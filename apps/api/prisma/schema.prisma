@@ -1,0 +1,980 @@
+// =============================================================================
+// Prospix · Schema Prisma (multi-tenant)
+// =============================================================================
+// Pronto pra copiar pra apps/api/prisma/schema.prisma
+//
+// Princípios:
+// - Toda tabela de domínio tem tenant_id NOT NULL
+// - RLS ativo em PostgreSQL (policies via migration · ver final do arquivo)
+// - UNIQUE constraints consideram tenant_id
+// - Soft delete via deleted_at (não DELETE direto)
+// - Timestamps com timezone (timestamptz)
+// =============================================================================
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions", "fullTextSearch"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pgcrypto, pg_trgm]
+}
+
+// =============================================================================
+// ENUMS
+// =============================================================================
+
+enum TenantStatus {
+  ONBOARDING
+  ACTIVE
+  SUSPENDED
+  CHURNING
+  CHURNED
+}
+
+enum TenantPlan {
+  STARTER
+  STANDARD
+  PREMIUM
+}
+
+enum UserRole {
+  OWNER
+  ASSISTANT
+  GUILDS_ADMIN
+}
+
+enum AIProvider {
+  GUILDS_SHARED
+  TENANT_OWN
+}
+
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum Profession {
+  DOCTOR
+  LAWYER
+  DENTIST
+  ENTREPRENEUR
+  ENGINEER
+  ARCHITECT
+  ACCOUNTANT
+  OTHER
+}
+
+enum LeadSource {
+  GOOGLE_MAPS
+  RECEITA_FEDERAL
+  CRM_SP
+  OAB_SP
+  CRO_SP
+  LINKEDIN
+  REFERRAL
+  LANDING_PAGE
+  MANUAL
+  IMPORTED
+}
+
+enum LeadStatus {
+  CAPTURED
+  ENRICHED
+  CONTACTED
+  NO_RESPONSE
+  CONVERSING
+  QUALIFIED
+  MEETING_SCHEDULED
+  CLOSED_WON
+  CLOSED_LOST
+  NOT_INTERESTED
+  LOST_BEFORE_MEETING
+  OPTED_OUT
+  ARCHIVED
+  ESCALATED_HUMAN
+}
+
+enum ConversationStatus {
+  ACTIVE
+  PAUSED
+  ESCALATED
+  CLOSED
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageSender {
+  AI
+  USER
+  LEAD
+}
+
+enum MessageDeliveryStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum MeetingStatus {
+  SCHEDULED
+  CONFIRMED
+  HAPPENED
+  NO_SHOW
+  RESCHEDULED
+  CANCELLED
+}
+
+enum MeetingOutcome {
+  CLOSED
+  SECOND_MEETING
+  NOT_INTERESTED
+  THINKING
+}
+
+enum ScriptCategory {
+  APPROACH
+  OBJECTION
+  EDUCATION
+  CLOSING
+  FOLLOW_UP
+  REFERRAL
+  REACTIVATION
+}
+
+enum ScriptStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum BillingStatus {
+  PENDING
+  PAID
+  OVERDUE
+  REFUNDED
+  WAIVED
+}
+
+enum PromptType {
+  SYSTEM
+  CLASSIFIER
+  GUARDRAIL_CORRECTIVE
+  FOLLOW_UP
+}
+
+enum NotificationChannel {
+  PUSH
+  WHATSAPP
+  EMAIL
+  SMS
+}
+
+// =============================================================================
+// TENANT (raiz)
+// =============================================================================
+
+model Tenant {
+  id                 String       @id @default(uuid()) @db.Uuid
+  slug               String       @unique @db.VarChar(64)
+  name               String       @db.VarChar(255)
+  status             TenantStatus
+  plan               TenantPlan
+  segment            String?      @db.VarChar(64) // 'insurance_metlife' | 'insurance_bradesco' | ...
+  setupPaidCents     Int?         @map("setup_paid_cents")
+  mrrCents           Int          @map("mrr_cents")
+  contractSignedAt   DateTime?    @map("contract_signed_at") @db.Timestamptz()
+  goLiveAt           DateTime?    @map("go_live_at") @db.Timestamptz()
+
+  // Branding
+  brandLogoUrl       String?      @map("brand_logo_url") @db.Text
+  brandPrimaryColor  String?      @map("brand_primary_color") @db.VarChar(7)
+  customDomain       String?      @unique @map("custom_domain") @db.VarChar(255) // white-label Fase 3
+
+  // IA voice
+  aiVoiceProfile     Json?        @map("ai_voice_profile")
+
+  // Aquecimento
+  zapiWarmupDay      Int          @default(1) @map("zapi_warmup_day")
+  zapiWarmupStartedAt DateTime?   @map("zapi_warmup_started_at") @db.Timestamptz()
+
+  // Áreas de alto valor (per-tenant, usado no fit score)
+  highValueAreas     String[]     @map("high_value_areas")
+
+  createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt          DateTime     @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt          DateTime?    @map("deleted_at") @db.Timestamptz()
+
+  users              User[]
+  secret             TenantSecret?
+  campaigns          Campaign[]
+  leads              Lead[]
+  conversations      Conversation[]
+  messages           Message[]
+  meetings           Meeting[]
+  scripts            Script[]
+  scriptVariations   ScriptVariation[]
+  leadEvents         LeadEvent[]
+  optouts            Optout[]
+  usage              TenantUsage[]
+  billings           TenantBilling[]
+  notifications      Notification[]
+  auditLogs          AuditLog[]
+  notes              LeadNote[]
+  pendingOutbound    PendingOutbound[]
+  notes2             TenantNote[]
+  promptVersions     PromptVersion[]
+  idempotencyKeys    IdempotencyKey[]
+
+  @@index([status])
+  @@index([segment])
+  @@map("tenants")
+}
+
+// =============================================================================
+// TENANT SECRETS (vault · 1 row por tenant)
+// =============================================================================
+
+model TenantSecret {
+  tenantId                       String     @id @map("tenant_id") @db.Uuid
+  tenant                         Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  zapiInstanceId                 String?    @map("zapi_instance_id")
+  zapiTokenEncrypted             String?    @map("zapi_token_encrypted") @db.Text
+  zapiWebhookSecret              String?    @map("zapi_webhook_secret") @db.Text
+
+  googleCalendarId               String?    @map("google_calendar_id")
+  googleOauthRefreshEncrypted    String?    @map("google_oauth_refresh_encrypted") @db.Text
+  googleOauthScope               String?    @map("google_oauth_scope") @db.Text
+
+  googleMapsApiKeyEncrypted      String?    @map("google_maps_api_key_encrypted") @db.Text
+
+  openaiApiKeyEncrypted          String?    @map("openai_api_key_encrypted") @db.Text
+  anthropicApiKeyEncrypted       String?    @map("anthropic_api_key_encrypted") @db.Text
+  aiProvider                     AIProvider @default(GUILDS_SHARED) @map("ai_provider")
+
+  // Telefonia (Fase 2)
+  twilioAccountSidEncrypted      String?    @map("twilio_account_sid_encrypted") @db.Text
+  twilioAuthTokenEncrypted       String?    @map("twilio_auth_token_encrypted") @db.Text
+
+  updatedAt                      DateTime   @updatedAt @map("updated_at") @db.Timestamptz()
+
+  @@map("tenant_secrets")
+}
+
+// =============================================================================
+// USER (per tenant · owner ou assistant + guilds_admin sem tenant)
+// =============================================================================
+
+model User {
+  id                 String       @id @default(uuid()) @db.Uuid
+  tenantId           String?      @map("tenant_id") @db.Uuid // null para guilds_admin
+  tenant             Tenant?      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  role               UserRole
+  name               String       @db.VarChar(255)
+  email              String       @unique @db.VarChar(255)
+  whatsapp           String       @db.VarChar(20)
+
+  susep              String?      @db.VarChar(64)
+  partnerCode        String?      @map("partner_code") @db.VarChar(64)
+  partnerBrand       String?      @map("partner_brand") @db.VarChar(64)
+
+  city               String?      @db.VarChar(128)
+  bio                String?      @db.Text
+  avatarUrl          String?      @map("avatar_url") @db.Text
+
+  // Preferências
+  preferences        Json?
+
+  lastLoginAt        DateTime?    @map("last_login_at") @db.Timestamptz()
+  createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt          DateTime     @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt          DateTime?    @map("deleted_at") @db.Timestamptz()
+
+  sessions           Session[]
+  notificationPrefs  NotificationPreference[]
+  notes              LeadNote[]
+  notesTenant        TenantNote[]
+  promptsCreated     PromptVersion[]
+  auditLogs          AuditLog[]
+
+  @@index([tenantId])
+  @@index([email])
+  @@map("users")
+}
+
+model Session {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshToken String   @unique @map("refresh_token") @db.Text
+  expiresAt    DateTime @map("expires_at") @db.Timestamptz()
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz()
+  ipAddress    String?  @map("ip_address") @db.Inet
+  userAgent    String?  @map("user_agent") @db.Text
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([userId])
+  @@index([refreshToken])
+  @@map("sessions")
+}
+
+// =============================================================================
+// CAMPAIGN (per tenant)
+// =============================================================================
+
+model Campaign {
+  id              String         @id @default(uuid()) @db.Uuid
+  tenantId        String         @map("tenant_id") @db.Uuid
+  tenant          Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name            String         @db.VarChar(255)
+  status          CampaignStatus @default(DRAFT)
+  profession      Profession
+
+  cities          String[]
+  neighborhoods   String[]
+
+  dailyLimit      Int            @default(100) @map("daily_limit")
+  hourWindowStart Int            @default(9) @map("hour_window_start")  // 0-23
+  hourWindowEnd   Int            @default(18) @map("hour_window_end")
+
+  activeScriptId  String?        @map("active_script_id") @db.Uuid
+  activeScript    Script?        @relation(fields: [activeScriptId], references: [id])
+
+  filters         Json? // { age_min, cnpj_min_age, exclude_existing_clients, min_fit_score }
+
+  // Estatísticas (denormalizadas, atualizadas via worker)
+  totalCaptured   Int            @default(0) @map("total_captured")
+  totalConversing Int            @default(0) @map("total_conversing")
+  totalScheduled  Int            @default(0) @map("total_scheduled")
+  totalClosedWon  Int            @default(0) @map("total_closed_won")
+
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt       DateTime       @updatedAt @map("updated_at") @db.Timestamptz()
+  archivedAt      DateTime?      @map("archived_at") @db.Timestamptz()
+
+  leads           Lead[]
+
+  @@index([tenantId, status])
+  @@map("campaigns")
+}
+
+// =============================================================================
+// LEAD (per tenant)
+// =============================================================================
+
+model Lead {
+  id                  String      @id @default(uuid()) @db.Uuid
+  tenantId            String      @map("tenant_id") @db.Uuid
+  tenant              Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  campaignId          String?     @map("campaign_id") @db.Uuid
+  campaign            Campaign?   @relation(fields: [campaignId], references: [id])
+
+  source              LeadSource
+  sourceExternalId    String?     @map("source_external_id") @db.Text // place_id, cnpj
+  sourceRawData       Json?       @map("source_raw_data")
+
+  // Dados pessoais
+  name                String?     @db.VarChar(255)
+  profession          Profession?
+  whatsapp            String      @db.VarChar(20)
+  whatsappValid       Boolean?    @map("whatsapp_valid")
+  email               String?     @db.VarChar(255)
+  address             Json? // { city, neighborhood, street, lat, lng }
+  ageEstimate         Int?        @map("age_estimate")
+
+  // Profissional
+  registrationNumber  String?     @map("registration_number") @db.VarChar(64) // CRM/OAB/CRO
+  partnerOrOwner      Boolean?    @map("partner_or_owner")
+  yearsOfPractice     Int?        @map("years_of_practice")
+  googleRating        Decimal?    @map("google_rating") @db.Decimal(3, 2)
+  googleReviewsCount  Int?        @map("google_reviews_count")
+
+  // Score & status
+  fitScore            Decimal?    @map("fit_score") @db.Decimal(3, 1) // 0.0 a 10.0
+  status              LeadStatus  @default(CAPTURED)
+  pipelineStage       String?     @map("pipeline_stage") @db.VarChar(64)
+
+  // Metadata
+  metadata            Json?
+  tags                String[]
+
+  // Timestamps de eventos
+  contactedAt         DateTime?   @map("contacted_at") @db.Timestamptz()
+  firstResponseAt     DateTime?   @map("first_response_at") @db.Timestamptz()
+  qualifiedAt         DateTime?   @map("qualified_at") @db.Timestamptz()
+  closedAt            DateTime?   @map("closed_at") @db.Timestamptz()
+
+  createdAt           DateTime    @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt           DateTime    @updatedAt @map("updated_at") @db.Timestamptz()
+  deletedAt           DateTime?   @map("deleted_at") @db.Timestamptz()
+
+  conversations       Conversation[]
+  meetings            Meeting[]
+  events              LeadEvent[]
+  notes               LeadNote[]
+  healthProfile       HealthProfile?
+
+  @@unique([tenantId, whatsapp])
+  @@index([tenantId, status])
+  @@index([tenantId, pipelineStage])
+  @@index([tenantId, fitScore(sort: Desc)])
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([campaignId])
+  @@map("leads")
+}
+
+model LeadNote {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId    String   @map("lead_id") @db.Uuid
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  authorId  String?  @map("author_id") @db.Uuid
+  author    User?    @relation(fields: [authorId], references: [id])
+  content   String   @db.Text
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([tenantId, leadId])
+  @@map("lead_notes")
+}
+
+// Pré-qualificação saúde (Fase 2 · adicional 3.4)
+model HealthProfile {
+  leadId            String   @id @map("lead_id") @db.Uuid
+  lead              Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  tenantId          String   @map("tenant_id") @db.Uuid
+
+  smoker            Boolean?
+  physicalActivity  String?  @map("physical_activity")
+  weightKg          Decimal? @map("weight_kg") @db.Decimal(5, 2)
+  heightCm          Int?     @map("height_cm")
+  bmiCalculated     Decimal? @map("bmi_calculated") @db.Decimal(4, 2)
+  preExistingDiseases String? @map("pre_existing_diseases")
+  continuousMedication String? @map("continuous_medication")
+  recentSurgery     Boolean? @map("recent_surgery")
+  familyHistory     Json?    @map("family_history")
+
+  riskCategory      String?  @map("risk_category") @db.VarChar(32)
+  estimatedPremiumMinCents Int? @map("estimated_premium_min_cents")
+  estimatedPremiumMaxCents Int? @map("estimated_premium_max_cents")
+
+  collectedAt       DateTime @default(now()) @map("collected_at") @db.Timestamptz()
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  @@index([tenantId])
+  @@map("health_profiles")
+}
+
+// =============================================================================
+// CONVERSATION + MESSAGE
+// =============================================================================
+
+model Conversation {
+  id               String             @id @default(uuid()) @db.Uuid
+  tenantId         String             @map("tenant_id") @db.Uuid
+  tenant           Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId           String             @map("lead_id") @db.Uuid
+  lead             Lead               @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  status           ConversationStatus @default(ACTIVE)
+  aiHandling       Boolean            @default(true) @map("ai_handling")
+
+  scriptId         String?            @map("script_id") @db.Uuid
+  script           Script?            @relation(fields: [scriptId], references: [id])
+  currentNodeId   String?             @map("current_node_id") @db.VarChar(64)
+
+  messageCount     Int                @default(0) @map("message_count")
+  lastMessageAt    DateTime?          @map("last_message_at") @db.Timestamptz()
+  lastInboundAt    DateTime?          @map("last_inbound_at") @db.Timestamptz()
+  lastOutboundAt   DateTime?          @map("last_outbound_at") @db.Timestamptz()
+  escalatedReason  String?            @map("escalated_reason") @db.VarChar(64)
+
+  startedAt        DateTime           @default(now()) @map("started_at") @db.Timestamptz()
+  closedAt         DateTime?          @map("closed_at") @db.Timestamptz()
+
+  messages         Message[]
+  meetings         Meeting[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, lastMessageAt(sort: Desc)])
+  @@index([leadId])
+  @@map("conversations")
+}
+
+model Message {
+  id                  String                @id @default(uuid()) @db.Uuid
+  tenantId            String                @map("tenant_id") @db.Uuid
+  tenant              Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversationId      String                @map("conversation_id") @db.Uuid
+  conversation        Conversation          @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  direction           MessageDirection
+  sender              MessageSender
+  content             String                @db.Text
+
+  // WhatsApp tracking
+  whatsappMessageId   String?               @unique @map("whatsapp_message_id") @db.VarChar(128)
+  deliveryStatus      MessageDeliveryStatus? @map("delivery_status")
+  deliveredAt         DateTime?             @map("delivered_at") @db.Timestamptz()
+  readAt              DateTime?             @map("read_at") @db.Timestamptz()
+  failedReason        String?               @map("failed_reason") @db.Text
+
+  // IA cost tracking
+  llmModel            String?               @map("llm_model") @db.VarChar(64)
+  llmTokensInput      Int?                  @map("llm_tokens_input")
+  llmTokensOutput     Int?                  @map("llm_tokens_output")
+  llmCostCents        Int?                  @map("llm_cost_cents")
+  llmLatencyMs        Int?                  @map("llm_latency_ms")
+
+  // Script tracking
+  scriptId            String?               @map("script_id") @db.Uuid
+  scriptVariationId   String?               @map("script_variation_id") @db.Uuid
+  scriptNodeId        String?               @map("script_node_id") @db.VarChar(64)
+  intentDetected      String?               @map("intent_detected") @db.VarChar(64)
+  intentConfidence    Decimal?              @map("intent_confidence") @db.Decimal(3, 2)
+
+  createdAt           DateTime              @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([tenantId, conversationId, createdAt])
+  @@index([whatsappMessageId])
+  @@map("messages")
+}
+
+// Fila de mensagens agendadas (off-hours queue)
+model PendingOutbound {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversationId  String   @map("conversation_id") @db.Uuid
+  content         String   @db.Text
+  scheduledFor    DateTime @map("scheduled_for") @db.Timestamptz()
+  idempotencyKey  String   @unique @map("idempotency_key") @db.VarChar(128)
+  sentAt          DateTime? @map("sent_at") @db.Timestamptz()
+  failedAt        DateTime? @map("failed_at") @db.Timestamptz()
+  failedReason    String?  @map("failed_reason") @db.Text
+  attempts        Int      @default(0)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([scheduledFor, sentAt])
+  @@index([tenantId])
+  @@map("pending_outbound")
+}
+
+// =============================================================================
+// MEETING
+// =============================================================================
+
+model Meeting {
+  id                  String          @id @default(uuid()) @db.Uuid
+  tenantId            String          @map("tenant_id") @db.Uuid
+  tenant              Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId              String          @map("lead_id") @db.Uuid
+  lead                Lead            @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  conversationId      String?         @map("conversation_id") @db.Uuid
+  conversation        Conversation?   @relation(fields: [conversationId], references: [id])
+
+  googleEventId       String?         @unique @map("google_event_id") @db.VarChar(128)
+  scheduledFor        DateTime        @map("scheduled_for") @db.Timestamptz()
+  durationMinutes     Int             @default(30) @map("duration_minutes")
+  location            String?         @db.Text
+  attendees           Json? // [{name, role, email?}]
+
+  status              MeetingStatus   @default(SCHEDULED)
+  outcome             MeetingOutcome?
+
+  policyValueCents    Int?            @map("policy_value_cents")
+  commissionCents     Int?            @map("commission_cents")
+
+  notes               String?         @db.Text
+  referralsCollected  Json?           @map("referrals_collected") // [{name, whatsapp}]
+  referralsCount      Int             @default(0) @map("referrals_count")
+
+  rescheduledFromId   String?         @map("rescheduled_from_id") @db.Uuid
+  rescheduledFrom     Meeting?        @relation("Reschedule", fields: [rescheduledFromId], references: [id])
+  reschedules         Meeting[]       @relation("Reschedule")
+
+  createdAt           DateTime        @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt           DateTime        @updatedAt @map("updated_at") @db.Timestamptz()
+  outcomeMarkedAt     DateTime?       @map("outcome_marked_at") @db.Timestamptz()
+
+  @@index([tenantId, scheduledFor])
+  @@index([tenantId, status])
+  @@index([leadId])
+  @@map("meetings")
+}
+
+// =============================================================================
+// SCRIPTS (per tenant)
+// =============================================================================
+
+model Script {
+  id                       String           @id @default(uuid()) @db.Uuid
+  tenantId                 String           @map("tenant_id") @db.Uuid
+  tenant                   Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  clonedFromTemplateId     String?          @map("cloned_from_template_id") @db.Uuid
+  clonedFromTemplate       ScriptTemplate?  @relation(fields: [clonedFromTemplateId], references: [id])
+
+  name                     String           @db.VarChar(255)
+  category                 ScriptCategory
+  targetProfession         Profession?      @map("target_profession")
+  status                   ScriptStatus     @default(DRAFT)
+
+  flow                     Json? // estrutura completa do flow
+  baseMessage              String?          @map("base_message") @db.Text
+  variables                String[]
+
+  // Stats (denormalizadas)
+  responseRate             Decimal?         @map("response_rate") @db.Decimal(5, 4)
+  conversionRate           Decimal?         @map("conversion_rate") @db.Decimal(5, 4)
+  totalUsages              Int              @default(0) @map("total_usages")
+
+  createdAt                DateTime         @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt                DateTime         @updatedAt @map("updated_at") @db.Timestamptz()
+  archivedAt               DateTime?        @map("archived_at") @db.Timestamptz()
+
+  campaigns                Campaign[]
+  conversations            Conversation[]
+  variations               ScriptVariation[]
+
+  @@index([tenantId, status, category])
+  @@map("scripts")
+}
+
+model ScriptVariation {
+  id                 String   @id @default(uuid()) @db.Uuid
+  tenantId           String   @map("tenant_id") @db.Uuid
+  tenant             Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  scriptId           String   @map("script_id") @db.Uuid
+  script             Script   @relation(fields: [scriptId], references: [id], onDelete: Cascade)
+
+  variantLetter      String   @map("variant_letter") @db.VarChar(2)
+  message            String   @db.Text
+  weight             Decimal  @default(0.33) @db.Decimal(3, 2)
+
+  // Stats
+  totalSent          Int      @default(0) @map("total_sent")
+  totalResponded     Int      @default(0) @map("total_responded")
+  totalConverted     Int      @default(0) @map("total_converted")
+  responseRate       Decimal? @map("response_rate") @db.Decimal(5, 4)
+  conversionRate     Decimal? @map("conversion_rate") @db.Decimal(5, 4)
+
+  active             Boolean  @default(true)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  @@unique([scriptId, variantLetter])
+  @@index([tenantId])
+  @@map("script_variations")
+}
+
+// =============================================================================
+// SCRIPT TEMPLATES (master library · Guilds-owned · sem tenant_id)
+// =============================================================================
+
+model ScriptTemplate {
+  id                  String         @id @default(uuid()) @db.Uuid
+  name                String         @db.VarChar(255)
+  segment             String         @db.VarChar(64) // 'insurance_metlife' | etc
+  category            ScriptCategory
+  targetProfession    Profession?    @map("target_profession")
+  flowTemplate        Json           @map("flow_template")
+  baseMessageTemplate String?        @map("base_message_template") @db.Text
+  variables           String[]
+  description         String?        @db.Text
+  active              Boolean        @default(true)
+  popularity          Int            @default(0)
+  createdAt           DateTime       @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt           DateTime       @updatedAt @map("updated_at") @db.Timestamptz()
+
+  scriptsCloned       Script[]
+
+  @@index([segment, active])
+  @@map("script_templates")
+}
+
+// =============================================================================
+// LEAD EVENTS (timeline imutável)
+// =============================================================================
+
+model LeadEvent {
+  id        BigInt   @id @default(autoincrement())
+  tenantId  String   @map("tenant_id") @db.Uuid
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leadId    String   @map("lead_id") @db.Uuid
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  eventType String   @map("event_type") @db.VarChar(64)
+  payload   Json?
+  actorId   String?  @map("actor_id") @db.Uuid // user_id quem disparou (null = sistema/IA)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([tenantId, leadId, createdAt(sort: Desc)])
+  @@index([eventType])
+  @@map("lead_events")
+}
+
+// =============================================================================
+// OPT-OUT (per tenant)
+// =============================================================================
+
+model Optout {
+  tenantId  String   @map("tenant_id") @db.Uuid
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  whatsapp  String   @db.VarChar(20)
+  reason    String?  @db.VarChar(128)
+  source    String?  @db.VarChar(32) // 'lead_request' | 'manual' | 'complaint'
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@id([tenantId, whatsapp])
+  @@index([tenantId])
+  @@map("optouts")
+}
+
+// =============================================================================
+// USAGE & BILLING
+// =============================================================================
+
+model TenantUsage {
+  id                    BigInt   @id @default(autoincrement())
+  tenantId              String   @map("tenant_id") @db.Uuid
+  tenant                Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  periodMonth           DateTime @map("period_month") @db.Date // primeiro dia do mês
+
+  llmTokensInput        BigInt   @default(0) @map("llm_tokens_input")
+  llmTokensOutput       BigInt   @default(0) @map("llm_tokens_output")
+  llmCostCents          Int      @default(0) @map("llm_cost_cents")
+
+  whatsappMessagesSent  Int      @default(0) @map("whatsapp_messages_sent")
+  whatsappCostCents     Int      @default(0) @map("whatsapp_cost_cents")
+
+  googleMapsCalls       Int      @default(0) @map("google_maps_calls")
+  googleMapsCostCents   Int      @default(0) @map("google_maps_cost_cents")
+
+  // Volumes operacionais (denormalizado pra dashboard rápido)
+  leadsCapturedCount    Int      @default(0) @map("leads_captured_count")
+  conversationsStarted  Int      @default(0) @map("conversations_started")
+  meetingsScheduled     Int      @default(0) @map("meetings_scheduled")
+  meetingsClosed        Int      @default(0) @map("meetings_closed")
+
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  @@unique([tenantId, periodMonth])
+  @@index([tenantId])
+  @@map("tenant_usage")
+}
+
+model TenantBilling {
+  id           String        @id @default(uuid()) @db.Uuid
+  tenantId     String        @map("tenant_id") @db.Uuid
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  periodMonth  DateTime      @map("period_month") @db.Date
+
+  mrrCents     Int           @map("mrr_cents")
+  excessCents  Int           @default(0) @map("excess_cents") // tokens IA acima da franquia
+  totalCents   Int           @map("total_cents")
+
+  status       BillingStatus @default(PENDING)
+  paidAt       DateTime?     @map("paid_at") @db.Timestamptz()
+  dueAt        DateTime      @map("due_at") @db.Timestamptz()
+  invoiceUrl   String?       @map("invoice_url") @db.Text
+  paymentMethod String?      @map("payment_method") @db.VarChar(32) // pix | boleto | credit_card
+
+  externalInvoiceId String?  @map("external_invoice_id") @db.VarChar(128) // Stripe/Asaas
+
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz()
+
+  @@unique([tenantId, periodMonth])
+  @@index([tenantId, status])
+  @@index([status, dueAt])
+  @@map("tenant_billing")
+}
+
+// =============================================================================
+// NOTIFICATIONS
+// =============================================================================
+
+model Notification {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId      String   @map("user_id") @db.Uuid
+
+  type        String   @db.VarChar(64) // 'lead_callback_request' | 'meeting_scheduled' | ...
+  title       String   @db.VarChar(255)
+  body        String   @db.Text
+  data        Json?
+  link        String?  @db.Text
+
+  readAt      DateTime? @map("read_at") @db.Timestamptz()
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([tenantId, userId, readAt])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+model NotificationPreference {
+  id           String              @id @default(uuid()) @db.Uuid
+  userId       String              @map("user_id") @db.Uuid
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  eventType    String              @map("event_type") @db.VarChar(64)
+  channels     NotificationChannel[]
+  enabled      Boolean             @default(true)
+  updatedAt    DateTime            @updatedAt @map("updated_at") @db.Timestamptz()
+
+  @@unique([userId, eventType])
+  @@map("notification_preferences")
+}
+
+// =============================================================================
+// AUDIT LOG
+// =============================================================================
+
+model AuditLog {
+  id         BigInt   @id @default(autoincrement())
+  tenantId   String?  @map("tenant_id") @db.Uuid
+  tenant     Tenant?  @relation(fields: [tenantId], references: [id])
+  userId     String?  @map("user_id") @db.Uuid
+  user       User?    @relation(fields: [userId], references: [id])
+
+  action     String   @db.VarChar(128) // 'lead.delete' | 'tenant.churn' | ...
+  targetType String?  @map("target_type") @db.VarChar(64)
+  targetId   String?  @map("target_id") @db.VarChar(128)
+  payload    Json?
+
+  ipAddress  String?  @map("ip_address") @db.Inet
+  userAgent  String?  @map("user_agent") @db.Text
+
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([action])
+  @@map("audit_log")
+}
+
+// =============================================================================
+// PROMPT VERSIONS (versionamento de prompts da IA)
+// =============================================================================
+
+model PromptVersion {
+  id              String     @id @default(uuid()) @db.Uuid
+  tenantId        String?    @map("tenant_id") @db.Uuid // null = global Guilds
+  tenant          Tenant?    @relation(fields: [tenantId], references: [id])
+  createdById     String?    @map("created_by_id") @db.Uuid
+  createdBy       User?      @relation(fields: [createdById], references: [id])
+
+  promptType      PromptType @map("prompt_type")
+  version         Int        @default(1)
+  template        String     @db.Text
+  variablesRequired Json?    @map("variables_required")
+  testCases       Json?      @map("test_cases")
+
+  isActive        Boolean    @default(false) @map("is_active")
+  notes           String?    @db.Text
+
+  createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz()
+  activatedAt     DateTime?  @map("activated_at") @db.Timestamptz()
+  deprecatedAt    DateTime?  @map("deprecated_at") @db.Timestamptz()
+
+  // Apenas 1 ativo por (tenant_id, prompt_type) — enforce via partial unique index na migration
+  @@index([tenantId, promptType, isActive])
+  @@map("prompt_versions")
+}
+
+// =============================================================================
+// IDEMPOTENCY KEYS
+// =============================================================================
+
+model IdempotencyKey {
+  key            String   @id @db.VarChar(128)
+  tenantId       String?  @map("tenant_id") @db.Uuid
+  tenant         Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  endpoint       String   @db.VarChar(255)
+  responseCache  Json?    @map("response_cache")
+  statusCode     Int?     @map("status_code")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  expiresAt      DateTime @map("expires_at") @db.Timestamptz()
+
+  @@index([expiresAt])
+  @@map("idempotency_keys")
+}
+
+// =============================================================================
+// TENANT NOTES (super-admin Guilds anota sobre o tenant)
+// =============================================================================
+
+model TenantNote {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  authorId  String?  @map("author_id") @db.Uuid
+  author    User?    @relation(fields: [authorId], references: [id])
+  content   String   @db.Text
+  category  String?  @db.VarChar(64) // 'support' | 'sales' | 'incident'
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@map("tenant_notes")
+}
+
+// =============================================================================
+// MIGRATION SQL (rodar após `prisma migrate`):
+// =============================================================================
+//
+// -- Ativar RLS em todas as tabelas de domínio
+// ALTER TABLE users               ENABLE ROW LEVEL SECURITY;
+// ALTER TABLE campaigns           ENABLE ROW LEVEL SECURITY;
+// ALTER TABLE leads               ENABLE ROW LEVEL SECURITY;
+// ALTER TABLE lead_notes          ENABLE ROW LEVEL SECURITY;
+// ALTER TABLE health_profiles     ENABLE ROW LEVEL SECURITY;
+// ALTER TABLE conversations       ENABLE ROW LEVEL SECURITY;
+// ALTER TABLE messages            ENABLE ROW LEVEL SECURITY;
+// ALTER TABLE pending_outbound    ENABLE ROW LEVEL SECURITY;
+// ALTER TABLE meetings            ENABLE ROW LEVEL SECURITY;
+// ALTER TABLE scripts             ENABLE ROW LEVEL SECURITY;
+// ALTER TABLE script_variations   ENABLE ROW LEVEL SECURITY;
+// ALTER TABLE lead_events         ENABLE ROW LEVEL SECURITY;
+// ALTER TABLE optouts             ENABLE ROW LEVEL SECURITY;
+// ALTER TABLE tenant_usage        ENABLE ROW LEVEL SECURITY;
+// ALTER TABLE tenant_billing      ENABLE ROW LEVEL SECURITY;
+// ALTER TABLE notifications       ENABLE ROW LEVEL SECURITY;
+// ALTER TABLE tenant_notes        ENABLE ROW LEVEL SECURITY;
+// ALTER TABLE tenant_secrets      ENABLE ROW LEVEL SECURITY;
+//
+// -- Policy padrão · só vê linhas do tenant atual
+// CREATE POLICY tenant_isolation_leads ON leads
+//   FOR ALL
+//   USING (tenant_id::text = current_setting('app.tenant_id', true));
+//
+// -- Repetir igual para cada tabela (ou usar gerador):
+// CREATE POLICY tenant_isolation_messages ON messages
+//   FOR ALL
+//   USING (tenant_id::text = current_setting('app.tenant_id', true));
+// -- ... etc
+//
+// -- Role super-admin Guilds (bypassa RLS)
+// CREATE ROLE guilds_admin BYPASSRLS;
+//
+// -- Partial unique index pra garantir 1 prompt ativo por (tenant, type)
+// CREATE UNIQUE INDEX one_active_prompt_per_type
+//   ON prompt_versions (tenant_id, prompt_type)
+//   WHERE is_active = true;
+//
+// -- Audit log do PostgreSQL (extensão)
+// CREATE EXTENSION IF NOT EXISTS pgaudit;
+// ALTER SYSTEM SET pgaudit.log = 'write,ddl';
+// =============================================================================

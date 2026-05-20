@@ -1,0 +1,1371 @@
+openapi: 3.1.0
+info:
+  title: Prospix API
+  description: |
+    API multi-tenant da plataforma de prospecção inteligente Prospix.
+    Primeiro tenant: Giovane Carrara (MetLife · SJRP).
+
+    ## Autenticação
+    Todas as rotas (exceto `/auth/*` e `/webhooks/*`) exigem JWT Bearer + header `X-Tenant-Id`.
+    O `X-Tenant-Id` é validado contra o JWT — mismatch retorna 403.
+
+    ## Multi-tenancy
+    Todo dado é isolado por tenant via RLS no PostgreSQL. Um tenant nunca vê dados de outro.
+
+    ## Rate limits
+    - `/auth/*`: 10 req/min por IP
+    - `/tenant/*` GET: 600 req/min por tenant
+    - `/tenant/*` POST/PATCH: 60 req/min por tenant
+  version: 1.0.0
+  contact:
+    name: Guilds
+    email: gustavo.macedo@guilds.com.br
+
+servers:
+  - url: https://api.prospix.com.br/v1
+    description: Produção
+  - url: https://api-staging.prospix.com.br/v1
+    description: Staging
+  - url: http://localhost:3000/v1
+    description: Local dev
+
+tags:
+  - name: Auth
+    description: Autenticação via magic link
+  - name: Leads
+    description: Gestão de leads capturados
+  - name: Conversations
+    description: Conversas e mensagens WhatsApp
+  - name: Meetings
+    description: Reuniões agendadas
+  - name: Campaigns
+    description: Campanhas de prospecção
+  - name: Scripts
+    description: Roteiros da IA
+  - name: Dashboard
+    description: Métricas e KPIs
+  - name: Settings
+    description: Configurações e integrações
+  - name: Notifications
+    description: Notificações do usuário
+  - name: LGPD
+    description: Operações de privacidade
+  - name: Admin
+    description: Super-admin Guilds (role guilds_admin)
+  - name: Webhooks
+    description: Recebimento de eventos externos
+
+# =============================================================================
+security:
+  - bearerAuth: []
+    tenantHeader: []
+
+paths:
+
+  # ===========================================================================
+  # AUTH
+  # ===========================================================================
+  /auth/magic-link:
+    post:
+      tags: [Auth]
+      summary: Solicita magic link
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                whatsapp: { type: string, example: "+5517998764422" }
+                email: { type: string, format: email }
+              oneOf:
+                - required: [whatsapp]
+                - required: [email]
+      responses:
+        '200':
+          description: Link enviado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      sent_to: { type: string, enum: [whatsapp, email] }
+                      expires_in: { type: integer, example: 600 }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /auth/callback:
+    get:
+      tags: [Auth]
+      summary: Callback do magic link (troca token por JWT)
+      security: []
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Autenticado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      access_token: { type: string }
+                      refresh_token: { type: string }
+                      user: { $ref: '#/components/schemas/User' }
+                      tenant: { $ref: '#/components/schemas/Tenant' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Renova access token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        '200':
+          description: Token renovado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      access_token: { type: string }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Encerra sessão (revoga JWT)
+      responses:
+        '204': { description: Logout efetuado }
+
+  # ===========================================================================
+  # LEADS
+  # ===========================================================================
+  /tenant/leads:
+    get:
+      tags: [Leads]
+      summary: Lista leads
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/LeadStatus' } }
+        - { name: fit_score_gte, in: query, schema: { type: number, minimum: 0, maximum: 10 } }
+        - { name: fit_score_lte, in: query, schema: { type: number, minimum: 0, maximum: 10 } }
+        - { name: profession, in: query, schema: { $ref: '#/components/schemas/Profession' } }
+        - { name: campaign_id, in: query, schema: { type: string, format: uuid } }
+        - { name: created_after, in: query, schema: { type: string, format: date-time } }
+        - { name: search, in: query, schema: { type: string } }
+        - { name: sort, in: query, schema: { type: string, example: "-fit_score,created_at" } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 100 } }
+      responses:
+        '200':
+          description: Lista paginada
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Lead' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+    post:
+      tags: [Leads]
+      summary: Cria lead manualmente
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LeadCreate' }
+      responses:
+        '201':
+          description: Lead criado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Lead' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /tenant/leads/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Leads]
+      summary: Detalhe do lead (com mensagens, reunião, timeline)
+      responses:
+        '200':
+          description: Lead completo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/LeadDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Leads]
+      summary: Atualiza lead
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                pipeline_stage: { type: string }
+                tags: { type: array, items: { type: string } }
+      responses:
+        '200':
+          description: Atualizado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Lead' }
+    delete:
+      tags: [Leads]
+      summary: Soft-delete (LGPD)
+      responses:
+        '204': { description: Removido }
+
+  /tenant/leads/{id}/optout:
+    post:
+      tags: [Leads]
+      summary: Marca opt-out do lead
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses:
+        '204': { description: Opt-out registrado }
+
+  /tenant/leads/{id}/assume:
+    post:
+      tags: [Leads]
+      summary: Assume conversa (pausa IA)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: IA pausada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      conversation_id: { type: string, format: uuid }
+
+  /tenant/leads/{id}/release:
+    post:
+      tags: [Leads]
+      summary: Devolve controle pra IA
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: IA reativada }
+
+  /tenant/leads/{id}/notes:
+    post:
+      tags: [Leads]
+      summary: Adiciona anotação
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: { type: string }
+      responses:
+        '201': { description: Nota criada }
+
+  # ===========================================================================
+  # CONVERSATIONS
+  # ===========================================================================
+  /tenant/conversations:
+    get:
+      tags: [Conversations]
+      summary: Lista conversas ativas
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [active, paused, escalated, closed] } }
+        - { name: filter, in: query, schema: { type: string, enum: [hot, waiting, scheduled] } }
+        - { name: sort, in: query, schema: { type: string } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Lista paginada
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Conversation' }
+
+  /tenant/conversations/{id}/messages:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Conversations]
+      summary: Mensagens da conversa (ordem cronológica)
+      responses:
+        '200':
+          description: Lista de mensagens
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Message' }
+    post:
+      tags: [Conversations]
+      summary: Envia mensagem (só se user assumiu a conversa)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: { type: string }
+                send_via: { type: string, enum: [whatsapp], default: whatsapp }
+      responses:
+        '201':
+          description: Mensagem enfileirada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Message' }
+        '409':
+          description: Conversa em modo IA — assuma antes de enviar
+
+  # ===========================================================================
+  # MEETINGS
+  # ===========================================================================
+  /tenant/meetings:
+    get:
+      tags: [Meetings]
+      summary: Lista reuniões
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/MeetingStatus' } }
+        - { name: scheduled_after, in: query, schema: { type: string, format: date-time } }
+        - { name: scheduled_before, in: query, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: Lista
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Meeting' }
+
+  /tenant/meetings/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Meetings]
+      summary: Detalhe da reunião
+      responses:
+        '200':
+          description: Reunião
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Meeting' }
+    patch:
+      tags: [Meetings]
+      summary: Marca resultado pós-reunião
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { type: string, enum: [happened, no_show, rescheduled] }
+                outcome: { type: string, enum: [closed, second_meeting, not_interested, thinking] }
+                policy_value_cents: { type: integer, example: 487000 }
+                commission_cents: { type: integer, example: 584400 }
+                notes: { type: string }
+                referrals_collected:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name: { type: string }
+                      whatsapp: { type: string }
+      responses:
+        '200':
+          description: Atualizado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Meeting' }
+
+  /tenant/meetings/{id}/reschedule:
+    post:
+      tags: [Meetings]
+      summary: Remarca reunião
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [new_datetime]
+              properties:
+                new_datetime: { type: string, format: date-time }
+      responses:
+        '200': { description: Remarcada }
+
+  # ===========================================================================
+  # CAMPAIGNS
+  # ===========================================================================
+  /tenant/campaigns:
+    get:
+      tags: [Campaigns]
+      summary: Lista campanhas
+      responses:
+        '200':
+          description: Lista
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Campaign' }
+    post:
+      tags: [Campaigns]
+      summary: Cria campanha
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CampaignCreate' }
+      responses:
+        '201':
+          description: Criada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Campaign' }
+
+  /tenant/campaigns/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Campaigns]
+      summary: Detalhe da campanha
+      responses:
+        '200':
+          description: Campanha
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Campaign' }
+    patch:
+      tags: [Campaigns]
+      summary: Atualiza campanha
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CampaignCreate' }
+      responses:
+        '200': { description: Atualizada }
+
+  /tenant/campaigns/{id}/pause:
+    post:
+      tags: [Campaigns]
+      summary: Pausa campanha
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Pausada }
+
+  /tenant/campaigns/{id}/resume:
+    post:
+      tags: [Campaigns]
+      summary: Retoma campanha
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Retomada }
+
+  # ===========================================================================
+  # SCRIPTS
+  # ===========================================================================
+  /tenant/scripts:
+    get:
+      tags: [Scripts]
+      summary: Lista roteiros do tenant
+      responses:
+        '200':
+          description: Lista
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Script' }
+
+  /tenant/scripts/templates:
+    get:
+      tags: [Scripts]
+      summary: Lista templates master (Guilds library)
+      responses:
+        '200':
+          description: Lista de templates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ScriptTemplate' }
+
+  /tenant/scripts/clone:
+    post:
+      tags: [Scripts]
+      summary: Clona template pra tenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [template_id]
+              properties:
+                template_id: { type: string, format: uuid }
+                customizations: { type: object }
+      responses:
+        '201':
+          description: Script clonado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Script' }
+
+  /tenant/scripts/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Scripts]
+      summary: Detalhe do roteiro (com flow)
+      responses:
+        '200':
+          description: Script
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ScriptDetail' }
+    patch:
+      tags: [Scripts]
+      summary: Atualiza roteiro (flow, status)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                flow: { type: object }
+                status: { type: string, enum: [active, archived] }
+                base_message: { type: string }
+      responses:
+        '200': { description: Atualizado }
+
+  /tenant/scripts/{id}/test:
+    post:
+      tags: [Scripts]
+      summary: Testa roteiro com lead fictício
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                test_lead: { type: object }
+      responses:
+        '200':
+          description: Preview
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      preview: { type: string }
+                      tokens_estimate: { type: integer }
+
+  # ===========================================================================
+  # DASHBOARD
+  # ===========================================================================
+  /tenant/dashboard/today:
+    get:
+      tags: [Dashboard]
+      summary: Cards do dia
+      responses:
+        '200':
+          description: Resumo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      meetings_today: { type: integer }
+                      conversations_ready: { type: integer }
+                      need_callback: { type: integer }
+                      new_leads_today: { type: integer }
+                      next_meeting: { $ref: '#/components/schemas/Meeting' }
+
+  /tenant/dashboard/funnel:
+    get:
+      tags: [Dashboard]
+      summary: Funil de prospecção
+      parameters:
+        - { name: period, in: query, schema: { type: string, enum: [7d, 30d, 90d], default: 30d } }
+      responses:
+        '200':
+          description: Funil
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      captured: { type: integer }
+                      whatsapp_valid: { type: integer }
+                      sent: { type: integer }
+                      responded: { type: integer }
+                      qualified: { type: integer }
+                      scheduled: { type: integer }
+
+  /tenant/dashboard/ai-usage:
+    get:
+      tags: [Dashboard]
+      summary: Consumo de IA
+      parameters:
+        - { name: period, in: query, schema: { type: string, default: current_month } }
+      responses:
+        '200':
+          description: Uso
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      tokens_used: { type: integer }
+                      tokens_quota: { type: integer }
+                      cost_cents: { type: integer }
+                      cost_quota_cents: { type: integer }
+                      breakdown: { type: object }
+
+  # ===========================================================================
+  # SETTINGS & INTEGRATIONS
+  # ===========================================================================
+  /tenant/me:
+    get:
+      tags: [Settings]
+      summary: Perfil + status das integrações
+      responses:
+        '200':
+          description: Dados
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      tenant: { $ref: '#/components/schemas/Tenant' }
+                      user: { $ref: '#/components/schemas/User' }
+                      secrets_status:
+                        type: object
+                        properties:
+                          zapi: { type: string, enum: [connected, pending] }
+                          calendar: { type: string, enum: [connected, pending] }
+                          telephony: { type: string, enum: [connected, pending] }
+    patch:
+      tags: [Settings]
+      summary: Atualiza perfil/branding
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                user: { type: object }
+                tenant: { type: object }
+      responses:
+        '200': { description: Atualizado }
+
+  /tenant/integrations/zapi/connect:
+    post:
+      tags: [Settings]
+      summary: Conecta Z-API
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [instance_id, token]
+              properties:
+                instance_id: { type: string }
+                token: { type: string }
+      responses:
+        '200':
+          description: Conectado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      connected: { type: boolean }
+                      whatsapp_number: { type: string }
+
+  /tenant/integrations/google/oauth:
+    post:
+      tags: [Settings]
+      summary: Inicia OAuth Google
+      responses:
+        '200':
+          description: URL de autorização
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      auth_url: { type: string, format: uri }
+
+  /tenant/integrations/openai/connect:
+    post:
+      tags: [Settings]
+      summary: Conecta chave OpenAI própria
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [api_key]
+              properties:
+                api_key: { type: string }
+      responses:
+        '200':
+          description: Validada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      validated: { type: boolean }
+                      test_call_ms: { type: integer }
+
+  # ===========================================================================
+  # NOTIFICATIONS
+  # ===========================================================================
+  /tenant/notifications:
+    get:
+      tags: [Notifications]
+      summary: Lista notificações
+      parameters:
+        - { name: unread, in: query, schema: { type: boolean } }
+      responses:
+        '200':
+          description: Lista
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Notification' }
+
+  /tenant/notifications/mark-all-read:
+    post:
+      tags: [Notifications]
+      summary: Marca todas como lidas
+      responses:
+        '204': { description: OK }
+
+  /tenant/notifications/preferences:
+    get:
+      tags: [Notifications]
+      summary: Preferências de notificação
+      responses:
+        '200': { description: Preferências }
+    patch:
+      tags: [Notifications]
+      summary: Atualiza preferências
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200': { description: Atualizado }
+
+  # ===========================================================================
+  # LGPD
+  # ===========================================================================
+  /tenant/lgpd/export-data:
+    post:
+      tags: [LGPD]
+      summary: Solicita export de dados (assíncrono)
+      responses:
+        '202':
+          description: Job iniciado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      job_id: { type: string, format: uuid }
+                      estimated_minutes: { type: integer }
+
+  /tenant/lgpd/delete-lead-data:
+    post:
+      tags: [LGPD]
+      summary: Exclui dados de um lead (direito ao esquecimento)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lead_whatsapp]
+              properties:
+                lead_whatsapp: { type: string }
+      responses:
+        '202':
+          description: Exclusão agendada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      deleted: { type: boolean }
+                      trace_id: { type: string }
+
+  # ===========================================================================
+  # ADMIN (super-admin Guilds)
+  # ===========================================================================
+  /admin/tenants:
+    get:
+      tags: [Admin]
+      summary: Lista todos tenants
+      responses:
+        '200':
+          description: Lista
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/TenantAdmin' }
+    post:
+      tags: [Admin]
+      summary: Cria tenant novo (onboarding)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slug, name, plan, segment, owner_email, owner_whatsapp]
+              properties:
+                slug: { type: string, example: "giovane-metlife" }
+                name: { type: string }
+                plan: { type: string, enum: [starter, standard, premium] }
+                segment: { type: string }
+                owner_email: { type: string, format: email }
+                owner_whatsapp: { type: string }
+      responses:
+        '201':
+          description: Tenant criado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/TenantAdmin' }
+
+  /admin/tenants/{id}/suspend:
+    post:
+      tags: [Admin]
+      summary: Suspende tenant
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Suspenso }
+
+  /admin/usage/consolidated:
+    get:
+      tags: [Admin]
+      summary: Uso consolidado (todos tenants)
+      responses:
+        '200':
+          description: Métricas consolidadas
+          content:
+            application/json:
+              schema: { type: object }
+
+  /admin/templates:
+    get:
+      tags: [Admin]
+      summary: Lista templates master
+      responses:
+        '200': { description: Lista }
+    post:
+      tags: [Admin]
+      summary: Cria template master
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '201': { description: Criado }
+
+  # ===========================================================================
+  # WEBHOOKS
+  # ===========================================================================
+  /webhooks/zapi/inbound:
+    post:
+      tags: [Webhooks]
+      summary: Mensagem recebida do lead (Z-API)
+      security: []
+      parameters:
+        - { name: x-zapi-signature, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ZApiInboundPayload' }
+      responses:
+        '200': { description: Enfileirado (ACK rápido) }
+        '401': { description: HMAC inválido }
+
+  /webhooks/zapi/status:
+    post:
+      tags: [Webhooks]
+      summary: Status de delivery (Z-API)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200': { description: OK }
+
+  /webhooks/zapi/instance:
+    post:
+      tags: [Webhooks]
+      summary: Status da instância (Z-API)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200': { description: OK }
+
+  /webhooks/google/calendar:
+    post:
+      tags: [Webhooks]
+      summary: Push notification do Google Calendar
+      security: []
+      responses:
+        '200': { description: OK }
+
+  /webhooks/stripe:
+    post:
+      tags: [Webhooks]
+      summary: Eventos de billing (Stripe · Fase 2)
+      security: []
+      responses:
+        '200': { description: OK }
+
+# =============================================================================
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    tenantHeader:
+      type: apiKey
+      in: header
+      name: X-Tenant-Id
+
+  responses:
+    Unauthenticated:
+      description: Token ausente ou inválido
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Sem permissão (role ou tenant mismatch)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Recurso não encontrado neste tenant
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ValidationError:
+      description: Payload inválido
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: Limite de requisições excedido
+      headers:
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              enum: [UNAUTHENTICATED, UNAUTHORIZED, RESOURCE_NOT_FOUND, VALIDATION_ERROR, RATE_LIMITED, TENANT_QUOTA_EXCEEDED, EXTERNAL_SERVICE_DOWN, INTERNAL_ERROR]
+            message: { type: string }
+            details: { type: object }
+            trace_id: { type: string }
+        meta:
+          type: object
+          properties:
+            request_id: { type: string }
+            timestamp: { type: string, format: date-time }
+
+    PaginatedResponse:
+      type: object
+      properties:
+        pagination:
+          type: object
+          properties:
+            next_cursor: { type: string, nullable: true }
+            has_more: { type: boolean }
+            total_estimate: { type: integer }
+
+    LeadStatus:
+      type: string
+      enum: [captured, enriched, contacted, no_response, conversing, qualified, meeting_scheduled, closed_won, closed_lost, not_interested, lost_before_meeting, opted_out, archived, escalated_human]
+
+    Profession:
+      type: string
+      enum: [doctor, lawyer, dentist, entrepreneur, engineer, architect, accountant, other]
+
+    MeetingStatus:
+      type: string
+      enum: [scheduled, confirmed, happened, no_show, rescheduled, cancelled]
+
+    Tenant:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        plan: { type: string }
+        brand_primary_color: { type: string }
+
+    TenantAdmin:
+      allOf:
+        - $ref: '#/components/schemas/Tenant'
+        - type: object
+          properties:
+            status: { type: string }
+            mrr_cents: { type: integer }
+            go_live_at: { type: string, format: date-time }
+            health: { type: string, enum: [green, yellow, red] }
+
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        role: { type: string, enum: [owner, assistant, guilds_admin] }
+        name: { type: string }
+        email: { type: string, format: email }
+        whatsapp: { type: string }
+        susep: { type: string }
+
+    Lead:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, nullable: true }
+        profession: { $ref: '#/components/schemas/Profession' }
+        whatsapp: { type: string }
+        whatsapp_valid: { type: boolean }
+        fit_score: { type: number, minimum: 0, maximum: 10 }
+        status: { $ref: '#/components/schemas/LeadStatus' }
+        pipeline_stage: { type: string }
+        source: { type: string }
+        address: { type: object }
+        created_at: { type: string, format: date-time }
+
+    LeadCreate:
+      type: object
+      required: [whatsapp]
+      properties:
+        name: { type: string }
+        whatsapp: { type: string }
+        profession: { $ref: '#/components/schemas/Profession' }
+        source: { type: string, default: manual }
+        metadata: { type: object }
+
+    LeadDetail:
+      allOf:
+        - $ref: '#/components/schemas/Lead'
+        - type: object
+          properties:
+            recent_messages:
+              type: array
+              items: { $ref: '#/components/schemas/Message' }
+            last_meeting: { $ref: '#/components/schemas/Meeting' }
+            events:
+              type: array
+              items: { $ref: '#/components/schemas/LeadEvent' }
+            health_profile: { type: object, nullable: true }
+
+    Conversation:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        lead_id: { type: string, format: uuid }
+        lead_name: { type: string }
+        status: { type: string, enum: [active, paused, escalated, closed] }
+        ai_handling: { type: boolean }
+        message_count: { type: integer }
+        last_message_at: { type: string, format: date-time }
+        last_message_preview: { type: string }
+
+    Message:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        direction: { type: string, enum: [inbound, outbound] }
+        sender: { type: string, enum: [ai, user, lead] }
+        content: { type: string }
+        delivery_status: { type: string, enum: [queued, sent, delivered, read, failed] }
+        intent_detected: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    Meeting:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        lead_id: { type: string, format: uuid }
+        lead_name: { type: string }
+        scheduled_for: { type: string, format: date-time }
+        duration_minutes: { type: integer }
+        location: { type: string }
+        status: { $ref: '#/components/schemas/MeetingStatus' }
+        outcome: { type: string, nullable: true }
+        attendees: { type: array, items: { type: object } }
+
+    Campaign:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        status: { type: string, enum: [draft, active, paused, archived] }
+        profession: { $ref: '#/components/schemas/Profession' }
+        cities: { type: array, items: { type: string } }
+        daily_limit: { type: integer }
+        total_captured: { type: integer }
+        total_conversing: { type: integer }
+        total_scheduled: { type: integer }
+
+    CampaignCreate:
+      type: object
+      required: [name, profession, cities]
+      properties:
+        name: { type: string }
+        profession: { $ref: '#/components/schemas/Profession' }
+        cities: { type: array, items: { type: string } }
+        neighborhoods: { type: array, items: { type: string } }
+        daily_limit: { type: integer, default: 100 }
+        hour_window: { type: array, items: { type: integer }, example: [9, 18] }
+        active_script_id: { type: string, format: uuid }
+        filters: { type: object }
+
+    Script:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        category: { type: string, enum: [approach, objection, education, closing, follow_up, referral, reactivation] }
+        target_profession: { $ref: '#/components/schemas/Profession' }
+        status: { type: string, enum: [draft, active, archived] }
+        response_rate: { type: number }
+        conversion_rate: { type: number }
+        total_usages: { type: integer }
+
+    ScriptDetail:
+      allOf:
+        - $ref: '#/components/schemas/Script'
+        - type: object
+          properties:
+            flow: { type: object }
+            base_message: { type: string }
+            variables: { type: array, items: { type: string } }
+            variations:
+              type: array
+              items:
+                type: object
+                properties:
+                  variant_letter: { type: string }
+                  message: { type: string }
+                  response_rate: { type: number }
+
+    ScriptTemplate:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        segment: { type: string }
+        category: { type: string }
+        target_profession: { $ref: '#/components/schemas/Profession' }
+        popularity: { type: integer }
+
+    LeadEvent:
+      type: object
+      properties:
+        event_type: { type: string }
+        payload: { type: object }
+        created_at: { type: string, format: date-time }
+
+    Notification:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string }
+        title: { type: string }
+        body: { type: string }
+        read_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    ZApiInboundPayload:
+      type: object
+      properties:
+        instanceId: { type: string }
+        messageId: { type: string }
+        phone: { type: string }
+        fromMe: { type: boolean }
+        momment: { type: integer }
+        type: { type: string }
+        text:
+          type: object
+          properties:
+            message: { type: string }
+        senderName: { type: string }
