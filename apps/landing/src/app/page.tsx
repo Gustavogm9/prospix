@@ -72,7 +72,7 @@ export default function LandingPage() {
 
           <div className="hidden md:flex items-center gap-4">
             <a
-              href={process.env.NEXT_PUBLIC_LOGIN_URL || '/login'}
+              href={process.env.NEXT_PUBLIC_LOGIN_URL || 'https://web-drab-chi-76.vercel.app/login'}
               className="text-sm font-medium text-text-secondary hover:text-primary transition-colors"
             >
               Entrar
@@ -141,7 +141,7 @@ export default function LandingPage() {
             </nav>
             <div className="pt-4 border-t border-border-subtle flex flex-col gap-3">
               <a
-                href={process.env.NEXT_PUBLIC_LOGIN_URL || '/login'}
+                href={process.env.NEXT_PUBLIC_LOGIN_URL || 'https://web-drab-chi-76.vercel.app/login'}
                 className="flex items-center justify-center h-10 px-4 rounded text-sm font-semibold text-text hover:bg-surface-sunken border border-border-strong transition-colors"
               >
                 Entrar
