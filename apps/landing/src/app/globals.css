@@ -1,4 +1,8 @@
-@import '@prospix/ui/globals.css';
+@import '../../../../packages/ui/src/tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 html {
   scroll-behavior: smooth;

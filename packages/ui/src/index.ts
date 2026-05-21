@@ -29,5 +29,4 @@ export { Tooltip } from './components/tooltip.js';
 export { Avatar } from './components/avatar.js';
 export { FunnelChart, BarChart } from './components/chart.js';
 
-// ── Tailwind preset ────────────────────────────────────────────────────────
-export { prospixPreset } from './tailwind.config.js';
+
