@@ -203,9 +203,9 @@ model Tenant {
   // IA voice
   aiVoiceProfile     Json?        @map("ai_voice_profile")
 
-  // Aquecimento
-  zapiWarmupDay      Int          @default(1) @map("zapi_warmup_day")
-  zapiWarmupStartedAt DateTime?   @map("zapi_warmup_started_at") @db.Timestamptz()
+  // Aquecimento WhatsApp (gateway-agnóstico · Evolution API)
+  whatsappWarmupDay       Int       @default(1) @map("whatsapp_warmup_day")
+  whatsappWarmupStartedAt DateTime? @map("whatsapp_warmup_started_at") @db.Timestamptz()
 
   // Áreas de alto valor (per-tenant, usado no fit score)
   highValueAreas     String[]     @map("high_value_areas")
@@ -216,6 +216,8 @@ model Tenant {
 
   users              User[]
   secret             TenantSecret?
+  aiConfig           TenantAIConfig?
+  invitations        TenantInvitation[]
   campaigns          Campaign[]
   leads              Lead[]
   conversations      Conversation[]
@@ -231,7 +233,7 @@ model Tenant {
   auditLogs          AuditLog[]
   notes              LeadNote[]
   pendingOutbound    PendingOutbound[]
-  notes2             TenantNote[]
+  tenantNotes        TenantNote[]
   promptVersions     PromptVersion[]
   idempotencyKeys    IdempotencyKey[]
 
@@ -248,9 +250,11 @@ model TenantSecret {
   tenantId                       String     @id @map("tenant_id") @db.Uuid
   tenant                         Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  zapiInstanceId                 String?    @map("zapi_instance_id")
-  zapiTokenEncrypted             String?    @map("zapi_token_encrypted") @db.Text
-  zapiWebhookSecret              String?    @map("zapi_webhook_secret") @db.Text
+  // WhatsApp gateway · Evolution API (self-hosted Hostinger)
+  evolutionBaseUrl               String?    @map("evolution_base_url") @db.Text       // ex: https://evo.prospix.com.br
+  evolutionInstanceName          String?    @map("evolution_instance_name")            // ex: tenant_giovane
+  evolutionApiKeyEncrypted       String?    @map("evolution_api_key_encrypted") @db.Text
+  evolutionWebhookSecret         String?    @map("evolution_webhook_secret") @db.Text
 
   googleCalendarId               String?    @map("google_calendar_id")
   googleOauthRefreshEncrypted    String?    @map("google_oauth_refresh_encrypted") @db.Text
@@ -258,8 +262,10 @@ model TenantSecret {
 
   googleMapsApiKeyEncrypted      String?    @map("google_maps_api_key_encrypted") @db.Text
 
+  // API keys próprias do tenant (opcionais · senão usa Guilds-shared)
   openaiApiKeyEncrypted          String?    @map("openai_api_key_encrypted") @db.Text
   anthropicApiKeyEncrypted       String?    @map("anthropic_api_key_encrypted") @db.Text
+  googleAiApiKeyEncrypted        String?    @map("google_ai_api_key_encrypted") @db.Text
   aiProvider                     AIProvider @default(GUILDS_SHARED) @map("ai_provider")
 
   // Telefonia (Fase 2)
@@ -269,6 +275,62 @@ model TenantSecret {
   updatedAt                      DateTime   @updatedAt @map("updated_at") @db.Timestamptz()
 
   @@map("tenant_secrets")
+}
+
+// =============================================================================
+// TENANT AI CONFIG · modelo IA configurável por uso (system/classifier/guardrail)
+// Permite trocar gpt-4o-mini ↔ claude-haiku ↔ gemini-flash sem deploy.
+// =============================================================================
+
+model TenantAIConfig {
+  tenantId            String   @id @map("tenant_id") @db.Uuid
+  tenant              Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Modelos por uso — null = usa default global Guilds
+  systemProvider      String?  @map("system_provider") @db.VarChar(16)      // openai | anthropic | google
+  systemModel         String?  @map("system_model") @db.VarChar(64)         // gpt-4o-mini | claude-3-5-haiku-20241022 | gemini-1.5-flash
+  classifierProvider  String?  @map("classifier_provider") @db.VarChar(16)
+  classifierModel     String?  @map("classifier_model") @db.VarChar(64)
+  guardrailProvider   String?  @map("guardrail_provider") @db.VarChar(16)
+  guardrailModel      String?  @map("guardrail_model") @db.VarChar(64)
+
+  // Fallback chain · array ordenado de providers tentados em sequência
+  fallbackChain       Json?    @map("fallback_chain")    // ex: ["openai", "anthropic", "google"]
+
+  // Parâmetros LLM
+  systemTemperature       Decimal  @default(0.4)  @map("system_temperature") @db.Decimal(3, 2)
+  classifierTemperature   Decimal  @default(0.0)  @map("classifier_temperature") @db.Decimal(3, 2)
+  maxOutputTokens         Int      @default(1024) @map("max_output_tokens")
+
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  @@map("tenant_ai_configs")
+}
+
+// =============================================================================
+// TENANT INVITATION · código de convite gerado pelo super-admin Guilds
+// Cadastro do owner é gated por código (setup pago off-platform)
+// =============================================================================
+
+model TenantInvitation {
+  id            String    @id @default(uuid()) @db.Uuid
+  code          String    @unique @db.VarChar(24)    // ex: PRSPX-A8K2-9F4M
+  tenantId      String    @map("tenant_id") @db.Uuid
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  role          UserRole  @default(OWNER)
+  createdById   String    @map("created_by_id") @db.Uuid    // guilds_admin que gerou
+  expiresAt     DateTime  @map("expires_at") @db.Timestamptz()
+  usedAt        DateTime? @map("used_at") @db.Timestamptz()
+  usedByUserId  String?   @map("used_by_user_id") @db.Uuid
+  revokedAt     DateTime? @map("revoked_at") @db.Timestamptz()
+  notes         String?   @db.Text                   // notas internas do admin
+
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([tenantId])
+  @@index([code, usedAt, revokedAt])
+  @@map("tenant_invitations")
 }
 
 // =============================================================================
@@ -954,6 +1016,8 @@ model TenantNote {
 // ALTER TABLE notifications       ENABLE ROW LEVEL SECURITY;
 // ALTER TABLE tenant_notes        ENABLE ROW LEVEL SECURITY;
 // ALTER TABLE tenant_secrets      ENABLE ROW LEVEL SECURITY;
+// ALTER TABLE tenant_ai_configs   ENABLE ROW LEVEL SECURITY;
+// ALTER TABLE tenant_invitations  ENABLE ROW LEVEL SECURITY;
 //
 // -- Policy padrão · só vê linhas do tenant atual
 // CREATE POLICY tenant_isolation_leads ON leads

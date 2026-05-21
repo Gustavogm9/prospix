@@ -1,0 +1,60 @@
+/**
+ * Prospix · Design Tokens
+ * Extraídos do protótipo aprovado (business/prototipo.html)
+ * Não editar sem aprovação do PM. Ver docs/design-system.md.
+ */
+
+:root {
+  /* ── Cores primárias ──────────────────────────────────────────────────── */
+  --primary: #1B3A6B;
+  --primary-hover: #142C52;
+  --primary-soft: rgba(27, 58, 107, 0.08);
+  --primary-softer: rgba(27, 58, 107, 0.04);
+
+  --secondary: #E8981C;
+  --secondary-soft: rgba(232, 152, 28, 0.14);
+  --secondary-softer: rgba(232, 152, 28, 0.06);
+  --secondary-text: #A56B0A;
+
+  /* ── Superfícies ──────────────────────────────────────────────────────── */
+  --bg: #F7F8FA;
+  --surface: #FFFFFF;
+  --surface-sunken: #F1F3F6;
+  --border: #E5E7EB;
+  --border-subtle: #EEF0F3;
+  --border-strong: #D0D5DD;
+
+  /* ── Texto ────────────────────────────────────────────────────────────── */
+  --text: #0F172A;
+  --text-secondary: #475569;
+  --text-muted: #94A3B8;
+
+  /* ── Status ───────────────────────────────────────────────────────────── */
+  --success: #039855;
+  --success-soft: #ECFDF3;
+  --success-text: #027A48;
+  --warning: #F79009;
+  --warning-soft: #FFFAEB;
+  --warning-text: #B54708;
+  --error: #D92D20;
+  --error-soft: #FEF3F2;
+  --error-text: #B42318;
+
+  /* ── Geometria ────────────────────────────────────────────────────────── */
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
+
+  /* ── Sombras ──────────────────────────────────────────────────────────── */
+  --shadow-sm: 0 1px 3px rgba(16, 24, 40, 0.08), 0 1px 2px rgba(16, 24, 40, 0.04);
+  --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.08);
+  --shadow-lg: 0 16px 32px rgba(16, 24, 40, 0.12), 0 4px 8px rgba(16, 24, 40, 0.04);
+
+  /* ── Layout ───────────────────────────────────────────────────────────── */
+  --sidebar-w: 236px;
+  --topbar-h: 60px;
+
+  /* ── Fontes ───────────────────────────────────────────────────────────── */
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}

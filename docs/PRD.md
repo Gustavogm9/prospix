@@ -154,7 +154,7 @@ AUTH      · Supabase Auth (magic link via WhatsApp)
 ┌─▼──┐  ┌──────▼──────┐  ┌────▼─────┐  ┌──────▼──────┐  ┌─────▼──────┐
 │ DB │  │  Workers     │  │  IA      │  │ Integrações │  │ Per-tenant │
 │ PG │  │  BullMQ      │  │  OpenAI  │  │ por tenant  │  │ secrets    │
-│RLS │  │  (queue por  │  │  Anthropic│ │ Z-API/Cal/  │  │ (vault)    │
+│RLS │  │  (queue por  │  │  Anthropic│ │ Evolution API/Cal/  │  │ (vault)    │
 │ON  │  │  tenant)     │  │          │  │  Maps       │  │            │
 └────┘  └──────┬───────┘  └──────────┘  └─────────────┘  └────────────┘
                │
@@ -167,7 +167,7 @@ AUTH      · Supabase Auth (magic link via WhatsApp)
 **Pontos-chave multi-tenant:**
 - **RLS ativo em todas as tabelas de domínio** — sem `tenant_id` no contexto, query retorna zero
 - **Workers carregam credenciais do tenant alvo no início do job** — nunca compartilham contexto
-- **Secrets per-tenant** (Z-API token, Google refresh token, API key custom) em vault (Supabase Vault ou env por tenant_id)
+- **Secrets per-tenant** (Evolution API token, Google refresh token, API key custom) em vault (Supabase Vault ou env por tenant_id)
 - **Quotas e billing per-tenant** (tokens IA, mensagens WhatsApp, captures Google Maps)
 
 ### 3.3 Workers / jobs
@@ -176,7 +176,7 @@ AUTH      · Supabase Auth (magic link via WhatsApp)
 | `capture-google-maps` | Cron 1h (horário comercial) | Busca novos leads das campanhas ativas |
 | `enrich-leads` | Cron 15min | Valida WhatsApp + classifica fit score |
 | `send-messages` | Event-driven (com throttle anti-ban) | Envia mensagens da IA respeitando cadência |
-| `process-inbound` | Webhook Z-API | Processa mensagem recebida do lead → IA |
+| `process-inbound` | Webhook Evolution API | Processa mensagem recebida do lead → IA |
 | `schedule-meeting` | Event-driven | Cria evento no Google Calendar |
 | `daily-digest` | Cron 8h | Envia resumo do dia pro Giovane via WhatsApp |
 | `health-check` | Cron 5min | Verifica saúde do número WhatsApp (anti-ban) |
@@ -185,7 +185,7 @@ AUTH      · Supabase Auth (magic link via WhatsApp)
 | Decisão | Por quê |
 |---|---|
 | **GPT-4o-mini ao invés de GPT-4o** | 25× mais barato, qualidade suficiente pra seguir roteiro |
-| **Z-API ao invés de Meta Cloud direta** | Z-API já gerencia anti-ban, aquecimento, instância dedicada · 1 instância por tenant |
+| **Evolution API ao invés de Meta Cloud direta** | Evolution API já gerencia anti-ban, aquecimento, instância dedicada · 1 instância por tenant |
 | **Supabase ao invés de RDS** | Auth + DB + RLS + Realtime em 1 stack · RLS nativo do PostgreSQL é nosso isolamento principal |
 | **Shared DB com RLS, não DB-per-tenant** | Operação simples, custo linear baixo, RLS é seguro e auditado |
 | **BullMQ com filas namespaced por tenant** | `queue:tenant_{id}:capture` · isolamento de carga e logs |
@@ -208,7 +208,7 @@ Tenant ──< User (Owner, Assistant) ──< Session
    │
    ├─< Script ──< ScriptVariation
    │
-   ├─< TenantSecret (Z-API token, Google refresh, etc · vault)
+   ├─< TenantSecret (Evolution API token, Google refresh, etc · vault)
    │
    ├─< TenantUsage (tokens IA · msgs WA · captures Maps · billing)
    │
@@ -275,8 +275,8 @@ CREATE INDEX idx_users_tenant ON users(tenant_id);
 -- ============================================================
 CREATE TABLE tenant_secrets (
   tenant_id UUID PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
-  zapi_instance_id TEXT,
-  zapi_token_encrypted TEXT,           -- AES-256
+  evolution_instance_name TEXT,
+  evolution_api_key_encrypted TEXT,           -- AES-256
   google_calendar_id TEXT,
   google_oauth_refresh_encrypted TEXT,
   google_maps_api_key_encrypted TEXT,
@@ -560,7 +560,7 @@ captured → enriched → contacted → conversing
 - **Limites:** rate limit padrão 100 QPS
 - **Auth:** API Key restrita por IP
 
-### 5.2 WhatsApp Business API (Z-API)
+### 5.2 WhatsApp Business API (Evolution API)
 - **Plano:** Profissional R$ 280/mês (instância dedicada)
 - **Limite:** 10.000 envios/mês
 - **Webhooks:** mensagens recebidas, status delivery, presença online
@@ -569,7 +569,7 @@ captured → enriched → contacted → conversing
   - `POST /send-text` — envia mensagem
   - `POST /check-phone` — valida se número tem WhatsApp
   - `GET /chat-status/:phone` — última atividade
-  - Webhook receive: `POST /webhook/zapi`
+  - Webhook receive: `POST /webhook/evolution`
 
 ### 5.3 Google Calendar API
 - **Scopes:** `calendar.events`
@@ -631,7 +631,7 @@ captured → enriched → contacted → conversing
   - Insert em `leads` (status: `captured`)
   - Respeita `daily_limit` da campaign
 - `worker:enrich-leads` roda a cada 15min:
-  - Valida WhatsApp via Z-API `check-phone`
+  - Valida WhatsApp via Evolution API `check-phone`
   - Cruza CNPJ com BrasilAPI (empresários)
   - Calcula `fit_score` com lógica:
     - Profissão alvo: +3
@@ -655,14 +655,14 @@ captured → enriched → contacted → conversing
 
 **Componentes:**
 - **Engine de roteiros:** carrega `script.flow` e executa via state machine
-- **Webhook Z-API:** recebe mensagem do lead → enfileira em `process-inbound`
+- **Webhook Evolution API:** recebe mensagem do lead → enfileira em `process-inbound`
 - **Worker `process-inbound`:** 
   1. Carrega histórico da conversation
   2. Monta prompt: `voice_profile` (system) + `script.flow.current_node` + histórico
   3. Chama GPT-4o-mini com `temperature: 0.4` (consistência)
   4. Parse resposta: extrai intenção classificada + mensagem
   5. Aplica regras (anti-alucinação, sem promessa de valores, opt-out)
-  6. Envia mensagem via Z-API `send-text`
+  6. Envia mensagem via Evolution API `send-text`
   7. Registra em `messages` + atualiza `conversations`
 - **Anti-ban:**
   - Aquecimento: limites diários crescentes (20→50→100→200) por 30 dias
@@ -754,7 +754,7 @@ captured → enriched → contacted → conversing
 
 **Páginas mínimas pra Fase 1 (versão leve):**
 - **Tenants:** lista com status, plan, MRR, último login, health (verde/amarelo/vermelho baseado em uptime IA e quality rating WhatsApp)
-- **Onboarding wizard:** criar tenant novo · cadastrar owner · configurar secrets (Z-API, Google) · ativar
+- **Onboarding wizard:** criar tenant novo · cadastrar owner · configurar secrets (Evolution API, Google) · ativar
 - **Templates de roteiros:** master library editável · cada novo tenant clona daqui
 - **Uso & custos:** dashboard com tokens consumidos por tenant + custo Guilds vs MRR cobrado (margem)
 - **Suporte:** lista de tickets (pode ser MVP só com integração Zendesk/email)
@@ -968,7 +968,7 @@ OBJETIVOS (ordem):
 | Semana | Fase | Entregáveis |
 |---|---|---|
 | **S1** (D1-D5) | **FOUNDRY** Kickoff | Discovery + voice_profile + spec aprovada |
-| **S2** (D6-D10) | **OBSERVE** Mapeamento | Acessos Z-API + Google Calendar + spec final |
+| **S2** (D6-D10) | **OBSERVE** Mapeamento | Acessos Evolution API + Google Calendar + spec final |
 | **S3** (D11-D15) | **REFINE** Arquitetura | Modelo de dados aprovado + skeleton API |
 | **S4** (D16-D20) | **GENERATE A** | Captura + Enriquecimento em homologação |
 | **S5** (D21-D25) | **GENERATE B** | IA + WhatsApp + Calendar em homologação |
@@ -1044,7 +1044,7 @@ OBJETIVOS (ordem):
 | LLM alucinação financeira | Baixa | Crítico | Regras hard-coded + temperatura baixa + classifier de validação pre-send |
 | Cliente desiste no meio | Baixa | Alto | Contrato com cláusula de pagamento por marcos |
 | Conselhos profissionais bloqueiam scraper | Alta | Baixo | Movido pra Fase 2 best-effort · não bloqueia MVP |
-| Volume de mensagens > 10k/mês (Z-API) | Média (mês 4+) | Médio | Upgrade Z-API plano R$ 480/mês · 1 instância por tenant |
+| Volume de mensagens > 10k/mês (Evolution API) | Média (mês 4+) | Médio | Upgrade Evolution API plano R$ 480/mês · 1 instância por tenant |
 | LGPD: lead reclama na ANPD | Baixa | Alto | Opt-out funcional · base legal documentada · escopo per-tenant (corretor A não vê opt-out do corretor B, e vice-versa) |
 | **Tenant abusa do sistema (spam · violação ToS)** | **Média** | **Alto** | **Quotas hard · suspensão automática se Quality Rating WhatsApp cair · contrato com cláusula de uso aceitável** |
 | **Custos de IA estouram a franquia silenciosamente** | **Média** | **Médio** | **Alertas em 70% / 90% / 100% da franquia · cobrança de excedente automática (Fase 2) · opção de plug própria chave** |
@@ -1090,13 +1090,13 @@ OBJETIVOS (ordem):
 ### 14.2 Per-Tenant (configurado no onboarding de cada tenant)
 | Serviço | Quem contrata | Notas |
 |---|---|---|
-| Z-API instância dedicada | Tenant (R$ 280/mês) | 1 instância · 1 número WhatsApp · armazenado em `tenant_secrets` |
+| Evolution API instância dedicada | Tenant (R$ 280/mês) | 1 instância · 1 número WhatsApp · armazenado em `tenant_secrets` |
 | Google Cloud (Maps + Calendar) | Tenant (custo direto) | Conta Google do owner · OAuth refresh em vault |
 | OpenAI API key própria (opcional) | Tenant | Plugável em `tenant_secrets.openai_api_key_encrypted` · ativa quando custo justifica |
 | Domínio próprio (opcional · Fase 3 white-label) | Tenant | DNS apontando pro Railway · cert SSL automático |
 
 ### 14.3 Tenant #1 · Giovane Carrara (status kickoff)
-- [ ] Z-API instância (a cadastrar)
+- [ ] Evolution API instância (a cadastrar)
 - [ ] Google Cloud project (a criar)
 - [ ] Owner cadastrado no sistema (via Super-Admin Guilds)
 - [ ] OAuth Google autorizado (Giovane clica no link)
@@ -1132,7 +1132,7 @@ prospix/                          # nome do produto (não "metlife-giovane")
 │   │   │   │   └── _base-worker.ts       # base class que sempre injeta tenant_id
 │   │   │   ├── integrations/
 │   │   │   │   ├── google-maps.ts        # recebe tenant_secrets
-│   │   │   │   ├── zapi.ts               # idem
+│   │   │   │   ├── evolution.ts          # idem (self-hosted Hostinger)
 │   │   │   │   ├── google-calendar.ts
 │   │   │   │   ├── openai.ts             # usa chave do tenant se houver, senão Guilds
 │   │   │   │   └── brasilapi.ts
@@ -1193,7 +1193,7 @@ prospix/                          # nome do produto (não "metlife-giovane")
 - [ ] Kickoff agendado (até D+5)
 - [ ] Reunião FOUNDRY · 3h com Giovane (gravada)
 - [ ] Setup repositório + Railway + Supabase
-- [ ] Cadastro Z-API + Google Cloud no nome do Giovane
+- [ ] Cadastro Evolution API + Google Cloud no nome do Giovane
 - [ ] Spec funcional aprovada até D+5
 - [ ] Início do desenvolvimento (Sprint A)
 
@@ -1213,7 +1213,7 @@ prospix/                          # nome do produto (não "metlife-giovane")
 | Anexo | Tema | Para quem |
 |---|---|---|
 | A | API Contracts (REST) | Backend + Frontend |
-| B | Webhooks (Z-API, Google, Stripe) | Backend |
+| B | Webhooks (Evolution API, Google, Stripe) | Backend |
 | C | State Machines (Lead, Conversation, Meeting, Campaign) | Backend + Produto |
 | D | Algoritmos (Fit Score, Aquecimento, Classificador, Follow-up) | Backend + Eng. IA |
 | E | IA & Prompts (system prompt, guardrails, versionamento) | Eng. IA |
@@ -1225,6 +1225,7 @@ prospix/                          # nome do produto (não "metlife-giovane")
 | K | UX & Edge Cases | Frontend + Produto |
 | L | Playbooks Operacionais | Suporte + Plantão |
 | M | Roadmap Detalhado Fase 2+ | Produto + Comercial |
+| N | Landing, Auth e Cadastro com código de convite | Frente F + Frente A |
 
 ---
 
@@ -1282,7 +1283,7 @@ X-Request-Id: <uuid>          # para tracing distribuído (gerado pelo client ou
 | `VALIDATION_ERROR` | 422 | Payload inválido (com details) |
 | `RATE_LIMITED` | 429 | Throttle do tenant (header `Retry-After`) |
 | `TENANT_QUOTA_EXCEEDED` | 429 | Excedeu franquia (tokens IA, mensagens WhatsApp) |
-| `EXTERNAL_SERVICE_DOWN` | 502 | Z-API/Google/OpenAI fora |
+| `EXTERNAL_SERVICE_DOWN` | 502 | Evolution API/Google/OpenAI fora |
 | `INTERNAL_ERROR` | 500 | Erro não previsto (gera Sentry) |
 
 **Paginação (cursor-based):**
@@ -1459,12 +1460,12 @@ Response: { "tokens_used": 14200000, "tokens_quota": 14000000, "cost_cents": 387
 
 ```
 GET /v1/tenant/me
-Response: { "tenant": {...}, "user": {...}, "secrets_status": { "zapi": "connected", "calendar": "connected", "telephony": "pending" } }
+Response: { "tenant": {...}, "user": {...}, "secrets_status": { "evolution": "connected", "calendar": "connected", "telephony": "pending" } }
 
 PATCH /v1/tenant/me
 Body: { "user?": {...}, "tenant?": {"brand_primary_color?": "..."} }
 
-POST /v1/tenant/integrations/zapi/connect
+POST /v1/tenant/integrations/evolution/connect
 Body: { "instance_id": "...", "token": "..." }
 Response: { "data": { "connected": true, "whatsapp_number": "+5517..." } }
 
@@ -1559,13 +1560,13 @@ Retry-After: 30
 
 # ANEXO B · Webhooks
 
-## B.1 Webhook: Z-API recebe mensagem do lead
+## B.1 Webhook: Evolution API recebe mensagem do lead
 
-**Endpoint:** `POST /v1/webhooks/zapi/inbound`
+**Endpoint:** `POST /v1/webhooks/evolution/inbound`
 
-**Auth:** validação por HMAC-SHA256 do payload com `tenant_secrets.zapi_webhook_secret`
+**Auth:** validação por HMAC-SHA256 do payload com `tenant_secrets.evolution_webhook_secret`
 
-**Payload Z-API (recebido):**
+**Payload Evolution API (recebido):**
 ```json
 {
   "instanceId": "3DCCAB...",
@@ -1589,8 +1590,8 @@ const tenant = await tenants.findByZapiInstance(payload.instanceId);
 if (!tenant) return reply.status(404).send();
 
 // 2. Verifica HMAC
-const expected = hmacSha256(rawBody, tenant.zapi_webhook_secret);
-if (expected !== req.headers['x-zapi-signature']) return reply.status(401).send();
+const expected = hmacSha256(rawBody, tenant.evolution_webhook_secret);
+if (expected !== req.headers['x-evolution-signature']) return reply.status(401).send();
 
 // 3. Idempotência: já processou este messageId?
 const exists = await messages.findOne({ tenant_id: tenant.id, whatsapp_message_id: payload.messageId });
@@ -1605,13 +1606,13 @@ await queue.add('process-inbound', {
   received_at: new Date(payload.momment)
 });
 
-// 5. ACK rápido (Z-API espera 200 em < 5s)
+// 5. ACK rápido (Evolution API espera 200 em < 5s)
 return reply.status(200).send({ queued: true });
 ```
 
-## B.2 Webhook: Z-API status de delivery
+## B.2 Webhook: Evolution API status de delivery
 
-**Endpoint:** `POST /v1/webhooks/zapi/status`
+**Endpoint:** `POST /v1/webhooks/evolution/status`
 
 **Payload:**
 ```json
@@ -1629,9 +1630,9 @@ return reply.status(200).send({ queued: true });
 - Atualiza `messages.delivery_status` e `delivered_at`/`read_at`
 - Se `FAILED`: registra em `lead_events` + se for o 3º FAILED do dia, alerta time Guilds (risco de ban)
 
-## B.3 Webhook: Z-API status da instância
+## B.3 Webhook: Evolution API status da instância
 
-**Endpoint:** `POST /v1/webhooks/zapi/instance`
+**Endpoint:** `POST /v1/webhooks/evolution/instance`
 
 ```json
 {
@@ -1799,7 +1800,7 @@ Cap: max 10.0, min 0.0
 | Componente | Peso | Como calcular |
 |---|---|---|
 | `matches_target_profession` | +3.0 | profissão do lead bate com campanha (binário) |
-| `whatsapp_valid` | +2.0 | validado via Z-API check-phone (binário) |
+| `whatsapp_valid` | +2.0 | validado via Evolution API check-phone (binário) |
 | `is_owner_or_partner` | +2.0 | médico com consultório próprio, advogado sócio, empresário ativo no CNPJ |
 | `high_value_area` | +1.0 | bairros pré-cadastrados como "nobres" da cidade (config per-tenant) |
 | `cnpj_age_score` | 0–1.0 | normalizado: 5+ anos = 1.0, 0 anos = 0.0 |
@@ -1859,13 +1860,13 @@ function calculateFitScore(lead: Lead, campaign: Campaign, tenant: Tenant): numb
 **Validações antes de cada envio:**
 ```typescript
 async function canSendMessage(tenant: Tenant): Promise<{ allowed: boolean; reason?: string }> {
-  const instance = await zapi.getInstanceStatus(tenant.zapi_instance_id);
+  const instance = await evolution.getConnectionState(tenant.evolution_instance_name);
 
   if (instance.status !== 'connected') return { allowed: false, reason: 'instance_not_connected' };
   if (instance.quality_rating === 'red') return { allowed: false, reason: 'quality_red' };
 
   const today = await usageTracker.getTodayCount(tenant.id);
-  const dailyLimit = getAquecimentoLimit(tenant.zapi_warmup_day);
+  const dailyLimit = getAquecimentoLimit(tenant.whatsapp_warmup_day);
   if (today >= dailyLimit) return { allowed: false, reason: 'daily_limit_reached' };
 
   const lastMessageAt = await getLastMessageTimestamp(tenant.id);
@@ -2232,7 +2233,7 @@ Coverage target: **100% dos cenários documentados** devem ter test case.
 
 **Lógica:**
 1. Carrega leads pendentes (`status: captured`)
-2. Para cada: valida WhatsApp (Z-API) + enriquece via BrasilAPI/Receita
+2. Para cada: valida WhatsApp (Evolution API) + enriquece via BrasilAPI/Receita
 3. Calcula fit_score
 4. Atualiza status → `enriched`
 
@@ -2267,7 +2268,7 @@ Coverage target: **100% dos cenários documentados** devem ter test case.
 
 | Campo | Valor |
 |---|---|
-| Tipo | Event-driven (webhook Z-API) |
+| Tipo | Event-driven (webhook Evolution API) |
 | Frequência | Imediato |
 | Concorrência | 1 job por conversation (lock) |
 | Timeout | 60s |
@@ -2305,7 +2306,7 @@ Cron 8h da manhã, envia resumo WhatsApp pro tenant:
 ### F.1.7 `worker:health-check`
 
 Cron 5min:
-- Verifica Quality Rating de cada Z-API instance
+- Verifica Quality Rating de cada Evolution API instance
 - Se RED ou YELLOW: pausa todas campanhas + alerta crítico
 - Verifica latência média OpenAI último 5min · se > 10s, fallback pra Claude
 
@@ -2424,7 +2425,7 @@ class TenantThrottle {
 2. POST /v1/auth/magic-link { "whatsapp": "+5517..." }
 3. API gera single-use token (UUID + assinatura HMAC)
    - Salva em redis: key="magic:{token}", value="{user_id}", TTL 10min
-4. Envia via Z-API (instância dedicada Guilds, não a do tenant):
+4. Envia via Evolution API (instância dedicada Guilds, não a do tenant):
    "Olá Giovane! Clique pra entrar: https://app.prospix.com.br/auth/callback?token=ABC123
     Link válido por 10 min."
 5. User clica → GET /v1/auth/callback?token=ABC123
@@ -2520,7 +2521,7 @@ async function tenantContext(req: FastifyRequest) {
 
 ### Passo 5 · Integrações
 ```
-- Cadastro Z-API (instance_id + token)
+- Cadastro Evolution API (instance_id + token)
 - OAuth Google (Calendar + Maps)
 - Validação automática de cada credencial
 ```
@@ -2552,7 +2553,7 @@ async function tenantContext(req: FastifyRequest) {
 3. Após 7 dias sem reativação:
    - Status → "churned"
    - Pausa todas campanhas
-   - WhatsApp instance Z-API → desconectada (mas Z-API mantida 30d pra evitar perda do número)
+   - WhatsApp instance Evolution API → desconectada (mas Evolution API mantida 30d pra evitar perda do número)
    - Painel mostra apenas tela "dados em retenção"
 4. D+30 após churned: notifica owner que dados serão deletados em 60d
 5. D+90 após churned: DELETE CASCADE de tudo (preserva apenas tenant_billing pra fiscal)
@@ -2645,7 +2646,7 @@ OPENAI_MODEL_CLASSIFIER=gpt-4o-mini-2024-07-18
 ANTHROPIC_API_KEY=sk-ant-...        # fallback
 ANTHROPIC_MODEL_FALLBACK=claude-3-5-haiku-20241022
 
-# === Z-API (instância Guilds pra magic links) ===
+# === Evolution API (instância Guilds pra magic links) ===
 ZAPI_GUILDS_INSTANCE=...
 ZAPI_GUILDS_TOKEN=...
 ZAPI_BASE_URL=https://api.z-api.io
@@ -2857,7 +2858,7 @@ Response 503: { "status": "not_ready", "checks": { "db": "fail" } }
 [Readiness · usado pelo LB pra incluir/excluir do pool]
 
 GET /admin/system-health
-Response 200: full health (todas integrações: Z-API, Google, OpenAI, etc)
+Response 200: full health (todas integrações: Evolution API, Google, OpenAI, etc)
 [Privado · só super-admin Guilds]
 ```
 
@@ -2869,7 +2870,7 @@ Response 200: full health (todas integrações: Z-API, Google, OpenAI, etc)
 | User session | Redis | 7 dias | Logout / revoke |
 | Voice profile | Memória (warm) | 1h | Save explícito |
 | Google Maps Place Details | Redis | 7 dias | Manual via admin |
-| Z-API instance status | Redis | 30s | Webhook |
+| Evolution API instance status | Redis | 30s | Webhook |
 | Dashboard KPIs | Redis | 1 min | Worker de aggregation |
 | Script template list | Redis | 1 hora | Save no admin |
 
@@ -2974,7 +2975,7 @@ Casos de uso:
 - `worker_job_failure_rate`
 - `db_connection_pool_utilization`
 - `redis_memory_usage`
-- `external_api_latency_p95` (Z-API, OpenAI, Google)
+- `external_api_latency_p95` (Evolution API, OpenAI, Google)
 - `external_api_error_rate`
 
 ### I.1.3 Negócio (Guilds)
@@ -2993,10 +2994,10 @@ Casos de uso:
 | API p95 > 2s por 5min | Métrica | Warning | Slack #alerts |
 | API error rate > 5% por 5min | Métrica | Critical | Slack + PagerDuty |
 | Worker job failure rate > 10% | Métrica | Warning | Slack |
-| Z-API instance disconnected > 10min | Health check | Critical | Slack + email tenant |
+| Evolution API instance disconnected > 10min | Health check | Critical | Slack + email tenant |
 | OpenAI 5xx > 5min consecutivos | Métrica | Critical | Slack |
 | DB connection pool > 90% | Métrica | Warning | Slack |
-| Tenant Quality Rating = RED | Webhook Z-API | Critical | Slack + email tenant |
+| Tenant Quality Rating = RED | Webhook Evolution API | Critical | Slack + email tenant |
 | Tenant atingiu 90% da franquia IA | Métrica | Info | Email tenant |
 | Tenant atingiu 100% da franquia IA | Métrica | Warning | Email tenant + admin |
 | RLS violation detected | Sentry | Critical | Slack #security |
@@ -3031,7 +3032,7 @@ logger.info({
 
 ### I.4.1 Pirâmide
 - **70% unit tests** — funções puras, lógica de negócio (algoritmo de fit_score, state machine, guardrails)
-- **25% integration tests** — workers, integrações com Z-API/OpenAI mockadas
+- **25% integration tests** — workers, integrações com Evolution API/OpenAI mockadas
 - **5% E2E tests** — fluxos críticos completos (Playwright)
 
 ### I.4.2 Multi-tenant isolation tests (obrigatórios em CI)
@@ -3208,7 +3209,7 @@ Auditoria: axe-core em CI + manual com NVDA/VoiceOver antes de release maior.
 |---|---|
 | Sem internet | Toast persistente "Sem conexão · tentando reconectar..." + degrada para cache local |
 | API 500 | Tela de erro com botão "Tentar novamente" + email pra suporte |
-| Z-API offline | Banner no topo: "WhatsApp temporariamente indisponível. Mensagens em fila." |
+| Evolution API offline | Banner no topo: "WhatsApp temporariamente indisponível. Mensagens em fila." |
 | Quality Rating RED | Modal bloqueante: "Atenção · risco de banimento. Campanhas pausadas. Fale com a Guilds." |
 | Tenant suspended | Tela única bloqueando acesso: "Plataforma suspensa por inadimplência. Regularize..." |
 
@@ -3246,7 +3247,7 @@ src/i18n/
 
 # ANEXO L · Playbooks Operacionais
 
-## L.1 Incidente: Z-API instance disconnected
+## L.1 Incidente: Evolution API instance disconnected
 
 **Detecção:** webhook `instance` com status `disconnected` OU health check falha por 10min.
 
@@ -3257,10 +3258,10 @@ src/i18n/
 4. Email automático pro tenant: "WhatsApp desconectado. Estamos verificando."
 
 **Resposta humana (PM Guilds):**
-1. Checa Z-API admin → motivo da disconnection
+1. Checa Evolution API admin → motivo da disconnection
 2. Se QR-code required: gera QR e envia pro tenant via canal alternativo
 3. Se ban: ação crítica → ver playbook L.2
-4. Se manutenção Z-API: aguarda + comunica
+4. Se manutenção Evolution API: aguarda + comunica
 5. Após reconectado: rampa de re-aquecimento conservadora (volta a 50% do limite por 3 dias)
 
 ## L.2 Incidente: número WhatsApp banido
@@ -3272,7 +3273,7 @@ src/i18n/
 2. Notifica owner do tenant via email + telefone (PM Guilds liga)
 3. Inicia processo de novo número:
    - Tenant compra novo chip
-   - Configura no Z-API
+   - Configura no Evolution API
    - Inicia novo aquecimento (D+1 do programa)
 4. Análise post-mortem:
    - Roteiros problemáticos?
@@ -3440,7 +3441,7 @@ M12   · Marketplace de templates (se ≥ 20 tenants)
 2. Preenche formulário básico → cria trial 14 dias (sem cartão)
 3. Wizard self-service (5 telas):
    - Dados do corretor
-   - Conecta Z-API (instrucoes em vídeo)
+   - Conecta Evolution API (instrucoes em vídeo)
    - Conecta Google Calendar
    - Escolhe 1 roteiro template
    - Lança 1ª campanha (50 leads · sample)
@@ -3459,7 +3460,167 @@ M12   · Marketplace de templates (se ≥ 20 tenants)
 
 ---
 
-**FIM DOS ANEXOS** · documento mantido em `docs/PRD.md` no repo · revisão a cada release maior.
+---
+
+# ANEXO N · Landing, Auth e Cadastro com código de convite
+
+## N.1 Premissas
+
+- **Cadastro self-service não existe no MVP.** Setup R$ 7.900 é pago **off-platform** (PIX/DocuSign). Após confirmação, Guilds cria tenant + gera **código de convite** + envia pro corretor.
+- Cadastro do owner é **gated** por código válido + ainda não usado + não expirado.
+- Login subsequente do owner é magic link via WhatsApp (mesmo fluxo do anexo G).
+- Próximos tenants futuros: cadastro self-service entra na Fase 2 (anexo M.5) quando volume justificar.
+
+## N.2 Subdomínios e responsabilidades
+
+| Subdomínio | App | Stack | Função |
+|---|---|---|---|
+| `prospix.com.br` | `apps/landing` | Next.js 15 | Marketing público, planos, FAQ, contato |
+| `app.prospix.com.br` | `apps/web` | React 18 + Vite | Painel do tenant (logado) + login + cadastro |
+| `admin.prospix.com.br` | `apps/admin` | React 18 + Vite | Super-admin Guilds |
+| `api.prospix.com.br` | `apps/api` | Fastify | API REST + webhooks |
+
+## N.3 Landing (`prospix.com.br`)
+
+### N.3.1 Páginas obrigatórias
+
+| Rota | Conteúdo |
+|---|---|
+| `/` | Home com hero + prova social + como funciona + planos + FAQ + CTA |
+| `/planos` | Comparativo detalhado Essencial × Recomendado × Premium |
+| `/cases` | 1 case escrito (Giovane · MetLife) com problema → solução → métricas |
+| `/lgpd` | DPIA simplificado + DPO contact + direitos do titular |
+| `/termos` | Termos de uso |
+| `/privacidade` | Política de privacidade |
+| `/contato` | Form + WhatsApp Guilds |
+| `/login` | Redirect pra `app.prospix.com.br/login` |
+| `/cadastro` | Redirect pra `app.prospix.com.br/cadastro` |
+
+### N.3.2 Tom + voz (premium-sóbrio B2B brasileiro)
+
+- Inspiração: Pipefy, Stripe BR, ContaAzul, Linear
+- Evitar: Hotmart/RD agressivo, urgência fake, emojis em headings
+- Números concretos sempre que possível ("3x reuniões", "−90% tempo")
+- Prova social: logos das seguradoras (segmento atendido), cases reais
+- Tipografia Inter + JetBrains Mono para números
+- Cores: primary `#1B3A6B`, secondary `#E8981C` (uso parcimonioso)
+
+### N.3.3 SEO + performance
+
+- Lighthouse Performance ≥ 90, A11y ≥ 95, SEO ≥ 95
+- OG image 1200×630 (`/og-image.png`)
+- Sitemap.xml + robots.txt
+- Metadata por página (title + description + canonical)
+- CLS = 0 (imagens com dimensions, fonts com `font-display: swap`)
+- Sem analytics pesado no MVP
+
+## N.4 Geração de código de convite
+
+### N.4.1 Formato
+
+`PRSPX-XXXX-XXXX` onde X ∈ `[A-Z0-9]` (alfanumérico maiúsculo).
+
+```typescript
+function generateInvitationCode(): string {
+  const seg = () => Array.from({ length: 4 }, () =>
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'[Math.floor(Math.random() * 36)]
+  ).join('');
+  return `PRSPX-${seg()}-${seg()}`;
+}
+```
+
+Entropia: ~41 bits (36^8) — suficiente pra brute-force ser impraticável com rate limit.
+
+### N.4.2 Lifecycle
+
+```
+[Super-admin gera] → created_at, expires_at = now + 14d
+[Corretor usa em /cadastro] → used_at = now, used_by_user_id = <novo_user>
+ou
+[Expira] → expires_at < now (UI mostra "expirado")
+ou
+[Admin revoga] → revoked_at = now
+```
+
+Apenas 1 invitation ativo por tenant (constraint partial unique index — ver [01_rls.sql](../apps/api/prisma/sql/01_rls.sql)).
+
+### N.4.3 Endpoints
+
+```
+# Admin
+POST /v1/admin/tenants/:tenant_id/invitations
+  Body: { ttl_days?: 14, notes?: string }
+  Response: { code, expires_at }
+
+POST /v1/admin/tenants/:tenant_id/invitations/:id/revoke
+  Response: 204
+
+GET /v1/admin/tenants/:tenant_id/invitations
+  Response: lista com status (active/used/expired/revoked)
+
+# Public (sem auth)
+POST /v1/auth/invitations/verify
+  Body: { code }
+  Response: { tenant_name, role } ou erro INVITATION_INVALID|EXPIRED|USED
+
+POST /v1/auth/invitations/redeem
+  Body: { code, user: { name, email, whatsapp, susep?, city } }
+  Response: { user_id, tenant_id, magic_link_sent: true }
+  [Marca invitation usado + cria user + envia magic link via Evolution Guilds-master]
+```
+
+## N.5 Fluxo de cadastro completo
+
+```
+1. Off-platform: Guilds vende → corretor paga R$ 7.900 (PIX/DocuSign)
+2. Super-admin /admin/tenants → cria tenant "ONBOARDING"
+3. Super-admin gera invitation → recebe código PRSPX-XXXX-XXXX
+4. Super-admin envia código pro corretor (WhatsApp + email)
+5. Corretor acessa prospix.com.br/cadastro
+   → tela 1: digita código (mascarado, valida formato)
+   → tela 2: confirma "Você foi convidado para acessar Giovane Carrara · MetLife"
+   → tela 3: preenche dados (nome, email, WhatsApp, SUSEP, cidade)
+   → tela 4: "Pronto! Te mandei um link no WhatsApp"
+6. WhatsApp recebe magic link → corretor clica
+7. /auth/callback valida token → emite JWT → redirect /
+8. Onboarding interno (tour 5 passos)
+9. Wizard de integrações:
+   → Conectar Evolution (na verdade já configurado pelo Guilds · só confirma número)
+   → Autorizar Google Calendar (OAuth)
+   → (opcional) plugar chave OpenAI própria
+10. Tenant vira ACTIVE → owner pode usar
+```
+
+## N.6 Estados de erro do cadastro
+
+| Estado | UX | CTA |
+|---|---|---|
+| Código vazio | Botão desabilitado | — |
+| Código formato inválido | Erro inline em vermelho | — |
+| Código não existe | Página `/cadastro/invalido` | "Falar com Guilds" (link WhatsApp) |
+| Código expirado | Página `/cadastro/expirado` | "Falar com Guilds" |
+| Código já usado | Página `/cadastro/usado` | "Fazer login" + "Falar com Guilds" |
+| Falha de rede | Toast persistente | "Tentar de novo" |
+
+## N.7 Rate limits e segurança
+
+- `/v1/auth/invitations/verify` — 5 req/min por IP (anti brute-force)
+- `/v1/auth/invitations/redeem` — 3 req/min por IP
+- Em `verify`, retornar mensagem genérica em código inválido (não distinguir "expirado" de "não existe" pra IPs externos · só interno)
+- Log de tentativas falhas em `audit_log`
+- Após 10 falhas em 10min do mesmo IP → bloqueia por 1h
+
+## N.8 Auth flow do owner já cadastrado (recap do anexo G)
+
+1. `/login` → input WhatsApp → POST `/v1/auth/magic-link`
+2. Mensagem chega no WhatsApp (Evolution Guilds-master): "Olá! Clique pra entrar: app.prospix.com.br/auth/callback?token=ABC123"
+3. Click → GET `/v1/auth/callback?token=ABC123`
+4. Backend valida token Redis (TTL 10min, single-use), emite JWT + refresh
+5. Cookie httpOnly com refresh token, JWT no localStorage
+6. Redirect `/` (Início)
+7. Refresh token rotation a cada uso
+
+---
 
 ---
 ---

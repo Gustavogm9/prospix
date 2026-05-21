@@ -1,0 +1,59 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: prospix-postgres
+    environment:
+      POSTGRES_USER: prospix
+      POSTGRES_PASSWORD: prospix_dev
+      POSTGRES_DB: prospix_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prospix -d prospix_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: prospix-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: prospix-mailhog
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # Web UI em http://localhost:8025
+
+  # Evolution API local · espelha o ambiente de produção (Hostinger)
+  # Comentado por padrão — descomentar quando Frente C precisar testar webhook localmente
+  # evolution:
+  #   image: atendai/evolution-api:latest
+  #   container_name: prospix-evolution
+  #   ports:
+  #     - "8080:8080"
+  #   environment:
+  #     SERVER_URL: http://localhost:8080
+  #     AUTHENTICATION_API_KEY: dev-evolution-key
+  #     DATABASE_ENABLED: "true"
+  #     DATABASE_PROVIDER: postgresql
+  #     DATABASE_CONNECTION_URI: postgresql://prospix:prospix_dev@postgres:5432/evolution
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+
+volumes:
+  pg_data:
+  redis_data:

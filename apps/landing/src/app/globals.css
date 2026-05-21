@@ -1,0 +1,11 @@
+@import '@prospix/ui/globals.css';
+
+html {
+  scroll-behavior: smooth;
+}
+
+/* Custom landing page overrides or additionals */
+.gradient-hero {
+  background: radial-gradient(circle at top right, rgba(232, 152, 28, 0.04), transparent 50%),
+              radial-gradient(circle at bottom left, rgba(27, 58, 107, 0.03), transparent 50%);
+}

@@ -1,0 +1,25 @@
+@import '@prospix/ui/globals.css';
+
+/* Custom application-specific styles can be added here */
+body {
+  overflow-y: auto;
+}
+
+/* Scrollbar styles for premium appearance */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}

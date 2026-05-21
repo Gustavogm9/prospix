@@ -1,0 +1,31 @@
+{
+  "name": "@prospix/mocks",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./evolution": "./src/evolution.ts",
+    "./openai": "./src/openai.ts",
+    "./google-maps": "./src/google-maps.ts",
+    "./google-calendar": "./src/google-calendar.ts",
+    "./asaas": "./src/asaas.ts",
+    "./seed": "./src/seed.ts"
+  },
+  "scripts": {
+    "lint": "eslint src --max-warnings=0",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf .turbo"
+  },
+  "dependencies": {
+    "@prospix/shared-types": "workspace:*",
+    "msw": "^2.6.6"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

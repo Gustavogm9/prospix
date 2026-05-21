@@ -1,5 +1,12 @@
 # Proposta Comercial — Giovane / MetLife
 
+> ⚠️ **Documento histórico.** Esta proposta foi a versão inicial enviada ao cliente em 13/05/2026.
+> Os **valores finais negociados** (R$ 7.900 setup + R$ 490/mês) e o **escopo aprovado** estão consolidados no [PRD](../docs/PRD.md) v1.1. Esta proposta fica como registro do que foi apresentado originalmente.
+> Outros pontos atualizados após esta proposta:
+> - **WhatsApp gateway:** Z-API → **Evolution API** self-hosted (Guilds absorve custo)
+> - **Prazo:** 60 dias → **35 dias úteis** (MVP) + 30d hypercare
+> - **Nome do produto:** definido como **Prospix**
+
 **Guilds** | 13 de maio de 2026 | Válida até 28/05/2026
 
 **Preparada para:** Giovane — Corretor parceiro MetLife · São José do Rio Preto, SP

@@ -160,6 +160,160 @@ paths:
         '204': { description: Logout efetuado }
 
   # ===========================================================================
+  # INVITATIONS (cadastro com código · ver PRD anexo N)
+  # ===========================================================================
+  /auth/invitations/verify:
+    post:
+      tags: [Auth]
+      summary: Verifica se código de convite é válido (sem consumir)
+      security: []
+      description: |
+        Rate limit 5 req/min por IP (anti brute-force).
+        Em erro retorna mensagem genérica · `code` específico só visível no log interno.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  pattern: '^PRSPX-[A-Z0-9]{4}-[A-Z0-9]{4}$'
+                  example: 'PRSPX-A8K2-9F4M'
+      responses:
+        '200':
+          description: Código válido
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      tenant_name: { type: string, example: 'Giovane Carrara · MetLife · SJRP' }
+                      role: { type: string, enum: [OWNER, ASSISTANT] }
+        '404':
+          description: INVITATION_INVALID
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '410':
+          description: INVITATION_EXPIRED ou INVITATION_ALREADY_USED
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /auth/invitations/redeem:
+    post:
+      tags: [Auth]
+      summary: Consome código de convite + cria owner + envia magic link
+      security: []
+      description: |
+        Rate limit 3 req/min por IP.
+        Marca invitation como usado e dispara magic link via WhatsApp do owner.
+        Operação atômica: ou cria tudo, ou nada.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, user, accept_terms]
+              properties:
+                code:
+                  type: string
+                  pattern: '^PRSPX-[A-Z0-9]{4}-[A-Z0-9]{4}$'
+                user:
+                  type: object
+                  required: [name, email, whatsapp]
+                  properties:
+                    name: { type: string, maxLength: 255 }
+                    email: { type: string, format: email }
+                    whatsapp: { type: string, example: '+5517998764422' }
+                    susep: { type: string, nullable: true }
+                    city: { type: string, nullable: true }
+                accept_terms:
+                  type: boolean
+                  description: Aceite LGPD + Termos de uso (obrigatório true)
+      responses:
+        '201':
+          description: Cadastrado · magic link enviado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      user_id: { type: string, format: uuid }
+                      tenant_id: { type: string, format: uuid }
+                      magic_link_sent: { type: boolean, example: true }
+                      sent_to: { type: string, example: 'whatsapp' }
+        '410':
+          description: Código expirado ou já usado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /admin/tenants/{tenant_id}/invitations:
+    get:
+      tags: [Admin]
+      summary: Lista invitations do tenant
+      parameters:
+        - { name: tenant_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Lista
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Invitation' }
+    post:
+      tags: [Admin]
+      summary: Gera novo código de convite (admin Guilds)
+      parameters:
+        - { name: tenant_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ttl_days: { type: integer, default: 14, minimum: 1, maximum: 60 }
+                role: { type: string, enum: [OWNER, ASSISTANT], default: OWNER }
+                notes: { type: string, nullable: true }
+      responses:
+        '201':
+          description: Código criado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Invitation' }
+
+  /admin/tenants/{tenant_id}/invitations/{id}/revoke:
+    post:
+      tags: [Admin]
+      summary: Revoga código de convite ativo
+      parameters:
+        - { name: tenant_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Revogado }
+
+  # ===========================================================================
   # LEADS
   # ===========================================================================
   /tenant/leads:
@@ -762,7 +916,7 @@ paths:
                       secrets_status:
                         type: object
                         properties:
-                          zapi: { type: string, enum: [connected, pending] }
+                          evolution: { type: string, enum: [connected, pending] }
                           calendar: { type: string, enum: [connected, pending] }
                           telephony: { type: string, enum: [connected, pending] }
     patch:
@@ -779,10 +933,10 @@ paths:
       responses:
         '200': { description: Atualizado }
 
-  /tenant/integrations/zapi/connect:
+  /tenant/integrations/evolution/connect:
     post:
       tags: [Settings]
-      summary: Conecta Z-API
+      summary: Conecta Evolution API
       requestBody:
         required: true
         content:
@@ -1028,26 +1182,26 @@ paths:
   # ===========================================================================
   # WEBHOOKS
   # ===========================================================================
-  /webhooks/zapi/inbound:
+  /webhooks/evolution/inbound:
     post:
       tags: [Webhooks]
-      summary: Mensagem recebida do lead (Z-API)
+      summary: Mensagem recebida do lead (Evolution API)
       security: []
       parameters:
-        - { name: x-zapi-signature, in: header, required: true, schema: { type: string } }
+        - { name: x-evolution-signature, in: header, required: true, schema: { type: string } }
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ZApiInboundPayload' }
+            schema: { $ref: '#/components/schemas/EvolutionInboundPayload' }
       responses:
         '200': { description: Enfileirado (ACK rápido) }
         '401': { description: HMAC inválido }
 
-  /webhooks/zapi/status:
+  /webhooks/evolution/status:
     post:
       tags: [Webhooks]
-      summary: Status de delivery (Z-API)
+      summary: Status de delivery (Evolution API)
       security: []
       requestBody:
         required: true
@@ -1057,10 +1211,10 @@ paths:
       responses:
         '200': { description: OK }
 
-  /webhooks/zapi/instance:
+  /webhooks/evolution/instance:
     post:
       tags: [Webhooks]
-      summary: Status da instância (Z-API)
+      summary: Status da instância (Evolution API)
       security: []
       requestBody:
         required: true
@@ -1078,13 +1232,40 @@ paths:
       responses:
         '200': { description: OK }
 
-  /webhooks/stripe:
+  /webhooks/asaas:
     post:
       tags: [Webhooks]
-      summary: Eventos de billing (Stripe · Fase 2)
+      summary: Eventos de billing (Asaas · MVP)
       security: []
+      description: |
+        Eventos recebidos:
+        - PAYMENT_CREATED, PAYMENT_CONFIRMED, PAYMENT_RECEIVED
+        - PAYMENT_OVERDUE (dispara régua de inadimplência)
+        - PAYMENT_DELETED
+        Validação por assinatura ASAAS_WEBHOOK_SECRET.
+      parameters:
+        - { name: asaas-access-token, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [event, payment]
+              properties:
+                event: { type: string, example: 'PAYMENT_CONFIRMED' }
+                payment:
+                  type: object
+                  properties:
+                    id: { type: string }
+                    customer: { type: string }
+                    value: { type: number }
+                    status: { type: string }
+                    dueDate: { type: string, format: date }
+                    billingType: { type: string, enum: [PIX, BOLETO, CREDIT_CARD] }
       responses:
         '200': { description: OK }
+        '401': { description: Token inválido }
 
 # =============================================================================
 components:
@@ -1355,17 +1536,78 @@ components:
         read_at: { type: string, format: date-time, nullable: true }
         created_at: { type: string, format: date-time }
 
-    ZApiInboundPayload:
+    EvolutionInboundPayload:
       type: object
+      description: Webhook `messages.upsert` da Evolution API
       properties:
-        instanceId: { type: string }
-        messageId: { type: string }
-        phone: { type: string }
-        fromMe: { type: boolean }
-        momment: { type: integer }
-        type: { type: string }
-        text:
+        event: { type: string, example: 'messages.upsert' }
+        instance: { type: string, example: 'tenant_giovane' }
+        data:
           type: object
           properties:
+            key:
+              type: object
+              properties:
+                remoteJid: { type: string, example: '5517998764422@s.whatsapp.net' }
+                fromMe: { type: boolean }
+                id: { type: string }
+            pushName: { type: string }
+            message:
+              type: object
+              properties:
+                conversation: { type: string, nullable: true }
+                extendedTextMessage:
+                  type: object
+                  properties:
+                    text: { type: string }
+            messageTimestamp: { type: integer }
+
+    Invitation:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        code:
+          type: string
+          pattern: '^PRSPX-[A-Z0-9]{4}-[A-Z0-9]{4}$'
+          example: 'PRSPX-A8K2-9F4M'
+        tenant_id: { type: string, format: uuid }
+        role: { type: string, enum: [OWNER, ASSISTANT] }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        used_at: { type: string, format: date-time, nullable: true }
+        used_by_user_id: { type: string, format: uuid, nullable: true }
+        revoked_at: { type: string, format: date-time, nullable: true }
+        notes: { type: string, nullable: true }
+        status:
+          type: string
+          enum: [active, used, expired, revoked]
+          description: Status derivado dos timestamps
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              enum:
+                - UNAUTHENTICATED
+                - UNAUTHORIZED
+                - RESOURCE_NOT_FOUND
+                - VALIDATION_ERROR
+                - RATE_LIMITED
+                - TENANT_QUOTA_EXCEEDED
+                - INVITATION_INVALID
+                - INVITATION_EXPIRED
+                - INVITATION_ALREADY_USED
+                - EXTERNAL_SERVICE_DOWN
+                - INTERNAL_ERROR
             message: { type: string }
-        senderName: { type: string }
+            details: { type: object, additionalProperties: true }
+            trace_id: { type: string, nullable: true }
+        meta:
+          type: object
+          properties:
+            request_id: { type: string }
+            timestamp: { type: string, format: date-time }

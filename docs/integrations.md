@@ -15,7 +15,7 @@
 | **Cloudflare R2** | Storage (assets, exports) | Guilds | ~US$ 5/mês | Semana 1 | 🟡 Médio |
 | **OpenAI** | LLM (IA conversacional) | Guilds (franquia) | variável (~R$ 30-150/tenant/mês) | Dia 1 | 🔴 Sim |
 | **Anthropic** | LLM fallback | Guilds | variável (baixo) | Semana 2 | 🟢 Opcional |
-| **Z-API** | WhatsApp Business | Tenant (Giovane) | R$ 280/mês por instância | Semana 1-2 | 🔴 Sim |
+| **Evolution API** | WhatsApp gateway self-hosted (Hostinger) | Guilds | já hospedado · custo absorvido | já provisionado | 🔴 Sim |
 | **Google Cloud · Maps** | Captura de leads | Tenant (Giovane) | ~US$ 0-200/mês (free tier US$200) | Semana 1-2 | 🔴 Sim |
 | **Google Cloud · Calendar** | Agendamento | Tenant (Giovane) | grátis | Semana 1-2 | 🔴 Sim |
 | **BrasilAPI / ReceitaWS** | Enriquecimento CNPJ | Guilds | grátis (rate-limited) | Semana 2 | 🟡 Médio |
@@ -25,7 +25,7 @@
 | **Resend** | Email transacional | Guilds | grátis (3k/mês) | Semana 2 | 🟡 Médio |
 | **Upstash Redis** | Filas + cache + locks | Guilds | grátis (tier) → ~US$ 10/mês | Dia 1 | 🔴 Sim |
 | **Twilio/Zenvia** | Telefonia (Fase 2) | Tenant | variável | Fase 2 | 🟢 Fase 2 |
-| **Stripe / Asaas** | Billing (Fase 2) | Guilds | % por transação | Fase 2 | 🟢 Fase 2 |
+| **Asaas** | Billing recorrente (PIX/boleto/cartão BR) | Guilds | ~R$ 0,49/boleto + 1,99%/cartão | Semana 1 (MVP) | 🔴 Sim |
 | **GitHub** | Repo + CI/CD | Guilds | grátis/Team | Dia 1 | 🔴 Sim |
 
 ---
@@ -178,45 +178,68 @@ ANTHROPIC_MODEL_FALLBACK=claude-3-5-haiku-20241022
 
 ---
 
-## 6. Z-API (WhatsApp Business) 🔴 · TENANT contrata
+## 6. Evolution API (WhatsApp gateway · self-hosted Hostinger) 🔴
 
-**O que é:** gateway não-oficial de WhatsApp que gerencia instância, aquecimento, anti-ban.
+**O que é:** gateway WhatsApp open-source self-hosted que gerencia múltiplas instâncias (uma por tenant) numa única infra.
 
 **Pra que usamos:**
 - Enviar mensagens da IA
 - Receber mensagens dos leads (webhook)
-- Validar se número tem WhatsApp (`check-phone`)
-- Monitorar Quality Rating + status da instância
+- Validar se número tem WhatsApp
+- Monitorar status da instância e Quality Rating
 
-**Como criar (cada tenant tem a SUA):**
-1. Conta em https://www.z-api.io
-2. Criar instância (plano R$ 280/mês · profissional)
-3. Conectar número via QR code (número dedicado · chip novo recomendado)
+**Estado atual:** **já hospedado pela Guilds na Hostinger** · base URL definida no setup.
+
+**Como criar instância de novo tenant (operação Guilds, não cliente):**
+1. Login no painel Evolution API self-hosted (`https://evo.prospix.com.br`)
+2. Criar nova instância nomeada (ex: `tenant_giovane`)
+3. Gerar API key da instância
 4. Configurar webhooks apontando pra nossa API:
-   - On message received → `https://api.prospix.com.br/v1/webhooks/zapi/inbound`
-   - On message status → `https://api.prospix.com.br/v1/webhooks/zapi/status`
-   - On instance status → `https://api.prospix.com.br/v1/webhooks/zapi/instance`
+   - On message received → `https://api.prospix.com.br/v1/webhooks/evolution/inbound`
+   - On message status → `https://api.prospix.com.br/v1/webhooks/evolution/status`
+   - On instance status → `https://api.prospix.com.br/v1/webhooks/evolution/instance`
 5. Gerar webhook secret (pra HMAC validation)
+6. Tenant escaneia QR code (ou pareamento) pra conectar o número novo
+7. Salvar credenciais em `tenant_secrets` (encrypted):
+   - `evolution_base_url` (URL pública da Evolution)
+   - `evolution_instance_name`
+   - `evolution_api_key_encrypted`
+   - `evolution_webhook_secret`
 
-**Variáveis (armazenadas em `tenant_secrets`, não no .env global):**
+**Endpoints principais (Evolution API v2):**
+- `POST /message/sendText/{instance}` — envia texto
+- `POST /message/sendMedia/{instance}` — envia mídia (Fase 2)
+- `POST /chat/whatsappNumbers/{instance}` — valida se telefone tem WhatsApp
+- `GET /instance/connectionState/{instance}` — status da conexão
+- `GET /instance/fetchInstances` — lista todas (admin Guilds)
+
+Auth: header `apikey: <api_key>` em todas as chamadas.
+
+**Variáveis (em `tenant_secrets`):**
 ```
-zapi_instance_id
-zapi_token (encrypted)
-zapi_webhook_secret (encrypted)
+evolution_base_url
+evolution_instance_name
+evolution_api_key_encrypted
+evolution_webhook_secret
 ```
 
-**Endpoints principais:**
-- `POST /instances/{id}/token/{token}/send-text`
-- `POST /instances/{id}/token/{token}/phone-exists/{phone}` (check-phone)
-- `GET /instances/{id}/token/{token}/status`
+**Variáveis globais (`.env` da API · pra instância Guilds-master que dispara magic links):**
+```bash
+EVOLUTION_BASE_URL=https://evo.prospix.com.br
+EVOLUTION_GUILDS_INSTANCE=guilds_master
+EVOLUTION_GUILDS_API_KEY=...
+```
 
 **⚠️ Anti-ban (crítico):**
-- Aquecimento gradual obrigatório (ver Anexo D.2 do PRD)
-- Monitorar Quality Rating · se cair pra RED → pausar
+- Aquecimento gradual obrigatório (ver Anexo D.2 do PRD · 30 dias)
+- Cada tenant tem chip + número dedicado (não compartilhar)
+- Monitorar Quality Rating · se cair pra RED → pausar campanhas
+- Jitter entre mensagens (40-90s)
+- Pausa noturna (18h-9h)
 
-**Custo:** R$ 280/mês por instância (tenant paga).
+**Custo:** absorvido pela Guilds (VPS Hostinger). Sem cobrança per-tenant adicional além do MRR.
 
-**Doc:** https://developer.z-api.io
+**Doc:** https://doc.evolution-api.com
 
 ---
 
@@ -445,21 +468,42 @@ twilio_auth_token (encrypted)
 
 ---
 
-## 17. Stripe / Asaas (Billing · Fase 2) 🟢
+## 17. Asaas (Billing recorrente · MVP) 🔴
 
-**O que é:** cobrança recorrente automatizada (adicional 7.13).
+**O que é:** gateway de pagamentos brasileiro · PIX + boleto + cartão recorrente. Substitui Stripe pra mercado BR.
 
-**Quando:** Fase 2. Asaas é mais BR-friendly (boleto + PIX + cartão).
+**Pra que usamos:**
+- Cobrança mensal R$ 490 (MRR) per tenant
+- Cobrança única R$ 7.900 (setup) per tenant — pode ser off-platform ou via Asaas
+- Régua de inadimplência automática (D+3 lembrete, D+7 segundo aviso, D+15 suspende)
+- Cobrança de excedentes IA (tokens acima da franquia · agregado mensal)
+
+**Como criar:**
+1. Conta empresarial Asaas https://www.asaas.com
+2. Cadastrar dados Guilds (CNPJ + conta bancária)
+3. Gerar API key (Sandbox primeiro, depois Produção)
+4. Configurar webhooks pra `https://api.prospix.com.br/v1/webhooks/asaas`
+5. Habilitar split de pagamento (Fase 2 · marketplace de templates)
 
 **Variáveis:**
 ```bash
-STRIPE_SECRET_KEY=sk_...
-STRIPE_WEBHOOK_SECRET=whsec_...
-# ou
-ASAAS_API_KEY=...
+ASAAS_API_KEY=<chave>
+ASAAS_BASE_URL=https://api.asaas.com/v3       # ou /sandbox/api/v3
+ASAAS_WEBHOOK_SECRET=<gerado no painel>
 ```
 
-**Doc:** https://docs.stripe.com · https://docs.asaas.com
+**Eventos webhook relevantes:**
+- `PAYMENT_CREATED` · fatura emitida
+- `PAYMENT_CONFIRMED` · pagamento confirmado (boleto/PIX/cartão)
+- `PAYMENT_RECEIVED` · valor no caixa
+- `PAYMENT_OVERDUE` · vencido → trigger régua de inadimplência
+- `PAYMENT_DELETED` · cancelado
+
+**Stripe:** considerar apenas Fase 3 se for vender pra mercado internacional (white-label fora do BR).
+
+**Custo:** ~R$ 0,49 por boleto · 1,99% + R$ 0,49 por cartão · PIX grátis. Repasse direto pro MRR.
+
+**Doc:** https://docs.asaas.com
 
 ---
 
@@ -482,16 +526,19 @@ ASAAS_API_KEY=...
 10. ✅ Google Cloud project + billing
 11. ✅ Habilitar Places API + Calendar API
 12. ✅ OAuth consent + client ID
-13. ✅ Z-API instância + número WhatsApp + chip
-14. ✅ Conectar Z-API via QR + configurar webhooks
-15. ✅ Giovane autoriza OAuth Google (Calendar)
+13. ✅ Comprar chip novo + número WhatsApp dedicado
+14. ✅ Criar instância no Evolution API (Guilds-managed) + parear número
+15. ✅ Configurar webhooks da instância pra `api.prospix.com.br`
+16. ✅ Giovane autoriza OAuth Google (Calendar)
 
-### Semana 2 (Dev 2/4)
-16. ✅ BrasilAPI (sem cadastro · testar rate limit)
-17. ✅ GrowthBook (self-host)
+### Semana 1 (Guilds · MVP completo)
+17. ✅ Asaas conta empresarial + API key + webhook
+18. ✅ BrasilAPI (sem cadastro · testar rate limit)
+19. ✅ GrowthBook (self-host)
 
 ### Fase 2 (quando contratado)
-- Twilio/Zenvia · Stripe/Asaas
+- Twilio/Zenvia (telefonia)
+- Stripe (apenas se for vender white-label internacional)
 
 ---
 
@@ -541,10 +588,16 @@ GOOGLE_OAUTH_CLIENT_ID=...apps.googleusercontent.com
 GOOGLE_OAUTH_CLIENT_SECRET=...
 GOOGLE_OAUTH_REDIRECT_URI=https://api.prospix.com.br/v1/tenant/integrations/google/callback
 
-# === Z-API (instância Guilds pra magic links) ===
-ZAPI_GUILDS_INSTANCE=...
-ZAPI_GUILDS_TOKEN=...
-ZAPI_BASE_URL=https://api.z-api.io
+# === Evolution API (instância Guilds-master pra magic links) ===
+# Instâncias por tenant ficam em tenant_secrets · esta é só da Guilds
+EVOLUTION_BASE_URL=https://evo.prospix.com.br
+EVOLUTION_GUILDS_INSTANCE=guilds_master
+EVOLUTION_GUILDS_API_KEY=...
+
+# === Billing · Asaas (MVP) ===
+ASAAS_API_KEY=...
+ASAAS_BASE_URL=https://api.asaas.com/v3
+ASAAS_WEBHOOK_SECRET=...
 
 # === Secrets vault ===
 SECRETS_ENCRYPTION_KEY=<32-byte base64>
@@ -582,7 +635,7 @@ TENANT_CHURNED_RETENTION_DAYS=90
 | Supabase | Sistema fora | Backup R2 + restore (RTO 4h) |
 | Railway | API fora | Redeploy / failover region |
 | OpenAI | IA não responde | Fallback Anthropic automático |
-| Z-API | Não envia/recebe WhatsApp | Mensagens em fila · alerta · aguarda |
+| Evolution API | Não envia/recebe WhatsApp | Mensagens em fila · alerta · failover pra instância backup ou VPS reserva |
 | Google Maps | Captura para | Cache + pausa captura · não afeta conversas em andamento |
 | Google Calendar | Não agenda | IA escala pra humano marcar manual |
 | Redis | Filas param | Jobs persistem · reprocessam ao voltar |

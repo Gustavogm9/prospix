@@ -1,0 +1,62 @@
+# =============================================================================
+# CODEOWNERS · Prospix
+# =============================================================================
+# Cada PR precisa de review do dono da pasta antes do merge.
+# Mudanças sensíveis (schema, RLS, prompts em prod) exigem 2 reviewers.
+# =============================================================================
+
+# Default · PM revisa tudo que ninguém mais reivindica
+*                                       @Gustavogm9
+
+# ── Contratos compartilhados (Frente A) ─────────────────────────────────────
+/packages/                              @Gustavogm9
+/apps/api/prisma/                       @Gustavogm9
+/apps/api/prisma/sql/                   @Gustavogm9
+/apps/api/src/middlewares/              @Gustavogm9
+/docs/api/openapi.yaml                  @Gustavogm9
+/docs/design-system.md                  @Gustavogm9
+
+# ── Specs operacionais ──────────────────────────────────────────────────────
+/docs/agents/                           @Gustavogm9
+/docs/PRD.md                            @Gustavogm9
+/docs/dev-plan.md                       @Gustavogm9
+
+# ── Frente B · Captura ──────────────────────────────────────────────────────
+/apps/api/src/integrations/google-maps.ts   @Gustavogm9
+/apps/api/src/integrations/brasilapi.ts     @Gustavogm9
+/apps/api/src/workers/capture-google-maps.ts @Gustavogm9
+/apps/api/src/workers/enrich-leads.ts       @Gustavogm9
+/apps/api/src/routes/tenant/leads/           @Gustavogm9
+/apps/api/src/routes/tenant/campaigns/       @Gustavogm9
+
+# ── Frente C · IA + WhatsApp ────────────────────────────────────────────────
+/apps/api/src/ai/                       @Gustavogm9
+/apps/api/src/integrations/evolution.ts @Gustavogm9
+/apps/api/src/integrations/openai.ts    @Gustavogm9
+/apps/api/src/integrations/anthropic.ts @Gustavogm9
+/apps/api/src/integrations/google-ai.ts @Gustavogm9
+
+# ── Frente D · Calendar + Admin ─────────────────────────────────────────────
+/apps/api/src/integrations/google-calendar.ts @Gustavogm9
+/apps/api/src/integrations/asaas.ts           @Gustavogm9
+/apps/api/src/routes/admin/                   @Gustavogm9
+
+# ── Frente E · Frontend ─────────────────────────────────────────────────────
+/apps/web/                              @Gustavogm9
+/apps/admin/                            @Gustavogm9
+
+# ── Frente F · Landing + Auth ───────────────────────────────────────────────
+/apps/landing/                          @Gustavogm9
+/apps/web/src/pages/auth/               @Gustavogm9
+
+# ── Infraestrutura ──────────────────────────────────────────────────────────
+/.github/                               @Gustavogm9
+/docker-compose.yml                     @Gustavogm9
+/.env.example                           @Gustavogm9
+/turbo.json                             @Gustavogm9
+/pnpm-workspace.yaml                    @Gustavogm9
+/package.json                           @Gustavogm9
+/tsconfig.base.json                     @Gustavogm9
+
+# ── Material comercial (não tocar sem PM) ───────────────────────────────────
+/business/                              @Gustavogm9

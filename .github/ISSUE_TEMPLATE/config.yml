@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentação
+    url: https://github.com/Gustavogm9/prospix/tree/main/docs
+    about: PRD, plano de devs, design system, specs por frente
+  - name: Slack Guilds
+    url: https://guilds.slack.com
+    about: Discussões rápidas, decisões fora de issue formal

@@ -1,0 +1,36 @@
+{
+  "name": "prospix",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Plataforma multi-tenant de prospecção inteligente via WhatsApp",
+  "author": "Guilds",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:e2e": "turbo run test:e2e",
+    "test:multi-tenant": "turbo run test:multi-tenant",
+    "db:migrate": "pnpm --filter @prospix/api db:migrate",
+    "db:seed": "pnpm --filter @prospix/api db:seed",
+    "db:studio": "pnpm --filter @prospix/api db:studio",
+    "db:reset": "pnpm --filter @prospix/api db:reset",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "clean": "turbo run clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "eslint": "^9.16.0",
+    "prettier": "^3.4.2",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2"
+  }
+}
