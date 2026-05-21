@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, Button, toast, Badge, Modal } from '@prospix/ui';
 import { Plus, Edit3, Trash2, Layers, AlertTriangle } from 'lucide-react';
+import { adminApiClient } from '../lib/api-client';
 
 interface ScriptNode {
   id: string;
@@ -20,34 +21,7 @@ interface Template {
 }
 
 export default function Templates() {
-  const [templates, setTemplates] = useState<Template[]>([
-    {
-      id: '1',
-      title: 'Seguro Saúde Empresarial B2B',
-      description: 'Template otimizado para prospectar pequenas e médias empresas (PMEs) pelo WhatsApp com inibidor de IA sob recusa.',
-      category: 'Saúde',
-      activeVariantsCount: 3,
-      nodes: [
-        { id: 'node_1', type: 'greeting', label: 'Saudação & Apresentação', messageText: 'Olá! Sou a consultora virtual da Prospix. Identificamos que a sua empresa possui potencial de otimização fiscal contratando seguro saúde estruturado. Gostaria de 2 minutos?' },
-        { id: 'node_2', type: 'question', label: 'Coleta de Colaboradores', messageText: 'Excelente! Quantos colaboradores ativos vocês possuem no regime CLT atualmente?', intentTrigger: 'prosseguir_saude' },
-        { id: 'node_3', type: 'condition', label: 'Validação de CNPJ', messageText: 'Entendido. Para calcularmos o enquadramento de grupo, qual é o CNPJ ativo da corretora/empresa?' },
-        { id: 'node_4', type: 'appointment', label: 'Agendamento Direto', messageText: 'Perfeito! Encontrei slots vagos com nosso especialista em saúde amanhã. Qual dos horários abaixo fica melhor para você?' }
-      ]
-    },
-    {
-      id: '2',
-      title: 'Seguro Automotivo Simplificado',
-      description: 'Fluxo rápido para cotação expressa de apólices veiculares, gerando fit score com base no CEP de pernoite.',
-      category: 'Automotivo',
-      activeVariantsCount: 2,
-      nodes: [
-        { id: 'node_1', type: 'greeting', label: 'Saudação Veicular', messageText: 'Olá, percebemos que o seguro do seu veículo está próximo do vencimento. Que tal cotar uma redução de até 30% em menos de 1 minuto?' },
-        { id: 'node_2', type: 'question', label: 'Modelo do Veículo', messageText: 'Qual o ano e modelo do carro que você deseja proteger hoje?', intentTrigger: 'cotacao_auto' },
-        { id: 'node_3', type: 'appointment', label: 'Call de Fechamento', messageText: 'Tenho os valores aqui! Nosso consultor quer te passar os termos e fechar o PIX. Podemos ligar agora?' }
-      ]
-    }
-  ]);
-
+  const [templates, setTemplates] = useState<Template[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [isEditingJson, setIsEditingJson] = useState(false);
   const [jsonString, setJsonString] = useState('');
@@ -56,13 +30,44 @@ export default function Templates() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [templateToDelete, setTemplateToDelete] = useState<string | null>(null);
 
+  const fetchTemplates = async () => {
+    try {
+      const response = await adminApiClient.get('/admin/templates');
+      const data = response.data.data || [];
+      const mapped = data.map((t: any) => {
+        let parsedNodes = [];
+        try {
+          parsedNodes = typeof t.flowTemplate === 'string' ? JSON.parse(t.flowTemplate) : t.flowTemplate || [];
+        } catch (_) {
+          parsedNodes = [];
+        }
+        return {
+          id: t.id,
+          title: t.name,
+          description: t.description || 'Abordagem geral B2B pronta para clonagem.',
+          category: t.category || t.segment || 'Geral',
+          activeVariantsCount: t.popularity || 1,
+          nodes: parsedNodes,
+        };
+      });
+      setTemplates(mapped);
+    } catch (err: any) {
+      console.error('Error fetching templates:', err);
+      toast.error('Erro de Conexão', 'Não foi possível carregar a lista de templates.');
+    }
+  };
+
+  useEffect(() => {
+    fetchTemplates();
+  }, []);
+
   const handleEditNodes = (tpl: Template) => {
     setSelectedTemplate(tpl);
     setJsonString(JSON.stringify(tpl.nodes, null, 2));
     setIsEditingJson(true);
   };
 
-  const handleSaveNodes = () => {
+  const handleSaveNodes = async () => {
     if (!selectedTemplate) return;
 
     try {
@@ -71,13 +76,17 @@ export default function Templates() {
         throw new Error('Os nós do roteiro precisam ser um Array de objetos JSON.');
       }
 
-      setTemplates(templates.map(t => t.id === selectedTemplate.id ? { ...t, nodes: parsedNodes } : t));
+      await adminApiClient.patch(`/admin/templates/${selectedTemplate.id}`, {
+        flowTemplate: parsedNodes,
+      });
+
       setIsEditingJson(false);
       setSelectedTemplate(null);
       
       toast.success('Estrutura Salva!', 'Os nós do template master foram compilados e atualizados.');
+      fetchTemplates();
     } catch (e: any) {
-      toast.error('Erro de Sintaxe JSON', e.message || 'Verifique se o JSON de grafos e nós está válido.');
+      toast.error('Erro ao salvar', e.message || 'Verifique se o JSON de grafos e nós está válido.');
     }
   };
 
@@ -86,28 +95,40 @@ export default function Templates() {
     setDeleteModalOpen(true);
   };
 
-  const confirmDelete = () => {
-    if (templateToDelete) {
-      setTemplates(templates.filter(t => t.id !== templateToDelete));
+  const confirmDelete = async () => {
+    if (!templateToDelete) return;
+    try {
+      await adminApiClient.delete(`/admin/templates/${templateToDelete}`);
       toast.success('Template Removido', 'Arquivo de fluxo master apagado com sucesso.');
+      fetchTemplates();
+    } catch (err: any) {
+      console.error('Error deleting template:', err);
+      toast.error('Erro ao deletar', 'Não foi possível apagar o template.');
+    } finally {
+      setDeleteModalOpen(false);
+      setTemplateToDelete(null);
     }
-    setDeleteModalOpen(false);
-    setTemplateToDelete(null);
   };
 
-  const handleCreateNew = () => {
-    const newTpl: Template = {
-      id: (templates.length + 1).toString(),
-      title: 'Roteiro Master Novo',
-      description: 'Abordagem geral B2B pronta para clonagem.',
-      category: 'Geral',
-      activeVariantsCount: 1,
-      nodes: [
-        { id: 'node_1', type: 'greeting', label: 'Boas vindas', messageText: 'Olá! Como posso ajudar você hoje?' }
-      ]
-    };
-    setTemplates([...templates, newTpl]);
-    toast.success('Template Inicializado', 'Novo template master adicionado à biblioteca de clones.');
+  const handleCreateNew = async () => {
+    const initialNodes = [
+      { id: 'node_1', type: 'greeting', label: 'Boas vindas', messageText: 'Olá! Como posso ajudar você hoje?' }
+    ];
+    try {
+      await adminApiClient.post('/admin/templates', {
+        name: 'Roteiro Master Novo',
+        segment: 'general',
+        category: 'Geral',
+        flowTemplate: initialNodes,
+        description: 'Abordagem geral B2B pronta para clonagem.',
+        variables: [],
+      });
+      toast.success('Template Inicializado', 'Novo template master adicionado à biblioteca de clones.');
+      fetchTemplates();
+    } catch (err: any) {
+      console.error('Error creating template:', err);
+      toast.error('Erro ao criar', 'Não foi possível salvar o template no servidor.');
+    }
   };
 
   return (

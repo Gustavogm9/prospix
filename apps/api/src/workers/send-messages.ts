@@ -7,6 +7,7 @@ import { createEvolutionClient } from '../integrations/evolution.js';
 import { getDecryptedSecrets } from '../tenant/secrets-vault.js';
 import { BaseJobPayload } from '@prospix/shared-types';
 import { CampaignStatus, MessageDeliveryStatus, LeadStatus } from '@prisma/client';
+import { randomUUID } from 'crypto';
 
 export interface SendMessagesPayload extends BaseJobPayload {
   conversation_id: string;
@@ -74,10 +75,26 @@ export function getNextWindowStart(now = new Date()): Date {
 
 export class SendMessagesWorker extends BaseWorker<SendMessagesPayload, SendMessagesResult> {
   name = 'send-messages';
-  concurrency = 1; // 1 concurrency per tenant enforces strict sequential ordering
+  concurrency = 20; // 20 global concurrent executions managed via distributed per-tenant lock
 
   async process(job: Job<SendMessagesPayload>): Promise<SendMessagesResult> {
     const { tenant_id, conversation_id, message_id } = job.data;
+    const lockKey = `lock:tenant:send-messages:${tenant_id}`;
+    const token = randomUUID();
+    const ttlSec = 60; // 60 seconds is plenty of time to process a message send request
+
+    // Acquire distributed lock on Redis to enforce strict sequential per-tenant ordering
+    const acquired = await redis.set(lockKey, token, 'EX', ttlSec, 'NX');
+    if (!acquired) {
+      logger.info(
+        { tenant_id, conversation_id, message_id, job_id: job.id },
+        '🔒 Tenant send lock is active. Postponing job to maintain strict per-tenant sequential order.'
+      );
+      // Reschedule job with a small delay (3 seconds) to allow the active send job to finish
+      return this.rescheduleJob(job, 3000);
+    }
+
+    try {
 
     // 1. Fetch message and conversation
     const message = await prisma.message.findUnique({
@@ -284,9 +301,16 @@ export class SendMessagesWorker extends BaseWorker<SendMessagesPayload, SendMess
     await redis.incr(todayCountKey);
     await redis.expire(todayCountKey, 86400); // 24h expire
 
-    logger.info({ tenant_id, message_id, whatsappMessageId }, '✅ Message delivered and registered successfully');
+      logger.info({ tenant_id, message_id, whatsappMessageId }, '✅ Message delivered and registered successfully');
 
-    return { sent: true, postponed: false };
+      return { sent: true, postponed: false };
+    } finally {
+      // Release lock safely
+      await redis.eval(
+        `if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end`,
+        1, lockKey, token
+      );
+    }
   }
 
   private async rescheduleJob(job: Job<SendMessagesPayload>, delayMs: number): Promise<SendMessagesResult> {

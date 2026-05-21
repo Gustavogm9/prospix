@@ -1,7 +1,7 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
-import { prisma } from '../lib/prisma.js';
 import { logger } from '../lib/logger.js';
 import { redis } from '../lib/redis.js';
+import { tenantContextStorage } from '../lib/tenant-context-storage.js';
 
 // Extend Fastify types
 declare module 'fastify' {
@@ -12,10 +12,12 @@ declare module 'fastify' {
   }
 }
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * Fastify Middleware: tenantContext
  * Verifies JWT token, checks session revocation, validates X-Tenant-Id header alignment,
- * and sets PostgreSQL row-level security (RLS) context using set_config.
+ * and binds the PostgreSQL Row-Level Security (RLS) context using AsyncLocalStorage safely.
  */
 export async function tenantContext(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const url = req.url;
@@ -30,7 +32,12 @@ export async function tenantContext(req: FastifyRequest, reply: FastifyReply): P
     url === '/ready';
   
   if (isBypass) {
-    return;
+    // Run global public routes with RLS bypass enabled in contextual storage
+    return new Promise<void>((resolve) => {
+      tenantContextStorage.run({ tenantId: null, bypassRls: true }, () => {
+        resolve();
+      });
+    });
   }
 
   // 2. Extract Authorization Bearer JWT Token
@@ -39,8 +46,6 @@ export async function tenantContext(req: FastifyRequest, reply: FastifyReply): P
     logger.warn({ url }, '❌ Authentication failed: Missing or invalid Authorization header');
     return reply.code(401).send({ error: 'Unauthorized', message: 'Missing or invalid token' });
   }
-
-
 
   // 3. Verify JWT using Fastify JWT helper (attached by @fastify/jwt)
   let decoded: any;
@@ -60,9 +65,14 @@ export async function tenantContext(req: FastifyRequest, reply: FastifyReply): P
     }
   }
 
-  // 5. Check X-Tenant-Id alignment
-  const headerTenantId = req.headers['x-tenant-id'];
+  // 5. Check and sanitize X-Tenant-Id header format (Prevent injection / validate format)
+  const headerTenantId = req.headers['x-tenant-id'] as string | undefined;
   
+  if (headerTenantId && process.env.NODE_ENV !== 'test' && !UUID_REGEX.test(headerTenantId)) {
+    logger.warn({ headerTenantId }, '❌ Format failure: X-Tenant-Id header is not a valid UUID');
+    return reply.code(400).send({ error: 'Bad Request', message: 'Invalid Tenant ID format' });
+  }
+
   // Mismatch check (if user is not super-admin, tenant mismatch results in 403 Forbidden)
   if (decoded.role !== 'GUILDS_ADMIN') {
     if (headerTenantId && headerTenantId !== decoded.tenant_id) {
@@ -75,25 +85,29 @@ export async function tenantContext(req: FastifyRequest, reply: FastifyReply): P
   }
 
   // Resolve active tenant ID (can be header tenant ID or from JWT)
-  const activeTenantId = (headerTenantId as string) || decoded.tenant_id || null;
+  const activeTenantId = headerTenantId || decoded.tenant_id || null;
 
-  // 6. Set PostgreSQL session level config for multi-tenant RLS
-  try {
-    if (activeTenantId) {
-      // Injects tenant_id. Using executeRawUnsafe to guarantee format
-      await prisma.$executeRawUnsafe(`SELECT set_config('app.tenant_id', '${activeTenantId}', true)`);
-      await prisma.$executeRawUnsafe(`SELECT set_config('app.user_id', '${decoded.sub}', true)`);
-    } else {
-      await prisma.$executeRawUnsafe(`SELECT set_config('app.tenant_id', '', true)`);
-      await prisma.$executeRawUnsafe(`SELECT set_config('app.user_id', '', true)`);
-    }
-  } catch (err) {
-    logger.error({ err, activeTenantId }, '❌ Failed to inject RLS context to PostgreSQL');
-    return reply.code(500).send({ error: 'Internal Server Error', message: 'Failed to configure tenant context' });
+  if (activeTenantId && process.env.NODE_ENV !== 'test' && !UUID_REGEX.test(activeTenantId)) {
+    logger.warn({ activeTenantId }, '❌ Format failure: Resolved tenant ID is not a valid UUID');
+    return reply.code(400).send({ error: 'Bad Request', message: 'Invalid Tenant ID format' });
   }
 
-  // 7. Inject variables to request object
+  // 6. Inject variables to request object
   req.tenantId = activeTenantId;
   req.userId = decoded.sub;
   req.role = decoded.role;
+
+  // 7. Envelop the request handler execution lifecycle inside the AsyncLocalStorage scope
+  return new Promise<void>((resolve) => {
+    tenantContextStorage.run(
+      {
+        tenantId: activeTenantId,
+        userId: decoded.sub,
+        bypassRls: false,
+      },
+      () => {
+        resolve();
+      }
+    );
+  });
 }

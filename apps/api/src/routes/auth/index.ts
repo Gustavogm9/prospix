@@ -9,6 +9,7 @@ import {
 } from '../../services/auth-service.js';
 import { prisma } from '../../lib/prisma.js';
 import { verifyInvitation, redeemInvitation } from '../../services/invitation-service.js';
+import { verifyPassword } from '../../lib/crypto.js';
 
 export const authRoutes: FastifyPluginAsync = async (app) => {
   
@@ -291,6 +292,80 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         tenant_id: result.value.tenantId,
         magic_link_sent: result.value.magicLinkSent,
         sent_to: 'whatsapp',
+      },
+    });
+  });
+
+  // ── 7. POST /auth/admin-login ──────────────────────────────────────────────
+  const adminLoginSchema = z.object({
+    email: z.string().email('Invalid email address'),
+    password: z.string().min(1, 'Password is required'),
+  });
+
+  app.post('/admin-login', async (req: FastifyRequest, reply: FastifyReply) => {
+    const parseResult = adminLoginSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return reply.code(400).send({
+        error: 'Validation Error',
+        message: parseResult.error.errors[0]?.message,
+      });
+    }
+
+    const { email, password } = parseResult.data;
+
+    // Verify user exists and is a GUILDS_ADMIN (RLS bypass search)
+    const user = await prisma.user.findFirst({
+      where: {
+        email,
+        role: 'GUILDS_ADMIN',
+      },
+    });
+
+    if (!user) {
+      return reply.code(401).send({
+        error: 'UNAUTHORIZED',
+        message: 'Administrador não encontrado ou credenciais incorretas.',
+      });
+    }
+
+    // Verify hashed password from the database
+    if (!user.passwordHash || !verifyPassword(password, user.passwordHash)) {
+      return reply.code(401).send({
+        error: 'UNAUTHORIZED',
+        message: 'Senha secreta administrativa incorreta.',
+      });
+    }
+
+    // Create session in the database
+    const ipAddress = req.ip;
+    const userAgent = req.headers['user-agent'];
+    const session = await createSession({
+      userId: user.id,
+      ipAddress,
+      userAgent,
+    });
+
+    // Create JWT
+    const payload = {
+      sub: user.id,
+      tenant_id: null,
+      role: user.role,
+      email: user.email,
+      name: user.name,
+      jti: session.refreshToken,
+    };
+
+    const accessToken = app.jwt.sign(payload);
+
+    return reply.code(200).send({
+      access_token: accessToken,
+      refresh_token: session.refreshToken,
+      user: {
+        id: user.id,
+        tenant_id: null,
+        name: user.name,
+        email: user.email,
+        role: user.role,
       },
     });
   });

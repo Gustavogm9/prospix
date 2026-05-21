@@ -33,6 +33,12 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
   app.get('/tenants', async (_req, reply) => {
     const tenants = await prisma.tenant.findMany({
       where: { deletedAt: null },
+      include: {
+        users: {
+          where: { role: 'OWNER' },
+          select: { id: true, name: true, email: true, whatsapp: true },
+        },
+      },
       orderBy: { createdAt: 'desc' },
     });
     return reply.send({ data: tenants });

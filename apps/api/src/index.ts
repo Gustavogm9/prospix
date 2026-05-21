@@ -43,8 +43,9 @@ async function bootstrap() {
   logger.info('🚀 Starting Prospix Core API bootstrap...');
 
   // 1. Register security and utility plugins
+  const allowedOrigins = [env.APP_URL, env.ADMIN_URL, env.LANDING_URL];
   await app.register(cors, {
-    origin: '*', // Customize in production
+    origin: env.NODE_ENV === 'production' ? allowedOrigins : '*',
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Tenant-Id', 'X-Idempotency-Key'],
   });
@@ -144,9 +145,14 @@ async function bootstrap() {
       });
     }
 
-    return reply.code(error.statusCode || 500).send({
-      error: 'Internal Error',
-      message: error.message || 'An unexpected error occurred.',
+    const isProd = env.NODE_ENV === 'production';
+    const statusCode = error.statusCode || 500;
+
+    return reply.code(statusCode).send({
+      error: statusCode === 500 ? 'Internal Error' : 'Error',
+      message: statusCode === 500 && isProd
+        ? 'An unexpected error occurred. Please contact support.'
+        : error.message || 'An unexpected error occurred.',
     });
   });
 

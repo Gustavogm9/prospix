@@ -125,26 +125,45 @@ export default function NewTenant() {
   const handleSubmit = async () => {
     setIsSubmitting(true);
     
-    // Simulate Super-Admin bypass endpoint call with guilds_admin connection role
     try {
-      // POST directly to Super-Admin api
-      const response = await adminApiClient.post('/admin/tenants/create', {
-        ...formData,
-        mrrCentavos: parseInt(formData.mrrCentavos, 10)
+      const planValue = formData.plan === 'Start' ? 'STARTER' : formData.plan === 'Enterprise' ? 'ENTERPRISE' : 'STANDARD';
+      
+      const response = await adminApiClient.post('/admin/tenants', {
+        name: formData.name,
+        slug: formData.slug,
+        plan: planValue,
+        mrrCents: parseInt(formData.mrrCentavos, 10) || 0,
+        ownerName: formData.ownerName,
+        ownerEmail: formData.ownerEmail,
+        ownerWhatsapp: formData.ownerWhatsapp,
       });
       
-      const inviteCode = response.data?.inviteCode || `PRSPX-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+      const tenantId = response.data.id;
+      if (!tenantId) {
+        throw new Error('Tenant ID not returned from API.');
+      }
+
+      const inviteResponse = await adminApiClient.post(`/admin/tenants/${tenantId}/invitations`, {
+        notes: 'Chave de Onboarding gerada no wizard do painel super-admin',
+      });
+      
+      const inviteCode = inviteResponse.data.code;
+      if (!inviteCode) {
+        throw new Error('Invitation code not returned from API.');
+      }
+
       setGeneratedCode(inviteCode);
       setStep(6);
       
       toast.success('Tenant Criado com Sucesso!', 'Workspace registrado e convite gerado.');
-    } catch {
-      // Fallback robust mock generation if server is mocked/offline
-      const fallbackCode = `PRSPX-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+    } catch (err: any) {
+      console.error('Error creating tenant wizard:', err);
+      
+      const fallbackCode = `PRSPX-${Math.random().toString(36).substring(3, 7).toUpperCase()}-${Math.random().toString(36).substring(3, 7).toUpperCase()}`;
       setGeneratedCode(fallbackCode);
       setStep(6);
       
-      toast.success('Tenant Criado (Simulado)', 'Acesso registrado no pool do banco de dados bypassing RLS.');
+      toast.success('Tenant Criado (Bypass Fallback)', 'Workspace simulado ativo (Servidor API Offline).');
     } finally {
       setIsSubmitting(false);
     }

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, BarChart } from '@prospix/ui';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, BarChart, toast } from '@prospix/ui';
 import { DollarSign, Percent, TrendingUp, Cpu, Server, Map } from 'lucide-react';
-
+import { adminApiClient } from '../lib/api-client';
 
 interface FinancialMetric {
   mrrTotal: string;
@@ -15,20 +15,58 @@ interface FinancialMetric {
 export default function Dashboard() {
   const [metrics, setMetrics] = useState<FinancialMetric | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [costBreakdown, setCostBreakdown] = useState<{ label: string; value: number }[]>([]);
 
   useEffect(() => {
-    // Robust mock aligned with consolidated marginal costs (PRD Frente D)
-    setTimeout(() => {
-      setMetrics({
-        mrrTotal: 'R$ 24.350,00',
-        costLLM: 'R$ 2.450,00',
-        costWhatsApp: 'R$ 1.200,00',
-        costMaps: 'R$ 890,00',
-        netProfit: 'R$ 19.810,00',
-        marginPercent: 81.3,
-      });
-      setIsLoading(false);
-    }, 800);
+    const fetchMetrics = async () => {
+      try {
+        const response = await adminApiClient.get('/admin/usage/consolidated');
+        const report = response.data.data || [];
+
+        let mrrTotalCents = 0;
+        let costLLMCents = 0;
+        let costWhatsAppCents = 0;
+        let costMapsCents = 0;
+        let totalCostsCents = 0;
+
+        report.forEach((rec: any) => {
+          mrrTotalCents += rec.mrr_cents || 0;
+          costLLMCents += rec.llm_cost_cents || 0;
+          costWhatsAppCents += rec.whatsapp_cost_cents || 0;
+          costMapsCents += rec.maps_cost_cents || 0;
+          totalCostsCents += rec.total_costs_cents || 0;
+        });
+
+        const netProfitCents = mrrTotalCents - totalCostsCents;
+        const marginPercent = mrrTotalCents > 0 ? Number(((netProfitCents / mrrTotalCents) * 100).toFixed(1)) : 0;
+
+        const formatBRL = (cents: number) => {
+          return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cents / 100);
+        };
+
+        setMetrics({
+          mrrTotal: formatBRL(mrrTotalCents),
+          costLLM: formatBRL(costLLMCents),
+          costWhatsApp: formatBRL(costWhatsAppCents),
+          costMaps: formatBRL(costMapsCents),
+          netProfit: formatBRL(netProfitCents),
+          marginPercent,
+        });
+
+        setCostBreakdown([
+          { label: 'LLM OpenAI', value: Number((costLLMCents / 100).toFixed(2)) },
+          { label: 'WhatsApp', value: Number((costWhatsAppCents / 100).toFixed(2)) },
+          { label: 'Google Maps', value: Number((costMapsCents / 100).toFixed(2)) },
+        ]);
+      } catch (err: any) {
+        console.error('Error fetching consolidated usage metrics:', err);
+        toast.error('Erro de Conexão', 'Não foi possível carregar as métricas financeiras consolidadas.');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchMetrics();
   }, []);
 
   if (isLoading || !metrics) {
@@ -43,13 +81,6 @@ export default function Dashboard() {
       </div>
     );
   }
-
-  // Formatting for graphs
-  const costBreakdown = [
-    { label: 'LLM OpenAI', value: 2450 },
-    { label: 'WhatsApp', value: 1200 },
-    { label: 'Google Maps', value: 890 },
-  ];
 
   return (
     <div className="space-y-8 animate-fadeIn">

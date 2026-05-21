@@ -51,6 +51,26 @@ const envSchema = z.object({
 
   // Resend integration
   RESEND_API_KEY: z.string().default('mock-resend-key'),
+}).superRefine((data, ctx) => {
+  if (data.NODE_ENV === 'production') {
+    const mockCredentials = [
+      { key: 'GOOGLE_CLIENT_ID', val: 'mock-client-id', name: 'Google Client ID' },
+      { key: 'GOOGLE_CLIENT_SECRET', val: 'mock-client-secret', name: 'Google Client Secret' },
+      { key: 'ASAAS_API_KEY', val: 'mock-asaas-key', name: 'Asaas API Key' },
+      { key: 'ASAAS_WEBHOOK_SECRET', val: 'mock-asaas-webhook-secret', name: 'Asaas Webhook Secret' },
+      { key: 'RESEND_API_KEY', val: 'mock-resend-key', name: 'Resend API Key' },
+    ];
+
+    for (const cred of mockCredentials) {
+      if (data[cred.key as keyof typeof data] === cred.val) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `In production mode, mock API keys are not allowed. Please supply a real value for: ${cred.name}.`,
+          path: [cred.key],
+        });
+      }
+    }
+  }
 });
 
 const _env = envSchema.safeParse(process.env);
@@ -61,3 +81,4 @@ if (!_env.success) {
 }
 
 export const env = _env.data;
+

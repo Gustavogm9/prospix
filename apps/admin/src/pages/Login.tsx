@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button, Input, toast } from '@prospix/ui';
 import { useAdminAuthStore } from '../store/admin-auth-store';
 import { ShieldCheck, Lock, Mail } from 'lucide-react';
+import axios from 'axios';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -20,20 +21,30 @@ export default function Login() {
     }
 
     setIsLoading(true);
-    // Simulate Super-Admin auth with bypass role guilds_admin
-    setTimeout(() => {
-      setIsLoading(false);
-      setAdminSession('super-admin-mock-token-guilds-admin', {
-        id: 'admin-1',
-        name: 'Administrador Guilds',
-        email: email,
-        role: 'SUPER_ADMIN',
+
+    try {
+      const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000/v1';
+      const response = await axios.post(`${apiBaseUrl}/auth/admin-login`, {
+        email,
+        password,
       });
 
-      toast.success('Acesso Autorizado', 'Bem-vindo ao console Super-Admin Prospix.');
-      
+      const { access_token, user } = response.data;
+
+      setAdminSession(access_token, {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role === 'GUILDS_ADMIN' ? 'SUPER_ADMIN' : 'ADMIN',
+      });
+
+      toast.success('Acesso Autorizado', 'Conexão ativa com o banco de dados.');
       navigate('/');
-    }, 1000);
+    } catch (err: any) {
+      toast.error('Erro de Autenticação', err.response?.data?.message || 'Credenciais inválidas ou erro ao conectar com o servidor.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (

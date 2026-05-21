@@ -354,6 +354,7 @@ model User {
   city               String?      @db.VarChar(128)
   bio                String?      @db.Text
   avatarUrl          String?      @map("avatar_url") @db.Text
+  passwordHash       String?      @map("password_hash") @db.Text
 
   // Preferências
   preferences        Json?

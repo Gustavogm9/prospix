@@ -1,4 +1,4 @@
-import { redisConnection } from '../lib/redis.js';
+import { createDedicatedRedisConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { prisma } from '../lib/prisma.js';
 import { createTenantQueue } from '../lib/queue.js';
@@ -7,6 +7,7 @@ import { ProcessInboundWorker } from './process-inbound.js';
 import { SendMessagesWorker } from './send-messages.js';
 import { ScheduleMeetingWorker } from './schedule-meeting.js';
 import { HealthCheckWorker } from './health-check.js';
+import { BillingSuspensionWorker } from './billing-suspension.js';
 
 let activeWorkers: Worker[] = [];
 let healthCheckInterval: NodeJS.Timeout | null = null;
@@ -15,7 +16,82 @@ export async function startWorkers() {
   logger.info('🚀 Prospix Background Workers bootstrap initiated...');
 
   try {
-    // 1. Fetch active tenants to spawn dynamic queues
+    // Instantiate Concrete Domain Worker Handlers
+    const processInboundHandler = new ProcessInboundWorker();
+    const sendMessagesHandler = new SendMessagesWorker();
+    const scheduleMeetingHandler = new ScheduleMeetingWorker();
+    const healthCheckHandler = new HealthCheckWorker();
+    const billingSuspensionHandler = new BillingSuspensionWorker();
+
+    // 1. Initialize static, global Workers with dedicated connection sockets
+    // This allows radical scalability by using exactly 5 workers instead of N * 4 workers.
+
+    // A. Process Inbound Worker
+    const inboundWorker = new Worker(
+      'queue:global:process-inbound',
+      async (job) => {
+        return await processInboundHandler.run(job);
+      },
+      {
+        connection: createDedicatedRedisConnection(),
+        concurrency: processInboundHandler.concurrency,
+      }
+    );
+    activeWorkers.push(inboundWorker);
+
+    // B. Send Messages Worker
+    const sendWorker = new Worker(
+      'queue:global:send-messages',
+      async (job) => {
+        return await sendMessagesHandler.run(job);
+      },
+      {
+        connection: createDedicatedRedisConnection(),
+        concurrency: sendMessagesHandler.concurrency, // enforce strict sequential per-tenant WhatsApp rules
+      }
+    );
+    activeWorkers.push(sendWorker);
+
+    // C. Schedule Meeting Worker
+    const meetingWorker = new Worker(
+      'queue:global:schedule-meeting',
+      async (job) => {
+        return await scheduleMeetingHandler.run(job);
+      },
+      {
+        connection: createDedicatedRedisConnection(),
+        concurrency: scheduleMeetingHandler.concurrency,
+      }
+    );
+    activeWorkers.push(meetingWorker);
+
+    // D. Health Check Worker
+    const hcWorker = new Worker(
+      'queue:global:health-check',
+      async (job) => {
+        return await healthCheckHandler.run(job);
+      },
+      {
+        connection: createDedicatedRedisConnection(),
+        concurrency: healthCheckHandler.concurrency,
+      }
+    );
+    activeWorkers.push(hcWorker);
+
+    // E. Billing Suspension Worker (Asaas auto-suspension scheduler)
+    const billingWorker = new Worker(
+      'queue:global:billing-suspension',
+      async (job) => {
+        return await billingSuspensionHandler.run(job);
+      },
+      {
+        connection: createDedicatedRedisConnection(),
+        concurrency: billingSuspensionHandler.concurrency,
+      }
+    );
+    activeWorkers.push(billingWorker);
+
+    // 2. Fetch active tenants to trigger initial health checks
     const tenants = await prisma.tenant.findMany({
       where: {
         status: 'ACTIVE',
@@ -23,79 +99,13 @@ export async function startWorkers() {
       },
     });
 
-    logger.info({ count: tenants.length }, `🏢 Found active tenants. Initializing tenant-specific workers...`);
-
-    // Instantiate Concrete Domain Worker Handlers
-    const processInboundHandler = new ProcessInboundWorker();
-    const sendMessagesHandler = new SendMessagesWorker();
-    const scheduleMeetingHandler = new ScheduleMeetingWorker();
-    const healthCheckHandler = new HealthCheckWorker();
-
+    logger.info({ count: tenants.length }, `🏢 Enqueuing initial health checks for active tenants...`);
     for (const tenant of tenants) {
-      const tenantId = tenant.id;
-
-      // A. Process Inbound Worker
-      const inboundQueueName = `queue:tenant_${tenantId}:process-inbound`;
-      const inboundWorker = new Worker(
-        inboundQueueName,
-        async (job) => {
-          return await processInboundHandler.run(job);
-        },
-        {
-          connection: redisConnection,
-          concurrency: processInboundHandler.concurrency,
-        }
-      );
-      activeWorkers.push(inboundWorker);
-
-      // B. Send Messages Worker
-      const sendQueueName = `queue:tenant_${tenantId}:send-messages`;
-      const sendWorker = new Worker(
-        sendQueueName,
-        async (job) => {
-          return await sendMessagesHandler.run(job);
-        },
-        {
-          connection: redisConnection,
-          concurrency: sendMessagesHandler.concurrency, // enforce strict sequential per-tenant
-        }
-      );
-      activeWorkers.push(sendWorker);
-
-      // C. Schedule Meeting Worker
-      const meetingQueueName = `queue:tenant_${tenantId}:schedule-meeting`;
-      const meetingWorker = new Worker(
-        meetingQueueName,
-        async (job) => {
-          return await scheduleMeetingHandler.run(job);
-        },
-        {
-          connection: redisConnection,
-          concurrency: scheduleMeetingHandler.concurrency,
-        }
-      );
-      activeWorkers.push(meetingWorker);
-
-      // D. Health Check Worker (consumes jobs)
-      const hcQueueName = `queue:tenant_${tenantId}:health-check`;
-      const hcWorker = new Worker(
-        hcQueueName,
-        async (job) => {
-          return await healthCheckHandler.run(job);
-        },
-        {
-          connection: redisConnection,
-          concurrency: healthCheckHandler.concurrency,
-        }
-      );
-      activeWorkers.push(hcWorker);
-
-      // Trigger initial health check immediately on startup
-      const hcQueue = createTenantQueue(tenantId, 'health-check');
-      await hcQueue.add('initial-check', { tenant_id: tenantId });
+      const hcQueue = createTenantQueue(tenant.id, 'health-check');
+      await hcQueue.add('initial-check', { tenant_id: tenant.id });
     }
 
-    // 2. Setup periodic health check scheduler (Every 5 minutes)
+    // 3. Setup periodic health check scheduler (Every 5 minutes)
     healthCheckInterval = setInterval(async () => {
       try {
         const activeTenants = await prisma.tenant.findMany({
@@ -113,7 +123,7 @@ export async function startWorkers() {
     }, 5 * 60 * 1000);
 
     // Register success log
-    logger.info({ spawned: activeWorkers.length }, '✅ All dynamic tenant workers listening and ready');
+    logger.info({ spawned: activeWorkers.length }, '✅ All static global workers listening and ready');
   } catch (err: any) {
     logger.error({ err: err.message }, '💥 Failed to bootstrap background workers');
     throw err;
@@ -152,3 +162,4 @@ if (isMainModule) {
     process.exit(1);
   });
 }
+

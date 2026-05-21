@@ -1,5 +1,6 @@
 import { PrismaClient, TenantStatus, TenantPlan, UserRole, LeadSource, LeadStatus } from '@prisma/client';
 import { SEED_TENANTS, SEED_USERS, SEED_LEAD_COUNT } from '@prospix/mocks';
+import { hashPassword } from '../src/lib/crypto.js';
 
 const prisma = new PrismaClient();
 
@@ -112,6 +113,7 @@ async function main() {
       name: SEED_USERS.guildsAdmin.name,
       email: SEED_USERS.guildsAdmin.email,
       whatsapp: SEED_USERS.guildsAdmin.whatsapp,
+      passwordHash: hashPassword('G.gm9189'),
     },
   });
 

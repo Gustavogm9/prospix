@@ -5,25 +5,39 @@ import { logger } from '../../lib/logger.js';
 import { createTenantQueue } from '../../lib/queue.js';
 import { validateEvolutionWebhookSignature } from '../../integrations/evolution.js';
 import { LeadStatus, ConversationStatus, MessageDeliveryStatus } from '@prisma/client';
+import { tenantContextStorage } from '../../lib/tenant-context-storage.js';
+import { Readable } from 'stream';
 
 export const evolutionWebhookRoutes: FastifyPluginAsync = async (app) => {
   
-  // Hook to capture rawBody for HMAC checking
+  // Hook to capture rawBody for HMAC checking using a synchronous Promise stream reader
+  // to fully eliminate race conditions and keep it fully portable.
   app.addHook('preParsing', async (request: any, _reply, payload) => {
-    let body = '';
-    payload.on('data', (chunk) => {
-      body += chunk;
+    const rawBodyBuffer = await new Promise<Buffer>((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      payload.on('data', (chunk: Buffer) => chunks.push(chunk));
+      payload.on('end', () => resolve(Buffer.concat(chunks)));
+      payload.on('error', (err) => reject(err));
     });
-    payload.on('end', () => {
-      request.rawBody = body;
-    });
-    return payload;
+
+    request.rawBody = rawBodyBuffer.toString('utf8');
+
+    // Create a new readable stream containing the original raw body buffer
+    // so the subsequent Fastify JSON parsers can consume it normally.
+    const newPayload = new Readable();
+    newPayload._read = () => {};
+    newPayload.push(rawBodyBuffer);
+    newPayload.push(null);
+    return newPayload;
   });
 
   // Helper to resolve tenant and validate HMAC signature
   async function resolveTenantAndValidate(req: FastifyRequest, reply: FastifyReply, instanceName: string): Promise<string | null> {
-    const secretRecord = await prisma.tenantSecret.findFirst({
-      where: { evolutionInstanceName: instanceName },
+    // 1. Fetch tenant secret record using RLS bypass context
+    const secretRecord = await tenantContextStorage.run({ tenantId: null, bypassRls: true }, async () => {
+      return prisma.tenantSecret.findFirst({
+        where: { evolutionInstanceName: instanceName },
+      });
     });
 
     if (!secretRecord) {
@@ -83,74 +97,77 @@ export const evolutionWebhookRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(200).send({ success: true, ignored: true, reason: 'empty_content' });
     }
 
-    // 1. Idempotency Check: search if message was already registered
-    const existingMsg = await prisma.message.findUnique({
-      where: { whatsappMessageId: messageId },
-    });
+    // 2. Wrap all database operations and queue dispatch inside the RLS tenant context scope
+    return tenantContextStorage.run({ tenantId }, async () => {
+      // A. Idempotency Check: search if message was already registered
+      const existingMsg = await prisma.message.findUnique({
+        where: { whatsappMessageId: messageId },
+      });
 
-    if (existingMsg) {
-      logger.info({ messageId }, '🔄 Duplicate webhook received (idempotency triggered)');
-      return reply.code(200).send({ success: true, duplicate: true });
-    }
+      if (existingMsg) {
+        logger.info({ messageId }, '🔄 Duplicate webhook received (idempotency triggered)');
+        return reply.code(200).send({ success: true, duplicate: true });
+      }
 
-    // 2. Fetch or create Lead
-    let lead = await prisma.lead.findUnique({
-      where: {
-        tenantId_whatsapp: {
-          tenantId,
-          whatsapp: number,
-        },
-      },
-    });
-
-    if (!lead) {
-      logger.info({ number, tenantId }, '🆕 Lead not found, creating in webhook dynamically');
-      lead = await prisma.lead.create({
-        data: {
-          tenantId,
-          whatsapp: number,
-          name: pushName,
-          source: 'MANUAL',
-          status: LeadStatus.CONTACTED,
+      // B. Fetch or create Lead
+      let lead = await prisma.lead.findUnique({
+        where: {
+          tenantId_whatsapp: {
+            tenantId,
+            whatsapp: number,
+          },
         },
       });
-    }
 
-    // 3. Fetch or create active Conversation
-    let conversation = await prisma.conversation.findFirst({
-      where: {
-        tenantId,
-        leadId: lead.id,
-        status: ConversationStatus.ACTIVE,
-      },
-    });
+      if (!lead) {
+        logger.info({ number, tenantId }, '🆕 Lead not found, creating in webhook dynamically');
+        lead = await prisma.lead.create({
+          data: {
+            tenantId,
+            whatsapp: number,
+            name: pushName,
+            source: 'MANUAL',
+            status: LeadStatus.CONTACTED,
+          },
+        });
+      }
 
-    if (!conversation) {
-      logger.info({ leadId: lead.id }, '🆕 Active conversation not found, creating a new one');
-      conversation = await prisma.conversation.create({
-        data: {
+      // C. Fetch or create active Conversation
+      let conversation = await prisma.conversation.findFirst({
+        where: {
           tenantId,
           leadId: lead.id,
           status: ConversationStatus.ACTIVE,
-          aiHandling: true,
         },
       });
-    }
 
-    // 4. Enqueue processing in process-inbound queue asynchronously
-    const processQueue = createTenantQueue(tenantId, 'process-inbound');
-    await processQueue.add('inbound-message', {
-      tenant_id: tenantId,
-      conversation_id: conversation.id,
-      lead_id: lead.id,
-      message_content: text,
-      message_direction: 'INBOUND',
-      whatsapp_message_id: messageId,
-      push_name: pushName,
+      if (!conversation) {
+        logger.info({ leadId: lead.id }, '🆕 Active conversation not found, creating a new one');
+        conversation = await prisma.conversation.create({
+          data: {
+            tenantId,
+            leadId: lead.id,
+            status: ConversationStatus.ACTIVE,
+            aiHandling: true,
+          },
+        });
+      }
+
+      // D. Enqueue processing in process-inbound queue asynchronously
+      const processQueue = createTenantQueue(tenantId, 'process-inbound');
+      await processQueue.add('inbound-message', {
+        tenant_id: tenantId,
+        conversation_id: conversation.id,
+        lead_id: lead.id,
+        message_content: text,
+        message_direction: 'INBOUND',
+        whatsapp_message_id: messageId,
+        push_name: pushName,
+      });
+
+      logger.info({ tenantId, conversationId: conversation.id, messageId }, '📥 Inbound message queued for processing');
+      return reply.code(200).send({ success: true, queued: true });
     });
-
-    logger.info({ tenantId, conversationId: conversation.id, messageId }, '📥 Inbound message queued for processing');
-    return reply.code(200).send({ success: true, queued: true });
   }
 
   async function handleStatusUpdate(req: FastifyRequest, reply: FastifyReply) {
@@ -183,25 +200,28 @@ export const evolutionWebhookRoutes: FastifyPluginAsync = async (app) => {
       status = MessageDeliveryStatus.FAILED;
     }
 
-    // Search and update message
-    const msg = await prisma.message.findUnique({
-      where: { whatsappMessageId: messageId },
-    });
-
-    if (msg) {
-      await prisma.message.update({
-        where: { id: msg.id },
-        data: {
-          deliveryStatus: status,
-          deliveredAt: status === MessageDeliveryStatus.DELIVERED ? new Date() : undefined,
-          readAt: status === MessageDeliveryStatus.READ ? new Date() : undefined,
-          failedReason: status === MessageDeliveryStatus.FAILED ? 'Evolution API delivery failed' : undefined,
-        },
+    // Wrap the message updates inside the RLS tenant context scope
+    return tenantContextStorage.run({ tenantId }, async () => {
+      // Search and update message
+      const msg = await prisma.message.findUnique({
+        where: { whatsappMessageId: messageId },
       });
-      logger.info({ messageId, status }, '✅ Message delivery status updated');
-    }
 
-    return reply.code(200).send({ success: true });
+      if (msg) {
+        await prisma.message.update({
+          where: { id: msg.id },
+          data: {
+            deliveryStatus: status,
+            deliveredAt: status === MessageDeliveryStatus.DELIVERED ? new Date() : undefined,
+            readAt: status === MessageDeliveryStatus.READ ? new Date() : undefined,
+            failedReason: status === MessageDeliveryStatus.FAILED ? 'Evolution API delivery failed' : undefined,
+          },
+        });
+        logger.info({ messageId, status }, '✅ Message delivery status updated');
+      }
+
+      return reply.code(200).send({ success: true });
+    });
   }
 
   async function handleInstanceUpdate(req: FastifyRequest, reply: FastifyReply) {
@@ -218,15 +238,18 @@ export const evolutionWebhookRoutes: FastifyPluginAsync = async (app) => {
 
     logger.info({ tenantId, event, body }, '🔌 Evolution Instance status webhook received');
 
-    // If quality rating is present in payload, cache it in Redis
-    if (body.data?.quality_rating || body.quality_rating) {
-      const rating = body.data?.quality_rating || body.quality_rating;
-      const qualityRatingKey = `whatsapp:quality:${tenantId}`;
-      await redis.set(qualityRatingKey, rating.toLowerCase());
-      logger.info({ tenantId, rating }, '📈 WhatsApp Quality Rating cached in Redis');
-    }
+    // Wrap instance state modifications inside the RLS tenant context scope
+    return tenantContextStorage.run({ tenantId }, async () => {
+      // If quality rating is present in payload, cache it in Redis
+      if (body.data?.quality_rating || body.quality_rating) {
+        const rating = body.data?.quality_rating || body.quality_rating;
+        const qualityRatingKey = `whatsapp:quality:${tenantId}`;
+        await redis.set(qualityRatingKey, rating.toLowerCase());
+        logger.info({ tenantId, rating }, '📈 WhatsApp Quality Rating cached in Redis');
+      }
 
-    return reply.code(200).send({ success: true });
+      return reply.code(200).send({ success: true });
+    });
   }
 
   // ── Routes Definitions ─────────────────────────────────────────────────────
@@ -254,3 +277,4 @@ export const evolutionWebhookRoutes: FastifyPluginAsync = async (app) => {
 };
 
 export default evolutionWebhookRoutes;
+

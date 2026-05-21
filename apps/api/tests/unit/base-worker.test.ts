@@ -1,29 +1,23 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { BaseWorker } from '../../src/workers/_base-worker.js';
-import { prisma } from '../../src/lib/prisma.js';
+import { tenantContextStorage } from '../../src/lib/tenant-context-storage.js';
 import { Job } from 'bullmq';
-
-// Mock prisma executeRaw
-vi.mock('../../src/lib/prisma.js', () => ({
-  prisma: {
-    $executeRaw: vi.fn().mockResolvedValue(1),
-  },
-}));
 
 class TestConcreteWorker extends BaseWorker<{ tenant_id: string; trace_id: string; message: string }, string> {
   name = 'test-concrete-worker';
   concurrency = 1;
 
   async process(job: Job<{ tenant_id: string; trace_id: string; message: string }>): Promise<string> {
+    // Assert that AsyncLocalStorage RLS context is set correctly during processing
+    const store = tenantContextStorage.getStore();
+    if (!store || store.tenantId !== job.data.tenant_id) {
+      throw new Error('AsyncLocalStorage RLS context is not active in process()');
+    }
     return `processed: ${job.data.message}`;
   }
 }
 
 describe('BaseWorker Isolation & Context', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
   it('should throw an error immediately if tenant_id is missing from job data', async () => {
     const worker = new TestConcreteWorker();
     const mockJob = {
@@ -35,10 +29,9 @@ describe('BaseWorker Isolation & Context', () => {
     } as unknown as Job;
 
     await expect(worker.run(mockJob)).rejects.toThrow('Missing tenant_id in job payload');
-    expect(prisma.$executeRaw).not.toHaveBeenCalled();
   });
 
-  it('should set the PostgreSQL RLS context, call process, and then reset context on success', async () => {
+  it('should run execution inside the tenantContextStorage context on success', async () => {
     const worker = new TestConcreteWorker();
     const mockJob = {
       id: 'job_123',
@@ -54,25 +47,19 @@ describe('BaseWorker Isolation & Context', () => {
 
     expect(result).toBe('processed: hello');
     
-    // First query sets tenant_id context
-    expect(prisma.$executeRaw).toHaveBeenNthCalledWith(
-      1,
-      expect.arrayContaining([expect.stringContaining("SELECT set_config('app.tenant_id',")]),
-      'tenant-1111'
-    );
-    
-    // Final block resets tenant_id context
-    expect(prisma.$executeRaw).toHaveBeenNthCalledWith(
-      2,
-      expect.arrayContaining([expect.stringContaining("SELECT set_config('app.tenant_id',")]),
-    );
+    // Assert store is cleared after worker execution
+    expect(tenantContextStorage.getStore()).toBeUndefined();
   });
 
-  it('should reset PostgreSQL RLS context even when process throws an error', async () => {
+  it('should clear tenantContextStorage context even when process throws an error', async () => {
     class BadWorker extends BaseWorker<{ tenant_id: string; trace_id: string }, never> {
       name = 'bad-worker';
       concurrency = 1;
-      async process(): Promise<never> {
+      async process(job: Job<{ tenant_id: string; trace_id: string }>): Promise<never> {
+        const store = tenantContextStorage.getStore();
+        if (!store || store.tenantId !== job.data.tenant_id) {
+          throw new Error('Store inactive in error test');
+        }
         throw new Error('Processing failed');
       }
     }
@@ -89,10 +76,7 @@ describe('BaseWorker Isolation & Context', () => {
 
     await expect(worker.run(mockJob)).rejects.toThrow('Processing failed');
     
-    // RLS context must still be reset
-    expect(prisma.$executeRaw).toHaveBeenCalledTimes(2);
-    expect(prisma.$executeRaw).toHaveBeenLastCalledWith(
-      expect.arrayContaining([expect.stringContaining("SELECT set_config('app.tenant_id',")])
-    );
+    // Assert store is cleared after worker execution failure
+    expect(tenantContextStorage.getStore()).toBeUndefined();
   });
 });

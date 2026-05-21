@@ -1,7 +1,7 @@
 import { Job } from 'bullmq';
-import { prisma } from '../lib/prisma.js';
 import { logger } from '../lib/logger.js';
 import { BaseJobPayload } from '@prospix/shared-types';
+import { tenantContextStorage } from '../lib/tenant-context-storage.js';
 
 export abstract class BaseWorker<TPayload extends BaseJobPayload, TResult> {
   abstract name: string;
@@ -36,11 +36,12 @@ export abstract class BaseWorker<TPayload extends BaseJobPayload, TResult> {
     );
 
     try {
-      // 1. Inject context in DB transaction client
-      await prisma.$executeRaw`SELECT set_config('app.tenant_id', ${tenantId}, true)`;
-      
-      // 2. Delegate to actual processing logic
-      const result = await this.process(job);
+      // 1. Wrap process execution inside the tenantContextStorage context.
+      // The Prisma Client query extension will automatically detect this tenantId and wrap
+      // all operations inside this async callback in an isolated, safe, pooled transaction!
+      const result = await tenantContextStorage.run({ tenantId }, async () => {
+        return await this.process(job);
+      });
       
       const durationMs = Date.now() - start;
       logger.info(
@@ -65,13 +66,7 @@ export abstract class BaseWorker<TPayload extends BaseJobPayload, TResult> {
         'job:fail'
       );
       throw err;
-    } finally {
-      // Reset tenant_id just in case
-      try {
-        await prisma.$executeRaw`SELECT set_config('app.tenant_id', '', true)`;
-      } catch (_) {
-        // Ignore reset failures
-      }
     }
   }
 }
+

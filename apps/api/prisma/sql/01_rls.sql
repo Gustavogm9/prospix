@@ -29,32 +29,57 @@ LANGUAGE sql STABLE AS $$
   SELECT NULLIF(current_setting('app.tenant_id', true), '')::uuid
 $$;
 
--- ── 3. Habilitar RLS em todas as tabelas de domínio ─────────────────────────
+-- ── 3. Habilitar e Forçar RLS em todas as tabelas de domínio ─────────────────
 ALTER TABLE users                  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE users                  FORCE ROW LEVEL SECURITY;
 ALTER TABLE sessions               ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sessions               FORCE ROW LEVEL SECURITY;
 ALTER TABLE tenant_secrets         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenant_secrets         FORCE ROW LEVEL SECURITY;
 ALTER TABLE tenant_ai_configs      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenant_ai_configs      FORCE ROW LEVEL SECURITY;
 ALTER TABLE tenant_invitations     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenant_invitations     FORCE ROW LEVEL SECURITY;
 ALTER TABLE campaigns              ENABLE ROW LEVEL SECURITY;
+ALTER TABLE campaigns              FORCE ROW LEVEL SECURITY;
 ALTER TABLE leads                  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE leads                  FORCE ROW LEVEL SECURITY;
 ALTER TABLE lead_notes             ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lead_notes             FORCE ROW LEVEL SECURITY;
 ALTER TABLE health_profiles        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE health_profiles        FORCE ROW LEVEL SECURITY;
 ALTER TABLE conversations          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE conversations          FORCE ROW LEVEL SECURITY;
 ALTER TABLE messages               ENABLE ROW LEVEL SECURITY;
+ALTER TABLE messages               FORCE ROW LEVEL SECURITY;
 ALTER TABLE pending_outbound       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pending_outbound       FORCE ROW LEVEL SECURITY;
 ALTER TABLE meetings               ENABLE ROW LEVEL SECURITY;
+ALTER TABLE meetings               FORCE ROW LEVEL SECURITY;
 ALTER TABLE scripts                ENABLE ROW LEVEL SECURITY;
+ALTER TABLE scripts                FORCE ROW LEVEL SECURITY;
 ALTER TABLE script_variations      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE script_variations      FORCE ROW LEVEL SECURITY;
 ALTER TABLE lead_events            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lead_events            FORCE ROW LEVEL SECURITY;
 ALTER TABLE optouts                ENABLE ROW LEVEL SECURITY;
+ALTER TABLE optouts                FORCE ROW LEVEL SECURITY;
 ALTER TABLE tenant_usage           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenant_usage           FORCE ROW LEVEL SECURITY;
 ALTER TABLE tenant_billing         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenant_billing         FORCE ROW LEVEL SECURITY;
 ALTER TABLE notifications          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE notifications          FORCE ROW LEVEL SECURITY;
 ALTER TABLE notification_preferences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE notification_preferences FORCE ROW LEVEL SECURITY;
 ALTER TABLE tenant_notes           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenant_notes           FORCE ROW LEVEL SECURITY;
 ALTER TABLE prompt_versions        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE prompt_versions        FORCE ROW LEVEL SECURITY;
 ALTER TABLE idempotency_keys       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE idempotency_keys       FORCE ROW LEVEL SECURITY;
 ALTER TABLE audit_log              ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_log              FORCE ROW LEVEL SECURITY;
 
 -- ── 4. Policies de isolamento por tenant ────────────────────────────────────
 -- Padrão: `tenant_id = current_tenant_id()` em SELECT, INSERT, UPDATE, DELETE.

@@ -103,6 +103,8 @@ jobs:
         run: pnpm --filter @prospix/api db:generate
       - name: Apply migrations + RLS
         run: pnpm --filter @prospix/api db:migrate
+      - name: Seed database
+        run: pnpm --filter @prospix/api db:seed
       - run: pnpm test
       - run: pnpm test:multi-tenant
         # Esse comando obriga 2 tenants fictícios + queries que tentam vazar dados

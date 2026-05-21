@@ -24,14 +24,50 @@ export default function Tenants() {
     tenantId: null,
   });
 
+  const fetchTenants = async () => {
+    try {
+      const response = await adminApiClient.get('/admin/tenants');
+      const data = response.data.data || [];
+      
+      const mapped = data.map((t: any) => {
+        const owner = t.users?.[0];
+        
+        let displayPlan = 'Premium Multi';
+        if (t.plan === 'STARTER') displayPlan = 'Start';
+        if (t.plan === 'ENTERPRISE') displayPlan = 'Enterprise';
+        
+        let displayStatus: 'active' | 'suspended' | 'grace_period' = 'active';
+        if (t.status === 'SUSPENDED') displayStatus = 'suspended';
+        if (t.status === 'CHURNING') displayStatus = 'grace_period';
+
+        let displayHealth: 'excellent' | 'good' | 'fair' | 'critical' = 'excellent';
+        if (t.status === 'SUSPENDED') displayHealth = 'critical';
+        if (t.status === 'CHURNING') displayHealth = 'fair';
+
+        const formattedMRR = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format((t.mrrCents || 0) / 100);
+
+        return {
+          id: t.id,
+          name: t.name,
+          slug: t.slug,
+          plan: displayPlan,
+          mrr: formattedMRR,
+          status: displayStatus,
+          health: displayHealth,
+          ownerName: owner?.name || 'N/A',
+          ownerWhatsapp: owner?.whatsapp || 'N/A',
+        };
+      });
+
+      setTenants(mapped);
+    } catch (err: any) {
+      console.error('Error fetching tenants:', err);
+      toast.error('Erro de Conexão', 'Não foi possível carregar a lista de tenants.');
+    }
+  };
+
   useEffect(() => {
-    // Robust mock representing full active tenant base bypassed via guilds_admin
-    setTenants([
-      { id: '1', name: 'Corretora Seguros Real', slug: 'seguros-real', plan: 'Premium Multi', mrr: 'R$ 399,00', status: 'active', health: 'excellent', ownerName: 'Gustavo Silva', ownerWhatsapp: '+55 11 98888-7777' },
-      { id: '2', name: 'Aliança Corretora', slug: 'alianca', plan: 'Enterprise', mrr: 'R$ 999,00', status: 'active', health: 'good', ownerName: 'Ana Paula Reis', ownerWhatsapp: '+55 21 97777-6666' },
-      { id: '3', name: 'Prime Seguros B2B', slug: 'prime-b2b', plan: 'Premium Multi', mrr: 'R$ 399,00', status: 'grace_period', health: 'critical', ownerName: 'Marcos Oliveira', ownerWhatsapp: '+55 19 96666-5555' },
-      { id: '4', name: 'Vanguard Seguros', slug: 'vanguard', plan: 'Start', mrr: 'R$ 199,00', status: 'suspended', health: 'fair', ownerName: 'Julia Silveira', ownerWhatsapp: '+55 31 95555-4444' },
-    ]);
+    fetchTenants();
   }, []);
 
   const handleSuspendClick = (tenantId: string) => {
@@ -45,31 +81,28 @@ export default function Tenants() {
     setSuspendModal({ isOpen: false, tenantId: null });
 
     // Optimistic Update
-    setTenants(tenants.map(t => t.id === tenantId ? { ...t, status: 'suspended', health: 'critical' } : t));
+    setTenants(prev => prev.map(t => t.id === tenantId ? { ...t, status: 'suspended', health: 'critical' } : t));
 
     try {
-      // POST directly to Super-Admin endpoints
       await adminApiClient.post(`/admin/tenants/${tenantId}/suspend`);
       toast.success('Tenant Suspenso', 'Status atualizado via role CONNECTION guilds_admin.');
     } catch (error: any) {
       toast.error('Erro ao suspender', error?.message || 'Ocorreu um erro ao suspender o tenant no servidor.');
+      fetchTenants();
     }
   };
 
   const handleActivate = async (tenantId: string) => {
     // Optimistic Update
-    setLeads(tenants.map(t => t.id === tenantId ? { ...t, status: 'active', health: 'good' } : t));
+    setTenants(prev => prev.map(t => t.id === tenantId ? { ...t, status: 'active', health: 'good' } : t));
 
     try {
-      await adminApiClient.post(`/admin/tenants/${tenantId}/activate`);
+      await adminApiClient.post(`/admin/tenants/${tenantId}/resume`);
       toast.success('Tenant Ativado', 'Sessão e limites liberados.');
     } catch (error: any) {
       toast.error('Erro ao ativar', error?.message || 'Ocorreu um erro ao reativar o tenant no servidor.');
+      fetchTenants();
     }
-  };
-
-  const setLeads = (newTenants: Tenant[]) => {
-    setTenants(newTenants);
   };
 
   const getHealthBadge = (health: Tenant['health']) => {
