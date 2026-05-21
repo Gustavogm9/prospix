@@ -82,10 +82,5 @@ export const prospixPreset: Partial<Config> = {
   plugins: [require('tailwindcss-animate')],
 };
 
-const config: Config = {
-  content: [], // cada app preenche os próprios paths
-  presets: [],
-  ...prospixPreset,
-} as Config;
+export default prospixPreset;
 
-export default config;
