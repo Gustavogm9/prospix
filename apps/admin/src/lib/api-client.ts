@@ -24,3 +24,19 @@ adminApiClient.interceptors.request.use(
     return Promise.reject(error);
   }
 );
+
+// Response Interceptor: handle 401 Unauthorized or 403 Forbidden to eject unauthorized users
+adminApiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401 || error.response?.status === 403) {
+      const { clearAdminSession } = useAdminAuthStore.getState();
+      clearAdminSession();
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+

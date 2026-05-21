@@ -13,14 +13,17 @@ import './index.css';
 
 // Protected Admin Route checking adminToken and session
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const adminToken = useAdminAuthStore((state) => state.adminToken);
+  const { adminToken, adminUser, clearAdminSession } = useAdminAuthStore();
   
-  if (!adminToken) {
+  if (!adminToken || !adminUser || (adminUser.role !== 'SUPER_ADMIN' && adminUser.role !== 'ADMIN')) {
+    // Proactively clear corrupted or incomplete localStorage credentials
+    clearAdminSession();
     return <Navigate to="/login" replace />;
   }
   
   return <>{children}</>;
 }
+
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

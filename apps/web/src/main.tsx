@@ -20,14 +20,17 @@ import './index.css';
 
 // Protected Route Component injecting RLS authentication state
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const accessToken = useAuthStore((state) => state.accessToken);
+  const { accessToken, tenantId, user, clearSession } = useAuthStore();
   
-  if (!accessToken) {
+  if (!accessToken || !tenantId || !user || !['OWNER', 'ASSISTANT', 'ADMIN'].includes(user.role)) {
+    // Proactively clear corrupted or incomplete localStorage credentials
+    clearSession();
     return <Navigate to="/login" replace />;
   }
   
   return <>{children}</>;
 }
+
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
