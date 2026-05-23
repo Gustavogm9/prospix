@@ -60,7 +60,18 @@ test.describe('Admin · dashboard pos-login (mocked)', () => {
         return route.fulfill({
           status: 200,
           contentType: 'application/json',
-          body: JSON.stringify({ data: { mrr_total: 49000, tokens_consumed_total: 1420000 } }),
+          body: JSON.stringify({
+            data: [
+              {
+                tenant_id: '11111111-1111-1111-1111-111111111111',
+                mrr_cents: 49000,
+                llm_cost_cents: 3800,
+                whatsapp_cost_cents: 1200,
+                maps_cost_cents: 900,
+                total_costs_cents: 5900,
+              },
+            ],
+          }),
         });
       }
 

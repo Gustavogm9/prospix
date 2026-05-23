@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ToastContainer } from '@prospix/ui';
@@ -14,10 +14,19 @@ import './index.css';
 // Protected Admin Route checking adminToken and session
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { adminToken, adminUser, clearAdminSession } = useAdminAuthStore();
-  
-  if (!adminToken || !adminUser || (adminUser.role !== 'SUPER_ADMIN' && adminUser.role !== 'ADMIN')) {
+  const isAuthorized =
+    !!adminToken &&
+    !!adminUser &&
+    ['SUPER_ADMIN', 'ADMIN', 'GUILDS_ADMIN'].includes(adminUser.role);
+
+  useEffect(() => {
+    if (!isAuthorized) {
+      clearAdminSession();
+    }
+  }, [clearAdminSession, isAuthorized]);
+
+  if (!isAuthorized) {
     // Proactively clear corrupted or incomplete localStorage credentials
-    clearAdminSession();
     return <Navigate to="/login" replace />;
   }
   

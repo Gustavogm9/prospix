@@ -27,7 +27,7 @@ const authState = {
       name: 'Giovane Carrara',
       email: 'giovane@seed.prospix.dev',
       role: 'OWNER',
-      tenantId: MOCK_TENANT_ID,
+      tenant_id: MOCK_TENANT_ID,
     },
   },
   version: 0,

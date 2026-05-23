@@ -5,7 +5,7 @@ interface AdminSession {
   id: string;
   name: string;
   email: string;
-  role: 'SUPER_ADMIN' | 'ADMIN';
+  role: 'SUPER_ADMIN' | 'ADMIN' | 'GUILDS_ADMIN';
 }
 
 interface AdminAuthState {

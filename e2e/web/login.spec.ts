@@ -30,7 +30,12 @@ test.describe('Web · /login publico', () => {
 
     await page.route('**/v1/auth/magic-link', async (route) => {
       magicLinkRequested = true;
-      const body = await route.request().postDataJSON().catch(() => null);
+      let body: unknown = null;
+      try {
+        body = route.request().postDataJSON();
+      } catch {
+        body = null;
+      }
       expect(body).not.toBeNull();
       await route.fulfill({
         status: 200,

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ToastContainer } from '@prospix/ui';
@@ -22,10 +22,20 @@ import './index.css';
 // Protected Route Component injecting RLS authentication state
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { accessToken, tenantId, user, clearSession } = useAuthStore();
-  
-  if (!accessToken || !tenantId || !user || !['OWNER', 'ASSISTANT', 'ADMIN'].includes(user.role)) {
+  const isAuthorized =
+    !!accessToken &&
+    !!tenantId &&
+    !!user &&
+    ['OWNER', 'ASSISTANT', 'ADMIN'].includes(user.role);
+
+  useEffect(() => {
+    if (!isAuthorized) {
+      clearSession();
+    }
+  }, [clearSession, isAuthorized]);
+
+  if (!isAuthorized) {
     // Proactively clear corrupted or incomplete localStorage credentials
-    clearSession();
     return <Navigate to="/login" replace />;
   }
   
