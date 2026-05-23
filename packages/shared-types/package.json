@@ -14,12 +14,15 @@
     "lint": "eslint src --max-warnings=0",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "clean": "rm -rf .turbo"
+    "clean": "rm -rf .turbo",
+    "gen:openapi": "openapi-typescript ../../docs/api/openapi.yaml -o ./src/openapi.generated.ts --immutable --root-types",
+    "verify:openapi": "node ./scripts/verify-openapi.mjs"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0"
   },
   "devDependencies": {
+    "openapi-typescript": "^7.4.4",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   }

@@ -66,6 +66,23 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
 
+  openapi-drift:
+    name: OpenAPI ↔ shared-types drift gate (AUD-P2-016)
+    runs-on: ubuntu-latest
+    needs: install
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Verify shared-types is in sync with docs/api/openapi.yaml
+        run: pnpm --filter @prospix/shared-types verify:openapi
+
   test:
     name: Unit + integration tests
     runs-on: ubuntu-latest
@@ -142,7 +159,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [lint, typecheck, test]
+    needs: [lint, typecheck, openapi-drift, test]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

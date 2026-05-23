@@ -1,9 +1,26 @@
 /**
- * Tipos de API derivados do OpenAPI.
+ * Tipos de API.
  *
- * Frente A: gerar via `openapi-typescript docs/api/openapi.yaml -o packages/shared-types/src/openapi.generated.ts`
- * e reexportar aqui os tipos de Request/Response mais usados.
+ * Tipos low-level (paths, components, request/response bodies) sao gerados
+ * automaticamente em ./openapi.generated.ts pelo openapi-typescript.
+ *
+ * Este arquivo expoe tipos curados/usados frequentemente + envelopes comuns.
+ *
+ * CI valida drift entre docs/api/openapi.yaml e openapi.generated.ts via
+ * `pnpm --filter @prospix/shared-types verify:openapi`.
  */
+
+// ── Tipos gerados (re-export) ───────────────────────────────────────────────
+export type {
+  paths as ApiPaths,
+  components as ApiComponents,
+  operations as ApiOperations,
+  webhooks as ApiWebhooks,
+} from './openapi.generated.js';
+import type { components as _Components } from './openapi.generated.js';
+
+/** Atalho: schema gerado pelo OpenAPI (ex.: `Schema<'Lead'>`). */
+export type Schema<K extends keyof _Components['schemas']> = _Components['schemas'][K];
 
 // ── Headers padrão de toda request /tenant/* ────────────────────────────────
 export interface TenantRequestHeaders {
