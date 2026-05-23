@@ -197,6 +197,7 @@ Triggers obrigatórios para **Codex bloquear** até nova evidência:
 | [D · Calendar + Admin](frente-d-calendar-admin.md) | ✅ | ✅ real | 2/3 | Em triagem |
 | [E · Frontend painel + admin](frente-e-frontend.md) | ✅ | ✅ real | 4 (Frontend/UX) | Bloqueado homologação ampla · estados estruturais + a11y |
 | [F · Landing + Auth](frente-f-landing-auth.md) | ✅ | ✅ real | 4/6 | Em mitigação · LGPD claims + termos juridicos |
+| [G · Discovery & Onboarding (Fase 2)](frente-g-discovery-onboarding.md) | 📋 roadmap | — | — | Não ativada · aguarda Tenant #2 |
 
 **Estado atual** (snapshot · 23/05/2026): monorepo com implementação real, ~26 mil LOC de aplicação, 162 testes verdes, prova DB-backed RLS local, prova Redis/BullMQ real para idempotência, framework de auditoria com 35 achados, 0 P0 aberto, 18 P1 em vários estágios. **Prontidão auditável** estimada em ~89% pelo Squad 0; **prontidão para go-live** menor por causa de gaps estruturais (DLQ física, smoke E2E, LGPD operacional, revisão jurídica).
 

@@ -22,6 +22,7 @@ Cada **Frente** é um spec autocontido em [`docs/agents/frente-*.md`](agents/) q
 | **Agente D · Calendar + Admin** | Gemini | Executa [frente-d-calendar-admin.md](agents/frente-d-calendar-admin.md) |
 | **Agente E · Frontend painel + admin** | Codex ou Gemini | Executa [frente-e-frontend.md](agents/frente-e-frontend.md) |
 | **Agente F · Landing + Auth** | Codex ou Gemini | Executa [frente-f-landing-auth.md](agents/frente-f-landing-auth.md) |
+| **Agente G · Discovery & Onboarding (Fase 2)** | _a ativar_ | Hub no super-admin que orquestra discovery do tenant (sessão → voice_profile → 3 roteiros → aprovação); roadmap em [agents/frente-g-discovery-onboarding.md](agents/frente-g-discovery-onboarding.md) |
 
 Auditoria oficial: [`docs/auditoria/`](auditoria/).
 
