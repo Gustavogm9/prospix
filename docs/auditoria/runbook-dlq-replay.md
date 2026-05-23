@@ -1,16 +1,34 @@
 # Runbook DLQ e Replay
 
-Atualizado em 22/05/2026.
+Atualizado em 23/05/2026.
 
 ## Estado atual
 
-O Prospix ainda nao possui uma DLQ fisica nem replay automatizado aprovado para producao. O estado atual e de **inspecao auditavel de falhas BullMQ**:
+O Prospix possui **DLQ fisica habilitada** (`apps/api/src/lib/dlq.ts`). Cada worker
+`worker_name` tem uma fila DLQ paralela `dlq-<worker_name>`. Jobs que esgotam
+tentativas (`failed-exhausted`) sao automaticamente enfileirados na DLQ pelo
+observer em `apps/api/src/lib/queue.ts`, idempotentes por `source_job_id`.
+
+**Eventos auditaveis:**
 
 - `queue:retry`: job falhou, mas ainda tem tentativas disponiveis.
-- `queue:failed-exhausted`: job esgotou tentativas e ficou preservado em `removeOnFail: false`.
+- `queue:failed-exhausted`: job esgotou tentativas; movido para DLQ fisica.
+- `queue:dlq-enqueued`: confirmacao de enqueue na DLQ (com `dlq_physical: true`).
 - `queue:failure-orphaned`: evento de falha recebido, mas o job nao foi encontrado no Redis.
+- `queue:dlq-replayed`: replay manual efetuado (registra `approved_by`, `reason`).
+- `queue:dlq-replay-dry-run`: validacao sem efeito colateral.
+- `queue:dlq-replay-blocked-by-allowlist`: tentativa de replay barrada pela allowlist.
+- `queue:dlq-purged`: job removido manualmente (com `approved_by`, `reason`).
 
-Esses eventos nao significam que o replay e seguro. Eles registram metadados minimos para triagem: fila, worker, job id, nome do job, tenant id, trace id, tentativas, motivo da falha e este runbook. Payload bruto, corpo de mensagem, telefone, segredo e conteudo de lead nao devem ser logados.
+Esses eventos nao incluem payload bruto, corpo de mensagem, telefone, segredo
+ou conteudo de lead — somente metadados de triagem.
+
+## Endpoints admin
+
+- `GET /v1/admin/dlq` · resumo + allowlist + runbook
+- `GET /v1/admin/dlq/:worker` · lista jobs (filtros: `limit`, `offset`, `tenant_id`)
+- `POST /v1/admin/dlq/:worker/:dlqJobId/replay` · replay (allowlist + `approved_by` + `reason`; `dry_run` opcional)
+- `DELETE /v1/admin/dlq/:worker/:dlqJobId` · purge (sem replay; exige `approved_by` + `reason`)
 
 ## Triagem manual
 
@@ -57,4 +75,12 @@ Replay so pode ser habilitado depois que todos os itens abaixo estiverem provado
 
 ## Gate de go-live
 
-Enquanto este runbook estiver em modo de inspecao, `AUD-P1-021` permanece em mitigacao, nao resolvido. Para go-live, e necessario provar falha esgotada, alerta, triagem, replay ou decisao explicita de nao replay por worker, com Redis real.
+`AUD-P1-021` passa de "Em mitigacao" para "Em mitigacao avancada" com DLQ
+fisica habilitada + endpoints admin + allowlist por worker. Para `Resolvido`
+no go-live ainda e necessario:
+
+- Reproduzir prova Redis-backed (`evolution-idempotency.redis-db.test.ts`
+  estilo) provando que `failed-exhausted` enfileira na DLQ.
+- Adicionar workers a `DLQ_REPLAYABLE_WORKERS` conforme prova de idempotencia
+  for sendo entregue.
+- Conectar alerta operacional (Sentry/Slack) ao evento `queue:dlq-enqueued`.

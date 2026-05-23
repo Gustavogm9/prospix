@@ -6,6 +6,7 @@ import { generateInvitationCode } from '../../services/invitation-service.js';
 import { tenantContextStorage } from '../../lib/tenant-context-storage.js';
 import { env } from '../../config/env.js';
 import { Prisma, TenantStatus, TenantPlan, UserRole, CampaignStatus, BillingStatus } from '@prisma/client';
+import { registerAdminDlqRoutes } from './dlq.js';
 
 type AdminTransaction = Prisma.TransactionClient;
 
@@ -115,6 +116,9 @@ function toAdminTenantDetail(tenant: TenantWithCredentialRecord) {
 export const adminRoutes: FastifyPluginAsync = async (app) => {
   // Enforce GUILDS_ADMIN role for all admin endpoints
   app.addHook('preHandler', requireRole(['GUILDS_ADMIN']));
+
+  // DLQ admin endpoints (AUD-P1-021)
+  registerAdminDlqRoutes(app);
 
   // =============================================================================
   // D8: CRUD /v1/admin/tenants

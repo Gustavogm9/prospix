@@ -2551,6 +2551,244 @@ export interface paths {
         };
         readonly trace?: never;
     };
+    readonly "/admin/dlq": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Resumo da DLQ por worker + allowlist
+         * @description Retorna estado consolidado das DLQs · allowlist de workers que aceitam
+         *     replay (`DLQ_REPLAYABLE_WORKERS` em `apps/api/src/lib/dlq.ts`) +
+         *     link ao runbook.
+         */
+        readonly get: {
+            readonly parameters: {
+                readonly query?: never;
+                readonly header?: never;
+                readonly path?: never;
+                readonly cookie?: never;
+            };
+            readonly requestBody?: never;
+            readonly responses: {
+                /** @description Resumo */
+                readonly 200: {
+                    headers: {
+                        readonly [name: string]: unknown;
+                    };
+                    content: {
+                        readonly "application/json": {
+                            readonly data?: {
+                                readonly replayable_workers?: readonly string[];
+                                readonly all_workers?: readonly {
+                                    readonly worker?: string;
+                                    readonly replayable?: boolean;
+                                    readonly list_endpoint?: string;
+                                }[];
+                                readonly runbook?: string;
+                                readonly retention_days?: number;
+                            };
+                        };
+                    };
+                };
+            };
+        };
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/admin/dlq/{worker}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Lista jobs DLQ de um worker */
+        readonly get: {
+            readonly parameters: {
+                readonly query?: {
+                    readonly limit?: number;
+                    readonly offset?: number;
+                    readonly tenant_id?: string;
+                };
+                readonly header?: never;
+                readonly path: {
+                    readonly worker: string;
+                };
+                readonly cookie?: never;
+            };
+            readonly requestBody?: never;
+            readonly responses: {
+                /** @description Lista DLQ */
+                readonly 200: {
+                    headers: {
+                        readonly [name: string]: unknown;
+                    };
+                    content: {
+                        readonly "application/json": {
+                            readonly data?: {
+                                readonly worker?: string;
+                                readonly replayable?: boolean;
+                                readonly count?: number;
+                                readonly jobs?: readonly Record<string, never>[];
+                            };
+                        };
+                    };
+                };
+                readonly 404: components["responses"]["NotFound"];
+                readonly 422: components["responses"]["ValidationError"];
+            };
+        };
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/admin/dlq/{worker}/{dlqJobId}/replay": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Replay manual de um job DLQ (allowlist obrigatoria)
+         * @description Replay so e permitido para workers em `DLQ_REPLAYABLE_WORKERS`.
+         *     Workers fora da allowlist retornam 403 com link ao runbook.
+         *     `approved_by` e `reason` sao obrigatorios para audit log.
+         */
+        readonly post: {
+            readonly parameters: {
+                readonly query?: never;
+                readonly header?: never;
+                readonly path: {
+                    readonly worker: string;
+                    readonly dlqJobId: string;
+                };
+                readonly cookie?: never;
+            };
+            readonly requestBody: {
+                readonly content: {
+                    readonly "application/json": {
+                        /** @default false */
+                        readonly dry_run?: boolean;
+                        readonly approved_by: string;
+                        readonly reason: string;
+                    };
+                };
+            };
+            readonly responses: {
+                /** @description Replay efetuado (ou dry-run validado) */
+                readonly 200: {
+                    headers: {
+                        readonly [name: string]: unknown;
+                    };
+                    content: {
+                        readonly "application/json": {
+                            readonly data?: {
+                                readonly ok?: boolean;
+                                readonly worker?: string;
+                                readonly dlq_job_id?: string;
+                                readonly source_job_id?: string;
+                                readonly replayed_into?: string;
+                                readonly new_job_id?: string;
+                                readonly dry_run?: boolean;
+                                readonly approved_by?: string;
+                                readonly reason?: string;
+                                /** Format: date-time */
+                                readonly replayed_at?: string;
+                            };
+                        };
+                    };
+                };
+                /** @description Worker fora da allowlist (UNAUTHORIZED) */
+                readonly 403: {
+                    headers: {
+                        readonly [name: string]: unknown;
+                    };
+                    content: {
+                        readonly "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+                readonly 404: components["responses"]["NotFound"];
+                readonly 422: components["responses"]["ValidationError"];
+            };
+        };
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/admin/dlq/{worker}/{dlqJobId}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Purge manual de um job DLQ (sem replay)
+         * @description Remove job DLQ sem reprocessar; exige `approved_by` + `reason`.
+         */
+        readonly delete: {
+            readonly parameters: {
+                readonly query?: never;
+                readonly header?: never;
+                readonly path: {
+                    readonly worker: string;
+                    readonly dlqJobId: string;
+                };
+                readonly cookie?: never;
+            };
+            readonly requestBody: {
+                readonly content: {
+                    readonly "application/json": {
+                        readonly approved_by: string;
+                        readonly reason: string;
+                    };
+                };
+            };
+            readonly responses: {
+                /** @description Job removido */
+                readonly 200: {
+                    headers: {
+                        readonly [name: string]: unknown;
+                    };
+                    content: {
+                        readonly "application/json": {
+                            readonly data?: {
+                                readonly ok?: boolean;
+                                /** Format: date-time */
+                                readonly purged_at?: string;
+                            };
+                        };
+                    };
+                };
+                readonly 404: components["responses"]["NotFound"];
+                readonly 422: components["responses"]["ValidationError"];
+            };
+        };
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/admin/templates": {
         readonly parameters: {
             readonly query?: never;

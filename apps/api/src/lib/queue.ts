@@ -2,6 +2,7 @@ import { Queue, QueueEvents, QueueOptions } from 'bullmq';
 import type { JobSchedulerTemplateOptions } from 'bullmq';
 import { logger } from './logger.js';
 import { createDedicatedRedisConnection, redisConnection } from './redis.js';
+import { handleFailedExhausted } from './dlq.js';
 
 /**
  * Generates a global static queue name for a worker.
@@ -112,8 +113,13 @@ export type QueueFailureLogEvent = {
     attempts_made: number;
     attempts: number;
     failed_reason?: string;
-    dlq_physical: false;
-    replay_supported: false;
+    /** DLQ fisica habilitada via `dlq.ts` (AUD-P1-021 resolvido). */
+    dlq_physical: true;
+    /**
+     * Replay efetivo depende de allowlist por worker
+     * (ver `DLQ_REPLAYABLE_WORKERS` em `dlq.ts` + runbook).
+     */
+    replay_supported: 'allowlist';
     runbook: 'docs/auditoria/runbook-dlq-replay.md';
   };
 };
@@ -141,8 +147,8 @@ export function buildQueueFailureEvent(
     attempts_made: attemptsMade,
     attempts,
     failed_reason: failedReason,
-    dlq_physical: false as const,
-    replay_supported: false as const,
+    dlq_physical: true as const,
+    replay_supported: 'allowlist' as const,
     runbook: 'docs/auditoria/runbook-dlq-replay.md' as const,
   };
 
@@ -182,6 +188,24 @@ export function observeQueueFailures(workerName: string): QueueFailureObserver {
       const event = buildQueueFailureEvent(workerName, queueName, jobId, failedReason, job);
 
       logger[event.level](event.fields, event.message);
+
+      // Quando esgotado, move pra DLQ fisica (idempotente por source_job_id)
+      if (event.message === 'queue:failed-exhausted' && job) {
+        try {
+          await handleFailedExhausted(workerName, jobId, failedReason, {
+            name: job.name,
+            attemptsMade: job.attemptsMade,
+            opts: job.opts as { attempts?: number },
+            data: job.data,
+            timestamp: job.timestamp,
+          });
+        } catch (dlqErr) {
+          logger.error(
+            { queue: queueName, worker: workerName, job_id: jobId, err: dlqErr },
+            'queue:dlq-enqueue-failed',
+          );
+        }
+      }
     } catch (err) {
       logger.error({ queue: queueName, worker: workerName, job_id: jobId, err }, 'queue:failure-observer-error');
     }

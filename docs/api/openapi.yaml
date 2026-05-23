@@ -1363,6 +1363,156 @@ paths:
                   data: { type: object }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  # ===========================================================================
+  # DLQ · AUD-P1-021
+  # ===========================================================================
+  /admin/dlq:
+    get:
+      tags: [Admin]
+      summary: Resumo da DLQ por worker + allowlist
+      description: |
+        Retorna estado consolidado das DLQs · allowlist de workers que aceitam
+        replay (`DLQ_REPLAYABLE_WORKERS` em `apps/api/src/lib/dlq.ts`) +
+        link ao runbook.
+      responses:
+        '200':
+          description: Resumo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      replayable_workers:
+                        type: array
+                        items: { type: string }
+                      all_workers:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            worker: { type: string }
+                            replayable: { type: boolean }
+                            list_endpoint: { type: string }
+                      runbook: { type: string }
+                      retention_days: { type: integer }
+
+  /admin/dlq/{worker}:
+    get:
+      tags: [Admin]
+      summary: Lista jobs DLQ de um worker
+      parameters:
+        - { name: worker, in: path, required: true, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+        - { name: tenant_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Lista DLQ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      worker: { type: string }
+                      replayable: { type: boolean }
+                      count: { type: integer }
+                      jobs:
+                        type: array
+                        items: { type: object }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /admin/dlq/{worker}/{dlqJobId}/replay:
+    post:
+      tags: [Admin]
+      summary: Replay manual de um job DLQ (allowlist obrigatoria)
+      description: |
+        Replay so e permitido para workers em `DLQ_REPLAYABLE_WORKERS`.
+        Workers fora da allowlist retornam 403 com link ao runbook.
+        `approved_by` e `reason` sao obrigatorios para audit log.
+      parameters:
+        - { name: worker, in: path, required: true, schema: { type: string } }
+        - { name: dlqJobId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [approved_by, reason]
+              properties:
+                dry_run: { type: boolean, default: false }
+                approved_by: { type: string, maxLength: 255 }
+                reason: { type: string, maxLength: 2000 }
+      responses:
+        '200':
+          description: Replay efetuado (ou dry-run validado)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      ok: { type: boolean }
+                      worker: { type: string }
+                      dlq_job_id: { type: string }
+                      source_job_id: { type: string }
+                      replayed_into: { type: string }
+                      new_job_id: { type: string }
+                      dry_run: { type: boolean }
+                      approved_by: { type: string }
+                      reason: { type: string }
+                      replayed_at: { type: string, format: date-time }
+        '403':
+          description: Worker fora da allowlist (UNAUTHORIZED)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /admin/dlq/{worker}/{dlqJobId}:
+    delete:
+      tags: [Admin]
+      summary: Purge manual de um job DLQ (sem replay)
+      description: Remove job DLQ sem reprocessar; exige `approved_by` + `reason`.
+      parameters:
+        - { name: worker, in: path, required: true, schema: { type: string } }
+        - { name: dlqJobId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [approved_by, reason]
+              properties:
+                approved_by: { type: string, maxLength: 255 }
+                reason: { type: string, maxLength: 2000 }
+      responses:
+        '200':
+          description: Job removido
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      ok: { type: boolean }
+                      purged_at: { type: string, format: date-time }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
   /admin/templates:
     get:
       tags: [Admin]
