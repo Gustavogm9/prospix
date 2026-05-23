@@ -1,12 +1,12 @@
 # Status de Cobertura da Auditoria
 
-Atualizado em 23/05/2026 apos rodada Codex DB/Redis-backed, DLQ fisica/replay, CI gate local, LGPD migration e smoke E2E.
+Atualizado em 23/05/2026 apos rodada Codex DB/Redis-backed, DLQ fisica/replay, CI gate local, LGPD migration, smoke E2E, hardening de landing/compliance e gate Axe a11y verde.
 
 ## Leitura rapida
 
-Estamos em **aproximadamente 94% de prontidao tecnica auditavel local** e **aproximadamente 87% de prontidao formal para go-live**.
+Estamos em **aproximadamente 96% de prontidao tecnica auditavel local** e **aproximadamente 89% de prontidao formal para go-live**.
 
-Esse numero nao significa que o produto esta pronto para go-live; significa que, ponderando os squads tecnicos, ha implementacao real e evidencia DB-backed/E2E relevante. A cobertura estatica de auditoria esta em torno de **94%**, porque os agentes mapearam e corrigiram parte relevante dos riscos por leitura de codigo, contratos e testes unitarios. A evidencia forte, com teste integrado/DB-backed/Redis/E2E, subiu para perto de **82%** depois das provas RLS/multi-tenant com Postgres real, Redis/BullMQ real, webhook Evolution duplicado concorrente com Postgres+Redis reais, admin-login com RLS ativo, DLQ fisica com replay Redis-backed e smoke Playwright 8/8.
+Esse numero nao significa que o produto esta pronto para go-live; significa que, ponderando os squads tecnicos, ha implementacao real e evidencia DB-backed/E2E relevante. A cobertura estatica de auditoria esta em torno de **96%**, porque os agentes mapearam e corrigiram parte relevante dos riscos por leitura de codigo, contratos, testes unitarios e smoke. A evidencia forte, com teste integrado/DB-backed/Redis/E2E, subiu para perto de **85%** depois das provas RLS/multi-tenant com Postgres real, Redis/BullMQ real, webhook Evolution duplicado concorrente com Postgres+Redis reais, admin-login com RLS ativo, DLQ fisica com replay Redis-backed, smoke Playwright/Axe 15/15 e hardening da landing contra claims/falso sucesso.
 
 ## Percentuais por squad
 
@@ -16,9 +16,9 @@ Esse numero nao significa que o produto esta pronto para go-live; significa que,
 | 1 | Foundation/Security | 88% | Parcial | Migration baseline + migration LGPD estao aplicadas, RLS SQL ficou idempotente, usuario app nao-superuser foi criado para prova real, `AUDIT_REQUIRE_DB=1` passou sem skips, admin-login usa bypass DB-role transacional e passou com RLS ativo; ainda falta ampliar RLS DB-backed para mais tabelas e auth refresh/logout integrada em Redis real. |
 | 2 | API/Contracts/Data | 89% | Parcial | `/v1/auth`, `admin-login`, tenants admin, convites, templates, conversations/scripts, meetings, notification preferences, integrations, billing/admin, webhooks, leads/auth/admin criticos, LGPD tenant e header Asaas foram alinhados com testes focados; rotas fantasmas foram removidas; ainda falta expandir contrato para todos os endpoints nao criticos. |
 | 3 | Workers/IA/WhatsApp | 95% | Bloqueado para go-live | Workers criticos foram registrados, opt-out confirmado, logs endurecidos, webhooks/envios com `jobId`, inbound com dedupe/P2002/transacao, HMAC obrigatorio, quota IA preventiva, prova Evolution DB/Redis-backed e DLQ fisica com alerta estruturado + replay Redis-backed passaram; ainda falta smoke E2E do fluxo WhatsApp real com provider. |
-| 4 | Frontend/UX | 86% | Parcial | Links legais existem, mocks/sucesso fake ficaram restritos a dev/demo, Settings nao exibe dados financeiros fake fora de dev/demo, admin/web `ProtectedRoute` foram corrigidos e smoke Playwright passou 8/8 cobrindo landing, legal pages, web login, web pos-login, admin login e admin pos-login; ainda faltam fluxos reais de negocio e a11y/responsividade ampla. |
+| 4 | Frontend/UX | 92% | Parcial | Links legais existem, mocks/sucesso fake ficaram restritos a dev/demo, Settings nao exibe dados financeiros fake fora de dev/demo, admin/web `ProtectedRoute` foram corrigidos, landing deixou de simular agenda criada e de apontar para Vercel hardcoded, contraste/ARIA basicos foram corrigidos e smoke Playwright/Axe passou 15/15 cobrindo landing, legal pages, web login, web pos-login, admin login e admin pos-login; ainda faltam fluxos reais de negocio e responsividade/a11y ampla em todas as telas. |
 | 5 | DevEx/CI/CD/Docs | 93% | Parcial | Scripts, CI/deploy, docs, migration baseline/LGPD, gates anti-skip, OpenAPI/shared-types, `test:audit:db`, DB/Redis local e Playwright smoke estao configurados e verdes localmente; ainda falta observar primeiro GitHub Actions verde e tornar audit de dependencias bloqueante. |
-| 6 | Produto/Compliance | 58% | Bloqueado para go-live | UX LGPD operacional existe com schema/API/frontend/migration, links legais existem e claims publicos foram suavizados; ainda falta revisao juridica, worker de fulfillment LGPD, retencao/subprocessadores e governanca comercial completa. |
+| 6 | Produto/Compliance | 62% | Bloqueado para go-live | UX LGPD operacional existe com schema/API/frontend/migration, links legais existem, claims publicos foram suavizados, numeros comerciais sem fonte foram removidos e o form da landing nao promete agendamento sem backend; ainda falta revisao juridica, worker de fulfillment LGPD, retencao/subprocessadores e governanca comercial completa. |
 
 ## Calculo operacional
 
@@ -33,18 +33,18 @@ Peso usado para a estimativa global:
 
 Resultado ponderado inicial: **aprox. 53%**, arredondado operacionalmente para **52%** por causa dos P0 abertos.
 
-Atualizacao incremental: depois das rodadas anteriores, a continuacao de 23/05/2026 fechou os bloqueantes tecnicos mais fortes: CI local ganhou `test:audit:db` com Postgres/Redis e usuario `prospix_app`; DLQ fisica foi provada com Redis real, alerta estruturado `queue:dlq-enqueued` e replay allowlisted; LGPD ganhou migration real, RLS idempotente e Prisma Client gerado; typecheck API/web/admin passou; `npm test` passou com 35 arquivos/199 testes; e `pnpm test:e2e:smoke` passou com 8/8. Com isso, a prontidao tecnica auditavel local fica em **aprox. 94%**.
+Atualizacao incremental: depois das rodadas anteriores, a continuacao de 23/05/2026 fechou os bloqueantes tecnicos mais fortes: CI local ganhou `test:audit:db` com Postgres/Redis e usuario `prospix_app`; DLQ fisica foi provada com Redis real, alerta estruturado `queue:dlq-enqueued` e replay allowlisted; LGPD ganhou migration real, RLS idempotente e Prisma Client gerado; typecheck API/web/admin passou; `npm test` passou com 35 arquivos/199 testes; `pnpm test:e2e:smoke` passou com 15/15 incluindo Axe critical/serious; e a landing foi endurecida contra falso sucesso, URL Vercel hardcoded e claims quantitativos sem fonte. Com isso, a prontidao tecnica auditavel local fica em **aprox. 96%**.
 
 ## P0 atuais
 
 - Nenhum P0 tecnico aberto no recorte atual de RLS/multi-tenant/auth versionado. `AUD-P0-001`, `AUD-P0-003` e `AUD-P0-011` ficam fechados com evidencia local.
 - `AUD-P0-011`: resolvido em 22/05/2026; mantido no historico como P0 fechado.
 
-## O que falta para sustentar 94%
+## O que falta para sustentar 96%
 
 - Observar primeiro GitHub Actions verde reproduzindo `test:audit:db`, OpenAPI drift e smoke Playwright.
 - RLS DB-backed cobrindo tabelas criticas alem de `leads`, incluindo LGPD, billing, sessions e audit log.
-- Auth session hardening com prova integrada de expiracao/reuso negado/logout em Redis real; admin-login DB-backed ja passou.
+- Ampliar auth/session para smoke HTTP real de refresh/logout alem da prova integrada DB/Redis ja registrada em testes.
 - Smoke E2E do fluxo WhatsApp real capturar -> enriquecer -> conversar -> opt-out -> agendar com provider controlado.
 - Termos/privacidade/LGPD alinhados por revisao juridica e fluxo real de retencao/subprocessadores.
 
@@ -87,7 +87,9 @@ Atualizacao incremental: depois das rodadas anteriores, a continuacao de 23/05/2
 - Migration LGPD passou em 23/05/2026: `20260523000000_lgpd_requests` aplicada em `prospix_test`, `db:migrate` aplicou 113 statements RLS, `db:generate` regenerou Prisma Client.
 - `npx tsc --noEmit --project apps/api/tsconfig.json` passou em 23/05/2026 apos migration LGPD; `npm test` passou com 35 arquivos/199 testes.
 - `pnpm --filter @prospix/web typecheck` e `pnpm --filter @prospix/admin typecheck` passaram em 23/05/2026 apos corrigir `ProtectedRoute`.
-- `pnpm test:e2e:smoke` passou em 23/05/2026 com 8/8: landing home, planos, termos/privacidade/LGPD, web login, web magic-link mockado, web pos-login mockado, admin login e admin pos-login mockado.
+- `pnpm test:e2e:smoke` passou em 23/05/2026 com 15/15: landing home, planos, termos/privacidade/LGPD, web login, web magic-link mockado, web pos-login mockado, admin login, admin pos-login e specs Axe sem violacoes critical/serious nos recortes cobertos.
+- Hardening de landing passou em 23/05/2026: URL Vercel hardcoded removida, `/login` nao redireciona para ambiente externo sem `NEXT_PUBLIC_LOGIN_URL`, falso sucesso do formulario substituido por triagem, claims numericos sem fonte foram removidos (`14.850+`, `-90%`, `+320%`, `3.2x`, `740`, `42 reunioes`); `pnpm --filter @prospix/landing typecheck` passou.
+- Correcoes a11y passaram em 23/05/2026: `--text-muted` endurecido para contraste, link legal inline sublinhado, input escuro preserva fundo no foco, botoes icon-only ganharam `aria-label`, labels admin `amber` ajustados; typechecks landing/web/admin passaram.
 - Dalton preparou smoke browser read-only com URLs locais: API `3000`, landing `3001`, web `5173`, admin `5174`, Mailhog `8025`; credencial admin seed `gustavo.macedo@guilds.com.br` e fluxo tenant dependente de magic link/Evolution.
 - Evidencia estatica revisada: `apps/api/src/services/auth-service.ts`, `apps/api/src/routes/auth/index.ts`, `apps/api/src/routes/admin/index.ts`, `apps/api/src/routes/webhooks/evolution.ts`, `apps/api/src/routes/webhooks/index.ts`, `apps/api/src/ai/quota.ts`, `apps/api/src/ai/guardrails.ts`, `apps/api/src/ai/router.ts`, `apps/api/src/lib/logger.ts`, `apps/api/src/workers/index.ts`, `apps/api/src/workers/usage-aggregation.ts`, `apps/api/src/routes/tenant/dashboard.ts`, `apps/api/tests/unit/ai-quota.test.ts`, `apps/api/tests/unit/admin.test.ts`, `apps/api/tests/ai/prompt-validation.test.ts`, `apps/api/tests/unit/auth-session-hardening.test.ts` e `apps/api/tests/unit/webhooks.test.ts`.
 - Prova forte ainda depende de primeiro CI remoto verde, E2E WhatsApp real com provider controlado, ampliacao RLS por tabela e aceite LGPD/compliance.

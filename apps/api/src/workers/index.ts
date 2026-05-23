@@ -14,6 +14,7 @@ import { EnrichLeadsWorker } from './enrich-leads.js';
 import { DailyDigestWorker } from './daily-digest.js';
 import { UsageAggregationWorker } from './usage-aggregation.js';
 import { SendNotificationWorker } from './send-notification.js';
+import { ProcessLgpdRequestWorker } from './process-lgpd-request.js';
 
 let activeWorkers: Worker[] = [];
 let activeQueueObservers: QueueFailureObserver[] = [];
@@ -30,6 +31,7 @@ export const workerQueueNames = [
   'enrich-leads',
   'daily-digest',
   'usage-aggregation',
+  'process-lgpd-request',
 ];
 
 const SCHEDULER_TIMEZONE = 'America/Sao_Paulo';
@@ -93,6 +95,7 @@ export async function startWorkers() {
     const enrichLeadsHandler = new EnrichLeadsWorker();
     const dailyDigestHandler = new DailyDigestWorker();
     const usageAggregationHandler = new UsageAggregationWorker();
+    const lgpdRequestHandler = new ProcessLgpdRequestWorker();
 
     activeQueueObservers = workerQueueNames.map((workerName) => observeQueueFailures(workerName));
 
@@ -228,6 +231,19 @@ export async function startWorkers() {
       }
     );
     activeWorkers.push(usageWorker);
+
+    // K. Process LGPD Request Worker (AUD-P2-033)
+    const lgpdWorker = new Worker(
+      getTenantQueueName('global', 'process-lgpd-request'),
+      async (job) => {
+        return await lgpdRequestHandler.run(job);
+      },
+      {
+        connection: createDedicatedRedisConnection(),
+        concurrency: lgpdRequestHandler.concurrency,
+      }
+    );
+    activeWorkers.push(lgpdWorker);
 
     // 2. Fetch active tenants to trigger initial health checks
     const tenants = await prisma.tenant.findMany({

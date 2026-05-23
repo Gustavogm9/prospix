@@ -121,7 +121,7 @@ export default function Login() {
                 placeholder="+55 (11) 99999-9999"
                 value={whatsapp}
                 onChange={handleWhatsappChange}
-                className="w-full bg-zinc-950/80 border-zinc-800 text-zinc-100 placeholder-zinc-600 focus:border-blue-500/50 text-base h-12"
+                className="w-full bg-zinc-950/80 border-zinc-800 text-zinc-100 placeholder-zinc-500 focus-visible:bg-zinc-950/80 focus:border-blue-500/50 text-base h-12"
                 disabled={isLoading}
                 autoFocus
               />
@@ -158,7 +158,7 @@ export default function Login() {
 
             <div className="pt-4 border-t border-zinc-800/60">
               {countdown > 0 ? (
-                <p className="text-xs text-zinc-500">
+                <p className="text-xs text-zinc-400">
                   Aguarde <span className="text-zinc-400 font-mono font-medium">{countdown}s</span> para reenviar.
                 </p>
               ) : (
@@ -174,7 +174,7 @@ export default function Login() {
         )}
 
         <div className="mt-8 text-center">
-          <p className="text-xs text-zinc-500">
+          <p className="text-xs text-zinc-400">
             Ainda não tem conta?{' '}
             <button
               onClick={() => navigate('/cadastro')}

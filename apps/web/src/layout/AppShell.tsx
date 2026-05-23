@@ -220,6 +220,7 @@ export default function AppShell() {
           <div className="flex items-center gap-4">
             <button 
               onClick={() => setIsMobileMenuOpen(true)}
+              aria-label="Abrir menu principal"
               className="md:hidden p-1.5 rounded-lg hover:bg-surface-sunken text-text-secondary hover:text-text"
             >
               <Menu className="w-5 h-5" />
@@ -240,10 +241,12 @@ export default function AppShell() {
             <div className="relative">
               <button 
                 onClick={() => setIsNotificationsOpen(!isNotificationsOpen)}
+                aria-label={isNotificationsOpen ? 'Fechar notificações' : 'Abrir notificações'}
+                aria-expanded={isNotificationsOpen}
                 className="p-2 rounded-xl bg-surface hover:bg-surface-sunken border border-border text-text-secondary hover:text-text transition-all relative"
               >
                 <Bell className="w-4 h-4" />
-                <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-primary" />
+                <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-primary" aria-hidden="true" />
               </button>
 
               {isNotificationsOpen && (

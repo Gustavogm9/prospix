@@ -664,8 +664,8 @@ export default function LandingPage() {
                   <input type="checkbox" id="terms" required className="h-4 w-4 text-primary border-border-strong rounded mt-0.5" />
                   <label htmlFor="terms" className="text-2xs text-text-secondary leading-relaxed">
                     Autorizo a Guilds a processar meus dados cadastrais para fins comerciais e aceito os{' '}
-                    <a href="/termos" className="text-primary hover:underline">Termos de Uso</a> e{' '}
-                    <a href="/privacidade" className="text-primary hover:underline">Políticas de Privacidade</a>.
+                    <a href="/termos" className="text-primary underline underline-offset-2 hover:text-primary-hover">Termos de Uso</a> e{' '}
+                    <a href="/privacidade" className="text-primary underline underline-offset-2 hover:text-primary-hover">Políticas de Privacidade</a>.
                   </label>
                 </div>
                 <button

@@ -22,6 +22,7 @@ import type { FastifyPluginAsync, FastifyInstance, FastifyRequest, FastifyReply 
 import { z } from 'zod';
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../lib/logger.js';
+import { createTenantQueue } from '../../lib/queue.js';
 import { LgpdRequestType, LgpdRequestStatus, Prisma } from '@prisma/client';
 
 const createRequestSchema = z.object({
@@ -156,6 +157,31 @@ export function registerTenantLgpdRoutes(app: FastifyInstance): void {
       },
       'lgpd:request-created',
     );
+
+    // Enfileira processamento async (worker process-lgpd-request)
+    try {
+      const queue = createTenantQueue(tenantId, 'process-lgpd-request');
+      await queue.add(
+        'process-lgpd-request',
+        {
+          tenant_id: tenantId,
+          trace_id: `lgpd:${request.id}`,
+          lgpd_request_id: request.id,
+        },
+        { jobId: `lgpd-request-${request.id}` }, // idempotente
+      );
+      await queue.close();
+    } catch (queueErr) {
+      logger.error(
+        {
+          tenant_id: tenantId,
+          lgpd_request_id: request.id,
+          err: queueErr instanceof Error ? { message: queueErr.message } : queueErr,
+        },
+        'lgpd:enqueue-failed · request persists as PENDING for manual triage',
+      );
+      // Nao falha o request · operador pode reprocessar manualmente
+    }
 
     return reply.status(202).send({
       data: {

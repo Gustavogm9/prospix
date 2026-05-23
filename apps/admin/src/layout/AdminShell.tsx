@@ -42,7 +42,7 @@ export default function AdminShell() {
           </div>
           <div>
             <h1 className="font-heading font-bold text-text text-sm leading-tight">Prospix</h1>
-            <p className="text-[10px] text-amber-600 font-mono tracking-wider uppercase font-semibold">Super-Admin Panel</p>
+            <p className="text-[10px] text-amber-800 font-mono tracking-wider uppercase font-semibold">Super-Admin Panel</p>
           </div>
         </div>
 
@@ -78,7 +78,7 @@ export default function AdminShell() {
             />
             <div className="min-w-0 flex-1">
               <p className="text-xs font-semibold text-text truncate leading-none mb-1">{adminUser?.name || 'Admin Guilds'}</p>
-              <p className="text-[10px] text-amber-600 truncate leading-none font-mono">GUILDS_OWNER</p>
+              <p className="text-[10px] text-amber-800 truncate leading-none font-mono">GUILDS_OWNER</p>
             </div>
           </div>
           <button
@@ -96,7 +96,7 @@ export default function AdminShell() {
         <div className="md:hidden fixed inset-0 z-40 flex">
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsMobileMenuOpen(false)} />
           <aside className="relative flex flex-col w-[236px] bg-surface h-full border-r border-border p-6 animate-in slide-in-from-left duration-200">
-            <button onClick={() => setIsMobileMenuOpen(false)} className="absolute top-4 right-4 p-1 rounded-lg hover:bg-surface-sunken text-text-secondary hover:text-text">
+              <button onClick={() => setIsMobileMenuOpen(false)} aria-label="Fechar menu admin" className="absolute top-4 right-4 p-1 rounded-lg hover:bg-surface-sunken text-text-secondary hover:text-text">
               <X className="w-5 h-5" />
             </button>
             <div className="flex items-center gap-3 mb-8">
@@ -140,11 +140,11 @@ export default function AdminShell() {
       <div className="flex-1 flex flex-col min-w-0 min-h-screen">
         <header className="h-[60px] border-b border-border bg-surface/80 backdrop-blur-md sticky top-0 z-30 flex items-center justify-between px-6 shrink-0 shadow-sm">
           <div className="flex items-center gap-4">
-            <button onClick={() => setIsMobileMenuOpen(true)} className="md:hidden p-1.5 rounded-lg hover:bg-surface-sunken text-text-secondary hover:text-text">
+            <button onClick={() => setIsMobileMenuOpen(true)} aria-label="Abrir menu admin" className="md:hidden p-1.5 rounded-lg hover:bg-surface-sunken text-text-secondary hover:text-text">
               <Menu className="w-5 h-5" />
             </button>
             <div className="flex items-center gap-2 text-xs font-semibold text-text-secondary">
-              <Activity className="w-4 h-4 text-amber-600 animate-pulse" />
+              <Activity className="w-4 h-4 text-amber-800 animate-pulse" />
               <span>Conexão bypass-RLS ativa: conexão direta com role connection guilds_admin</span>
             </div>
           </div>
