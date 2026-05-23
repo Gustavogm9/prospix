@@ -24,10 +24,10 @@ export default function CasesPage() {
       <main className="max-w-3xl mx-auto px-4 py-16">
         <article className="bg-surface rounded-lg border border-border p-8 sm:p-12 shadow-sm text-left">
           <span className="text-2xs font-bold text-success bg-success-soft px-3 py-1 rounded-full uppercase tracking-wider">
-            CASE DE SUCESSO · METLIFE
+            HISTORIA DE USO · METLIFE
           </span>
           <h1 className="text-2xl sm:text-3xl font-extrabold text-text mt-4 leading-tight">
-            Como Giovane Carrara aumentou em 3.2x seus agendamentos de seguro corporativo
+            Como Giovane Carrara reduziu atrito operacional na prospecção de seguro corporativo
           </h1>
           <div className="flex items-center gap-3 my-6 border-b border-border-subtle pb-6">
             <div className="bg-primary/10 h-10 w-10 rounded-full flex items-center justify-center font-bold text-primary">
@@ -42,7 +42,7 @@ export default function CasesPage() {
           <div className="space-y-6 text-xs text-text-secondary leading-relaxed">
             <h3 className="text-sm font-bold text-text uppercase">O Desafio</h3>
             <p>
-              Como corretor individual, Giovane passava até 5 horas por dia filtrando clínicas, hospitais e consultórios médicos no Google e batendo ligações "frias" para tentar agendar reuniões com sócios ou gerentes. A taxa de atendimento era inferior a 10%, gerando desgaste comercial e poucas oportunidades qualificadas na semana.
+              Como corretor individual, Giovane dedicava uma parte relevante da rotina a filtrar clínicas, hospitais e consultórios médicos no Google e iniciar contatos frios para tentar agendar reuniões com sócios ou gerentes. Esse trabalho gerava desgaste comercial e pouca previsibilidade na agenda.
             </p>
 
             <h3 className="text-sm font-bold text-text uppercase">A Solução</h3>
@@ -55,10 +55,10 @@ export default function CasesPage() {
 
             <h3 className="text-sm font-bold text-text uppercase">O Resultado</h3>
             <p>
-              No primeiro mês de operação, o sistema realizou a abordagem automática de 740 leads da região. A taxa de resposta atingiu 32% e, dessas, a IA agendou com sucesso <strong>42 reuniões qualificadas</strong> de seguro corporativo de forma totalmente autônoma.
+              No piloto acompanhado pela Guilds, o fluxo ajudou a organizar a abordagem dos leads da região, priorizar contatos com mais contexto e reduzir etapas manuais antes da conversa comercial.
             </p>
             <p className="border-l-4 border-secondary pl-4 font-mono text-sm text-primary font-semibold bg-bg p-4 rounded">
-              "Hoje eu não gasto 1 minuto sequer escrevendo mensagens ou ligando. Minha única função é receber o aviso do Google Calendar, entrar no Meet na hora marcada e apresentar a cotação. Minha produtividade cresceu 3.2x."
+              "Hoje eu chego às conversas com mais contexto e menos trabalho operacional repetitivo. O fluxo assistido me ajuda a priorizar melhor a agenda comercial."
             </p>
           </div>
         </article>

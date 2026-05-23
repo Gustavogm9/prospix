@@ -369,4 +369,72 @@ Apps `web`, `admin`, `landing` consomem `@prospix/ui` via workspace.
 
 ---
 
+## 12. Acessibilidade · checklist WCAG 2.1 AA (AUD-P3-035)
+
+### 12.1 Regras hard-enforced no CI
+
+`@axe-core/playwright` roda em `e2e/landing/a11y.spec.ts`, `e2e/web/a11y.spec.ts`,
+`e2e/admin/a11y.spec.ts` e **falha o build** em violações `critical` ou `serious`.
+`moderate` e `minor` aparecem no log mas não bloqueiam (polish incremental).
+
+Tags WCAG cobertas: `wcag2a`, `wcag2aa`, `wcag21a`, `wcag21aa`.
+
+### 12.2 Regras concretas obrigatórias
+
+| Regra | Quando aplica |
+|---|---|
+| `aria-label` em botão icon-only | Sempre que o botão é só um ícone (`<Trash2 />`, `<Ban />`, etc) |
+| `aria-hidden="true"` em ícone decorativo | Sempre que o ícone está dentro de um botão com texto · evita screen reader duplicar |
+| `<label>` ou `aria-labelledby` em todo input | Todo `<Input>` deve ter label associado · placeholders **não** substituem |
+| Foco visível em todo interativo | Tailwind `focus-visible:ring-2 focus-visible:ring-primary` (já no preset) |
+| Contraste ≥ 4.5:1 texto normal · ≥ 3:1 texto grande | Cores do design system já passam · cuidado em hover states custom |
+| `alt` em toda `<img>` | Decorativa: `alt=""` + `role="presentation"` |
+| Heading hierarchy correta | h1 único por página · h2 → h3 sem pular nível |
+| Form submit acessível por teclado | `<form onSubmit>` sempre · não `<div onClick>` |
+| Tabela com `<th scope>` | Tabelas de dados precisam scope row/col |
+| Toast com `aria-live="polite"` | Notificações não-críticas |
+| Modal com `role="dialog"` + focus trap | Tab cycle não escapa do modal |
+
+### 12.3 Padrões de ícones nos botões
+
+**Icon-only (sem texto):**
+```tsx
+<Button onClick={...} aria-label="Remover item">
+  <Trash2 aria-hidden="true" />
+</Button>
+```
+
+**Icon + texto:**
+```tsx
+<Button onClick={...}>
+  <Trash2 aria-hidden="true" />
+  <span>Remover</span>
+</Button>
+```
+
+### 12.4 Como rodar a11y local
+
+```bash
+# Roda smoke + a11y nos 3 apps em paralelo
+pnpm test:e2e:smoke
+
+# Apenas a11y de uma surface
+pnpm exec playwright test e2e/landing/a11y.spec.ts
+pnpm exec playwright test e2e/web/a11y.spec.ts
+pnpm exec playwright test e2e/admin/a11y.spec.ts
+```
+
+### 12.5 Quando aceitar uma violação serious/critical
+
+Mover para uma allowlist explícita não é uma opção sem PR aprovado pelo PM.
+Em caso de bug do axe-core ou false positive comprovado, abrir aceite em
+[docs/auditoria/template-aceite-risco.md](auditoria/template-aceite-risco.md) com:
+
+- ID da violação (`landmark-one-main`, `color-contrast`, etc)
+- Por que é false positive
+- Prova (screenshot, leitor de tela testado, etc)
+- Revisor independente: Claude (severidade alta)
+
+---
+
 **Manutenção:** este doc é atualizado sempre que adicionarmos componente novo, ou quando o protótipo for revisado. Mudança de token requer aprovação do PM (Gustavo).

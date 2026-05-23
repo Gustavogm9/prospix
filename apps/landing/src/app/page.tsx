@@ -2,6 +2,8 @@
 
 import React, { useState } from 'react';
 
+const loginUrl = process.env.NEXT_PUBLIC_LOGIN_URL || '/login';
+
 export default function LandingPage() {
   const [leadForm, setLeadForm] = useState({ name: '', phone: '', volume: '500' });
   const [submitted, setSubmitted] = useState(false);
@@ -72,7 +74,7 @@ export default function LandingPage() {
 
           <div className="hidden md:flex items-center gap-4">
             <a
-              href={process.env.NEXT_PUBLIC_LOGIN_URL || 'https://web-drab-chi-76.vercel.app/login'}
+              href={loginUrl}
               className="text-sm font-medium text-text-secondary hover:text-primary transition-colors"
             >
               Entrar
@@ -141,7 +143,7 @@ export default function LandingPage() {
             </nav>
             <div className="pt-4 border-t border-border-subtle flex flex-col gap-3">
               <a
-                href={process.env.NEXT_PUBLIC_LOGIN_URL || 'https://web-drab-chi-76.vercel.app/login'}
+                href={loginUrl}
                 className="flex items-center justify-center h-10 px-4 rounded text-sm font-semibold text-text hover:bg-surface-sunken border border-border-strong transition-colors"
               >
                 Entrar
@@ -271,8 +273,8 @@ export default function LandingPage() {
             </span>
           </div>
           <div className="text-center">
-            <span className="text-xl font-bold font-mono text-primary block">14.850+</span>
-            <span className="text-2xs text-text-secondary">Reuniões agendadas via WhatsApp</span>
+            <span className="text-xl font-bold font-mono text-primary block">Fluxos auditáveis</span>
+            <span className="text-2xs text-text-secondary">Operação comercial acompanhada por evidências</span>
           </div>
         </div>
       </section>
@@ -376,24 +378,24 @@ export default function LandingPage() {
         <div className="max-w-5xl mx-auto px-4 text-center">
           <h2 className="text-2xl font-bold tracking-tight">Menos atrito operacional, mais produtividade comercial</h2>
           <p className="mt-4 text-sm text-white/80 max-w-xl mx-auto">
-            Resultados empíricos extraídos de mais de 150 corretoras utilizando nossos fluxos de atendimento.
+            Indicadores operacionais observados em simulações, pilotos e fluxos acompanhados pela equipe Guilds.
           </p>
 
           <div className="mt-16 grid grid-cols-1 sm:grid-cols-3 gap-8">
             <div>
-              <span className="text-4xl font-extrabold font-mono text-secondary block">+3x</span>
-              <span className="text-sm font-medium mt-2 block">Reuniões Agendadas</span>
-              <span className="text-xs text-white/60 mt-1 block">Aumento médio do funil no primeiro mês</span>
+              <span className="text-4xl font-extrabold font-mono text-secondary block">Mais foco</span>
+              <span className="text-sm font-medium mt-2 block">Agenda comercial</span>
+              <span className="text-xs text-white/60 mt-1 block">Menos tempo gasto em tarefas repetitivas</span>
             </div>
             <div>
-              <span className="text-4xl font-extrabold font-mono text-secondary block">−90%</span>
-              <span className="text-sm font-medium mt-2 block">Tempo de Abordagem</span>
-              <span className="text-xs text-white/60 mt-1 block">Eliminação de contatos manuais e frios</span>
+              <span className="text-4xl font-extrabold font-mono text-secondary block">Menos atrito</span>
+              <span className="text-sm font-medium mt-2 block">Tempo de abordagem</span>
+              <span className="text-xs text-white/60 mt-1 block">Automação assistida para reduzir trabalho manual</span>
             </div>
             <div>
-              <span className="text-4xl font-extrabold font-mono text-secondary block">30 Dias</span>
-              <span className="text-sm font-medium mt-2 block">Retorno sobre Investimento</span>
-              <span className="text-xs text-white/60 mt-1 block">Recuperação rápida do custo de setup</span>
+              <span className="text-4xl font-extrabold font-mono text-secondary block">Visibilidade</span>
+              <span className="text-sm font-medium mt-2 block">Operação e custos</span>
+              <span className="text-xs text-white/60 mt-1 block">Métricas centralizadas para acompanhar eficiência</span>
             </div>
           </div>
         </div>
@@ -527,7 +529,7 @@ export default function LandingPage() {
           <div className="mt-12 bg-surface rounded-lg border border-border p-6 sm:p-10 shadow-sm grid grid-cols-1 md:grid-cols-3 gap-8 items-center">
             <div className="md:col-span-2 text-left">
               <p className="text-sm text-text-secondary leading-relaxed italic">
-                "Eu gastava cerca de 4 horas por dia apenas batendo ligações de leads capturados friamente. A maioria das pessoas nem atendia o telefone. Com a IA do Prospix conectada à minha API de leads, eu passei a ter 15 a 20 reuniões super qualificadas agendadas automaticamente no meu calendário toda semana. Minha única função agora é abrir o Google Meet na hora marcada e apresentar a proposta comercial."
+                "Eu gastava muitas horas em contatos frios e triagem manual. Com um fluxo assistido pelo Prospix, passei a chegar nas conversas comerciais com mais contexto e menos trabalho operacional repetitivo."
               </p>
               <div className="mt-6 flex items-center gap-3">
                 <div className="bg-primary/10 h-10 w-10 rounded-full flex items-center justify-center font-bold text-primary">
@@ -540,9 +542,9 @@ export default function LandingPage() {
               </div>
             </div>
             <div className="bg-bg p-6 rounded border border-border-subtle text-center flex flex-col justify-center h-full">
-              <span className="text-xs text-text-secondary block font-medium">Melhora do Funil</span>
-              <span className="text-3xl font-extrabold font-mono text-success mt-2 block">+320%</span>
-              <span className="text-2xs text-text-muted mt-1 block">Em reuniões fechadas</span>
+              <span className="text-xs text-text-secondary block font-medium">Melhora do funil</span>
+              <span className="text-3xl font-extrabold font-mono text-success mt-2 block">Mais cadência</span>
+              <span className="text-2xs text-text-muted mt-1 block">Em acompanhamento comercial</span>
               <div className="border-t border-border my-4 pt-4">
                 <a href="/cases" className="text-xs font-semibold text-primary hover:text-primary-hover transition-colors">
                   Ler case completo →
@@ -616,7 +618,7 @@ export default function LandingPage() {
                 </div>
                 <h3 className="text-md font-bold text-text">Entraremos em contato no WhatsApp!</h3>
                 <p className="text-xs text-text-secondary mt-2 max-w-sm mx-auto leading-relaxed">
-                  Agradecemos seu interesse. Nosso comercial agendou uma conversa direta no seu WhatsApp em instantes.
+                  Agradecemos seu interesse. Sua solicitação foi registrada e o time comercial da Guilds fará a triagem pelo canal informado.
                 </p>
               </div>
             ) : (

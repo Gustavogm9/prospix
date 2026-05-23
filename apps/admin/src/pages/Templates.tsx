@@ -260,9 +260,10 @@ export default function Templates() {
                   </Button>
                   <Button
                     onClick={() => handleDeleteClick(tpl.id)}
+                    aria-label={`Remover template ${tpl.title}`}
                     className="bg-surface hover:bg-error-soft text-text-secondary hover:text-error border border-border/80 hover:border-error-soft text-[10px] px-3 py-1.5 h-8 rounded-lg font-bold flex items-center gap-1 shadow-sm transition-all"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
+                    <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
                   </Button>
                 </div>
               </CardContent>

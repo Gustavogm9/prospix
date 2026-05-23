@@ -312,9 +312,10 @@ export default function Tenants() {
                           onClick={() => handleActivate(t.id)}
                           variant="outline"
                           size="compact"
+                          aria-label={`Reativar tenant ${t.name}`}
                           className="text-[10px] font-bold flex items-center gap-1"
                         >
-                          <Play className="w-3.5 h-3.5 text-success fill-current" />
+                          <Play className="w-3.5 h-3.5 text-success fill-current" aria-hidden="true" />
                           <span>Reativar</span>
                         </Button>
                       ) : (
@@ -322,9 +323,10 @@ export default function Tenants() {
                           onClick={() => handleSuspendClick(t.id)}
                           variant="ghost"
                           size="compact"
+                          aria-label={`Suspender tenant ${t.name}`}
                           className="hover:bg-error-soft/60 text-text-secondary hover:text-error-text border border-transparent hover:border-error-soft text-[10px] font-bold flex items-center gap-1"
                         >
-                          <Ban className="w-3.5 h-3.5 shrink-0" />
+                          <Ban className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                           <span>Suspender</span>
                         </Button>
                       )}
