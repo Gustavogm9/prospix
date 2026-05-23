@@ -41,6 +41,7 @@ Multi-tenant desde o Day 1 — a mesma estrutura é revendida para vários corre
 | [`docs/PRD.md`](docs/PRD.md) | PRD técnico completo + 13 anexos (arquitetura, algoritmos, prompts, segurança, playbooks) |
 | [`docs/dev-plan.md`](docs/dev-plan.md) | Plano de desenvolvimento paralelo · 5 frentes, milestones, ownership |
 | [`docs/discovery.md`](docs/discovery.md) | Roteiro da sessão de discovery (extração da linguagem do corretor) |
+| [`docs/discovery/`](docs/discovery/) | Material operacional pronto · checklists, WhatsApp templates, NDA, voice profile JSON |
 | [`docs/integrations.md`](docs/integrations.md) | Guia de APIs, credenciais e conexões externas |
 | [`docs/design-system.md`](docs/design-system.md) | Tokens, componentes, voz · extraído do protótipo aprovado |
 | [`docs/agents/`](docs/agents/) | Modelo de trabalho com agentes IA + specs por frente |

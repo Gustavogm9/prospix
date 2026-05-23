@@ -7,6 +7,36 @@
 
 ---
 
+## Material operacional pronto
+
+Este doc é o **roteiro de fundo**. Para executar a sessão, use os artefatos em [`discovery/`](discovery/):
+
+| Arquivo | Quando usar |
+|---|---|
+| [`discovery/checklist-pre-sessao.md`](discovery/checklist-pre-sessao.md) | D-7 a D-0 · checklist do PM antes da sessão |
+| [`discovery/whatsapp-confirmacao.md`](discovery/whatsapp-confirmacao.md) | Mensagens prontas pra cada momento (confirmação, lembrete, pós-sessão, validação, aprovação) |
+| [`discovery/nda-template.md`](discovery/nda-template.md) | NDA + consentimento LGPD pra Giovane assinar antes |
+| [`discovery/notas-template.md`](discovery/notas-template.md) | Template estruturado pra preencher **durante** a sessão |
+| [`discovery/formulario-async.md`](discovery/formulario-async.md) | Fallback caso 3h não rolem · formulário pra ele preencher async |
+| [`discovery/voice-profile-template.json`](discovery/voice-profile-template.json) | Template do `voice_profile.json` final · preencher depois da sessão |
+| [`discovery/checklist-pos-sessao.md`](discovery/checklist-pos-sessao.md) | D+0 a D+15 · consolidação, validação e aprovação formal |
+
+**Fluxo resumido:**
+
+```
+D-7 → confirma sessão + WhatsApp #1
+D-3 → manda NDA
+D-1 → WhatsApp #2 (lembrete)
+D+0 → SESSÃO (usa notas-template + checklist-pre-sessao)
+D+1 → transcrição
+D+3 → voice_profile.json consolidado
+D+5 → envia 3 roteiros pro Giovane → WhatsApp #4
+D+10-15 → ajustes
+D+15 → aprovação formal → WhatsApp #5
+```
+
+---
+
 ## 1. Objetivo da sessão
 
 Capturar **como o Giovane realmente vende** pra que a IA replique:
