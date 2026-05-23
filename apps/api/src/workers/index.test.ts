@@ -77,6 +77,35 @@ describe('Worker registry', () => {
     expect(workerQueueNames).toContain('send-notification');
   });
 
+  it('should include process-lgpd-request queue in the global worker registry (AUD-P2-033 fulfillment)', async () => {
+    const { workerQueueNames } = await import('./index.js');
+
+    expect(workerQueueNames).toContain('process-lgpd-request');
+  });
+
+  it('registry covers all 11 critical worker queues (AUD-P1-020 fulfillment)', async () => {
+    const { workerQueueNames } = await import('./index.js');
+
+    const expected = [
+      'process-inbound',
+      'send-messages',
+      'send-notification',
+      'schedule-meeting',
+      'health-check',
+      'billing-suspension',
+      'capture-google-maps',
+      'enrich-leads',
+      'daily-digest',
+      'usage-aggregation',
+      'process-lgpd-request',
+    ];
+
+    for (const name of expected) {
+      expect(workerQueueNames).toContain(name);
+    }
+    expect(workerQueueNames).toHaveLength(expected.length);
+  });
+
   it('observes failures for every registered global worker queue', async () => {
     const { observeQueueFailures } = await import('../lib/queue.js');
     const { startWorkers, workerQueueNames } = await import('./index.js');
