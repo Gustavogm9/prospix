@@ -9,9 +9,14 @@ import {
   observeQueueFailures,
 } from '../../src/lib/queue.js';
 import {
+  buildDlqEntry,
+  enqueueToDlq,
   getDlqQueueName,
   listDlqJobs,
+  purgeDlqJob,
   replayDlqJob,
+  DlqJobNotFoundError,
+  DlqReplayNotAllowedError,
 } from '../../src/lib/dlq.js';
 import { createDedicatedRedisConnection, redis } from '../../src/lib/redis.js';
 import { redisConnection } from '../../src/lib/redis.js';
@@ -215,5 +220,147 @@ describe('AUD-P1-021 Redis-backed queue failure retention', () => {
     });
 
     await expect(dlqQueue.getJob(dlqJobId)).resolves.toBeFalsy();
+  });
+
+  it('enqueueToDlq e idempotente · mesma source_job_id 2x = 1 entry', async (context) => {
+    if (!redisAvailable) {
+      context.skip();
+      return;
+    }
+
+    const workerName = 'health-check';
+    const dlqName = getDlqQueueName(workerName);
+    const dlq = new Queue(dlqName, { connection: redisConnection });
+
+    cleanupTasks.push(async () => {
+      await dlq.obliterate({ force: true });
+      await dlq.close();
+    });
+
+    await dlq.obliterate({ force: true });
+
+    const sourceJobId = `audit-dedup-${Date.now()}`;
+    const entry = buildDlqEntry(
+      workerName,
+      getTenantQueueName('tenant-audit', workerName),
+      sourceJobId,
+      'first failure',
+      {
+        name: 'health-check',
+        attemptsMade: 1,
+        opts: { attempts: 1 },
+        data: { tenant_id: 'tenant-audit', trace_id: 'trace-dedup' },
+        timestamp: Date.now(),
+      },
+    );
+
+    await enqueueToDlq(workerName, entry);
+    await enqueueToDlq(workerName, { ...entry, failed_reason: 'second attempt' });
+
+    const jobs = await listDlqJobs(workerName, { limit: 50 });
+    const matches = jobs.filter((job) => job.entry.source_job_id === sourceJobId);
+    expect(matches).toHaveLength(1);
+    expect(matches[0]!.dlq_job_id).toBe(sourceJobId);
+  });
+
+  it('replayDlqJob para worker FORA da allowlist lanca DlqReplayNotAllowedError', async (context) => {
+    if (!redisAvailable) {
+      context.skip();
+      return;
+    }
+
+    const workerName = 'process-inbound'; // NAO esta em DLQ_REPLAYABLE_WORKERS
+    const dlqName = getDlqQueueName(workerName);
+    const dlq = new Queue(dlqName, { connection: redisConnection });
+
+    cleanupTasks.push(async () => {
+      await dlq.obliterate({ force: true });
+      await dlq.close();
+    });
+
+    await dlq.obliterate({ force: true });
+
+    const sourceJobId = `audit-blocked-${Date.now()}`;
+    const entry = buildDlqEntry(
+      workerName,
+      getTenantQueueName('tenant-audit', workerName),
+      sourceJobId,
+      'simulated failure',
+      {
+        name: 'process-inbound',
+        attemptsMade: 3,
+        opts: { attempts: 3 },
+        data: { tenant_id: 'tenant-audit', trace_id: 'trace-blocked' },
+      },
+    );
+
+    await enqueueToDlq(workerName, entry);
+
+    await expect(
+      replayDlqJob(workerName, sourceJobId, {
+        approvedBy: 'audit@prospix.local',
+        reason: 'attempt to replay non-allowlisted worker',
+      }),
+    ).rejects.toBeInstanceOf(DlqReplayNotAllowedError);
+
+    // Listagem ainda mostra o job · com replayable:false e replayable_reason
+    const jobs = await listDlqJobs(workerName, { limit: 50 });
+    const target = jobs.find((job) => job.entry.source_job_id === sourceJobId);
+    expect(target).toBeDefined();
+    expect(target!.replayable).toBe(false);
+    expect(target!.replayable_reason).toContain('process-inbound');
+    expect(target!.replayable_reason).toContain('runbook-dlq-replay.md');
+  });
+
+  it('purgeDlqJob remove entry com approved_by + reason · job inexistente lanca DlqJobNotFoundError', async (context) => {
+    if (!redisAvailable) {
+      context.skip();
+      return;
+    }
+
+    const workerName = 'send-messages'; // fora da allowlist mas purge nao precisa estar
+    const dlqName = getDlqQueueName(workerName);
+    const dlq = new Queue(dlqName, { connection: redisConnection });
+
+    cleanupTasks.push(async () => {
+      await dlq.obliterate({ force: true });
+      await dlq.close();
+    });
+
+    await dlq.obliterate({ force: true });
+
+    const sourceJobId = `audit-purge-${Date.now()}`;
+    const entry = buildDlqEntry(
+      workerName,
+      getTenantQueueName('tenant-audit', workerName),
+      sourceJobId,
+      'reason',
+      {
+        name: 'send-messages',
+        attemptsMade: 3,
+        opts: { attempts: 3 },
+        data: { tenant_id: 'tenant-audit', trace_id: 'trace-purge' },
+      },
+    );
+
+    await enqueueToDlq(workerName, entry);
+
+    // Verify existe
+    let jobs = await listDlqJobs(workerName, { limit: 50 });
+    expect(jobs.find((j) => j.entry.source_job_id === sourceJobId)).toBeDefined();
+
+    // Purge
+    const purgeResult = await purgeDlqJob(workerName, sourceJobId, 'audit@prospix.local', 'job processed offline');
+    expect(purgeResult.ok).toBe(true);
+    expect(typeof purgeResult.purged_at).toBe('string');
+
+    // Verify removido
+    jobs = await listDlqJobs(workerName, { limit: 50 });
+    expect(jobs.find((j) => j.entry.source_job_id === sourceJobId)).toBeUndefined();
+
+    // Purge novamente · DlqJobNotFoundError
+    await expect(
+      purgeDlqJob(workerName, sourceJobId, 'audit@prospix.local', 'retry'),
+    ).rejects.toBeInstanceOf(DlqJobNotFoundError);
   });
 });
