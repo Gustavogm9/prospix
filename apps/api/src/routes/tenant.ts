@@ -4,7 +4,7 @@ import { logger } from '../lib/logger.js';
 import { createTenantQueue } from '../lib/queue.js';
 import { createSendWhatsappJobId } from '../workers/send-whatsapp-job.js';
 import { z } from 'zod';
-import { ConversationStatus, MessageDirection, MessageSender, MessageDeliveryStatus, ScriptCategory, ScriptStatus } from '@prisma/client';
+import { ConversationStatus, LeadStatus, MessageDirection, MessageSender, MessageDeliveryStatus, ScriptCategory, ScriptStatus } from '@prisma/client';
 
 export const tenantRoutes: FastifyPluginAsync = async (app) => {
 
@@ -25,7 +25,84 @@ export const tenantRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(200).send(list);
   });
 
-  // ── 2. GET /v1/tenant/conversations/:id/messages ────────────────────────────
+  // ── 2. POST /v1/tenant/conversations ───────────────────────────────────────
+  const createConversationSchema = z.object({
+    leadId: z.string().uuid('Invalid lead ID format'),
+  });
+
+  app.post('/conversations', async (req: FastifyRequest, reply: FastifyReply) => {
+    const parsed = createConversationSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'Validation Error', message: parsed.error.errors[0]?.message });
+    }
+
+    const tenantId = req.tenantId!;
+    const { leadId } = parsed.data;
+
+    const lead = await prisma.lead.findFirst({
+      where: { id: leadId, tenantId, deletedAt: null },
+    });
+
+    if (!lead) {
+      return reply.code(404).send({ error: 'Not Found', message: 'Lead not found' });
+    }
+
+    const existing = await prisma.conversation.findFirst({
+      where: {
+        tenantId,
+        leadId,
+        status: { in: [ConversationStatus.ACTIVE, ConversationStatus.PAUSED, ConversationStatus.ESCALATED] },
+      },
+      include: { lead: true },
+      orderBy: { startedAt: 'desc' },
+    });
+
+    if (existing) {
+      return reply.code(200).send(existing);
+    }
+
+    const conversation = await prisma.$transaction(async (tx) => {
+      const created = await tx.conversation.create({
+        data: {
+          tenantId,
+          leadId,
+          status: ConversationStatus.PAUSED,
+          aiHandling: false,
+        },
+        include: { lead: true },
+      });
+
+      if (lead.status === LeadStatus.CAPTURED) {
+        await tx.lead.update({
+          where: { id: leadId },
+          data: {
+            status: LeadStatus.CONTACTED,
+            contactedAt: new Date(),
+          },
+        });
+      }
+
+      await tx.leadEvent.create({
+        data: {
+          tenantId,
+          leadId,
+          eventType: 'conversation_started',
+          actorId: req.userId || undefined,
+          payload: {
+            conversation_id: created.id,
+            source: 'manual',
+          },
+        },
+      });
+
+      return created;
+    });
+
+    logger.info({ conversationId: conversation.id, leadId }, '💬 Manual conversation created');
+    return reply.code(201).send(conversation);
+  });
+
+  // ── 3. GET /v1/tenant/conversations/:id/messages ────────────────────────────
   app.get('/conversations/:id/messages', async (req: FastifyRequest, reply: FastifyReply) => {
     const { id } = req.params as { id: string };
     const list = await prisma.message.findMany({
@@ -35,7 +112,7 @@ export const tenantRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(200).send(list);
   });
 
-  // ── 3. POST /v1/tenant/conversations/:id/messages ───────────────────────────
+  // ── 4. POST /v1/tenant/conversations/:id/messages ───────────────────────────
   const sendMsgSchema = z.object({
     content: z.string().min(1, 'Message content cannot be empty'),
   });
@@ -90,7 +167,7 @@ export const tenantRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(201).send(newMsg);
   });
 
-  // ── 4. PATCH /v1/tenant/conversations/:id ───────────────────────────────────
+  // ── 5. PATCH /v1/tenant/conversations/:id ───────────────────────────────────
   const updateConvSchema = z.object({
     aiHandling: z.boolean(),
   });
@@ -126,7 +203,7 @@ export const tenantRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(200).send(updated);
   });
 
-  // ── 5. GET /v1/tenant/scripts ───────────────────────────────────────────────
+  // ── 6. GET /v1/tenant/scripts ───────────────────────────────────────────────
   app.get('/scripts', async (req: FastifyRequest, reply: FastifyReply) => {
     const list = await prisma.script.findMany({
       where: { tenantId: req.tenantId!, archivedAt: null },

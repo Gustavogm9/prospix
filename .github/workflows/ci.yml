@@ -149,7 +149,7 @@ jobs:
           AUDIT_REQUIRE_REDIS: '1'
           DATABASE_URL: postgresql://prospix_app:prospix_dev@localhost:5432/prospix_test?schema=public
         run: |
-          pnpm --filter @prospix/api exec vitest run tests/multi-tenant tests/integration/auth-admin-login.rls-db.test.ts tests/integration/auth-refresh-revoke.redis-db.test.ts tests/integration/evolution-idempotency.redis-db.test.ts tests/integration/queue-dlq.redis.test.ts src/lib/queue.test.ts src/workers/index.test.ts --reporter=default --reporter=json --outputFile=../../audit-db-results.json
+          pnpm --filter @prospix/api exec vitest run tests/multi-tenant tests/integration/auth-admin-login.rls-db.test.ts tests/integration/auth-refresh-revoke.redis-db.test.ts tests/integration/evolution-idempotency.redis-db.test.ts tests/integration/queue-dlq.redis.test.ts tests/integration/rls-users-isolation.rls-db.test.ts src/lib/queue.test.ts src/workers/index.test.ts --reporter=default --reporter=json --outputFile=../../audit-db-results.json
           node - <<'NODE'
           const fs = require('fs');
           const results = JSON.parse(fs.readFileSync('audit-db-results.json', 'utf8'));
