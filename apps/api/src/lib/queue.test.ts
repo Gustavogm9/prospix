@@ -23,6 +23,10 @@ const loggerMocks = vi.hoisted(() => ({
   error: vi.fn(),
 }));
 
+const dlqMocks = vi.hoisted(() => ({
+  handleFailedExhausted: vi.fn(),
+}));
+
 vi.mock('bullmq', () => ({
   Queue: vi.fn().mockImplementation((name, opts) => {
     const instance = {
@@ -57,6 +61,8 @@ vi.mock('./redis.js', () => redisMocks);
 vi.mock('./logger.js', () => ({
   logger: loggerMocks,
 }));
+
+vi.mock('./dlq.js', () => dlqMocks);
 
 describe('queue failure observer', () => {
   beforeEach(() => {
@@ -141,8 +147,8 @@ describe('queue failure observer', () => {
         attempts_made: 3,
         attempts: 3,
         failed_reason: 'provider_down',
-        dlq_physical: false,
-        replay_supported: false,
+        dlq_physical: true,
+        replay_supported: 'allowlist',
         runbook: 'docs/auditoria/runbook-dlq-replay.md',
       },
     });
@@ -166,8 +172,8 @@ describe('queue failure observer', () => {
         job_id: 'job-missing',
         attempts_made: 0,
         attempts: 1,
-        dlq_physical: false,
-        replay_supported: false,
+        dlq_physical: true,
+        replay_supported: 'allowlist',
       },
     });
   });
@@ -200,11 +206,24 @@ describe('queue failure observer', () => {
         attempts_made: 3,
         attempts: 3,
         failed_reason: 'provider_down',
-        dlq_physical: false,
-        replay_supported: false,
+        dlq_physical: true,
+        replay_supported: 'allowlist',
         runbook: 'docs/auditoria/runbook-dlq-replay.md',
       }),
       'queue:failed-exhausted'
+    );
+    expect(dlqMocks.handleFailedExhausted).toHaveBeenCalledWith(
+      'send-messages',
+      'job-001',
+      'provider_down',
+      expect.objectContaining({
+        name: 'send-whatsapp',
+        attemptsMade: 3,
+        data: {
+          tenant_id: 'tenant-001',
+          trace_id: 'trace-001',
+        },
+      }),
     );
   });
 
@@ -230,10 +249,11 @@ describe('queue failure observer', () => {
         tenant_id: 'tenant-001',
         attempts_made: 1,
         attempts: 3,
-        dlq_physical: false,
-        replay_supported: false,
+        dlq_physical: true,
+        replay_supported: 'allowlist',
       }),
       'queue:retry'
     );
+    expect(dlqMocks.handleFailedExhausted).not.toHaveBeenCalled();
   });
 });

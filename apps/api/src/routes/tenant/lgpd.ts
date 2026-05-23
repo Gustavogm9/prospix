@@ -1,0 +1,252 @@
+/**
+ * Endpoints LGPD operacional · AUD-P2-033.
+ *
+ * Permite ao owner do tenant solicitar:
+ *  - EXPORT_DATA       · portabilidade (art. 18 V)
+ *  - DELETE_TENANT_DATA · exclusao do tenant inteiro (art. 18 VI)
+ *  - DELETE_LEAD_DATA  · exclusao de um lead especifico (art. 18 VI)
+ *  - CORRECT_DATA      · correcao (art. 18 III)
+ *  - CONFIRM_DATA      · confirmacao (art. 18 I)
+ *
+ * Fluxo MVP:
+ *  1. Owner POST /v1/tenant/lgpd/requests · cria registro com status PENDING
+ *  2. Endpoint retorna 202 com `request_id`
+ *  3. Operador Guilds (super-admin) processa manualmente em <= 15 dias
+ *     (queue worker virá em iteração futura · AUD-P2-033 fix incremental)
+ *  4. Quando processed, status -> COMPLETED + downloadUrl preenchido se aplicavel
+ *  5. Owner GET /v1/tenant/lgpd/requests vê histórico + status
+ *
+ * Rate limit: 3 requests/hora por tenant (anti-abuso).
+ */
+import type { FastifyPluginAsync, FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { z } from 'zod';
+import { prisma } from '../../lib/prisma.js';
+import { logger } from '../../lib/logger.js';
+import { LgpdRequestType, LgpdRequestStatus, Prisma } from '@prisma/client';
+
+const createRequestSchema = z.object({
+  type: z.nativeEnum(LgpdRequestType),
+  scope: z.record(z.unknown()).optional(),
+}).superRefine((data, ctx) => {
+  const scope = data.scope as Record<string, unknown> | undefined;
+
+  // Validation per type
+  if (data.type === 'DELETE_LEAD_DATA') {
+    const lead = scope?.lead_whatsapp;
+    if (!lead || typeof lead !== 'string') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'scope.lead_whatsapp obrigatorio para DELETE_LEAD_DATA',
+        path: ['scope', 'lead_whatsapp'],
+      });
+    }
+  }
+  if (data.type === 'CORRECT_DATA') {
+    const field = scope?.field;
+    if (!field || typeof field !== 'string') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'scope.field obrigatorio para CORRECT_DATA',
+        path: ['scope', 'field'],
+      });
+    }
+  }
+});
+
+const cancelRequestSchema = z.object({
+  reason: z.string().min(1).max(500).optional(),
+});
+
+export const lgpdRoutes: FastifyPluginAsync = async (app) => {
+  registerTenantLgpdRoutes(app);
+};
+
+export function registerTenantLgpdRoutes(app: FastifyInstance): void {
+  // ── GET /requests · lista requests do tenant ──────────────────────────────
+  app.get('/requests', async (req: FastifyRequest, reply: FastifyReply) => {
+    const tenantId = (req as FastifyRequest & { tenantId?: string }).tenantId;
+    if (!tenantId) {
+      return reply.status(401).send({
+        error: { code: 'UNAUTHENTICATED', message: 'Tenant context missing' },
+      });
+    }
+
+    const requests = await prisma.lgpdRequest.findMany({
+      where: { tenantId },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      select: {
+        id: true,
+        type: true,
+        status: true,
+        scope: true,
+        downloadUrl: true,
+        downloadExpiresAt: true,
+        rejectionReason: true,
+        createdAt: true,
+        processedAt: true,
+        updatedAt: true,
+      },
+    });
+
+    return reply.send({ data: requests });
+  });
+
+  // ── POST /lgpd/requests · cria nova solicitacao ──────────────────────────
+  app.post('/requests', async (req: FastifyRequest, reply: FastifyReply) => {
+    const tenantId = (req as FastifyRequest & { tenantId?: string }).tenantId;
+    const userId = (req as FastifyRequest & { userId?: string }).userId;
+
+    if (!tenantId || !userId) {
+      return reply.status(401).send({
+        error: { code: 'UNAUTHENTICATED', message: 'Tenant/user context missing' },
+      });
+    }
+
+    const parsed = createRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.status(422).send({
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Payload invalido',
+          details: parsed.error.flatten(),
+        },
+      });
+    }
+
+    // Anti-abuso: max 3 requests pendentes simultaneos por tenant
+    const pendingCount = await prisma.lgpdRequest.count({
+      where: {
+        tenantId,
+        status: { in: [LgpdRequestStatus.PENDING, LgpdRequestStatus.PROCESSING] },
+      },
+    });
+    if (pendingCount >= 3) {
+      return reply.status(429).send({
+        error: {
+          code: 'RATE_LIMITED',
+          message: 'Voce ja tem 3 solicitacoes LGPD em andamento. Aguarde processamento.',
+        },
+      });
+    }
+
+    const request = await prisma.lgpdRequest.create({
+      data: {
+        tenantId,
+        requestedByUserId: userId,
+        type: parsed.data.type,
+        status: LgpdRequestStatus.PENDING,
+        scope: parsed.data.scope as Prisma.InputJsonValue | undefined,
+      },
+      select: {
+        id: true,
+        type: true,
+        status: true,
+        scope: true,
+        createdAt: true,
+      },
+    });
+
+    logger.info(
+      {
+        tenant_id: tenantId,
+        user_id: userId,
+        lgpd_request_id: request.id,
+        lgpd_request_type: request.type,
+      },
+      'lgpd:request-created',
+    );
+
+    return reply.status(202).send({
+      data: {
+        ...request,
+        sla: {
+          message: 'Sua solicitacao foi registrada. Resposta em ate 15 dias uteis (LGPD art. 19).',
+          estimated_resolution_days: 15,
+        },
+      },
+    });
+  });
+
+  // ── GET /lgpd/requests/:id · detalhe ─────────────────────────────────────
+  app.get('/requests/:id', async (req: FastifyRequest, reply: FastifyReply) => {
+    const tenantId = (req as FastifyRequest & { tenantId?: string }).tenantId;
+    if (!tenantId) {
+      return reply.status(401).send({
+        error: { code: 'UNAUTHENTICATED', message: 'Tenant context missing' },
+      });
+    }
+    const { id } = req.params as { id: string };
+
+    const request = await prisma.lgpdRequest.findFirst({
+      where: { id, tenantId },
+    });
+    if (!request) {
+      return reply.status(404).send({
+        error: { code: 'RESOURCE_NOT_FOUND', message: 'Solicitacao nao encontrada' },
+      });
+    }
+
+    return reply.send({ data: request });
+  });
+
+  // ── POST /lgpd/requests/:id/cancel · usuário cancela request pendente ────
+  app.post('/requests/:id/cancel', async (req: FastifyRequest, reply: FastifyReply) => {
+    const tenantId = (req as FastifyRequest & { tenantId?: string }).tenantId;
+    if (!tenantId) {
+      return reply.status(401).send({
+        error: { code: 'UNAUTHENTICATED', message: 'Tenant context missing' },
+      });
+    }
+    const { id } = req.params as { id: string };
+
+    const parsed = cancelRequestSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return reply.status(422).send({
+        error: { code: 'VALIDATION_ERROR', message: parsed.error.message },
+      });
+    }
+
+    const existing = await prisma.lgpdRequest.findFirst({
+      where: { id, tenantId },
+      select: { id: true, status: true },
+    });
+    if (!existing) {
+      return reply.status(404).send({
+        error: { code: 'RESOURCE_NOT_FOUND', message: 'Solicitacao nao encontrada' },
+      });
+    }
+    if (existing.status !== LgpdRequestStatus.PENDING) {
+      return reply.status(409).send({
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: `So e possivel cancelar requests em PENDING (atual: ${existing.status})`,
+        },
+      });
+    }
+
+    const updated = await prisma.lgpdRequest.update({
+      where: { id },
+      data: {
+        status: LgpdRequestStatus.CANCELED,
+        rejectionReason: parsed.data.reason ?? 'Cancelado pelo usuario',
+      },
+      select: {
+        id: true,
+        status: true,
+        rejectionReason: true,
+        updatedAt: true,
+      },
+    });
+
+    logger.info(
+      {
+        tenant_id: tenantId,
+        lgpd_request_id: id,
+      },
+      'lgpd:request-canceled',
+    );
+
+    return reply.send({ data: updated });
+  });
+}

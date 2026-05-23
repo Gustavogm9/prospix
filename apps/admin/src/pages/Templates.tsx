@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, Button, toast, Badge, Modal } from '@prospix/ui';
-import { Plus, Edit3, Trash2, Layers, AlertTriangle } from 'lucide-react';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, Button, toast, Badge, Modal, Skeleton } from '@prospix/ui';
+import { Plus, Edit3, Trash2, Layers, AlertTriangle, Inbox, AlertCircle, RotateCw } from 'lucide-react';
 import { adminApiClient } from '../lib/api-client';
 
 interface ScriptNode {
@@ -22,6 +22,8 @@ interface Template {
 
 export default function Templates() {
   const [templates, setTemplates] = useState<Template[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [isEditingJson, setIsEditingJson] = useState(false);
   const [jsonString, setJsonString] = useState('');
@@ -31,6 +33,8 @@ export default function Templates() {
   const [templateToDelete, setTemplateToDelete] = useState<string | null>(null);
 
   const fetchTemplates = async () => {
+    setIsLoading(true);
+    setLoadError(null);
     try {
       const response = await adminApiClient.get('/admin/templates');
       const data = response.data.data || [];
@@ -53,7 +57,11 @@ export default function Templates() {
       setTemplates(mapped);
     } catch (err: any) {
       console.error('Error fetching templates:', err);
-      toast.error('Erro de Conexão', 'Não foi possível carregar a lista de templates.');
+      const message = err?.response?.data?.error?.message || err?.message || 'Não foi possível carregar a lista de templates.';
+      setLoadError(message);
+      toast.error('Erro de Conexão', message);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -154,6 +162,66 @@ export default function Templates() {
 
       {!isEditingJson ? (
         /* Template List */
+        isLoading ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 flex-1 overflow-y-auto" data-testid="templates-loading-state">
+            {Array.from({ length: 4 }).map((_, idx) => (
+              <Card key={`tpl-skeleton-${idx}`} className="bg-surface border-border shadow-sm">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Skeleton className="h-4 w-16 rounded" />
+                    <Skeleton className="h-3 w-20" />
+                  </div>
+                  <Skeleton className="h-5 w-48 mb-3" />
+                  <Skeleton className="h-3 w-full mb-1" />
+                  <Skeleton className="h-3 w-3/4" />
+                </CardHeader>
+                <CardContent className="pt-3 border-t border-border mt-4 flex items-center justify-between">
+                  <Skeleton className="h-3 w-40" />
+                  <div className="flex gap-2">
+                    <Skeleton className="h-8 w-24 rounded-lg" />
+                    <Skeleton className="h-8 w-8 rounded-lg" />
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        ) : loadError ? (
+          <Card className="bg-surface border-border flex-1 overflow-hidden flex flex-col items-center justify-center py-16" data-testid="templates-error-state">
+            <div className="w-12 h-12 rounded-full bg-error-soft flex items-center justify-center mb-3">
+              <AlertCircle className="w-6 h-6 text-error-text" />
+            </div>
+            <div className="text-sm font-semibold text-text">Não conseguimos carregar a biblioteca</div>
+            <div className="text-xs text-text-secondary mt-1 max-w-md text-center px-6">{loadError}</div>
+            <Button
+              variant="outline"
+              size="compact"
+              onClick={fetchTemplates}
+              className="mt-4 flex items-center gap-1.5"
+            >
+              <RotateCw className="w-3.5 h-3.5" />
+              <span>Tentar novamente</span>
+            </Button>
+          </Card>
+        ) : templates.length === 0 ? (
+          <Card className="bg-surface border-border flex-1 overflow-hidden flex flex-col items-center justify-center py-16" data-testid="templates-empty-state">
+            <div className="w-12 h-12 rounded-full bg-surface-sunken flex items-center justify-center mb-3">
+              <Inbox className="w-6 h-6 text-text-muted" />
+            </div>
+            <div className="text-sm font-semibold text-text">Nenhum template master criado</div>
+            <div className="text-xs text-text-secondary mt-1 max-w-md text-center px-6">
+              Templates master são clonados por novos tenants durante o onboarding. Crie o primeiro com o botão acima.
+            </div>
+            <Button
+              variant="outline"
+              size="compact"
+              onClick={handleCreateNew}
+              className="mt-4 flex items-center gap-1.5"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Criar primeiro template</span>
+            </Button>
+          </Card>
+        ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 flex-1 overflow-y-auto">
           {templates.map((tpl) => (
             <Card key={tpl.id} className="bg-surface border-border flex flex-col justify-between shadow-sm hover:shadow-md transition-all duration-200">
@@ -201,6 +269,7 @@ export default function Templates() {
             </Card>
           ))}
         </div>
+        )
       ) : (
         /* Grafo / Node JSON Editor */
         <Card className="bg-surface border-border flex-1 overflow-hidden flex flex-col shadow-md animate-in slide-in-from-bottom-4 duration-300">

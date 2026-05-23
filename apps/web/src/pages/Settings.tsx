@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, Button, Input, Tabs, TabsList, TabsTrigger, TabsContent, Badge, toast } from '@prospix/ui';
-import { Settings as SettingsIcon, Shield, CreditCard, Key, Calendar, Phone, Copy, Loader2, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
+import { Settings as SettingsIcon, Shield, CreditCard, Key, Calendar, Phone, Copy, Loader2, CheckCircle2, AlertCircle, RefreshCw, FileText } from 'lucide-react';
 import { useAuthStore } from '../store/auth-store';
 import { apiClient } from '../lib/api-client';
 import { canUseMockFallbacks } from '../lib/demo-mode';
+import PrivacyTab from './settings/PrivacyTab';
 
 export default function Settings() {
   const { user } = useAuthStore();
@@ -167,6 +168,14 @@ export default function Settings() {
             >
               <CreditCard className="w-4 h-4 mr-2.5" />
               Faturamento Asaas
+            </TabsTrigger>
+            <TabsTrigger
+              value="privacidade"
+              className="w-full text-left justify-start px-3 py-2.5 rounded-xl text-xs font-semibold hover:bg-surface-sunken text-text-secondary data-[state=active]:bg-primary data-[state=active]:text-white transition-all"
+              data-testid="settings-privacy-tab"
+            >
+              <FileText className="w-4 h-4 mr-2.5" />
+              Privacidade & Dados
             </TabsTrigger>
           </TabsList>
         </Card>
@@ -568,6 +577,11 @@ export default function Settings() {
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* TAB 4: PRIVACIDADE & DADOS (AUD-P2-033) */}
+          <TabsContent value="privacidade" className="m-0">
+            <PrivacyTab />
           </TabsContent>
         </div>
       </Tabs>

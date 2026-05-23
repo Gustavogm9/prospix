@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Card, CardContent, Button, Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell, toast, Input, Modal } from '@prospix/ui';
-import { Search, Ban, Play } from 'lucide-react';
+import { Card, CardContent, Button, Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell, toast, Input, Modal, Skeleton } from '@prospix/ui';
+import { Search, Ban, Play, Inbox, AlertCircle, RotateCw } from 'lucide-react';
 import { adminApiClient } from '../lib/api-client';
 
 interface Tenant {
@@ -17,6 +17,8 @@ interface Tenant {
 
 export default function Tenants() {
   const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'suspended'>('all');
   const [suspendModal, setSuspendModal] = useState<{ isOpen: boolean; tenantId: string | null }>({
@@ -25,6 +27,8 @@ export default function Tenants() {
   });
 
   const fetchTenants = async () => {
+    setIsLoading(true);
+    setLoadError(null);
     try {
       const response = await adminApiClient.get('/admin/tenants');
       const data = response.data.data || [];
@@ -62,7 +66,11 @@ export default function Tenants() {
       setTenants(mapped);
     } catch (err: any) {
       console.error('Error fetching tenants:', err);
-      toast.error('Erro de Conexão', 'Não foi possível carregar a lista de tenants.');
+      const message = err?.response?.data?.error?.message || err?.message || 'Não foi possível carregar a lista de tenants.';
+      setLoadError(message);
+      toast.error('Erro de Conexão', message);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -206,7 +214,76 @@ export default function Tenants() {
               </TableRow>
             </TableHeader>
             <TableBody className="divide-y divide-border-subtle/40">
-              {filteredTenants.map((t) => (
+              {isLoading ? (
+                Array.from({ length: 5 }).map((_, idx) => (
+                  <TableRow key={`skeleton-${idx}`} className="hover:bg-transparent" data-testid="tenants-loading-row">
+                    <TableCell className="py-3.5 px-6"><Skeleton className="h-3.5 w-40 mb-1.5" /><Skeleton className="h-2.5 w-24" /></TableCell>
+                    <TableCell className="py-3.5 px-6"><Skeleton className="h-3.5 w-32 mb-1.5" /><Skeleton className="h-2.5 w-28" /></TableCell>
+                    <TableCell className="py-3.5 px-6"><Skeleton className="h-3.5 w-20 mb-1.5" /><Skeleton className="h-2.5 w-16" /></TableCell>
+                    <TableCell className="py-3.5 px-6"><Skeleton className="h-5 w-16 rounded-full" /></TableCell>
+                    <TableCell className="py-3.5 px-6"><Skeleton className="h-5 w-20 rounded-full" /></TableCell>
+                    <TableCell className="py-3.5 px-6 text-right"><Skeleton className="h-7 w-24 rounded-md ml-auto" /></TableCell>
+                  </TableRow>
+                ))
+              ) : loadError ? (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={6} className="py-16 px-6">
+                    <div className="flex flex-col items-center justify-center gap-3 text-center" data-testid="tenants-error-state">
+                      <div className="w-12 h-12 rounded-full bg-error-soft flex items-center justify-center">
+                        <AlertCircle className="w-6 h-6 text-error-text" />
+                      </div>
+                      <div>
+                        <div className="text-sm font-semibold text-text">Não conseguimos carregar a lista</div>
+                        <div className="text-xs text-text-secondary mt-1 max-w-md">{loadError}</div>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="compact"
+                        onClick={fetchTenants}
+                        className="mt-2 flex items-center gap-1.5"
+                      >
+                        <RotateCw className="w-3.5 h-3.5" />
+                        <span>Tentar novamente</span>
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ) : filteredTenants.length === 0 ? (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={6} className="py-16 px-6">
+                    <div className="flex flex-col items-center justify-center gap-3 text-center" data-testid="tenants-empty-state">
+                      <div className="w-12 h-12 rounded-full bg-surface-sunken flex items-center justify-center">
+                        <Inbox className="w-6 h-6 text-text-muted" />
+                      </div>
+                      <div>
+                        <div className="text-sm font-semibold text-text">
+                          {tenants.length === 0
+                            ? 'Nenhum tenant criado ainda'
+                            : 'Nenhum tenant corresponde aos filtros'}
+                        </div>
+                        <div className="text-xs text-text-secondary mt-1 max-w-md">
+                          {tenants.length === 0
+                            ? 'Use o botão "Novo Tenant" para criar o primeiro workspace e enviar o código de convite.'
+                            : 'Ajuste a busca ou troque o filtro de status para ver outros tenants.'}
+                        </div>
+                      </div>
+                      {tenants.length > 0 && (search || filterStatus !== 'all') && (
+                        <Button
+                          variant="ghost"
+                          size="compact"
+                          onClick={() => {
+                            setSearch('');
+                            setFilterStatus('all');
+                          }}
+                          className="mt-2"
+                        >
+                          Limpar filtros
+                        </Button>
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ) : filteredTenants.map((t) => (
                 <TableRow key={t.id} className="hover:bg-surface-sunken/40">
                   <TableCell className="py-3.5 px-6 font-medium text-text">
                     <div>

@@ -140,6 +140,9 @@ export async function enqueueToDlq(workerName: string, entry: DlqEntry): Promise
         attempts_made: entry.attempts_made,
         attempts: entry.attempts,
         failed_reason: entry.failed_reason,
+        alert: true,
+        severity: 'critical',
+        action_required: 'manual-dlq-triage',
         runbook: 'docs/auditoria/runbook-dlq-replay.md',
       },
       'queue:dlq-enqueued',
@@ -258,7 +261,7 @@ export interface DlqReplayResult {
  *  1. Worker DEVE estar em DLQ_REPLAYABLE_WORKERS (senao lanca DlqReplayNotAllowedError)
  *  2. Job DEVE existir na DLQ (senao lanca DlqJobNotFoundError)
  *  3. Reenfileira na fila original com o source_payload + replay_metadata
- *  4. Marca DLQ job como 'completed' com return value contendo timestamp + replay_into
+ *  4. Remove o item pendente da DLQ apos replay para impedir reprocessamento duplicado
  *  5. Loga 'queue:dlq-replayed' com approvedBy + reason
  *
  * Em dry-run: apenas valida (passos 1-2), NAO toca em fila nem marca o job.
@@ -337,12 +340,9 @@ export async function replayDlqJob(
       await targetQueue.close();
     }
 
-    // Marca o DLQ job como completed (preserva historico mas tira da lista de pendentes)
-    await job.moveToCompleted(
-      { replayed_at: replayedAt, replayed_into: entry.source_queue, new_job_id: replayJobId },
-      'manual-replay',
-      false,
-    );
+    // Remove da DLQ pendente apos reenfileirar. O rastro auditavel fica no log
+    // estruturado `queue:dlq-replayed` e no novo job com `_replay_metadata`.
+    await job.remove();
 
     logger.info(
       {

@@ -2098,6 +2098,209 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/tenant/lgpd/requests": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Lista solicitações LGPD do tenant
+         * @description Retorna até 100 solicitações ordenadas por data desc.
+         *     Inclui status, scope, downloadUrl (se COMPLETED) e timestamps.
+         */
+        readonly get: {
+            readonly parameters: {
+                readonly query?: never;
+                readonly header?: never;
+                readonly path?: never;
+                readonly cookie?: never;
+            };
+            readonly requestBody?: never;
+            readonly responses: {
+                /** @description Lista de solicitações */
+                readonly 200: {
+                    headers: {
+                        readonly [name: string]: unknown;
+                    };
+                    content: {
+                        readonly "application/json": {
+                            readonly data?: readonly components["schemas"]["LgpdRequest"][];
+                        };
+                    };
+                };
+            };
+        };
+        readonly put?: never;
+        /**
+         * Cria nova solicitação LGPD (art. 18)
+         * @description Tipos suportados:
+         *     - `EXPORT_DATA` · portabilidade (art. 18 V)
+         *     - `DELETE_TENANT_DATA` · exclusão do tenant (art. 18 VI)
+         *     - `DELETE_LEAD_DATA` · exclusão de lead específico (requer `scope.lead_whatsapp`)
+         *     - `CORRECT_DATA` · correção (requer `scope.field`)
+         *     - `CONFIRM_DATA` · confirmação da existência (art. 18 I)
+         *
+         *     Rate limit: máximo 3 requests PENDING/PROCESSING simultâneos por tenant.
+         *     SLA de resposta: 15 dias úteis (LGPD art. 19).
+         */
+        readonly post: {
+            readonly parameters: {
+                readonly query?: never;
+                readonly header?: never;
+                readonly path?: never;
+                readonly cookie?: never;
+            };
+            readonly requestBody: {
+                readonly content: {
+                    readonly "application/json": {
+                        /** @enum {string} */
+                        readonly type: "EXPORT_DATA" | "DELETE_TENANT_DATA" | "DELETE_LEAD_DATA" | "CORRECT_DATA" | "CONFIRM_DATA";
+                        /**
+                         * @description Depende de `type`:
+                         *     - DELETE_LEAD_DATA: `{ lead_whatsapp: string }`
+                         *     - CORRECT_DATA: `{ field: string, oldValue?, newValue? }`
+                         *     - EXPORT_DATA: `{ include?: ["leads","conversations","meetings","scripts"] }`
+                         */
+                        readonly scope?: {
+                            readonly [key: string]: unknown;
+                        };
+                    };
+                };
+            };
+            readonly responses: {
+                /** @description Solicitação registrada */
+                readonly 202: {
+                    headers: {
+                        readonly [name: string]: unknown;
+                    };
+                    content: {
+                        readonly "application/json": {
+                            readonly data?: components["schemas"]["LgpdRequest"] & {
+                                readonly sla?: {
+                                    readonly message?: string;
+                                    readonly estimated_resolution_days?: number;
+                                };
+                            };
+                        };
+                    };
+                };
+                readonly 422: components["responses"]["ValidationError"];
+                /** @description Rate limit (max 3 PENDING/PROCESSING simultâneos) */
+                readonly 429: {
+                    headers: {
+                        readonly [name: string]: unknown;
+                    };
+                    content: {
+                        readonly "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+            };
+        };
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/tenant/lgpd/requests/{id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Detalhe de uma solicitação LGPD */
+        readonly get: {
+            readonly parameters: {
+                readonly query?: never;
+                readonly header?: never;
+                readonly path: {
+                    readonly id: string;
+                };
+                readonly cookie?: never;
+            };
+            readonly requestBody?: never;
+            readonly responses: {
+                /** @description Detalhe */
+                readonly 200: {
+                    headers: {
+                        readonly [name: string]: unknown;
+                    };
+                    content: {
+                        readonly "application/json": {
+                            readonly data?: components["schemas"]["LgpdRequest"];
+                        };
+                    };
+                };
+                readonly 404: components["responses"]["NotFound"];
+            };
+        };
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/tenant/lgpd/requests/{id}/cancel": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Cancela solicitação ainda PENDING */
+        readonly post: {
+            readonly parameters: {
+                readonly query?: never;
+                readonly header?: never;
+                readonly path: {
+                    readonly id: string;
+                };
+                readonly cookie?: never;
+            };
+            readonly requestBody?: {
+                readonly content: {
+                    readonly "application/json": {
+                        readonly reason?: string;
+                    };
+                };
+            };
+            readonly responses: {
+                /** @description Cancelada */
+                readonly 200: {
+                    headers: {
+                        readonly [name: string]: unknown;
+                    };
+                    content: {
+                        readonly "application/json": {
+                            readonly data?: components["schemas"]["LgpdRequest"];
+                        };
+                    };
+                };
+                readonly 404: components["responses"]["NotFound"];
+                /** @description Já está em PROCESSING ou COMPLETED — não pode cancelar */
+                readonly 409: {
+                    headers: {
+                        readonly [name: string]: unknown;
+                    };
+                    content: {
+                        readonly "application/json": components["schemas"]["ErrorResponse"];
+                    };
+                };
+            };
+        };
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/tenant/notifications/preferences": {
         readonly parameters: {
             readonly query?: never;
@@ -3403,6 +3606,29 @@ export interface components {
                 readonly messageTimestamp?: number;
             };
         };
+        /** @description Solicitação de direito do titular LGPD (art. 18) */
+        readonly LgpdRequest: {
+            /** Format: uuid */
+            readonly id?: string;
+            /** @enum {string} */
+            readonly type?: "EXPORT_DATA" | "DELETE_TENANT_DATA" | "DELETE_LEAD_DATA" | "CORRECT_DATA" | "CONFIRM_DATA";
+            /** @enum {string} */
+            readonly status?: "PENDING" | "PROCESSING" | "COMPLETED" | "REJECTED" | "CANCELED";
+            readonly scope?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /** @description R2 presigned URL · só presente quando status=COMPLETED */
+            readonly downloadUrl?: string | null;
+            /** Format: date-time */
+            readonly downloadExpiresAt?: string | null;
+            readonly rejectionReason?: string | null;
+            /** Format: date-time */
+            readonly processedAt?: string | null;
+            /** Format: date-time */
+            readonly createdAt?: string;
+            /** Format: date-time */
+            readonly updatedAt?: string;
+        };
         readonly Invitation: {
             /** Format: uuid */
             readonly id?: string;
@@ -3523,6 +3749,7 @@ export type SchemaNotification = components['schemas']['Notification'];
 export type SchemaNotificationChannel = components['schemas']['NotificationChannel'];
 export type SchemaNotificationPreference = components['schemas']['NotificationPreference'];
 export type SchemaEvolutionInboundPayload = components['schemas']['EvolutionInboundPayload'];
+export type SchemaLgpdRequest = components['schemas']['LgpdRequest'];
 export type SchemaInvitation = components['schemas']['Invitation'];
 export type SchemaErrorResponse = components['schemas']['ErrorResponse'];
 export type ResponseUnauthenticated = components['responses']['Unauthenticated'];

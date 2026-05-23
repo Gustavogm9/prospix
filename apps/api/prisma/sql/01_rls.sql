@@ -62,7 +62,9 @@ ALTER TABLE tenant_secrets         FORCE ROW LEVEL SECURITY;
 ALTER TABLE tenant_ai_configs      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tenant_ai_configs      FORCE ROW LEVEL SECURITY;
 ALTER TABLE tenant_invitations     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lgpd_requests          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tenant_invitations     FORCE ROW LEVEL SECURITY;
+ALTER TABLE lgpd_requests          FORCE ROW LEVEL SECURITY;
 ALTER TABLE campaigns              ENABLE ROW LEVEL SECURITY;
 ALTER TABLE campaigns              FORCE ROW LEVEL SECURITY;
 ALTER TABLE leads                  ENABLE ROW LEVEL SECURITY;
@@ -127,6 +129,10 @@ CREATE POLICY tenant_isolation_tenant_ai_configs ON tenant_ai_configs
 
 DROP POLICY IF EXISTS tenant_isolation_tenant_invitations ON tenant_invitations;
 CREATE POLICY tenant_isolation_tenant_invitations ON tenant_invitations
+  FOR ALL USING (tenant_id = current_tenant_id());
+
+DROP POLICY IF EXISTS tenant_isolation_lgpd_requests ON lgpd_requests;
+CREATE POLICY tenant_isolation_lgpd_requests ON lgpd_requests
   FOR ALL USING (tenant_id = current_tenant_id());
 
 DROP POLICY IF EXISTS tenant_isolation_campaigns ON campaigns;

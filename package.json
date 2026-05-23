@@ -22,6 +22,7 @@
     "test:e2e:smoke": "playwright test",
     "test:e2e:smoke:install": "playwright install --with-deps chromium",
     "test:multi-tenant": "pnpm --filter @prospix/api exec vitest run tests/multi-tenant",
+    "test:audit:db": "pnpm --filter @prospix/api test:audit:db",
     "db:migrate": "pnpm --filter @prospix/api db:migrate",
     "db:seed": "pnpm --filter @prospix/api db:seed",
     "db:studio": "pnpm --filter @prospix/api db:studio",

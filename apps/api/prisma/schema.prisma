@@ -234,6 +234,7 @@ model Tenant {
   notes              LeadNote[]
   pendingOutbound    PendingOutbound[]
   tenantNotes        TenantNote[]
+  lgpdRequests       LgpdRequest[]
   promptVersions     PromptVersion[]
   idempotencyKeys    IdempotencyKey[]
 
@@ -334,6 +335,65 @@ model TenantInvitation {
 }
 
 // =============================================================================
+// LGPD REQUESTS (AUD-P2-033 · solicitacoes do tenant ou de leads)
+// Direitos do titular · LGPD art. 18
+// =============================================================================
+
+enum LgpdRequestType {
+  EXPORT_DATA          // art. 18 V · portabilidade
+  DELETE_TENANT_DATA   // art. 18 VI · exclusao do tenant inteiro
+  DELETE_LEAD_DATA     // art. 18 VI · exclusao de um lead especifico
+  CORRECT_DATA         // art. 18 III · correcao
+  CONFIRM_DATA         // art. 18 I  · confirmacao da existencia
+}
+
+enum LgpdRequestStatus {
+  PENDING              // criado · aguarda processamento Guilds
+  PROCESSING           // operador Guilds esta executando
+  COMPLETED            // resolvido · download disponivel se aplicavel
+  REJECTED             // recusado · com motivo registrado
+  CANCELED             // user cancelou
+}
+
+model LgpdRequest {
+  id                String             @id @default(uuid()) @db.Uuid
+  tenantId          String             @map("tenant_id") @db.Uuid
+  tenant            Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Quem solicitou
+  requestedByUserId String?            @map("requested_by_user_id") @db.Uuid     // owner/assistant
+  requestedByUser   User?              @relation("LgpdRequestedBy", fields: [requestedByUserId], references: [id])
+  requestedByLead   String?            @map("requested_by_lead") @db.VarChar(24) // WhatsApp do lead quando vem via webhook
+
+  type              LgpdRequestType
+  status            LgpdRequestStatus  @default(PENDING)
+
+  // Escopo (depende do tipo)
+  // EXPORT_DATA: { include?: ["leads","conversations","meetings","scripts"] }
+  // DELETE_LEAD_DATA: { lead_whatsapp: string }
+  // CORRECT_DATA: { field: string, oldValue, newValue }
+  scope             Json?
+
+  // Output
+  downloadUrl       String?            @map("download_url") @db.Text   // R2 presigned URL
+  downloadExpiresAt DateTime?          @map("download_expires_at") @db.Timestamptz()
+  rejectionReason   String?            @map("rejection_reason") @db.Text
+
+  // Audit
+  processedAt       DateTime?          @map("processed_at") @db.Timestamptz()
+  processedById     String?            @map("processed_by_id") @db.Uuid     // guilds_admin que executou
+  processedBy       User?              @relation("LgpdProcessedBy", fields: [processedById], references: [id])
+
+  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt         DateTime           @updatedAt @map("updated_at") @db.Timestamptz()
+
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([requestedByUserId])
+  @@map("lgpd_requests")
+}
+
+// =============================================================================
 // USER (per tenant · owner ou assistant + guilds_admin sem tenant)
 // =============================================================================
 
@@ -370,6 +430,8 @@ model User {
   notesTenant        TenantNote[]
   promptsCreated     PromptVersion[]
   auditLogs          AuditLog[]
+  lgpdRequested      LgpdRequest[]            @relation("LgpdRequestedBy")
+  lgpdProcessed      LgpdRequest[]            @relation("LgpdProcessedBy")
 
   @@index([tenantId])
   @@index([email])
