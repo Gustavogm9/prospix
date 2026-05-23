@@ -74,3 +74,42 @@ Use linguagem objetiva e auditavel:
 - Codex audita e decide gate.
 - Claude revisa os achados altos/criticos e desafia conclusoes sem evidencia.
 - Gustavo decide prioridades de negocio e aceitacao excepcional de risco.
+
+## Formato oficial de saida multiagente
+
+Toda entrega de agente, handoff ou revisao deve usar esta estrutura quando o trabalho for auditavel:
+
+```markdown
+## Resumo
+- O que foi feito:
+- O que mudou para o usuario/sistema:
+
+## Arquivos tocados
+- `path` - motivo
+
+## Evidencias
+- Comando/teste:
+- Resultado:
+- Forca E0-E5:
+
+## Lacunas
+- Nao verificado:
+- Motivo:
+- Evidencia necessaria:
+
+## Riscos
+- Risco residual:
+- Severidade:
+- Mitigacao:
+
+## Handoff
+- Proximo dono:
+- Proxima acao:
+- Bloqueadores:
+
+## Gate
+- Decisao esperada: LIBERADO / LIBERADO COM RESSALVA / BLOQUEADO / NAO DETERMINADO
+- Justificativa:
+```
+
+Se o agente nao conseguir preencher `Evidencias`, a decisao padrao do auditor e `NAO DETERMINADO`.

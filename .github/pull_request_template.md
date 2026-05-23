@@ -15,6 +15,14 @@
 
 <!-- Link para a tarefa específica no spec, ex: docs/agents/frente-b-captura.md#b3 · algoritmo-fit-score -->
 
+## Tarefa multiagente
+
+<!-- ID MA-YYYYMMDD-NN e link para issue/pacote em docs/auditoria/template-pacote-tarefa.md, se aplicável -->
+
+- ID:
+- Issue:
+- Pacote:
+
 ## Mudanças
 
 <!-- Bullet points objetivos · o "o quê", não o "como" -->

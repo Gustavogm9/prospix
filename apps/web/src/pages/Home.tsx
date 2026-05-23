@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, FunnelChart, BarChart, Badge, Button } from '@prospix/ui';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, FunnelChart, BarChart, Badge, Button, toast } from '@prospix/ui';
 import { Calendar, MessageSquare, AlertCircle, UserPlus, ArrowUpRight, Flame } from 'lucide-react';
 import { apiClient } from '../lib/api-client';
+import { canUseMockFallbacks } from '../lib/demo-mode';
 import { useNavigate } from 'react-router-dom';
 
 interface DashboardStats {
@@ -28,43 +29,67 @@ export default function Home() {
 
   useEffect(() => {
     const fetchDashboardData = async () => {
+      const fallbackStats: DashboardStats = {
+        todayMeetings: 3,
+        pendingConversations: 8,
+        needsAttention: 5,
+        newLeadsToday: 14,
+        funnelData: [
+          { stage: 'Capturado', value: 120, color: '#1B3A6B' },
+          { stage: 'Contatado', value: 85, color: '#3b82f6' },
+          { stage: 'Qualificado', value: 50, color: '#6366f1' },
+          { stage: 'Agendado', value: 28, color: '#06b6d4' },
+          { stage: 'Negociação', value: 12, color: '#10b981' },
+          { stage: 'Fechado', value: 6, color: '#10b981' },
+        ],
+        weeklyPerformance: [
+          { label: 'Seg', value: 4 },
+          { label: 'Ter', value: 12 },
+          { label: 'Qua', value: 8 },
+          { label: 'Qui', value: 14 },
+          { label: 'Sex', value: 10 },
+        ],
+        hotLeads: [
+          { id: '1', name: 'Marcos de Oliveira', city: 'São Paulo - SP', fitScore: 9.4, phone: '+55 11 98888-7777', status: 'Qualificado' },
+          { id: '2', name: 'Ana Beatriz Reis', city: 'Rio de Janeiro - RJ', fitScore: 8.8, phone: '+55 21 97777-6666', status: 'Contatado' },
+          { id: '3', name: 'Indústrias Metalúrgicas Alfa', city: 'Campinas - SP', fitScore: 8.5, phone: '+55 19 96666-5555', status: 'Capturado' },
+        ],
+      };
+      const emptyStats: DashboardStats = {
+        todayMeetings: 0,
+        pendingConversations: 0,
+        needsAttention: 0,
+        newLeadsToday: 0,
+        funnelData: [],
+        weeklyPerformance: [],
+        hotLeads: [],
+      };
+      const defaultStats = canUseMockFallbacks ? fallbackStats : emptyStats;
+
       try {
-        // Fetch real API data if backend is available, or use realistic mock with beautiful data
-        const response = await apiClient.get('/today').catch(() => null);
+        const response = await apiClient.get('/tenant/dashboard/today');
         
         if (response?.data) {
-          setStats(response.data);
-        } else {
-          // Robust elegant fallback mock data aligned with design-system.md
+          const data = response.data.data ?? response.data;
           setStats({
-            todayMeetings: 3,
-            pendingConversations: 8,
-            needsAttention: 5,
-            newLeadsToday: 14,
-            funnelData: [
-              { stage: 'Capturado', value: 120, color: '#1B3A6B' },
-              { stage: 'Contatado', value: 85, color: '#3b82f6' },
-              { stage: 'Qualificado', value: 50, color: '#6366f1' },
-              { stage: 'Agendado', value: 28, color: '#06b6d4' },
-              { stage: 'Negociação', value: 12, color: '#10b981' },
-              { stage: 'Fechado', value: 6, color: '#10b981' },
-            ],
-            weeklyPerformance: [
-              { label: 'Seg', value: 4 },
-              { label: 'Ter', value: 12 },
-              { label: 'Qua', value: 8 },
-              { label: 'Qui', value: 14 },
-              { label: 'Sex', value: 10 },
-            ],
-            hotLeads: [
-              { id: '1', name: 'Marcos de Oliveira', city: 'São Paulo - SP', fitScore: 9.4, phone: '+55 11 98888-7777', status: 'Qualificado' },
-              { id: '2', name: 'Ana Beatriz Reis', city: 'Rio de Janeiro - RJ', fitScore: 8.8, phone: '+55 21 97777-6666', status: 'Contatado' },
-              { id: '3', name: 'Indústrias Metalúrgicas Alfa', city: 'Campinas - SP', fitScore: 8.5, phone: '+55 19 96666-5555', status: 'Capturado' },
-            ],
+            ...defaultStats,
+            todayMeetings: data.meetings_today ?? defaultStats.todayMeetings,
+            pendingConversations: data.conversations_ready ?? defaultStats.pendingConversations,
+            needsAttention: data.need_callback ?? defaultStats.needsAttention,
+            newLeadsToday: data.new_leads_today ?? defaultStats.newLeadsToday,
+            funnelData: data.funnel_data ?? defaultStats.funnelData,
+            weeklyPerformance: data.weekly_performance ?? defaultStats.weeklyPerformance,
+            hotLeads: data.hot_leads ?? defaultStats.hotLeads,
           });
+        } else {
+          setStats(defaultStats);
         }
       } catch (err) {
         console.error('Error fetching dashboard stats', err);
+        setStats(defaultStats);
+        if (!canUseMockFallbacks) {
+          toast.error('Erro de Conexão', 'Não foi possível carregar o dashboard real da API.');
+        }
       } finally {
         setIsLoading(false);
       }

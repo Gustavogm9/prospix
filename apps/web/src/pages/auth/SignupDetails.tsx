@@ -250,11 +250,11 @@ export default function SignupDetails() {
               />
               <span className="text-xs text-zinc-400 group-hover:text-zinc-300 leading-relaxed">
                 Estou ciente e aceito os{' '}
-                <a href="/termos" target="_blank" className="text-blue-400 hover:underline">
+                <a href="/termos" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">
                   Termos de Uso
                 </a>{' '}
                 e a{' '}
-                <a href="/privacidade" target="_blank" className="text-blue-400 hover:underline">
+                <a href="/privacidade" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">
                   Política de Privacidade
                 </a>{' '}
                 da Prospix, incluindo o tratamento de dados segundo as diretrizes da LGPD.

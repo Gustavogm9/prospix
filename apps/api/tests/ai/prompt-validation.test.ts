@@ -4,6 +4,17 @@ import { ruleBasedIntent, classifyIntent } from '../../src/ai/classifier.js';
 import { validateAIResponse, callAIWithGuardrails } from '../../src/ai/guardrails.js';
 import { chooseVariation, executeScriptStep } from '../../src/ai/script-engine.js';
 import { AIRouter } from '../../src/ai/router.js';
+import { AIQuotaExceededError } from '../../src/ai/quota.js';
+
+const loggerMock = vi.hoisted(() => ({
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}));
+
+vi.mock('../../src/lib/logger.js', () => ({
+  logger: loggerMock,
+}));
 
 // Mock dependencies
 vi.mock('../../src/lib/prisma.js', () => {
@@ -344,6 +355,59 @@ describe('=== Frente C: AI & Whatsapp - Technical Suite ===', () => {
 
       expect(res.escalated).toBe(true);
       expect(res.escalatedReason).toBe('guardrail_failed_twice:mentions_specific_money');
+    });
+
+    it('should not log rejected AI response content when guardrails fail', async () => {
+      const rejectedMessage = 'Fica R$ 150 por mês';
+      vi.mocked(AIRouter.call)
+        .mockResolvedValueOnce({
+          content: `{"message_to_send": "${rejectedMessage}", "intent_detected": "price"}`,
+          tokensInput: 10,
+          tokensOutput: 10,
+          costCents: 0.1,
+          latencyMs: 100,
+          model: 'gpt-4o',
+          provider: 'openai',
+        })
+        .mockResolvedValueOnce({
+          content: '{"message_to_send": "O premio depende da cotacao SUSEP.", "intent_detected": "price"}',
+          tokensInput: 12,
+          tokensOutput: 12,
+          costCents: 0.12,
+          latencyMs: 100,
+          model: 'gpt-4o',
+          provider: 'openai',
+        });
+
+      await callAIWithGuardrails({
+        tenantId: 'tenant_1',
+        messages: [{ role: 'system', content: 'system' }],
+      });
+
+      const warnPayloads = loggerMock.warn.mock.calls.map((call) => JSON.stringify(call[0]));
+      expect(warnPayloads.some((payload) => payload.includes(rejectedMessage))).toBe(false);
+      expect(loggerMock.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reason: 'mentions_specific_money',
+          outputLength: rejectedMessage.length,
+        }),
+        '🛡️ Guardrail validation failed'
+      );
+    });
+
+    it('should escalate immediately without retry when AI quota is exceeded', async () => {
+      vi.mocked(AIRouter.call).mockRejectedValueOnce(
+        new AIQuotaExceededError('tenant_1', 5000, 1, 5000)
+      );
+
+      const res = await callAIWithGuardrails({
+        tenantId: 'tenant_1',
+        messages: [{ role: 'system', content: 'system' }],
+      });
+
+      expect(res.escalated).toBe(true);
+      expect(res.escalatedReason).toBe('ai_quota_exceeded');
+      expect(AIRouter.call).toHaveBeenCalledTimes(1);
     });
   });
 

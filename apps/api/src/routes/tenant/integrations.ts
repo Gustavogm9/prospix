@@ -7,6 +7,10 @@ import { encryptSecret, getDecryptedSecrets } from '../../tenant/secrets-vault.j
 import crypto from 'crypto';
 import { createEvolutionClient } from '../../integrations/evolution.js';
 
+const WHATSAPP_STATUS_UNAVAILABLE = 'CONNECTION_STATE_UNAVAILABLE';
+const WHATSAPP_QR_UNAVAILABLE = 'QR_CODE_UNAVAILABLE';
+const WHATSAPP_INTEGRATION_ERROR_MESSAGE = 'Failed to process WhatsApp integration request';
+
 export const integrationsRoutes: FastifyPluginAsync = async (app) => {
   // GET /v1/tenant/integrations/google/oauth - Generate Google Calendar consent URL
   app.get('/google/oauth', async (req: FastifyRequest, reply: FastifyReply) => {
@@ -48,7 +52,7 @@ export const integrationsRoutes: FastifyPluginAsync = async (app) => {
 
     if (error) {
       logger.error({ error }, 'Google OAuth Callback returned error');
-      return reply.redirect(`${env.APP_URL}/dashboard/integrations?google=error&message=${encodeURIComponent(error)}`);
+      return reply.redirect(`${env.APP_URL}/dashboard/integrations?google=error`);
     }
 
     if (!code || !state) {
@@ -170,11 +174,12 @@ export const integrationsRoutes: FastifyPluginAsync = async (app) => {
       });
 
       if (!stateRes.ok) {
+        logger.warn({ tenantId, instanceName, error: stateRes.error }, 'Failed to get WhatsApp connection state');
         return reply.send({
           status: 'disconnected',
           configured: true,
           instanceName,
-          error: stateRes.error.message,
+          error: WHATSAPP_STATUS_UNAVAILABLE,
         });
       }
 
@@ -185,7 +190,7 @@ export const integrationsRoutes: FastifyPluginAsync = async (app) => {
       });
     } catch (err: any) {
       logger.error({ err, tenantId }, 'Error getting WhatsApp connection status');
-      return reply.code(500).send({ error: 'InternalServerError', message: err.message });
+      return reply.code(500).send({ error: 'InternalServerError', message: WHATSAPP_INTEGRATION_ERROR_MESSAGE });
     }
   });
 
@@ -296,10 +301,11 @@ export const integrationsRoutes: FastifyPluginAsync = async (app) => {
       });
 
       if (!qrRes.ok) {
+        logger.warn({ tenantId, instanceName, error: qrRes.error }, 'Failed to retrieve WhatsApp pairing QR Code');
         return reply.code(500).send({
           error: 'EXTERNAL_SERVICE_ERROR',
           message: 'Failed to retrieve WhatsApp pairing QR Code from Evolution API',
-          details: qrRes.error.message,
+          details: WHATSAPP_QR_UNAVAILABLE,
         });
       }
 
@@ -309,7 +315,7 @@ export const integrationsRoutes: FastifyPluginAsync = async (app) => {
       });
     } catch (err: any) {
       logger.error({ err, tenantId }, 'Error connecting WhatsApp integration');
-      return reply.code(500).send({ error: 'InternalServerError', message: err.message });
+      return reply.code(500).send({ error: 'InternalServerError', message: WHATSAPP_INTEGRATION_ERROR_MESSAGE });
     }
   });
 
@@ -375,7 +381,7 @@ export const integrationsRoutes: FastifyPluginAsync = async (app) => {
       return reply.send({ success: true, message: 'WhatsApp session disconnected successfully' });
     } catch (err: any) {
       logger.error({ err, tenantId }, 'Error disconnecting WhatsApp integration');
-      return reply.code(500).send({ error: 'InternalServerError', message: err.message });
+      return reply.code(500).send({ error: 'InternalServerError', message: WHATSAPP_INTEGRATION_ERROR_MESSAGE });
     }
   });
 };

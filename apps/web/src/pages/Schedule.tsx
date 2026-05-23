@@ -1,7 +1,8 @@
-import { useState } from 'react';
-import { Card, Button, Badge } from '@prospix/ui';
+import { useEffect, useState } from 'react';
+import { Card, Button, Badge, toast } from '@prospix/ui';
 import { Clock, Phone, Mail, Calendar, X } from 'lucide-react';
 import { apiClient } from '../lib/api-client';
+import { canUseMockFallbacks } from '../lib/demo-mode';
 
 interface Meeting {
   id: string;
@@ -35,13 +36,51 @@ const STATUS_CONFIG = {
   cancelada: { bg: 'bg-red-50 text-red-600 border-red-200', name: 'Cancelada' },
 };
 
+const STATUS_TO_API: Record<Meeting['status'], string> = {
+  agendada: 'SCHEDULED',
+  confirmada: 'CONFIRMED',
+  aconteceu: 'HAPPENED',
+  cancelada: 'CANCELLED',
+};
+
+const API_STATUS_TO_STATUS: Record<string, Meeting['status']> = {
+  SCHEDULED: 'agendada',
+  CONFIRMED: 'confirmada',
+  HAPPENED: 'aconteceu',
+  CANCELLED: 'cancelada',
+};
+
+const MOCK_MEETINGS: Meeting[] = [
+  { id: '1', leadName: 'Marcos de Oliveira', phone: '+55 11 98888-7777', email: 'marcos@oliveira.com.br', company: 'Oliveira Consultoria', dayOfWeek: 2, timeSlot: '14:30', durationMin: 30, status: 'confirmada' },
+  { id: '2', leadName: 'Ana Beatriz Reis', phone: '+55 21 97777-6666', email: 'ana@reis.com.br', company: 'Reis Arquitetura', dayOfWeek: 3, timeSlot: '10:00', durationMin: 60, status: 'agendada' },
+  { id: '3', leadName: 'Metalúrgica Alfa', phone: '+55 19 96666-5555', email: 'vendas@alfa.com.br', company: 'Alfa Ltda', dayOfWeek: 1, timeSlot: '09:00', durationMin: 30, status: 'aconteceu' },
+  { id: '4', leadName: 'Julia Silveira', phone: '+55 31 95555-4444', email: 'julia@silveira.med.br', company: 'Clinica Silveira', dayOfWeek: 4, timeSlot: '16:00', durationMin: 30, status: 'cancelada' },
+];
+
+const mapBackendMeeting = (meeting: any): Meeting => {
+  const lead = meeting.lead || {};
+  const scheduledAt = meeting.scheduledAt || meeting.scheduled_at || meeting.startAt || meeting.start_at;
+  const scheduledDate = scheduledAt ? new Date(scheduledAt) : null;
+  const dayOfWeek = scheduledDate ? Math.max(1, Math.min(5, scheduledDate.getDay())) : 1;
+  const timeSlot = scheduledDate
+    ? scheduledDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    : meeting.timeSlot || '09:00';
+
+  return {
+    id: meeting.id,
+    leadName: lead.name || meeting.leadName || 'Sem lead',
+    phone: lead.whatsapp || meeting.phone || '',
+    email: lead.email || meeting.email || '',
+    company: lead.metadata?.company || meeting.company || 'N/A',
+    dayOfWeek,
+    timeSlot,
+    durationMin: meeting.durationMin || meeting.duration_min || 30,
+    status: API_STATUS_TO_STATUS[meeting.status] || 'agendada',
+  };
+};
+
 export default function Schedule() {
-  const [meetings, setMeetings] = useState<Meeting[]>([
-    { id: '1', leadName: 'Marcos de Oliveira', phone: '+55 11 98888-7777', email: 'marcos@oliveira.com.br', company: 'Oliveira Consultoria', dayOfWeek: 2, timeSlot: '14:30', durationMin: 30, status: 'confirmada' },
-    { id: '2', leadName: 'Ana Beatriz Reis', phone: '+55 21 97777-6666', email: 'ana@reis.com.br', company: 'Reis Arquitetura', dayOfWeek: 3, timeSlot: '10:00', durationMin: 60, status: 'agendada' },
-    { id: '3', leadName: 'Metalúrgica Alfa', phone: '+55 19 96666-5555', email: 'vendas@alfa.com.br', company: 'Alfa Ltda', dayOfWeek: 1, timeSlot: '09:00', durationMin: 30, status: 'aconteceu' },
-    { id: '4', leadName: 'Julia Silveira', phone: '+55 31 95555-4444', email: 'julia@silveira.med.br', company: 'Clinica Silveira', dayOfWeek: 4, timeSlot: '16:00', durationMin: 30, status: 'cancelada' },
-  ]);
+  const [meetings, setMeetings] = useState<Meeting[]>(canUseMockFallbacks ? MOCK_MEETINGS : []);
 
   const [selectedMeeting, setSelectedMeeting] = useState<Meeting | null>(null);
   const [selectedMobileDay, setSelectedMobileDay] = useState<number>(1);
@@ -50,16 +89,40 @@ export default function Schedule() {
     return meetings.find(m => m.dayOfWeek === day && m.timeSlot === slot);
   };
 
+  useEffect(() => {
+    const fetchMeetings = async () => {
+      try {
+        const response = await apiClient.get('/tenant/meetings');
+        const list = Array.isArray(response.data) ? response.data : response.data?.data;
+        setMeetings((list || []).map(mapBackendMeeting));
+      } catch (error) {
+        console.error('Error fetching meetings:', error);
+        if (canUseMockFallbacks) {
+          setMeetings(MOCK_MEETINGS);
+        } else {
+          setMeetings([]);
+          toast.error('Erro de Conexão', 'Não foi possível carregar a agenda real da API.');
+        }
+      }
+    };
+
+    fetchMeetings();
+  }, []);
+
   const handleStatusChange = async (meetingId: string, newStatus: Meeting['status']) => {
+    const previousMeetings = meetings;
+    const previousSelectedMeeting = selectedMeeting;
     setMeetings(meetings.map(m => m.id === meetingId ? { ...m, status: newStatus } : m));
     if (selectedMeeting && selectedMeeting.id === meetingId) {
       setSelectedMeeting({ ...selectedMeeting, status: newStatus });
     }
 
     try {
-      await apiClient.patch(`/meetings/${meetingId}`, { status: newStatus });
+      await apiClient.patch(`/tenant/meetings/${meetingId}`, { status: STATUS_TO_API[newStatus] });
     } catch {
-      // silent fallback
+      setMeetings(previousMeetings);
+      setSelectedMeeting(previousSelectedMeeting);
+      toast.error('Erro de Conexão', 'Não foi possível confirmar a alteração no servidor.');
     }
   };
 

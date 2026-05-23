@@ -4,6 +4,7 @@ import { logger } from '../lib/logger.js';
 import { getDecryptedSecrets } from '../tenant/secrets-vault.js';
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
+import { AI_MODEL_PRICING, AIQuotaExceededError, assertAIQuotaBeforeCall } from './quota.js';
 
 export interface AICallParams {
   tenantId: string;
@@ -24,12 +25,6 @@ export interface AICallResult {
   latencyMs: number;
 }
 
-const PRICING: Record<string, { inputRate: number; outputRate: number }> = {
-  'gpt-4o-mini': { inputRate: 0.00000015, outputRate: 0.00000060 },
-  'claude-3-5-haiku-20241022': { inputRate: 0.00000080, outputRate: 0.00000400 },
-  'gemini-1.5-flash': { inputRate: 0.000000075, outputRate: 0.00000030 },
-};
-
 const DEFAULT_MODELS = {
   openai: 'gpt-4o-mini',
   anthropic: 'claude-3-5-haiku-20241022',
@@ -37,6 +32,15 @@ const DEFAULT_MODELS = {
 };
 
 const DEFAULT_FALLBACK_CHAIN = ['openai', 'anthropic', 'google'];
+
+class AIProviderError extends Error {
+  constructor(
+    public readonly provider: string,
+    public readonly status?: number
+  ) {
+    super(status ? `${provider} API returned ${status}` : `${provider} API failed`);
+  }
+}
 
 export class AIRouter {
   private static async getAIConfig(tenantId: string) {
@@ -109,6 +113,13 @@ export class AIRouter {
     const providersToTry = [primaryProvider, ...fallbackChain.filter((p) => p !== primaryProvider)];
 
     let lastError: any;
+
+    await assertAIQuotaBeforeCall({
+      tenantId,
+      model: primaryModel,
+      messages,
+      maxTokens: maxTokens || config.maxOutputTokens || 1024,
+    });
 
     const decryptedSecrets = await getDecryptedSecrets(tenantId);
 
@@ -211,8 +222,8 @@ export class AIRouter {
           clearTimeout(timeoutId);
 
           if (!response.ok) {
-            const errText = await response.text();
-            throw new Error(`Google API returned ${response.status}: ${errText}`);
+            await response.arrayBuffer();
+            throw new AIProviderError('Google', response.status);
           }
 
           const data = await response.json() as any;
@@ -232,7 +243,7 @@ export class AIRouter {
         }
 
         const latencyMs = Date.now() - start;
-        const pricing = PRICING[model] || { inputRate: 0, outputRate: 0 };
+        const pricing = AI_MODEL_PRICING[model] || { inputRate: 0, outputRate: 0 };
         const rawCost = (result.tokensInput * pricing.inputRate) + (result.tokensOutput * pricing.outputRate);
         const costCents = Math.round(rawCost * 100 * 100) / 100; // stored as decimal cents
 
@@ -251,15 +262,34 @@ export class AIRouter {
           latencyMs,
         };
       } catch (err: any) {
+        if (err instanceof AIQuotaExceededError) {
+          throw err;
+        }
+
         lastError = err;
         logger.warn(
-          { tenantId, provider, useCase, err: err.message },
+          {
+            tenantId,
+            provider,
+            useCase,
+            errorName: err?.name,
+            status: err instanceof AIProviderError ? err.status : undefined,
+            message: err instanceof AIProviderError ? err.message : 'AI provider call failed',
+          },
           `⚠️ AI Call failed on ${provider}, trying next fallback...`
         );
       }
     }
 
-    logger.error({ tenantId, useCase, lastError: lastError?.message }, '❌ All AI Providers failed in fallback chain');
-    throw new Error(`AI Router failed: ${lastError?.message || 'Unknown error'}`);
+    logger.error(
+      {
+        tenantId,
+        useCase,
+        errorName: lastError?.name,
+        status: lastError instanceof AIProviderError ? lastError.status : undefined,
+      },
+      '❌ All AI Providers failed in fallback chain'
+    );
+    throw new Error('AI Router failed');
   }
 }

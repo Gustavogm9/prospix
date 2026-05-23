@@ -158,12 +158,11 @@ export default function NewTenant() {
       toast.success('Tenant Criado com Sucesso!', 'Workspace registrado e convite gerado.');
     } catch (err: any) {
       console.error('Error creating tenant wizard:', err);
-      
-      const fallbackCode = `PRSPX-${Math.random().toString(36).substring(3, 7).toUpperCase()}-${Math.random().toString(36).substring(3, 7).toUpperCase()}`;
-      setGeneratedCode(fallbackCode);
-      setStep(6);
-      
-      toast.success('Tenant Criado (Bypass Fallback)', 'Workspace simulado ativo (Servidor API Offline).');
+      setGeneratedCode(null);
+      toast.error(
+        'Falha ao criar tenant',
+        err.response?.data?.message || err.message || 'A API não confirmou o provisionamento. Nenhum convite foi gerado.'
+      );
     } finally {
       setIsSubmitting(false);
     }

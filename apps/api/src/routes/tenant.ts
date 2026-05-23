@@ -2,8 +2,9 @@ import { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
 import { prisma } from '../lib/prisma.js';
 import { logger } from '../lib/logger.js';
 import { createTenantQueue } from '../lib/queue.js';
+import { createSendWhatsappJobId } from '../workers/send-whatsapp-job.js';
 import { z } from 'zod';
-import { ConversationStatus, MessageDirection, MessageSender, MessageDeliveryStatus, ScriptStatus } from '@prisma/client';
+import { ConversationStatus, MessageDirection, MessageSender, MessageDeliveryStatus, ScriptCategory, ScriptStatus } from '@prisma/client';
 
 export const tenantRoutes: FastifyPluginAsync = async (app) => {
 
@@ -82,6 +83,8 @@ export const tenantRoutes: FastifyPluginAsync = async (app) => {
       tenant_id: req.tenantId!,
       conversation_id: id,
       message_id: newMsg.id,
+    }, {
+      jobId: createSendWhatsappJobId(req.tenantId!, newMsg.id),
     });
 
     return reply.code(201).send(newMsg);
@@ -132,7 +135,72 @@ export const tenantRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(200).send(list);
   });
 
-  // ── 6. POST /v1/tenant/scripts/clone ────────────────────────────────────────
+  // ── 6. POST /v1/tenant/scripts ─────────────────────────────────────────────
+  const createScriptSchema = z.object({
+    name: z.string().min(1).optional(),
+    baseMessage: z.string().min(1),
+    variations: z.array(z.object({
+      id: z.string().optional(),
+      name: z.string().optional(),
+      weight: z.number().min(0).max(100).optional(),
+      content: z.string().min(1),
+    })).default([]),
+  });
+
+  app.post('/scripts', async (req: FastifyRequest, reply: FastifyReply) => {
+    const parsed = createScriptSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'Validation Error', message: parsed.error.errors[0]?.message });
+    }
+
+    const { name, baseMessage, variations } = parsed.data;
+    const script = await prisma.script.create({
+      data: {
+        tenantId: req.tenantId!,
+        name: name ?? 'Roteiro principal',
+        category: ScriptCategory.APPROACH,
+        baseMessage,
+        variables: ['Nome', 'Empresa', 'Cidade'],
+        flow: { variations },
+        status: ScriptStatus.ACTIVE,
+      },
+    });
+
+    logger.info({ scriptId: script.id }, '📋 Script created successfully');
+    return reply.code(201).send(script);
+  });
+
+  // ── 7. POST /v1/tenant/scripts/simulate ────────────────────────────────────
+  const simulateScriptSchema = z.object({
+    input: z.string().min(1),
+    baseMessage: z.string().min(1),
+    variations: z.array(z.object({
+      name: z.string().optional(),
+      weight: z.number().min(0).max(100).optional(),
+      content: z.string().min(1),
+    })).default([]),
+  });
+
+  app.post('/scripts/simulate', async (req: FastifyRequest, reply: FastifyReply) => {
+    const parsed = simulateScriptSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'Validation Error', message: parsed.error.errors[0]?.message });
+    }
+
+    const { input, baseMessage, variations } = parsed.data;
+    const selectedVariation = variations
+      .slice()
+      .sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0))[0];
+
+    const selectedMessage = selectedVariation?.content ?? baseMessage;
+
+    return reply.code(200).send({
+      reply: `Simulacao auditavel: diante de "${input}", a IA responderia usando a abordagem "${selectedMessage}".`,
+      variantUsed: selectedVariation?.name ?? 'Abordagem base',
+    });
+  });
+
+  // ── 8. POST /v1/tenant/scripts/clone ────────────────────────────────────────
   const cloneSchema = z.object({
     templateId: z.string().uuid('Invalid template ID format'),
   });
@@ -173,7 +241,7 @@ export const tenantRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(201).send(script);
   });
 
-  // ── 7. PATCH /v1/tenant/scripts/:id ─────────────────────────────────────────
+  // ── 9. PATCH /v1/tenant/scripts/:id ─────────────────────────────────────────
   const updateScriptSchema = z.object({
     name: z.string().min(1).optional(),
     status: z.nativeEnum(ScriptStatus).optional(),
@@ -208,7 +276,7 @@ export const tenantRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(200).send(updated);
   });
 
-  // ── 8. POST /v1/tenant/scripts/:id/variations ──────────────────────────────
+  // ── 10. POST /v1/tenant/scripts/:id/variations ─────────────────────────────
   const variationSchema = z.object({
     variantLetter: z.string().min(1).max(2),
     message: z.string().min(1),

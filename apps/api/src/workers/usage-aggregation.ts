@@ -6,9 +6,10 @@ import { BaseJobPayload } from '@prospix/shared-types';
 import { redis } from '../lib/redis.js';
 import { UserRole } from '@prisma/client';
 import { sendNotification } from '../services/notification-service.js';
+import { getAIPlanLimitCents } from '../ai/quota.js';
 
 export interface UsageAggregationPayload extends BaseJobPayload {
-  // Opcional se for rodar para um tenant específico, senão roda para todos
+  // Kept for producer compatibility; scheduled jobs run tenant-scoped.
   run_all_tenants?: boolean;
 }
 
@@ -21,15 +22,15 @@ export class UsageAggregationWorker extends BaseWorker<UsageAggregationPayload, 
   name = 'usage-aggregation';
   concurrency = 1;
 
-  async process(_job: Job<UsageAggregationPayload>): Promise<UsageAggregationResult> {
+  async process(job: Job<UsageAggregationPayload>): Promise<UsageAggregationResult> {
     const startOfMonth = new Date();
     startOfMonth.setDate(1);
     startOfMonth.setHours(0, 0, 0, 0);
 
-    // If a specific tenant is specified, we might bypass and run only for that, 
-    // but the cron aggregates for everyone.
+    // Scheduled jobs are tenant-scoped so BaseWorker can keep RLS active safely.
     const tenants = await prisma.tenant.findMany({
       where: {
+        id: job.data.tenant_id,
         status: 'ACTIVE',
         deletedAt: null,
       },
@@ -98,10 +99,7 @@ export class UsageAggregationWorker extends BaseWorker<UsageAggregationPayload, 
         });
 
         // 3. Threshold check & notification triggering
-        let limitCents = 15000; // STANDARD ($150)
-        if (tenant.plan === 'STARTER') limitCents = 5000; // STARTER ($50)
-        if (tenant.plan === 'PREMIUM') limitCents = 50000; // PREMIUM ($500)
-
+        const limitCents = getAIPlanLimitCents(tenant.plan);
         const percentUsed = (costCents / limitCents) * 100;
         const currentMonthKey = `${startOfMonth.getFullYear()}-${startOfMonth.getMonth() + 1}`;
 

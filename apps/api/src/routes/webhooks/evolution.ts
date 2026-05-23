@@ -7,6 +7,17 @@ import { validateEvolutionWebhookSignature } from '../../integrations/evolution.
 import { LeadStatus, ConversationStatus, MessageDeliveryStatus } from '@prisma/client';
 import { tenantContextStorage } from '../../lib/tenant-context-storage.js';
 import { Readable } from 'stream';
+import crypto from 'crypto';
+
+function createExternalEventJobId(...parts: Array<string | null | undefined>): string {
+  const hash = crypto
+    .createHash('sha256')
+    .update(parts.filter(Boolean).join('|'))
+    .digest('hex')
+    .slice(0, 32);
+
+  return `external-evolution-${hash}`;
+}
 
 export const evolutionWebhookRoutes: FastifyPluginAsync = async (app) => {
   
@@ -31,14 +42,34 @@ export const evolutionWebhookRoutes: FastifyPluginAsync = async (app) => {
     return newPayload;
   });
 
+  async function findTenantSecretByEvolutionInstance(instanceName: string) {
+    return tenantContextStorage.run({ tenantId: null, bypassRls: true }, async () => {
+      const secretRecord = await prisma.tenantSecret.findFirst({
+        where: { evolutionInstanceName: instanceName },
+      });
+
+      if (secretRecord) {
+        return secretRecord;
+      }
+
+      try {
+        return await prisma.$transaction(async (tx) => {
+          await tx.$executeRaw`SET LOCAL ROLE guilds_admin`;
+          return tx.tenantSecret.findFirst({
+            where: { evolutionInstanceName: instanceName },
+          });
+        });
+      } catch (err) {
+        logger.warn({ err, instanceName }, '⚠️ Failed to resolve Evolution tenant secret with RLS bypass role');
+        return null;
+      }
+    });
+  }
+
   // Helper to resolve tenant and validate HMAC signature
   async function resolveTenantAndValidate(req: FastifyRequest, reply: FastifyReply, instanceName: string): Promise<string | null> {
     // 1. Fetch tenant secret record using RLS bypass context
-    const secretRecord = await tenantContextStorage.run({ tenantId: null, bypassRls: true }, async () => {
-      return prisma.tenantSecret.findFirst({
-        where: { evolutionInstanceName: instanceName },
-      });
-    });
+    const secretRecord = await findTenantSecretByEvolutionInstance(instanceName);
 
     if (!secretRecord) {
       logger.warn({ instanceName }, '⚠️ Webhook received for unconfigured Evolution API instance');
@@ -48,18 +79,27 @@ export const evolutionWebhookRoutes: FastifyPluginAsync = async (app) => {
 
     const tenantId = secretRecord.tenantId;
 
-    // HMAC verification if webhook secret is configured
+    // HMAC verification if webhook secret is configured.
+    // In production, every Evolution instance must have a webhook secret.
     const webhookSecret = secretRecord.evolutionWebhookSecret;
-    if (webhookSecret) {
-      const signature = req.headers['x-evolution-signature'] as string || req.headers['signature'] as string;
-      const rawBody = (req as any).rawBody || JSON.stringify(req.body);
-      
-      const isValid = validateEvolutionWebhookSignature(rawBody, signature, webhookSecret);
-      if (!isValid) {
-        logger.error({ tenantId, instanceName }, '❌ Webhook HMAC signature verification failed');
-        reply.code(401).send({ error: 'Unauthorized', message: 'HMAC signature is invalid' });
+    if (!webhookSecret) {
+      if (process.env.NODE_ENV === 'production') {
+        logger.error({ tenantId, instanceName }, '❌ Evolution webhook secret missing in production');
+        reply.code(401).send({ error: 'Unauthorized', message: 'Evolution webhook secret is required in production' });
         return null;
       }
+
+      return tenantId;
+    }
+
+    const signature = (req.headers['x-evolution-signature'] as string) || (req.headers['signature'] as string);
+    const rawBody = (req as any).rawBody || JSON.stringify(req.body);
+
+    const isValid = validateEvolutionWebhookSignature(rawBody, signature, webhookSecret);
+    if (!isValid) {
+      logger.error({ tenantId, instanceName }, '❌ Webhook HMAC signature verification failed');
+      reply.code(401).send({ error: 'Unauthorized', message: 'HMAC signature is invalid' });
+      return null;
     }
 
     return tenantId;
@@ -163,6 +203,8 @@ export const evolutionWebhookRoutes: FastifyPluginAsync = async (app) => {
         message_direction: 'INBOUND',
         whatsapp_message_id: messageId,
         push_name: pushName,
+      }, {
+        jobId: createExternalEventJobId(tenantId, event, messageId),
       });
 
       logger.info({ tenantId, conversationId: conversation.id, messageId }, '📥 Inbound message queued for processing');
@@ -277,4 +319,3 @@ export const evolutionWebhookRoutes: FastifyPluginAsync = async (app) => {
 };
 
 export default evolutionWebhookRoutes;
-

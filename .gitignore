@@ -10,6 +10,21 @@ build/
 out/
 *.tsbuildinfo
 
+# Deploy artifacts (Vercel · Next export · etc)
+.vercel/
+**/.vercel/
+apps/*/.vercel/
+apps/landing/out/
+apps/admin/.vercel/
+
+# Test outputs / CI artifacts
+multi-tenant-results.json
+**/multi-tenant-results.json
+vitest-results.json
+**/vitest-results.json
+*.junit.xml
+junit.xml
+
 # Coverage / tests
 coverage/
 .nyc_output/
@@ -44,6 +59,9 @@ pnpm-debug.log*
 !.vscode/settings.json.example
 !.vscode/extensions.json
 .idea/
+
+# Claude Code session/local config
+.claude/
 *.swp
 *.swo
 .DS_Store

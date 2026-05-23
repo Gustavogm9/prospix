@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Button, Input, Badge, Tabs, TabsList, TabsTrigger, TabsContent, Avatar, toast } from '@prospix/ui';
 import { MessageSquare, Send, Bot, User, Phone, DollarSign, Award, Activity, Clock, ChevronLeft } from 'lucide-react';
 import { apiClient } from '../lib/api-client';
+import { canUseMockFallbacks } from '../lib/demo-mode';
 import { supabase } from '../lib/supabase';
 import { useAuthStore } from '../store/auth-store';
 
@@ -20,6 +21,7 @@ interface Conversation {
   fitScore: number;
   lastMessage: string;
   timestamp: string;
+  meetingId?: string;
   details: {
     phone: string;
     city: string;
@@ -126,6 +128,7 @@ export default function Conversations() {
         : new Date(conv.startedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
       fitScore: Number(lead.fitScore) || 5.0,
       unread: conv.status === 'ACTIVE' && !conv.lastOutboundAt,
+      meetingId: conv.meetings?.[0]?.id,
       details: {
         phone: lead.whatsapp || '',
         city: city,
@@ -168,18 +171,27 @@ export default function Conversations() {
         if (!selectedConv) {
           setSelectedConv(mapped[0] || null);
         }
-      } else {
+      } else if (canUseMockFallbacks) {
         setConversations(mockConversations);
         if (!selectedConv) {
           setSelectedConv(mockConversations[0] || null);
         }
+      } else {
+        setConversations([]);
+        setSelectedConv(null);
       }
     } catch (error) {
       console.error('Error fetching real conversations:', error);
       if (!silent) {
-        setConversations(mockConversations);
-        if (!selectedConv) {
-          setSelectedConv(mockConversations[0] || null);
+        if (canUseMockFallbacks) {
+          setConversations(mockConversations);
+          if (!selectedConv) {
+            setSelectedConv(mockConversations[0] || null);
+          }
+        } else {
+          setConversations([]);
+          setSelectedConv(null);
+          toast.error('Erro de Conexão', 'Não foi possível carregar conversas reais da API.');
         }
       }
     }
@@ -195,7 +207,7 @@ export default function Conversations() {
 
     const fetchMessages = async () => {
       // Mock Fallback Check
-      if (selectedConv.id.startsWith('conv-')) {
+      if (selectedConv.id.startsWith('conv-') && canUseMockFallbacks) {
         if (selectedConv.id === 'conv-1') {
           setMessages(mockMessagesConv1);
         } else {
@@ -296,7 +308,7 @@ export default function Conversations() {
     setSelectedConv(updated);
     setConversations(conversations.map(c => c.id === selectedConv.id ? updated : c));
 
-    if (selectedConv.id.startsWith('conv-')) {
+    if (selectedConv.id.startsWith('conv-') && canUseMockFallbacks) {
       toast.success('Controle Manual Ativo', 'A IA foi desativada temporariamente. Você está no controle da conversa.');
       return;
     }
@@ -335,7 +347,7 @@ export default function Conversations() {
       prev.map(c => c.id === selectedConv.id ? { ...c, lastMessage: userMsgContent, timestamp: newMsg.timestamp } : c)
     );
 
-    if (selectedConv.id.startsWith('conv-')) {
+    if (selectedConv.id.startsWith('conv-') && canUseMockFallbacks) {
       return;
     }
 
@@ -357,11 +369,29 @@ export default function Conversations() {
     if (!selectedConv) return;
 
     try {
-      await apiClient.post(`/tenant/meetings/outcome`, {
-        leadId: selectedConv.id,
-        outcome: 'closed',
-        value: Math.floor(parseFloat(outcomeValue) * 100), // cents
-        commission: Math.floor(parseFloat(outcomeCommission) * 100), // cents
+      if (selectedConv.id.startsWith('conv-') && canUseMockFallbacks) {
+        toast.success('Venda Registrada!', 'Parabéns pela apólice fechada! Faturamento cadastrado com sucesso.');
+        setIsOutcomeModalOpen(false);
+        setOutcomeValue('');
+        setOutcomeCommission('');
+        return;
+      }
+
+      let meetingId = selectedConv.meetingId;
+      if (!meetingId) {
+        const meetingsResponse = await apiClient.get('/tenant/meetings');
+        const meetings = meetingsResponse.data?.data || [];
+        meetingId = meetings.find((meeting: any) => meeting.conversationId === selectedConv.id)?.id;
+      }
+
+      if (!meetingId) {
+        throw new Error('Meeting not found for selected conversation');
+      }
+
+      await apiClient.patch(`/tenant/meetings/${meetingId}`, {
+        outcome: 'CLOSED',
+        policy_value_cents: Math.floor(parseFloat(outcomeValue) * 100),
+        commission_cents: Math.floor(parseFloat(outcomeCommission) * 100),
       });
 
       toast.success('Venda Registrada!', 'Parabéns pela apólice fechada! Faturamento cadastrado com sucesso.');

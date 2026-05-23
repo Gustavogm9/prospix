@@ -32,12 +32,9 @@ export async function tenantContext(req: FastifyRequest, reply: FastifyReply): P
     url === '/ready';
   
   if (isBypass) {
-    // Run global public routes with RLS bypass enabled in contextual storage
-    return new Promise<void>((resolve) => {
-      tenantContextStorage.run({ tenantId: null, bypassRls: true }, () => {
-        resolve();
-      });
-    });
+    // Bind the rest of this Fastify request lifecycle to an explicit public context.
+    tenantContextStorage.enterWith({ tenantId: null, bypassRls: true });
+    return;
   }
 
   // 2. Extract Authorization Bearer JWT Token
@@ -97,17 +94,10 @@ export async function tenantContext(req: FastifyRequest, reply: FastifyReply): P
   req.userId = decoded.sub;
   req.role = decoded.role;
 
-  // 7. Envelop the request handler execution lifecycle inside the AsyncLocalStorage scope
-  return new Promise<void>((resolve) => {
-    tenantContextStorage.run(
-      {
-        tenantId: activeTenantId,
-        userId: decoded.sub,
-        bypassRls: false,
-      },
-      () => {
-        resolve();
-      }
-    );
+  // 7. Bind the rest of this Fastify request lifecycle to the tenant context.
+  tenantContextStorage.enterWith({
+    tenantId: activeTenantId,
+    userId: decoded.sub,
+    bypassRls: false,
   });
 }

@@ -43,10 +43,13 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @prospix/api db:generate
       - run: pnpm --filter @prospix/api db:migrate
+      - run: pnpm --filter @prospix/api db:seed
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm test:multi-tenant
+        env:
+          AUDIT_REQUIRE_DB: '1'
 
   deploy-staging:
     name: Deploy to Railway (Staging)

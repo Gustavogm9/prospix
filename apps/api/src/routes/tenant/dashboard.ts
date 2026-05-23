@@ -3,6 +3,7 @@ import { prisma } from '../../lib/prisma.js';
 import { redis } from '../../lib/redis.js';
 import { logger } from '../../lib/logger.js';
 import { MeetingStatus, LeadStatus, ConversationStatus } from '@prisma/client';
+import { getAIPlanLimitCents } from '../../ai/quota.js';
 
 // Helper SWR function
 async function withSWR<T>(
@@ -232,8 +233,11 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       const mapsCost = usage ? Number(usage.googleMapsCostCents) : 0;
       const totalCost = llmCost + whatsappCost + mapsCost;
 
-      // Plan Limit threshold check (default $30 limits)
-      const maxLimitCents = 3000;
+      const tenant = await prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { plan: true },
+      });
+      const maxLimitCents = getAIPlanLimitCents(tenant?.plan);
       const limitUsedPercent = maxLimitCents > 0 ? (totalCost / maxLimitCents) * 100 : 0;
 
       return {

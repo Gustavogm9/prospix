@@ -45,16 +45,22 @@ Gates P0/P1:
 - Separacao entre `test:unit`, `test:integration` e `test:multi-tenant`.
 - Validacao de `set_config`, transacoes e pool Prisma.
 - Validacao de `SET ROLE guilds_admin` e reset de role no pool.
+- Auth session com refresh token armazenado por hash, `jti`/`accessTokenId` separado, revogacao e rotacao provadas.
 - CORS nao permissivo em producao.
 - Mensagens de erro publicas sem vazamento interno.
 - Logs sem segredos, tokens, payloads sensiveis ou PII desnecessaria.
+- IA/guardrails/router sem logar resposta rejeitada, corpo bruto de provider ou mensagens de lead fora dos campos redigidos.
 - Uso de `executeRawUnsafe` revisado e substituido quando houver interpolacao evitavel.
+- Webhooks externos com autenticacao obrigatoria em producao, `jobId` deterministico e idempotencia transacional.
+- Workers/schedulers recorrentes registrados com evidencia em Redis/BullMQ real.
+- Gate preventivo de custo IA antes de chamada paga ao provider; implementado em escopo unitario, pendente de validacao staging/uso real.
 
 Gate de saida:
 
 - Nenhum achado P0 aberto.
 - Todo P1 tem fix, mitigacao ou aceite formal de risco.
 - CI diferencia teste unitario de teste com infraestrutura.
+- Evidencias desta rodada contam como fortes para o escopo local: `npx tsc --noEmit --project apps/api/tsconfig.json`, typecheck de shared-types/web, suites focadas, `npm test` com 32 arquivos/162 testes e `git diff --check` passaram em 22/05/2026; em 23/05/2026 Docker/Postgres/Redis ficaram disponiveis, `db:generate`, `db:migrate`, `db:seed`, `AUDIT_REQUIRE_DB=1` multi-tenant com 5/5 e 0 skips, e suite Workers/Redis/webhooks com 20/20 passaram localmente. Evidencia DB-backed ainda precisa ser reproduzida em CI.
 
 ## Fase 3 - Auditoria por frente
 
@@ -79,9 +85,12 @@ Validar:
 
 - smoke E2E capturar -> enriquecer -> conversar -> agendar;
 - opt-out efetivo e rastreavel;
+- refresh/logout/reuso de sessao com Redis real;
+- webhook duplicado sem efeito duplicado persistido;
 - LGPD, termos, privacidade e retencao;
 - backup/restore, alertas, dashboards, runbooks e rollback;
 - custos de IA/WhatsApp/Maps e billing;
+- quota preventiva de IA antes de chamada paga, alem de alertas posteriores de uso;
 - treinamento operacional do primeiro cliente.
 
 Gate de saida:

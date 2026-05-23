@@ -20,9 +20,9 @@ export class DailyDigestWorker extends BaseWorker<DailyDigestPayload, DailyDiges
   name = 'daily-digest';
   concurrency = 1;
 
-  async process(_job: Job<DailyDigestPayload>): Promise<DailyDigestResult> {
+  async process(job: Job<DailyDigestPayload>): Promise<DailyDigestResult> {
     const activeTenants = await prisma.tenant.findMany({
-      where: { status: 'ACTIVE', deletedAt: null },
+      where: { id: job.data.tenant_id, status: 'ACTIVE', deletedAt: null },
     });
 
     let sentCount = 0;

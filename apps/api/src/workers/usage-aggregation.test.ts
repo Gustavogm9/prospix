@@ -98,6 +98,9 @@ describe('Usage Aggregation Worker', () => {
 
     expect(result.success).toBe(true);
     expect(result.tenants_processed).toBe(1);
+    expect(prisma.tenant.findMany).toHaveBeenCalledWith({
+      where: { id: 'tenant-abc', status: 'ACTIVE', deletedAt: null },
+    });
 
     expect(prisma.tenantUsage.upsert).toHaveBeenCalled();
     // 80% should trigger 70% alert but not 90% or 100%

@@ -57,6 +57,13 @@ Bloqueios automáticos:
 
 Achados e critérios ficam em [`docs/auditoria/matriz-achados.md`](auditoria/matriz-achados.md).
 
+Execucao multiagente operacional:
+
+- Pacotes de tarefa usam [`docs/auditoria/template-pacote-tarefa.md`](auditoria/template-pacote-tarefa.md).
+- Status, dono, PR, handoff e gate ficam em [`docs/auditoria/matriz-execucao-multiagente.md`](auditoria/matriz-execucao-multiagente.md).
+- Trocas de dono usam [`docs/auditoria/template-handoff.md`](auditoria/template-handoff.md).
+- Conflitos seguem [`docs/auditoria/protocolo-conflitos.md`](auditoria/protocolo-conflitos.md).
+
 ## 2. Princípio de paralelização · contratos primeiro
 
 A regra que faz as frentes não se prejudicarem:

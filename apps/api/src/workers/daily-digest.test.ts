@@ -83,6 +83,9 @@ describe('Daily Digest Worker', () => {
 
     expect(result.success).toBe(true);
     expect(result.digests_sent).toBe(1);
+    expect(prisma.tenant.findMany).toHaveBeenCalledWith({
+      where: { id: 'tenant-123', status: 'ACTIVE', deletedAt: null },
+    });
 
     expect(mockSendText).toHaveBeenCalledWith(
       expect.objectContaining({

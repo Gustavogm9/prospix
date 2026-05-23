@@ -1,5 +1,9 @@
 import crypto from 'crypto';
 
+export function hashOpaqueToken(token: string): string {
+  return crypto.createHash('sha256').update(token, 'utf8').digest('hex');
+}
+
 /**
  * Hash a password using the secure scrypt algorithm with a random salt.
  * Returns the hash in salt:hash format.

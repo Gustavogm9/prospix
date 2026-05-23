@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Card, CardContent, Button, Input, Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell, Drawer } from '@prospix/ui';
+import { Card, CardContent, Button, Input, Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell, Drawer, toast } from '@prospix/ui';
 import { Search, Filter, Flame, MessageSquare, Download, RefreshCw, User, Phone, DollarSign } from 'lucide-react';
 import { apiClient } from '../lib/api-client';
+import { canUseMockFallbacks } from '../lib/demo-mode';
 
 interface Lead {
   id: string;
@@ -14,6 +15,23 @@ interface Lead {
   status: string;
   createdAt: string;
 }
+
+const mapBackendLead = (lead: any): Lead => {
+  const metadata = lead.metadata || {};
+  const address = lead.address || {};
+
+  return {
+    id: lead.id,
+    name: lead.name || 'Sem nome',
+    phone: lead.whatsapp || '',
+    company: metadata.company || lead.name || 'N/A',
+    faturamento: metadata.faturamento || 'N/A',
+    fitScore: Number(lead.fitScore) || 0,
+    city: address.city || 'N/A',
+    status: lead.status || 'N/A',
+    createdAt: lead.createdAt ? new Date(lead.createdAt).toLocaleDateString('pt-BR') : 'N/A',
+  };
+};
 
 export default function Leads() {
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -37,15 +55,20 @@ export default function Leads() {
       try {
         const response = await apiClient.get('/tenant/leads', {
           params: {
-            q: debouncedSearch || undefined,
-            minFit: fitFilter === 'hot' ? 8.0 : undefined,
+            search: debouncedSearch || undefined,
+            fit_score_gte: fitFilter === 'hot' ? 8.0 : undefined,
           }
-        }).catch(() => null);
+        });
 
         if (response?.data) {
-          setLeads(response.data);
+          const list = Array.isArray(response.data) ? response.data : response.data.data;
+          setLeads((list || []).map(mapBackendLead));
         } else {
-          // Robust mock fallback aligning with 50,000 lead scaling data
+          setLeads([]);
+        }
+      } catch (err) {
+        console.error(err);
+        if (canUseMockFallbacks) {
           const allMock: Lead[] = [
             { id: '1', name: 'Marcos de Oliveira', phone: '+55 11 98888-7777', company: 'Oliveira Consultoria', faturamento: 'R$ 150k/mês', fitScore: 9.4, city: 'São Paulo - SP', status: 'Qualificado', createdAt: '21/05/2026' },
             { id: '2', name: 'Ana Beatriz Reis', phone: '+55 21 97777-6666', company: 'Reis Arquitetura', faturamento: 'R$ 80k/mês', fitScore: 8.8, city: 'Rio de Janeiro - RJ', status: 'Contatado', createdAt: '20/05/2026' },
@@ -66,9 +89,10 @@ export default function Leads() {
           }
 
           setLeads(filtered);
+        } else {
+          setLeads([]);
+          toast.error('Erro de Conexão', 'Não foi possível carregar leads reais da API.');
         }
-      } catch (err) {
-        console.error(err);
       } finally {
         setIsLoading(false);
       }

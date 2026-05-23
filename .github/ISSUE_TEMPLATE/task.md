@@ -47,6 +47,37 @@ assignees: ''
 - [ ] Claude
 - [ ] Humano
 
+## Auditoria multiagente
+
+**ID da tarefa (`MA-YYYYMMDD-NN`):**
+
+**Squad auditor:**
+- [ ] 0 · Auditoria Central
+- [ ] 1 · Foundation/Security
+- [ ] 2 · API/Contracts/Data
+- [ ] 3 · Workers/IA/WhatsApp
+- [ ] 4 · Frontend/UX
+- [ ] 5 · DevEx/CI/CD/Docs
+- [ ] 6 · Produto/Compliance
+
+**Gate Codex obrigatório:**
+- [ ] Sim
+- [ ] Não
+
+**Áreas sensíveis tocadas:**
+- [ ] Prisma/RLS/tenant context
+- [ ] Auth/session/admin bypass
+- [ ] Secrets/integrações/webhooks
+- [ ] Billing/usage/créditos
+- [ ] Opt-out/LGPD/retenção
+- [ ] Prompts IA/guardrails/workers
+- [ ] OpenAPI/shared-types/contratos
+- [ ] CI/CD/deploy
+
+**Pacote de tarefa:** <!-- Link para docs/auditoria/template-pacote-tarefa.md preenchido ou conteúdo equivalente -->
+
+**Handoff atual:** <!-- Link para handoff se houver -->
+
 ## Dependências
 
 <!-- Issues bloqueadoras ou dependentes -->

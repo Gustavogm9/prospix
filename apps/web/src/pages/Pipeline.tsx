@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Button, toast } from '@prospix/ui';
 import { Phone, DollarSign, Calendar, AlertCircle, Flame, Plus } from 'lucide-react';
 import { apiClient } from '../lib/api-client';
+import { canUseMockFallbacks } from '../lib/demo-mode';
 
 interface LeadCard {
   id: string;
@@ -23,6 +24,49 @@ const COLUMNS = [
   { id: 'fechado', name: 'Fechado', color: 'border-t-emerald-500 bg-emerald-50/20' },
 ] as const;
 
+const STAGE_TO_STATUS: Record<LeadCard['stage'], string> = {
+  capturado: 'CAPTURED',
+  contatado: 'CONTACTED',
+  qualificado: 'QUALIFIED',
+  agendado: 'MEETING_SCHEDULED',
+  negociacao: 'MEETING_SCHEDULED',
+  fechado: 'CLOSED_WON',
+};
+
+const STATUS_TO_STAGE: Record<string, LeadCard['stage']> = {
+  CAPTURED: 'capturado',
+  CONTACTED: 'contatado',
+  QUALIFIED: 'qualificado',
+  MEETING_SCHEDULED: 'agendado',
+  NEGOTIATION: 'negociacao',
+  CLOSED_WON: 'fechado',
+};
+
+const MOCK_LEADS: LeadCard[] = [
+  { id: '1', name: 'Marcos de Oliveira', phone: '+55 11 98888-7777', company: 'Oliveira Consultoria', faturamento: 'R$ 150k/mês', fitScore: 9.4, stage: 'qualificado', createdAt: '21/05 09:30' },
+  { id: '2', name: 'Ana Beatriz Reis', phone: '+55 21 97777-6666', company: 'Reis Arquitetura', faturamento: 'R$ 80k/mês', fitScore: 8.8, stage: 'contatado', createdAt: '20/05 10:15' },
+  { id: '3', name: 'Metalúrgica Alfa', phone: '+55 19 96666-5555', company: 'Alfa Ltda', faturamento: 'R$ 450k/mês', fitScore: 8.5, stage: 'capturado', createdAt: '21/05 08:20' },
+  { id: '4', name: 'Dra. Julia Silveira', phone: '+55 31 95555-4444', company: 'Clinica Silveira', faturamento: 'R$ 60k/mês', fitScore: 7.2, stage: 'agendado', createdAt: '19/05 14:00' },
+  { id: '5', name: 'Supermercado Central', phone: '+55 11 94444-3333', company: 'Central Alimentos', faturamento: 'R$ 1.2M/mês', fitScore: 9.9, stage: 'negociacao', createdAt: '18/05 11:30' },
+  { id: '6', name: 'Consultório Dr. Pedro', phone: '+55 11 93333-2222', company: 'Odonto Pedro', faturamento: 'R$ 40k/mês', fitScore: 6.8, stage: 'fechado', createdAt: '15/05 16:45' },
+];
+
+const mapBackendLeadToCard = (lead: any): LeadCard => {
+  const metadata = lead.metadata || {};
+  const stage = STATUS_TO_STAGE[lead.status] || 'capturado';
+
+  return {
+    id: lead.id,
+    name: lead.name || 'Sem nome',
+    phone: lead.whatsapp || '',
+    company: metadata.company || lead.name || 'N/A',
+    faturamento: metadata.faturamento || 'N/A',
+    fitScore: Number(lead.fitScore) || 0,
+    stage,
+    createdAt: lead.createdAt ? new Date(lead.createdAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'N/A',
+  };
+};
+
 export default function Pipeline() {
   const [leads, setLeads] = useState<LeadCard[]>([]);
   const [draggedId, setDraggedId] = useState<string | null>(null);
@@ -30,15 +74,23 @@ export default function Pipeline() {
   const [activeMobileColumn, setActiveMobileColumn] = useState<string>('capturado');
 
   useEffect(() => {
-    const mockLeads: LeadCard[] = [
-      { id: '1', name: 'Marcos de Oliveira', phone: '+55 11 98888-7777', company: 'Oliveira Consultoria', faturamento: 'R$ 150k/mês', fitScore: 9.4, stage: 'qualificado', createdAt: '21/05 09:30' },
-      { id: '2', name: 'Ana Beatriz Reis', phone: '+55 21 97777-6666', company: 'Reis Arquitetura', faturamento: 'R$ 80k/mês', fitScore: 8.8, stage: 'contatado', createdAt: '20/05 10:15' },
-      { id: '3', name: 'Metalúrgica Alfa', phone: '+55 19 96666-5555', company: 'Alfa Ltda', faturamento: 'R$ 450k/mês', fitScore: 8.5, stage: 'capturado', createdAt: '21/05 08:20' },
-      { id: '4', name: 'Dra. Julia Silveira', phone: '+55 31 95555-4444', company: 'Clinica Silveira', faturamento: 'R$ 60k/mês', fitScore: 7.2, stage: 'agendado', createdAt: '19/05 14:00' },
-      { id: '5', name: 'Supermercado Central', phone: '+55 11 94444-3333', company: 'Central Alimentos', faturamento: 'R$ 1.2M/mês', fitScore: 9.9, stage: 'negociacao', createdAt: '18/05 11:30' },
-      { id: '6', name: 'Consultório Dr. Pedro', phone: '+55 11 93333-2222', company: 'Odonto Pedro', faturamento: 'R$ 40k/mês', fitScore: 6.8, stage: 'fechado', createdAt: '15/05 16:45' },
-    ];
-    setLeads(mockLeads);
+    const fetchLeads = async () => {
+      try {
+        const response = await apiClient.get('/tenant/leads');
+        const list = Array.isArray(response.data) ? response.data : response.data?.data;
+        setLeads((list || []).map(mapBackendLeadToCard));
+      } catch (error) {
+        console.error('Error fetching pipeline leads:', error);
+        if (canUseMockFallbacks) {
+          setLeads(MOCK_LEADS);
+        } else {
+          setLeads([]);
+          toast.error('Erro de Conexão', 'Não foi possível carregar o pipeline real da API.');
+        }
+      }
+    };
+
+    fetchLeads();
   }, []);
 
   const handleDragStart = (e: React.DragEvent, id: string) => {
@@ -71,7 +123,7 @@ export default function Pipeline() {
     toast.info('Atualizando estágio', `Movendo ${lead.name} para ${COLUMNS.find(c => c.id === targetStage)?.name}...`);
 
     try {
-      await apiClient.patch(`/leads/${id}`, { stage: targetStage });
+      await apiClient.patch(`/tenant/leads/${id}`, { status: STAGE_TO_STATUS[targetStage] });
       toast.success('Sucesso', 'Estágio atualizado no servidor.');
     } catch (error) {
       setLeads(leads.map(l => l.id === id ? { ...l, stage: originalStage } : l));

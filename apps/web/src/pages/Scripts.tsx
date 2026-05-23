@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, Button, Input, Textarea, toast, Badge } from '@prospix/ui';
 import { Play, Sparkles, MessageSquare, Plus, Save, Trash2 } from 'lucide-react';
 import { apiClient } from '../lib/api-client';
+import { canUseMockFallbacks } from '../lib/demo-mode';
 
 interface ScriptVariation {
   id: string;
@@ -66,9 +67,8 @@ export default function Scripts() {
         variations,
       });
       toast.success('Roteiro Salvo!', 'Roteiros de IA atualizados e implantados em produção.');
-    } catch {
-      // simulate success anyway for mock
-      toast.success('Script Salvo com Sucesso', 'Mock REST: Roteiros A/B sincronizados com RLS de tenant.');
+    } catch (err: any) {
+      toast.error('Erro ao salvar', err.response?.data?.message || 'Não foi possível confirmar a gravação do roteiro na API.');
     }
   };
 
@@ -77,18 +77,19 @@ export default function Scripts() {
 
     setIsLoadingSim(true);
     try {
-      // REST Post to /scripts/:id/test
-      const response = await apiClient.post('/scripts/simulate', {
+      const response = await apiClient.post('/tenant/scripts/simulate', {
         input: simulationInput,
         baseMessage,
         variations,
-      }).catch(() => null);
+      });
 
       if (response?.data) {
         setSimulationResponse(response.data.reply);
         setSimulatedVariant(response.data.variantUsed);
-      } else {
-        // High fidelity mock AI responses aligned with multi-provider fallbacks (GPT-4 / Claude)
+      }
+      setIsLoadingSim(false);
+    } catch (err: any) {
+      if (canUseMockFallbacks) {
         setTimeout(() => {
           setSimulatedVariant('Variante A (Foco em Economia)');
           setSimulationResponse(
@@ -96,8 +97,9 @@ export default function Scripts() {
           );
           setIsLoadingSim(false);
         }, 1200);
+        return;
       }
-    } catch (err) {
+      toast.error('Erro na simulação', err.response?.data?.message || 'A API não gerou uma resposta para a simulação.');
       setIsLoadingSim(false);
     }
   };

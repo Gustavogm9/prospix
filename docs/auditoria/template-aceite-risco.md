@@ -5,6 +5,9 @@ Use este documento somente quando um risco nao puder ser corrigido antes do marc
 ## Identificacao
 
 - ID do achado: `AUD-`
+- ID da tarefa: `MA-`
+- PR/branch:
+- Agente executor:
 - Titulo:
 - Squad dono:
 - Severidade: Critica / Alta / Media / Baixa
@@ -26,6 +29,8 @@ Use este documento somente quando um risco nao puder ser corrigido antes do marc
 - Escopo exato do aceite:
 - O que fica fora do aceite:
 - Prazo maximo de revisita:
+- Condicao de expiracao automatica:
+- Impacto no gate Codex: bloqueia / libera com ressalva / nao determinado
 
 ## Mitigacoes temporarias
 

@@ -69,6 +69,8 @@ paths:
     post:
       tags: [Auth]
       summary: Solicita magic link
+      x-prospix-response-shape: raw-object
+      x-prospix-error-shape: flat-error
       security: []
       requestBody:
         required: true
@@ -166,6 +168,8 @@ paths:
     post:
       tags: [Auth]
       summary: Verifica se código de convite é válido (sem consumir)
+      x-prospix-response-shape: data-object
+      x-prospix-error-shape: flat-error
       security: []
       description: |
         Rate limit 5 req/min por IP (anti brute-force).
@@ -211,6 +215,8 @@ paths:
     post:
       tags: [Auth]
       summary: Consome código de convite + cria owner + envia magic link
+      x-prospix-response-shape: data-object
+      x-prospix-error-shape: flat-error
       security: []
       description: |
         Rate limit 3 req/min por IP.
@@ -262,12 +268,44 @@ paths:
         '422': { $ref: '#/components/responses/ValidationError' }
         '429': { $ref: '#/components/responses/RateLimited' }
 
-  /admin/tenants/{tenant_id}/invitations:
+  /auth/admin-login:
+    post:
+      tags: [Auth]
+      summary: Login administrativo Guilds
+      x-prospix-response-shape: raw-object
+      x-prospix-error-shape: flat-error
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 1 }
+      responses:
+        '200':
+          description: Sessão administrativa criada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token: { type: string }
+                  refresh_token: { type: string }
+                  user: { type: object }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { description: Credenciais administrativas inválidas }
+
+  /admin/tenants/{id}/invitations:
     get:
       tags: [Admin]
       summary: Lista invitations do tenant
+      x-prospix-response-shape: data-array
       parameters:
-        - { name: tenant_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
         '200':
           description: Lista
@@ -282,8 +320,10 @@ paths:
     post:
       tags: [Admin]
       summary: Gera novo código de convite (admin Guilds)
+      x-prospix-response-shape: raw-object
+      x-prospix-error-shape: flat-error
       parameters:
-        - { name: tenant_id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
       requestBody:
         content:
           application/json:
@@ -299,19 +339,25 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data: { $ref: '#/components/schemas/Invitation' }
+                $ref: '#/components/schemas/Invitation'
 
-  /admin/tenants/{tenant_id}/invitations/{id}/revoke:
-    post:
+  /admin/tenants/{id}/invitations/{invitationId}:
+    delete:
       tags: [Admin]
       summary: Revoga código de convite ativo
+      x-prospix-response-shape: raw-object
+      x-prospix-error-shape: flat-error
       parameters:
-        - { name: tenant_id, in: path, required: true, schema: { type: string, format: uuid } }
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: invitationId, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
-        '204': { description: Revogado }
+        '200':
+          description: Revogado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Invitation' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   # ===========================================================================
   # LEADS
@@ -320,6 +366,8 @@ paths:
     get:
       tags: [Leads]
       summary: Lista leads
+      x-prospix-response-shape: data-array
+      x-prospix-error-shape: flat-error
       parameters:
         - { name: status, in: query, schema: { $ref: '#/components/schemas/LeadStatus' } }
         - { name: fit_score_gte, in: query, schema: { type: number, minimum: 0, maximum: 10 } }
@@ -348,6 +396,8 @@ paths:
     post:
       tags: [Leads]
       summary: Cria lead manualmente
+      x-prospix-response-shape: raw-object
+      x-prospix-error-shape: flat-error
       requestBody:
         required: true
         content:
@@ -370,6 +420,7 @@ paths:
     get:
       tags: [Leads]
       summary: Detalhe do lead (com mensagens, reunião, timeline)
+      x-prospix-response-shape: raw-object
       responses:
         '200':
           description: Lead completo
@@ -383,6 +434,8 @@ paths:
     patch:
       tags: [Leads]
       summary: Atualiza lead
+      x-prospix-response-shape: raw-object
+      x-prospix-error-shape: flat-error
       requestBody:
         required: true
         content:
@@ -405,6 +458,7 @@ paths:
     delete:
       tags: [Leads]
       summary: Soft-delete (LGPD)
+      x-prospix-response-shape: empty
       responses:
         '204': { description: Removido }
 
@@ -412,6 +466,7 @@ paths:
     post:
       tags: [Leads]
       summary: Marca opt-out do lead
+      x-prospix-response-shape: raw-object
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
       requestBody:
@@ -422,40 +477,14 @@ paths:
               properties:
                 reason: { type: string }
       responses:
-        '204': { description: Opt-out registrado }
-
-  /tenant/leads/{id}/assume:
-    post:
-      tags: [Leads]
-      summary: Assume conversa (pausa IA)
-      parameters:
-        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
-      responses:
-        '200':
-          description: IA pausada
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      conversation_id: { type: string, format: uuid }
-
-  /tenant/leads/{id}/release:
-    post:
-      tags: [Leads]
-      summary: Devolve controle pra IA
-      parameters:
-        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
-      responses:
-        '200': { description: IA reativada }
+        '200': { description: Opt-out registrado }
 
   /tenant/leads/{id}/notes:
     post:
       tags: [Leads]
       summary: Adiciona anotação
+      x-prospix-response-shape: raw-object
+      x-prospix-error-shape: flat-error
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
       requestBody:
@@ -469,6 +498,14 @@ paths:
                 content: { type: string }
       responses:
         '201': { description: Nota criada }
+    get:
+      tags: [Leads]
+      summary: Lista anotações do lead
+      x-prospix-response-shape: raw-array
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Lista }
 
   # ===========================================================================
   # CONVERSATIONS
@@ -477,6 +514,7 @@ paths:
     get:
       tags: [Conversations]
       summary: Lista conversas ativas
+      x-prospix-response-shape: raw-array
       parameters:
         - { name: status, in: query, schema: { type: string, enum: [active, paused, escalated, closed] } }
         - { name: filter, in: query, schema: { type: string, enum: [hot, waiting, scheduled] } }
@@ -488,13 +526,8 @@ paths:
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/PaginatedResponse'
-                  - type: object
-                    properties:
-                      data:
-                        type: array
-                        items: { $ref: '#/components/schemas/Conversation' }
+                type: array
+                items: { $ref: '#/components/schemas/Conversation' }
 
   /tenant/conversations/{id}/messages:
     parameters:
@@ -502,20 +535,20 @@ paths:
     get:
       tags: [Conversations]
       summary: Mensagens da conversa (ordem cronológica)
+      x-prospix-response-shape: raw-array
       responses:
         '200':
           description: Lista de mensagens
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data:
-                    type: array
-                    items: { $ref: '#/components/schemas/Message' }
+                type: array
+                items: { $ref: '#/components/schemas/Message' }
     post:
       tags: [Conversations]
       summary: Envia mensagem (só se user assumiu a conversa)
+      x-prospix-response-shape: raw-object
+      x-prospix-error-shape: flat-error
       requestBody:
         required: true
         content:
@@ -532,11 +565,35 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data: { $ref: '#/components/schemas/Message' }
+                $ref: '#/components/schemas/Message'
         '409':
           description: Conversa em modo IA — assuma antes de enviar
+
+  /tenant/conversations/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Conversations]
+      summary: Atualiza controle IA/humano da conversa
+      x-prospix-response-shape: raw-object
+      x-prospix-error-shape: flat-error
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [aiHandling]
+              properties:
+                aiHandling: { type: boolean }
+      responses:
+        '200':
+          description: Conversa atualizada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Conversation' }
+        '400': { description: Payload invalido }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   # ===========================================================================
   # MEETINGS
@@ -545,6 +602,7 @@ paths:
     get:
       tags: [Meetings]
       summary: Lista reuniões
+      x-prospix-response-shape: data-array
       parameters:
         - { name: status, in: query, schema: { $ref: '#/components/schemas/MeetingStatus' } }
         - { name: scheduled_after, in: query, schema: { type: string, format: date-time } }
@@ -564,21 +622,11 @@ paths:
   /tenant/meetings/{id}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
-    get:
-      tags: [Meetings]
-      summary: Detalhe da reunião
-      responses:
-        '200':
-          description: Reunião
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data: { $ref: '#/components/schemas/Meeting' }
     patch:
       tags: [Meetings]
       summary: Marca resultado pós-reunião
+      x-prospix-response-shape: data-object
+      x-prospix-error-shape: flat-error
       requestBody:
         required: true
         content:
@@ -586,8 +634,8 @@ paths:
             schema:
               type: object
               properties:
-                status: { type: string, enum: [happened, no_show, rescheduled] }
-                outcome: { type: string, enum: [closed, second_meeting, not_interested, thinking] }
+                status: { $ref: '#/components/schemas/MeetingStatus' }
+                outcome: { type: string, enum: [CLOSED, SECOND_MEETING, NOT_INTERESTED, THINKING] }
                 policy_value_cents: { type: integer, example: 487000 }
                 commission_cents: { type: integer, example: 584400 }
                 notes: { type: string }
@@ -607,24 +655,36 @@ paths:
                 type: object
                 properties:
                   data: { $ref: '#/components/schemas/Meeting' }
+        '400': { description: Payload invalido }
+        '404': { $ref: '#/components/responses/NotFound' }
 
-  /tenant/meetings/{id}/reschedule:
+  /tenant/meetings/reschedule:
     post:
       tags: [Meetings]
       summary: Remarca reunião
-      parameters:
-        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      x-prospix-response-shape: data-object
+      x-prospix-error-shape: flat-error
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [new_datetime]
+              required: [meetingId, newTime]
               properties:
-                new_datetime: { type: string, format: date-time }
+                meetingId: { type: string, format: uuid }
+                newTime: { type: string, format: date-time }
       responses:
-        '200': { description: Remarcada }
+        '201':
+          description: Remarcada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Meeting' }
+        '400': { description: Payload invalido }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   # ===========================================================================
   # CAMPAIGNS
@@ -686,6 +746,12 @@ paths:
             schema: { $ref: '#/components/schemas/CampaignCreate' }
       responses:
         '200': { description: Atualizada }
+    delete:
+      tags: [Campaigns]
+      summary: Arquiva campanha
+      x-prospix-response-shape: empty
+      responses:
+        '204': { description: Arquivada }
 
   /tenant/campaigns/{id}/pause:
     post:
@@ -712,92 +778,165 @@ paths:
     get:
       tags: [Scripts]
       summary: Lista roteiros do tenant
+      x-prospix-response-shape: raw-array
       responses:
         '200':
           description: Lista
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data:
-                    type: array
-                    items: { $ref: '#/components/schemas/Script' }
-
-  /tenant/scripts/templates:
-    get:
-      tags: [Scripts]
-      summary: Lista templates master (Guilds library)
-      responses:
-        '200':
-          description: Lista de templates
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: array
-                    items: { $ref: '#/components/schemas/ScriptTemplate' }
-
-  /tenant/scripts/clone:
+                type: array
+                items: { $ref: '#/components/schemas/Script' }
     post:
       tags: [Scripts]
-      summary: Clona template pra tenant
+      summary: Cria roteiro do tenant
+      x-prospix-response-shape: raw-object
+      x-prospix-error-shape: flat-error
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [template_id]
+              required: [baseMessage]
               properties:
-                template_id: { type: string, format: uuid }
-                customizations: { type: object }
+                name: { type: string }
+                baseMessage: { type: string }
+                variations:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      name: { type: string }
+                      weight: { type: number, minimum: 0, maximum: 100 }
+                      content: { type: string }
+      responses:
+        '201':
+          description: Script criado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Script' }
+        '400': { description: Payload invalido }
+
+  /tenant/scripts/simulate:
+    post:
+      tags: [Scripts]
+      summary: Simula resposta de roteiro
+      x-prospix-response-shape: raw-object
+      x-prospix-error-shape: flat-error
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [input, baseMessage]
+              properties:
+                input: { type: string }
+                baseMessage: { type: string }
+                variations:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name: { type: string }
+                      weight: { type: number, minimum: 0, maximum: 100 }
+                      content: { type: string }
+      responses:
+        '200':
+          description: Preview simulado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reply: { type: string }
+                  variantUsed: { type: string }
+        '400': { description: Payload invalido }
+
+  /tenant/scripts/clone:
+    post:
+      tags: [Scripts]
+      summary: Clona template pra tenant
+      x-prospix-response-shape: raw-object
+      x-prospix-error-shape: flat-error
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [templateId]
+              properties:
+                templateId: { type: string, format: uuid }
       responses:
         '201':
           description: Script clonado
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  data: { $ref: '#/components/schemas/Script' }
+              schema: { $ref: '#/components/schemas/Script' }
+        '400': { description: Payload invalido }
 
   /tenant/scripts/{id}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
-    get:
-      tags: [Scripts]
-      summary: Detalhe do roteiro (com flow)
-      responses:
-        '200':
-          description: Script
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data: { $ref: '#/components/schemas/ScriptDetail' }
     patch:
       tags: [Scripts]
       summary: Atualiza roteiro (flow, status)
+      x-prospix-response-shape: raw-object
+      x-prospix-error-shape: flat-error
       requestBody:
         content:
           application/json:
             schema:
               type: object
               properties:
+                name: { type: string }
                 flow: { type: object }
-                status: { type: string, enum: [active, archived] }
-                base_message: { type: string }
+                status: { type: string, enum: [DRAFT, ACTIVE, PAUSED, ARCHIVED] }
+                baseMessage: { type: string }
       responses:
-        '200': { description: Atualizado }
+        '200':
+          description: Atualizado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Script' }
+        '400': { description: Payload invalido }
+
+  /tenant/scripts/{id}/variations:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Scripts]
+      summary: Cria ou atualiza variante de roteiro
+      x-prospix-response-shape: raw-object
+      x-prospix-error-shape: flat-error
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [variantLetter, message]
+              properties:
+                variantLetter: { type: string, minLength: 1, maxLength: 2 }
+                message: { type: string }
+                weight: { type: number, minimum: 0, maximum: 1, default: 0.33 }
+      responses:
+        '201':
+          description: Variante salva
+          content:
+            application/json:
+              schema: { type: object }
+        '400': { description: Payload invalido }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /tenant/scripts/{id}/test:
     post:
       tags: [Scripts]
       summary: Testa roteiro com lead fictício
+      x-prospix-response-shape: raw-object
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
       requestBody:
@@ -816,11 +955,11 @@ paths:
               schema:
                 type: object
                 properties:
-                  data:
-                    type: object
-                    properties:
-                      preview: { type: string }
-                      tokens_estimate: { type: integer }
+                  preview: { type: string }
+                  nodes_count: { type: integer }
+                  active_variations:
+                    type: array
+                    items: { type: string }
 
   # ===========================================================================
   # DASHBOARD
@@ -829,6 +968,7 @@ paths:
     get:
       tags: [Dashboard]
       summary: Cards do dia
+      x-prospix-response-shape: data-object
       responses:
         '200':
           description: Resumo
@@ -850,6 +990,7 @@ paths:
     get:
       tags: [Dashboard]
       summary: Funil de prospecção
+      x-prospix-response-shape: data-object
       parameters:
         - { name: period, in: query, schema: { type: string, enum: [7d, 30d, 90d], default: 30d } }
       responses:
@@ -870,10 +1011,32 @@ paths:
                       qualified: { type: integer }
                       scheduled: { type: integer }
 
+  /tenant/dashboard/performance:
+    get:
+      tags: [Dashboard]
+      summary: Resultado financeiro e metas
+      x-prospix-response-shape: data-object
+      responses:
+        '200':
+          description: Performance financeira
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      total_policy_cents: { type: integer }
+                      total_commission_cents: { type: integer }
+                      sales_count: { type: integer }
+                      goals: { type: object }
+
   /tenant/dashboard/ai-usage:
     get:
       tags: [Dashboard]
       summary: Consumo de IA
+      x-prospix-response-shape: data-object
       parameters:
         - { name: period, in: query, schema: { type: string, default: current_month } }
       responses:
@@ -896,75 +1059,11 @@ paths:
   # ===========================================================================
   # SETTINGS & INTEGRATIONS
   # ===========================================================================
-  /tenant/me:
+  /tenant/integrations/google/oauth:
     get:
       tags: [Settings]
-      summary: Perfil + status das integrações
-      responses:
-        '200':
-          description: Dados
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      tenant: { $ref: '#/components/schemas/Tenant' }
-                      user: { $ref: '#/components/schemas/User' }
-                      secrets_status:
-                        type: object
-                        properties:
-                          evolution: { type: string, enum: [connected, pending] }
-                          calendar: { type: string, enum: [connected, pending] }
-                          telephony: { type: string, enum: [connected, pending] }
-    patch:
-      tags: [Settings]
-      summary: Atualiza perfil/branding
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                user: { type: object }
-                tenant: { type: object }
-      responses:
-        '200': { description: Atualizado }
-
-  /tenant/integrations/evolution/connect:
-    post:
-      tags: [Settings]
-      summary: Conecta Evolution API
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [instance_id, token]
-              properties:
-                instance_id: { type: string }
-                token: { type: string }
-      responses:
-        '200':
-          description: Conectado
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      connected: { type: boolean }
-                      whatsapp_number: { type: string }
-
-  /tenant/integrations/google/oauth:
-    post:
-      tags: [Settings]
       summary: Inicia OAuth Google
+      x-prospix-response-shape: raw-object
       responses:
         '200':
           description: URL de autorização
@@ -973,50 +1072,85 @@ paths:
               schema:
                 type: object
                 properties:
-                  data:
-                    type: object
-                    properties:
-                      auth_url: { type: string, format: uri }
+                  auth_url: { type: string, format: uri }
 
-  /tenant/integrations/openai/connect:
-    post:
+  /tenant/integrations/google/callback:
+    get:
       tags: [Settings]
-      summary: Conecta chave OpenAI própria
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [api_key]
-              properties:
-                api_key: { type: string }
+      summary: Callback OAuth Google Calendar
+      parameters:
+        - { name: code, in: query, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string } }
+        - { name: error, in: query, schema: { type: string } }
+      responses:
+        '302': { description: Redireciona para o app com status da integracao }
+        '400': { description: Callback invalido ou state expirado }
+
+  /tenant/integrations/whatsapp/status:
+    get:
+      tags: [Settings]
+      summary: Status da integracao WhatsApp
+      x-prospix-response-shape: raw-object
       responses:
         '200':
-          description: Validada
+          description: Status atual
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  data:
-                    type: object
-                    properties:
-                      validated: { type: boolean }
-                      test_call_ms: { type: integer }
+                  status: { type: string, enum: [connected, disconnected] }
+                  configured: { type: boolean }
+                  instanceName: { type: string, nullable: true }
+                  error: { type: string }
+
+  /tenant/integrations/whatsapp/connect:
+    post:
+      tags: [Settings]
+      summary: Cria/verifica instancia WhatsApp e retorna QR Code
+      x-prospix-response-shape: raw-object
+      responses:
+        '200':
+          description: QR Code gerado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  instanceName: { type: string }
+                  qrcode: { type: string }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { description: Falha externa Evolution API }
+
+  /tenant/integrations/whatsapp/disconnect:
+    post:
+      tags: [Settings]
+      summary: Desconecta sessao WhatsApp
+      x-prospix-response-shape: raw-object
+      responses:
+        '200':
+          description: Sessao desconectada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  message: { type: string }
+        '400': { description: Integracao nao configurada }
+        '500': { description: Falha externa Evolution API }
 
   # ===========================================================================
   # NOTIFICATIONS
   # ===========================================================================
-  /tenant/notifications:
+  /tenant/notifications/preferences:
     get:
       tags: [Notifications]
-      summary: Lista notificações
-      parameters:
-        - { name: unread, in: query, schema: { type: boolean } }
+      summary: Preferências de notificação
+      x-prospix-response-shape: data-array
       responses:
         '200':
-          description: Lista
+          description: Preferências
           content:
             application/json:
               schema:
@@ -1024,78 +1158,36 @@ paths:
                 properties:
                   data:
                     type: array
-                    items: { $ref: '#/components/schemas/Notification' }
-
-  /tenant/notifications/mark-all-read:
-    post:
-      tags: [Notifications]
-      summary: Marca todas como lidas
-      responses:
-        '204': { description: OK }
-
-  /tenant/notifications/preferences:
-    get:
-      tags: [Notifications]
-      summary: Preferências de notificação
-      responses:
-        '200': { description: Preferências }
-    patch:
+                    items: { $ref: '#/components/schemas/NotificationPreference' }
+    put:
       tags: [Notifications]
       summary: Atualiza preferências
-      requestBody:
-        content:
-          application/json:
-            schema: { type: object }
-      responses:
-        '200': { description: Atualizado }
-
-  # ===========================================================================
-  # LGPD
-  # ===========================================================================
-  /tenant/lgpd/export-data:
-    post:
-      tags: [LGPD]
-      summary: Solicita export de dados (assíncrono)
-      responses:
-        '202':
-          description: Job iniciado
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      job_id: { type: string, format: uuid }
-                      estimated_minutes: { type: integer }
-
-  /tenant/lgpd/delete-lead-data:
-    post:
-      tags: [LGPD]
-      summary: Exclui dados de um lead (direito ao esquecimento)
+      x-prospix-response-shape: data-object
+      x-prospix-error-shape: flat-error
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [lead_whatsapp]
+              required: [eventType, channels]
               properties:
-                lead_whatsapp: { type: string }
+                eventType: { type: string, example: 'meeting_reminder_1h' }
+                channels:
+                  type: array
+                  items: { $ref: '#/components/schemas/NotificationChannel' }
+                  minItems: 1
+                enabled: { type: boolean, default: true }
       responses:
-        '202':
-          description: Exclusão agendada
+        '200':
+          description: Atualizado
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  data:
-                    type: object
-                    properties:
-                      deleted: { type: boolean }
-                      trace_id: { type: string }
+                  data: { $ref: '#/components/schemas/NotificationPreference' }
+        '400': { description: Payload invalido }
 
   # ===========================================================================
   # ADMIN (super-admin Guilds)
@@ -1104,6 +1196,7 @@ paths:
     get:
       tags: [Admin]
       summary: Lista todos tenants
+      x-prospix-response-shape: data-array
       responses:
         '200':
           description: Lista
@@ -1118,6 +1211,8 @@ paths:
     post:
       tags: [Admin]
       summary: Cria tenant novo (onboarding)
+      x-prospix-response-shape: raw-object
+      x-prospix-error-shape: flat-error
       requestBody:
         required: true
         content:
@@ -1142,19 +1237,90 @@ paths:
                 properties:
                   data: { $ref: '#/components/schemas/TenantAdmin' }
 
+  /admin/tenants/{id}:
+    get:
+      tags: [Admin]
+      summary: Detalhe administrativo do tenant
+      x-prospix-response-shape: data-object
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Tenant com estado de credenciais
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: object }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Admin]
+      summary: Atualiza metadados administrativos do tenant
+      x-prospix-response-shape: data-object
+      x-prospix-error-shape: flat-error
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                plan: { type: string, enum: [STARTER, STANDARD, PREMIUM] }
+                mrrCents: { type: integer }
+                status: { type: string }
+      responses:
+        '200':
+          description: Tenant atualizado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: object }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /admin/tenants/{id}/suspend:
     post:
       tags: [Admin]
       summary: Suspende tenant
+      x-prospix-response-shape: raw-object
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
         '200': { description: Suspenso }
 
+  /admin/tenants/{id}/resume:
+    post:
+      tags: [Admin]
+      summary: Reativa tenant
+      x-prospix-response-shape: raw-object
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Reativado }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/tenants/{id}/churn:
+    post:
+      tags: [Admin]
+      summary: Inicia churn do tenant
+      x-prospix-response-shape: raw-object
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Churn iniciado }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /admin/usage/consolidated:
     get:
       tags: [Admin]
       summary: Uso consolidado (todos tenants)
+      x-prospix-response-shape: data-array
       responses:
         '200':
           description: Métricas consolidadas
@@ -1162,30 +1328,137 @@ paths:
             application/json:
               schema: { type: object }
 
+  /admin/billing:
+    get:
+      tags: [Admin]
+      summary: Lista cobrancas pendentes ou vencidas
+      x-prospix-response-shape: data-array
+      responses:
+        '200':
+          description: Lista de cobrancas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { type: object }
+
+  /admin/billing/{id}/pay:
+    patch:
+      tags: [Admin]
+      summary: Confirma pagamento manual/offline
+      x-prospix-response-shape: data-object
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Cobranca marcada como paga
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: object }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /admin/templates:
     get:
       tags: [Admin]
       summary: Lista templates master
+      x-prospix-response-shape: data-array
       responses:
-        '200': { description: Lista }
+        '200':
+          description: Lista
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { type: object }
     post:
       tags: [Admin]
       summary: Cria template master
+      x-prospix-response-shape: data-object
+      x-prospix-error-shape: flat-error
       requestBody:
         required: true
         content:
           application/json:
             schema: { type: object }
       responses:
-        '201': { description: Criado }
+        '201':
+          description: Criado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: object }
+        '400': { $ref: '#/components/responses/ValidationError' }
+
+  /admin/templates/{id}:
+    patch:
+      tags: [Admin]
+      summary: Atualiza template master
+      x-prospix-response-shape: data-object
+      x-prospix-error-shape: flat-error
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200':
+          description: Atualizado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: object }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Admin]
+      summary: Desativa template master
+      x-prospix-response-shape: raw-object
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Desativado }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   # ===========================================================================
   # WEBHOOKS
   # ===========================================================================
+  /webhooks/evolution:
+    post:
+      tags: [Webhooks]
+      summary: Dispatcher unificado da Evolution API
+      x-prospix-response-shape: raw-object
+      security: []
+      parameters:
+        - { name: x-evolution-signature, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200': { description: ACK rapido }
+        '401': { description: HMAC invalido }
+
   /webhooks/evolution/inbound:
     post:
       tags: [Webhooks]
       summary: Mensagem recebida do lead (Evolution API)
+      x-prospix-response-shape: raw-object
       security: []
       parameters:
         - { name: x-evolution-signature, in: header, required: true, schema: { type: string } }
@@ -1202,6 +1475,7 @@ paths:
     post:
       tags: [Webhooks]
       summary: Status de delivery (Evolution API)
+      x-prospix-response-shape: raw-object
       security: []
       requestBody:
         required: true
@@ -1215,6 +1489,7 @@ paths:
     post:
       tags: [Webhooks]
       summary: Status da instância (Evolution API)
+      x-prospix-response-shape: raw-object
       security: []
       requestBody:
         required: true
@@ -1224,18 +1499,12 @@ paths:
       responses:
         '200': { description: OK }
 
-  /webhooks/google/calendar:
-    post:
-      tags: [Webhooks]
-      summary: Push notification do Google Calendar
-      security: []
-      responses:
-        '200': { description: OK }
-
   /webhooks/asaas:
     post:
       tags: [Webhooks]
       summary: Eventos de billing (Asaas · MVP)
+      x-prospix-response-shape: raw-object
+      x-prospix-error-shape: flat-error
       security: []
       description: |
         Eventos recebidos:
@@ -1348,7 +1617,7 @@ components:
 
     MeetingStatus:
       type: string
-      enum: [scheduled, confirmed, happened, no_show, rescheduled, cancelled]
+      enum: [SCHEDULED, CONFIRMED, HAPPENED, NO_SHOW, RESCHEDULED, CANCELLED]
 
     Tenant:
       type: object
@@ -1535,6 +1804,22 @@ components:
         body: { type: string }
         read_at: { type: string, format: date-time, nullable: true }
         created_at: { type: string, format: date-time }
+
+    NotificationChannel:
+      type: string
+      enum: [PUSH, WHATSAPP, EMAIL, SMS]
+
+    NotificationPreference:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        eventType: { type: string }
+        channels:
+          type: array
+          items: { $ref: '#/components/schemas/NotificationChannel' }
+        enabled: { type: boolean }
+        updatedAt: { type: string, format: date-time }
 
     EvolutionInboundPayload:
       type: object

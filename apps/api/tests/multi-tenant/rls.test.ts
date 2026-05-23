@@ -5,6 +5,7 @@ import { SEED_TENANTS } from '@prospix/mocks';
 
 const prisma = new PrismaClient();
 let isDbConnected = true;
+const requireDbEvidence = process.env.AUDIT_REQUIRE_DB === '1' || process.env.CI === 'true';
 
 describe('PostgreSQL Row-Level Security (RLS) Multi-Tenant Isolation', () => {
   beforeAll(async () => {
@@ -13,7 +14,12 @@ describe('PostgreSQL Row-Level Security (RLS) Multi-Tenant Isolation', () => {
       // Execute a trivial query to confirm connection works
       await prisma.$queryRaw`SELECT 1`;
     } catch (err) {
-      console.warn('\n⚠️  [DATABASE OFFLINE] Row-Level Security integration tests skipped: PostgreSQL is not running on localhost:5432.');
+      const message = '[DATABASE OFFLINE] Row-Level Security integration tests require PostgreSQL on localhost:5432.';
+      if (requireDbEvidence) {
+        throw new Error(message);
+      }
+
+      console.warn(`\n⚠️  ${message} Tests skipped because AUDIT_REQUIRE_DB is not enabled.`);
       isDbConnected = false;
     }
   });
@@ -112,4 +118,3 @@ describe('PostgreSQL Row-Level Security (RLS) Multi-Tenant Isolation', () => {
     ).rejects.toThrow();
   });
 });
-

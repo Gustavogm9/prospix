@@ -5,8 +5,10 @@ import { meetingsRoutes } from './meetings.js';
 import { dashboardRoutes } from './dashboard.js';
 import { integrationsRoutes } from './integrations.js';
 import { notificationsRoutes } from './notifications.js';
+import { tenantRoutes as tenantContractRoutes } from '../tenant.js';
 
 export const tenantRoutes: FastifyPluginAsync = async (app) => {
+  await app.register(tenantContractRoutes);
   await app.register(leadRoutes, { prefix: '/leads' });
   await app.register(campaignRoutes, { prefix: '/campaigns' });
   await app.register(meetingsRoutes, { prefix: '/meetings' });

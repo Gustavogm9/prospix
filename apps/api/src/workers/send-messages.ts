@@ -8,10 +8,12 @@ import { getDecryptedSecrets } from '../tenant/secrets-vault.js';
 import { BaseJobPayload } from '@prospix/shared-types';
 import { CampaignStatus, MessageDeliveryStatus, LeadStatus } from '@prisma/client';
 import { randomUUID } from 'crypto';
+import { createRescheduledSendWhatsappJobId } from './send-whatsapp-job.js';
 
 export interface SendMessagesPayload extends BaseJobPayload {
   conversation_id: string;
   message_id: string;
+  force_send_optout_confirmation?: boolean;
 }
 
 export interface SendMessagesResult {
@@ -73,12 +75,21 @@ export function getNextWindowStart(now = new Date()): Date {
   return new Date(now.getTime() + 30 * 60 * 1000);
 }
 
+export function redactPhoneForLog(phone: string | null | undefined): string {
+  if (!phone) return '[redacted]';
+
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length <= 4) return '***';
+
+  return `***${digits.slice(-4)}`;
+}
+
 export class SendMessagesWorker extends BaseWorker<SendMessagesPayload, SendMessagesResult> {
   name = 'send-messages';
   concurrency = 20; // 20 global concurrent executions managed via distributed per-tenant lock
 
   async process(job: Job<SendMessagesPayload>): Promise<SendMessagesResult> {
-    const { tenant_id, conversation_id, message_id } = job.data;
+    const { tenant_id, conversation_id, message_id, force_send_optout_confirmation } = job.data;
     const lockKey = `lock:tenant:send-messages:${tenant_id}`;
     const token = randomUUID();
     const ttlSec = 60; // 60 seconds is plenty of time to process a message send request
@@ -114,7 +125,7 @@ export class SendMessagesWorker extends BaseWorker<SendMessagesPayload, SendMess
       where: { tenantId: tenant_id, whatsapp: lead.whatsapp },
     });
 
-    if (isOptedOut || lead.status === LeadStatus.OPTED_OUT) {
+    if (!force_send_optout_confirmation && (isOptedOut || lead.status === LeadStatus.OPTED_OUT)) {
       logger.warn({ tenant_id, lead_id: lead.id }, '🚫 Lead is opted out. Cancelling send job.');
       await prisma.message.update({
         where: { id: message_id },
@@ -262,7 +273,7 @@ export class SendMessagesWorker extends BaseWorker<SendMessagesPayload, SendMess
     }
 
     // 4. Send Message via Evolution Client
-    logger.info({ tenant_id, message_id, to: lead.whatsapp }, '🚀 Delivering message via Evolution API');
+    logger.info({ tenant_id, message_id, recipient: redactPhoneForLog(lead.whatsapp) }, '🚀 Delivering message via Evolution API');
 
     const result = await evolutionClient.sendText({
       instance: secretRecord.evolutionInstanceName,
@@ -316,7 +327,11 @@ export class SendMessagesWorker extends BaseWorker<SendMessagesPayload, SendMess
   private async rescheduleJob(job: Job<SendMessagesPayload>, delayMs: number): Promise<SendMessagesResult> {
     const { createTenantQueue } = await import('../lib/queue.js');
     const queue = createTenantQueue(job.data.tenant_id, 'send-messages');
-    await queue.add('send-whatsapp', job.data, { delay: delayMs });
+    const runAtMs = Date.now() + Math.max(delayMs, 0);
+    await queue.add('send-whatsapp', job.data, {
+      delay: delayMs,
+      jobId: createRescheduledSendWhatsappJobId(job.data.tenant_id, job.data.message_id, runAtMs),
+    });
     return { sent: false, postponed: true, reason: `rescheduled_delay_${delayMs}_ms` };
   }
 }

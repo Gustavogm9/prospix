@@ -6,6 +6,7 @@ import {
   createSession,
   rotateSession,
   revokeSession,
+  withAuthRlsBypass,
 } from '../../services/auth-service.js';
 import { prisma } from '../../lib/prisma.js';
 import { verifyInvitation, redeemInvitation } from '../../services/invitation-service.js';
@@ -103,7 +104,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       role: user.role,
       email: user.email,
       name: user.name,
-      jti: session.refreshToken, // use refresh token or a custom uuid for revocation tracking
+      jti: session.accessTokenId,
     };
 
     const accessToken = app.jwt.sign(payload);
@@ -148,7 +149,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
-    const { userId, refreshToken } = result.value;
+    const { userId, refreshToken, accessTokenId } = result.value;
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -168,7 +169,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       role: user.role,
       email: user.email,
       name: user.name,
-      jti: refreshToken,
+      jti: accessTokenId,
     };
 
     const accessToken = app.jwt.sign(payload);
@@ -313,13 +314,13 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
     const { email, password } = parseResult.data;
 
-    // Verify user exists and is a GUILDS_ADMIN (RLS bypass search)
-    const user = await prisma.user.findFirst({
+    // Verify user exists and is a GUILDS_ADMIN (scoped DB-role bypass for auth only)
+    const user = await withAuthRlsBypass((tx) => tx.user.findFirst({
       where: {
         email,
         role: 'GUILDS_ADMIN',
       },
-    });
+    }));
 
     if (!user) {
       return reply.code(401).send({
@@ -352,7 +353,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       role: user.role,
       email: user.email,
       name: user.name,
-      jti: session.refreshToken,
+      jti: session.accessTokenId,
     };
 
     const accessToken = app.jwt.sign(payload);

@@ -124,3 +124,5 @@ Gates:
 5. Gustavo decide somente risco excepcional ou tradeoff de produto.
 
 O PR deve usar [../../.github/pull_request_template.md](../../.github/pull_request_template.md). Se houver risco aceito sem correcao imediata, usar [template-aceite-risco.md](template-aceite-risco.md) e manter o achado na matriz ate a revisita.
+
+A execucao paralela completa segue [execucao-multiagente.md](execucao-multiagente.md). Toda tarefa delegada deve ter pacote em [template-pacote-tarefa.md](template-pacote-tarefa.md), status em [matriz-execucao-multiagente.md](matriz-execucao-multiagente.md) e handoff em [template-handoff.md](template-handoff.md) quando trocar de dono.

@@ -86,9 +86,11 @@ jobs:
         options: >-
           --health-cmd "redis-cli ping" --health-interval 5s
     env:
+      NODE_ENV: test
       DATABASE_URL: postgresql://prospix:prospix_dev@localhost:5432/prospix_test
       REDIS_URL: redis://localhost:6379
       SECRETS_ENCRYPTION_KEY: dGVzdF9rZXlfMzJfYnl0ZXNfbG9uZ19wYWRfeHh4eA==
+      EVOLUTION_GUILDS_API_KEY: test-evolution-key
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -99,6 +101,22 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Verify PostgreSQL is reachable
+        run: |
+          for attempt in {1..30}; do
+            if timeout 1 bash -c '</dev/tcp/localhost/5432' 2>/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::PostgreSQL service did not become reachable on localhost:5432"
+          exit 1
+      - name: Require committed Prisma migrations
+        run: |
+          if [ ! -d apps/api/prisma/migrations ]; then
+            echo "::error::apps/api/prisma/migrations is required before DB-backed multi-tenant tests can run in CI."
+            exit 1
+          fi
       - name: Generate Prisma client
         run: pnpm --filter @prospix/api db:generate
       - name: Apply migrations + RLS
@@ -106,8 +124,20 @@ jobs:
       - name: Seed database
         run: pnpm --filter @prospix/api db:seed
       - run: pnpm test
-      - run: pnpm test:multi-tenant
-        # Esse comando obriga 2 tenants fictícios + queries que tentam vazar dados
+      - name: Run DB-backed multi-tenant tests without skips
+        env:
+          AUDIT_REQUIRE_DB: '1'
+        run: |
+          pnpm --filter @prospix/api exec vitest run tests/multi-tenant --reporter=default --reporter=json --outputFile=../../multi-tenant-results.json
+          node - <<'NODE'
+          const fs = require('fs');
+          const results = JSON.parse(fs.readFileSync('multi-tenant-results.json', 'utf8'));
+          const skipped = Number(results.numPendingTests ?? 0) + Number(results.numTodoTests ?? 0);
+          if (skipped > 0) {
+            console.error(`::error::test:multi-tenant reported ${skipped} skipped/todo test(s). DB-backed RLS evidence cannot contain skips.`);
+            process.exit(1);
+          }
+          NODE
 
   build:
     name: Build

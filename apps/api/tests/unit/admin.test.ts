@@ -54,6 +54,7 @@ vi.mock('../../src/lib/prisma.js', () => ({
 }));
 
 vi.mock('../../src/services/invitation-service.js', () => ({
+  generateInvitationCode: vi.fn(() => 'PRSPX-A1B2-C3D4'),
   createInvitation: vi.fn().mockResolvedValue({
     ok: true,
     value: { code: 'PRSPX-A1B2-C3D4', id: 'inv-123' },
@@ -128,6 +129,94 @@ describe('Admin Onboarding Routes', () => {
     expect(prisma.tenant.create).toHaveBeenCalled();
     expect(prisma.tenantSecret.create).toHaveBeenCalled();
     expect(prisma.tenantAIConfig.create).toHaveBeenCalled();
+  });
+
+  it('should return tenant detail without raw credential payload', async () => {
+    app.addHook('preValidation', async (req: any) => {
+      req.role = 'GUILDS_ADMIN';
+      req.userId = 'guilds_admin_999';
+    });
+
+    const updatedAt = new Date('2026-05-22T10:00:00.000Z');
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValue({
+      id: 'tenant_xyz',
+      name: 'Roberta Prudential',
+      slug: 'roberta-prudential',
+      users: [
+        {
+          id: 'owner_123',
+          name: 'Roberta',
+          email: 'roberta@example.com',
+          role: 'OWNER',
+        },
+      ],
+      secret: {
+        evolutionBaseUrl: 'https://evo.example.com',
+        evolutionInstanceName: 'tenant_roberta',
+        evolutionApiKeyEncrypted: 'encrypted:evolution-api-key-value',
+        evolutionWebhookSecret: 'webhook-secret-value',
+        googleCalendarId: 'primary',
+        googleOauthRefreshEncrypted: 'encrypted:google-refresh-token',
+        googleOauthScope: 'https://www.googleapis.com/auth/calendar.events',
+        googleMapsApiKeyEncrypted: 'encrypted:maps-api-key-value',
+        openaiApiKeyEncrypted: 'encrypted:openai-api-key-value',
+        anthropicApiKeyEncrypted: null,
+        googleAiApiKeyEncrypted: 'encrypted:gemini-api-key-value',
+        aiProvider: 'GUILDS_SHARED',
+        twilioAccountSidEncrypted: 'encrypted:twilio-account-sid',
+        twilioAuthTokenEncrypted: 'encrypted:twilio-auth-token',
+        updatedAt,
+      },
+    } as any);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/tenants/tenant_xyz',
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.payload);
+
+    expect(body.data).not.toHaveProperty('secret');
+    expect(body.data.credentialState).toEqual({
+      exists: true,
+      evolution: {
+        baseUrlConfigured: true,
+        instanceConfigured: true,
+        tokenConfigured: true,
+        webhookConfigured: true,
+      },
+      google: {
+        calendarConfigured: true,
+        oauthConnected: true,
+        oauthScope: 'https://www.googleapis.com/auth/calendar.events',
+        mapsConfigured: true,
+      },
+      ai: {
+        provider: 'GUILDS_SHARED',
+        openaiConfigured: true,
+        anthropicConfigured: false,
+        googleConfigured: true,
+      },
+      telephony: {
+        accountConfigured: true,
+        tokenConfigured: true,
+      },
+      updatedAt: updatedAt.toISOString(),
+    });
+
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain('secret');
+    expect(serialized).not.toContain('apiKey');
+    expect(serialized).not.toContain('clientSecret');
+    expect(serialized).not.toContain('encrypted');
+    expect(serialized).not.toContain('evolution-api-key-value');
+    expect(serialized).not.toContain('google-refresh-token');
+    expect(serialized).not.toContain('maps-api-key-value');
+    expect(serialized).not.toContain('openai-api-key-value');
+    expect(serialized).not.toContain('gemini-api-key-value');
+    expect(serialized).not.toContain('twilio-auth-token');
+    expect(serialized).not.toContain('webhook-secret-value');
   });
 
   it('should suspend tenant and pause active campaigns successfully', async () => {

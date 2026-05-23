@@ -44,7 +44,7 @@ export const SEED_USERS = {
     whatsapp: '+5511999990002',
   },
   guildsAdmin: {
-    id: 'ggggggg9-9999-9999-9999-999999999999',
+    id: '99999999-9999-9999-9999-999999999999',
     tenantId: null,
     role: 'GUILDS_ADMIN',
     name: 'Gustavo Macedo',

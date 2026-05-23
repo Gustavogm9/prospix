@@ -43,6 +43,34 @@ git push -u origin feat/<frente>-<feature>
 5. **Logs sempre incluem `tenant_id` no contexto**
 6. **Nunca skip hooks** (--no-verify) ou suprime CI sem aprovação explícita
 7. **Testes multi-tenant devem ficar verdes** · qualquer falha indica vazamento entre tenants
+8. **Gate de auditoria Codex** preenchido em todo PR que toca área sensível (ver template do PR)
+
+## Auditoria oficial
+
+Todo PR passa por gate da [auditoria oficial Codex](docs/auditoria/README.md). Leitura obrigatória antes do primeiro PR:
+
+| Documento | Para quê |
+|---|---|
+| [docs/auditoria/README.md](docs/auditoria/README.md) | Mandato, taxonomia E0-E5, severidade, prioridade, gates bloqueantes |
+| [docs/auditoria/auditor-codex.md](docs/auditoria/auditor-codex.md) | Papel do Codex, formato de saída multiagente obrigatório |
+| [docs/auditoria/squads.md](docs/auditoria/squads.md) | 7 squads (0-6) e ownership por domínio |
+| [docs/auditoria/execucao-multiagente.md](docs/auditoria/execucao-multiagente.md) | Esteira operacional, IDs (MA/HO/CF/AUD), labels, limites de paralelismo |
+| [docs/auditoria/protocolo-conflitos.md](docs/auditoria/protocolo-conflitos.md) | Como resolver conflito de ownership, evidência ou contrato |
+| [docs/auditoria/matriz-achados.md](docs/auditoria/matriz-achados.md) | Achados ativos · checar antes de abrir PR |
+| [docs/auditoria/status-cobertura.md](docs/auditoria/status-cobertura.md) | Prontidão atual por squad |
+
+**Toda entrega usa o formato oficial multiagente** ([auditor-codex.md seção "Formato oficial de saída"](docs/auditoria/README.md)): `Resumo`, `Arquivos tocados`, `Evidências (E0-E5)`, `Lacunas`, `Riscos`, `Handoff`, `Gate esperado`. Sem evidência registrada, decisão padrão é `NAO DETERMINADO`.
+
+### Quando parar e pedir gate
+
+Pare e peça gate ao Codex/Claude quando:
+
+- Descobrir vazamento cross-tenant, auth bypass, perda de dados
+- Precisar tocar segredo real ou PII
+- Encontrar divergência material entre PRD, spec e código real
+- Mudar contrato compartilhado com consumidor desconhecido
+- Não conseguir rodar teste obrigatório em área P0/P1
+- Depender de aceite formal de risco ([template](docs/auditoria/template-aceite-risco.md))
 
 ## Quando agente IA pediu help
 

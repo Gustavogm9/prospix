@@ -9,6 +9,7 @@ import SignupCode from './pages/auth/SignupCode';
 import SignupDetails from './pages/auth/SignupDetails';
 import InvitationError from './pages/auth/InvitationError';
 import LoginCallback from './pages/auth/LoginCallback';
+import LegalDocument from './pages/legal/LegalDocument';
 import Home from './pages/Home';
 import Conversations from './pages/Conversations';
 import Pipeline from './pages/Pipeline';
@@ -42,6 +43,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/cadastro/detalhes" element={<SignupDetails />} />
         <Route path="/cadastro/erro" element={<InvitationError />} />
         <Route path="/auth/callback" element={<LoginCallback />} />
+        <Route path="/termos" element={<LegalDocument kind="terms" />} />
+        <Route path="/privacidade" element={<LegalDocument kind="privacy" />} />
 
         {/* Private Tenant Routes */}
         <Route

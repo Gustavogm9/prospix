@@ -9,6 +9,7 @@ import { executeScriptStep } from '../ai/script-engine.js';
 import { buildSystemPrompt } from '../ai/prompt-builder.js';
 import { callAIWithGuardrails } from '../ai/guardrails.js';
 import { createTenantQueue } from '../lib/queue.js';
+import { createSendWhatsappJobId } from './send-whatsapp-job.js';
 import { LeadStatus, ConversationStatus, MessageDirection, MessageSender, MessageDeliveryStatus } from '@prisma/client';
 import { randomUUID } from 'crypto';
 
@@ -27,6 +28,23 @@ export interface ProcessInboundResult {
   escalated: boolean;
   escalationReason?: string;
   optout: boolean;
+}
+
+function isWhatsappMessageUniqueViolation(err: unknown): boolean {
+  const maybeError = err as { code?: string; meta?: { target?: unknown } } | null;
+  if (!maybeError || maybeError.code !== 'P2002') return false;
+
+  const target = maybeError.meta?.target;
+  if (Array.isArray(target)) {
+    return target.includes('whatsappMessageId') || target.includes('whatsapp_message_id');
+  }
+
+  return typeof target === 'string'
+    && (target.includes('whatsappMessageId') || target.includes('whatsapp_message_id'));
+}
+
+function duplicateInboundResult(): ProcessInboundResult {
+  return { success: true, replied: false, escalated: false, optout: false };
 }
 
 export async function withLock<T>(key: string, ttlSec: number, fn: () => Promise<T>): Promise<T> {
@@ -54,9 +72,92 @@ export class ProcessInboundWorker extends BaseWorker<ProcessInboundPayload, Proc
   async process(job: Job<ProcessInboundPayload>): Promise<ProcessInboundResult> {
     const { tenant_id, conversation_id, lead_id, message_content, whatsapp_message_id } = job.data;
     const lockKey = `lock:conversation:${conversation_id}`;
+    const isRetry = job.attemptsMade > 0;
 
     return withLock(lockKey, 60, async (): Promise<ProcessInboundResult> => {
       logger.info({ conversation_id, lead_id }, '📥 Processing inbound message with lock acquired');
+
+      let inboundAlreadyPersisted = false;
+      if (whatsapp_message_id) {
+        const existingInbound = await prisma.message.findUnique({
+          where: { whatsappMessageId: whatsapp_message_id },
+          select: { id: true, tenantId: true, conversationId: true },
+        });
+
+        if (existingInbound) {
+          if (existingInbound.tenantId === tenant_id && existingInbound.conversationId === conversation_id) {
+            inboundAlreadyPersisted = true;
+            if (isRetry) {
+              logger.info(
+                { tenant_id, conversation_id, whatsapp_message_id, job_id: job.id },
+                'process-inbound:retry-continues-with-existing-message'
+              );
+            } else {
+              logger.info(
+                { tenant_id, conversation_id, whatsapp_message_id },
+                'process-inbound:duplicate-message-skipped'
+              );
+              return duplicateInboundResult();
+            }
+          } else {
+            throw new Error(`WhatsApp message ${whatsapp_message_id} already belongs to another tenant or conversation`);
+          }
+        }
+      }
+
+      async function persistInboundMessageOnce(params: {
+        intent: string | null;
+        confidence: number | null;
+      }): Promise<ProcessInboundResult | null> {
+        if (inboundAlreadyPersisted) return null;
+
+        try {
+          await prisma.$transaction(async (tx) => {
+            await tx.message.create({
+              data: {
+                tenantId: tenant_id,
+                conversationId: conversation_id,
+                direction: MessageDirection.INBOUND,
+                sender: MessageSender.LEAD,
+                content: message_content,
+                whatsappMessageId: whatsapp_message_id,
+                deliveryStatus: MessageDeliveryStatus.DELIVERED,
+                intentDetected: params.intent,
+                intentConfidence: params.confidence,
+              },
+            });
+
+            await tx.conversation.update({
+              where: { id: conversation_id },
+              data: {
+                lastMessageAt: new Date(),
+                lastInboundAt: new Date(),
+                messageCount: { increment: 1 },
+              },
+            });
+          });
+          return null;
+        } catch (err) {
+          if (!whatsapp_message_id || !isWhatsappMessageUniqueViolation(err)) {
+            throw err;
+          }
+
+          const existingInbound = await prisma.message.findUnique({
+            where: { whatsappMessageId: whatsapp_message_id },
+            select: { id: true, tenantId: true, conversationId: true },
+          });
+
+          if (existingInbound?.tenantId === tenant_id && existingInbound.conversationId === conversation_id) {
+            logger.info(
+              { tenant_id, conversation_id, whatsapp_message_id },
+              'process-inbound:duplicate-message-race-skipped'
+            );
+            return duplicateInboundResult();
+          }
+
+          throw err;
+        }
+      }
 
       // 1. Fetch lead
       const lead = await prisma.lead.findUnique({
@@ -83,6 +184,11 @@ export class ProcessInboundWorker extends BaseWorker<ProcessInboundPayload, Proc
 
       if (isHardOptout) {
         logger.info({ lead_id, conversation_id }, '🛡️ Hard opt-out detected pre-AI');
+        const duplicateResult = await persistInboundMessageOnce({
+          intent: 'optout_request',
+          confidence: 1,
+        });
+        if (duplicateResult) return duplicateResult;
         await this.handleOptout(tenant_id, lead, conversation);
         return { success: true, replied: true, escalated: false, optout: true };
       }
@@ -97,30 +203,11 @@ export class ProcessInboundWorker extends BaseWorker<ProcessInboundPayload, Proc
         })),
       });
 
-      // Save lead's message to database
-      await prisma.message.create({
-        data: {
-          tenantId: tenant_id,
-          conversationId: conversation_id,
-          direction: MessageDirection.INBOUND,
-          sender: MessageSender.LEAD,
-          content: message_content,
-          whatsappMessageId: whatsapp_message_id,
-          deliveryStatus: MessageDeliveryStatus.DELIVERED,
-          intentDetected: classification.intent,
-          intentConfidence: classification.confidence,
-        },
+      const duplicateResult = await persistInboundMessageOnce({
+        intent: classification.intent,
+        confidence: classification.confidence,
       });
-
-      // Update last message timestamp
-      await prisma.conversation.update({
-        where: { id: conversation_id },
-        data: {
-          lastMessageAt: new Date(),
-          lastInboundAt: new Date(),
-          messageCount: { increment: 1 },
-        },
-      });
+      if (duplicateResult) return duplicateResult;
 
       // Check if opt-out intent was classified
       if (classification.intent === 'optout_request') {
@@ -286,6 +373,8 @@ export class ProcessInboundWorker extends BaseWorker<ProcessInboundPayload, Proc
         tenant_id,
         conversation_id,
         message_id: newMsg.id,
+      }, {
+        jobId: createSendWhatsappJobId(tenant_id, newMsg.id),
       });
 
       return {
@@ -301,10 +390,20 @@ export class ProcessInboundWorker extends BaseWorker<ProcessInboundPayload, Proc
     logger.info({ lead_id: lead.id }, '🛡️ Processing opt-out action and marking tables');
     
     // Register opt-out record
-    await prisma.optout.create({
-      data: {
+    await prisma.optout.upsert({
+      where: {
+        tenantId_whatsapp: {
+          tenantId,
+          whatsapp: lead.whatsapp,
+        },
+      },
+      create: {
         tenantId,
         whatsapp: lead.whatsapp,
+        reason: 'lead_request',
+        source: 'lead_request',
+      },
+      update: {
         reason: 'lead_request',
         source: 'lead_request',
       },
@@ -344,6 +443,9 @@ export class ProcessInboundWorker extends BaseWorker<ProcessInboundPayload, Proc
       tenant_id: tenantId,
       conversation_id: conversation.id,
       message_id: newMsg.id,
+      force_send_optout_confirmation: true,
+    }, {
+      jobId: createSendWhatsappJobId(tenantId, newMsg.id),
     });
   }
 

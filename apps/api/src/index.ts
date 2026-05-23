@@ -8,6 +8,7 @@ import { env } from './config/env.js';
 import { logger } from './lib/logger.js';
 import { prisma } from './lib/prisma.js';
 import { redis } from './lib/redis.js';
+import { tenantContextStorage } from './lib/tenant-context-storage.js';
 
 import { tenantContext } from './middlewares/tenant-context.js';
 import { idempotencyPlugin } from './middlewares/idempotency.js';
@@ -17,6 +18,34 @@ import { adminRoutes } from './routes/admin/index.js';
 import { tenantRoutes } from './routes/tenant/index.js';
 import { webhookRoutes } from './routes/webhooks/index.js';
 import { evolutionWebhookRoutes } from './routes/webhooks/evolution.js';
+
+const isProduction = env.NODE_ENV === 'production' || process.env.NODE_ENV === 'production';
+
+const productionAllowedOrigins = Array.from(new Set([env.APP_URL, env.ADMIN_URL, env.LANDING_URL].filter(Boolean)));
+
+function getPublicErrorMessage(error: any, statusCode: number): string {
+  if (!isProduction) {
+    return error.message || 'An unexpected error occurred.';
+  }
+
+  if (statusCode === 400) {
+    return 'Invalid request.';
+  }
+
+  if (statusCode === 401) {
+    return 'Authentication required.';
+  }
+
+  if (statusCode === 403) {
+    return 'Access denied.';
+  }
+
+  if (statusCode === 404) {
+    return 'Resource not found.';
+  }
+
+  return 'An unexpected error occurred. Please contact support.';
+}
 
 // Instantiate Fastify
 const app = fastify({
@@ -43,15 +72,14 @@ async function bootstrap() {
   logger.info('🚀 Starting Prospix Core API bootstrap...');
 
   // 1. Register security and utility plugins
-  const allowedOrigins = [env.APP_URL, env.ADMIN_URL, env.LANDING_URL];
   await app.register(cors, {
-    origin: env.NODE_ENV === 'production' ? allowedOrigins : '*',
+    origin: isProduction ? productionAllowedOrigins : '*',
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Tenant-Id', 'X-Idempotency-Key'],
   });
 
   await app.register(helmet, {
-    contentSecurityPolicy: env.NODE_ENV === 'production',
+    contentSecurityPolicy: isProduction,
   });
 
   // Rate Limit: 100 requests per minute by default per IP
@@ -79,9 +107,44 @@ async function bootstrap() {
   await app.register(idempotencyPlugin);
   
   // Tenant Context & RLS preHandler hook
-  app.addHook('preHandler', tenantContext);
+  app.addHook('preHandler', async (request, reply) => {
+    if (request.url.startsWith('/v1/auth/')) {
+      tenantContextStorage.enterWith({ tenantId: null, bypassRls: true });
+      return;
+    }
 
-  // 4. Liveness / Readiness Health Check Routes
+    return tenantContext(request, reply);
+  });
+
+  // 4. Global Error Handler
+  app.setErrorHandler((err, request, reply) => {
+    const error = err as any;
+    logger.error({ err: error, url: request.url }, '💥 Unhandled route error');
+
+    if (error.validation) {
+      return reply.code(400).send({
+        error: 'Validation Error',
+        message: isProduction ? 'Invalid request payload.' : error.message,
+        ...(isProduction ? {} : { details: error.validation }),
+      });
+    }
+
+    if (error.statusCode === 429) {
+      return reply.code(429).send({
+        error: 'Rate Limited',
+        message: 'Too many requests. Please try again later.',
+      });
+    }
+
+    const statusCode = error.statusCode || 500;
+
+    return reply.code(statusCode).send({
+      error: statusCode === 500 ? 'Internal Error' : 'Error',
+      message: getPublicErrorMessage(error, statusCode),
+    });
+  });
+
+  // 5. Liveness / Readiness Health Check Routes
   app.get('/health', async (_req, reply) => {
     return reply.code(200).send({ status: 'ok' });
   });
@@ -116,45 +179,15 @@ async function bootstrap() {
     }
   });
 
-  // 5. Register Domain Routes
+  // 6. Register Domain Routes
   await app.register(authRoutes, { prefix: '/auth' });
+  await app.register(authRoutes, { prefix: '/v1/auth' });
   await app.register(adminRoutes, { prefix: '/admin' });
   await app.register(adminRoutes, { prefix: '/v1/admin' });
   await app.register(tenantRoutes, { prefix: '/v1/tenant' });
   await app.register(webhookRoutes, { prefix: '/v1/webhooks' });
   await app.register(evolutionWebhookRoutes, { prefix: '/v1/webhooks/evolution' });
   await app.register(evolutionWebhookRoutes, { prefix: '/webhooks/evolution' });
-
-  // 6. Global Error Handler
-  app.setErrorHandler((err, request, reply) => {
-    const error = err as any;
-    logger.error({ err: error, url: request.url }, '💥 Unhandled route error');
-
-    if (error.validation) {
-      return reply.code(400).send({
-        error: 'Validation Error',
-        message: error.message,
-        details: error.validation,
-      });
-    }
-
-    if (error.statusCode === 429) {
-      return reply.code(429).send({
-        error: 'Rate Limited',
-        message: 'Too many requests. Please try again later.',
-      });
-    }
-
-    const isProd = env.NODE_ENV === 'production';
-    const statusCode = error.statusCode || 500;
-
-    return reply.code(statusCode).send({
-      error: statusCode === 500 ? 'Internal Error' : 'Error',
-      message: statusCode === 500 && isProd
-        ? 'An unexpected error occurred. Please contact support.'
-        : error.message || 'An unexpected error occurred.',
-    });
-  });
 
   // 7. Start Server
   if (process.env.NODE_ENV !== 'test') {

@@ -21,7 +21,30 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'guilds_admin') THEN
     CREATE ROLE guilds_admin BYPASSRLS NOINHERIT;
   END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'prospix_app') THEN
+    CREATE ROLE prospix_app LOGIN PASSWORD 'prospix_dev' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+  ELSE
+    ALTER ROLE prospix_app WITH LOGIN PASSWORD 'prospix_dev' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+  END IF;
+
+  IF NOT pg_has_role(current_user, 'guilds_admin', 'member') THEN
+    EXECUTE format('GRANT guilds_admin TO %I', current_user);
+  END IF;
+
+  IF NOT pg_has_role('prospix_app', 'guilds_admin', 'member') THEN
+    GRANT guilds_admin TO prospix_app;
+  END IF;
 END$$;
+
+DO $$
+BEGIN
+  EXECUTE format('GRANT CONNECT ON DATABASE %I TO prospix_app', current_database());
+END$$;
+
+GRANT USAGE ON SCHEMA public TO prospix_app, guilds_admin;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO prospix_app, guilds_admin;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO prospix_app, guilds_admin;
 
 -- ── 2. Função helper · retorna tenant_id do contexto ────────────────────────
 CREATE OR REPLACE FUNCTION current_tenant_id() RETURNS uuid
@@ -84,85 +107,110 @@ ALTER TABLE audit_log              FORCE ROW LEVEL SECURITY;
 -- ── 4. Policies de isolamento por tenant ────────────────────────────────────
 -- Padrão: `tenant_id = current_tenant_id()` em SELECT, INSERT, UPDATE, DELETE.
 
+DROP POLICY IF EXISTS tenant_isolation_users ON users;
 CREATE POLICY tenant_isolation_users ON users
-  FOR ALL USING (tenant_id = current_tenant_id() OR role = 'GUILDS_ADMIN');
+  FOR ALL USING (tenant_id = current_tenant_id());
 
+DROP POLICY IF EXISTS tenant_isolation_sessions ON sessions;
 CREATE POLICY tenant_isolation_sessions ON sessions
   FOR ALL USING (
     user_id IN (SELECT id FROM users WHERE tenant_id = current_tenant_id())
   );
 
+DROP POLICY IF EXISTS tenant_isolation_tenant_secrets ON tenant_secrets;
 CREATE POLICY tenant_isolation_tenant_secrets ON tenant_secrets
   FOR ALL USING (tenant_id = current_tenant_id());
 
+DROP POLICY IF EXISTS tenant_isolation_tenant_ai_configs ON tenant_ai_configs;
 CREATE POLICY tenant_isolation_tenant_ai_configs ON tenant_ai_configs
   FOR ALL USING (tenant_id = current_tenant_id());
 
+DROP POLICY IF EXISTS tenant_isolation_tenant_invitations ON tenant_invitations;
 CREATE POLICY tenant_isolation_tenant_invitations ON tenant_invitations
   FOR ALL USING (tenant_id = current_tenant_id());
 
+DROP POLICY IF EXISTS tenant_isolation_campaigns ON campaigns;
 CREATE POLICY tenant_isolation_campaigns ON campaigns
   FOR ALL USING (tenant_id = current_tenant_id());
 
+DROP POLICY IF EXISTS tenant_isolation_leads ON leads;
 CREATE POLICY tenant_isolation_leads ON leads
   FOR ALL USING (tenant_id = current_tenant_id());
 
+DROP POLICY IF EXISTS tenant_isolation_lead_notes ON lead_notes;
 CREATE POLICY tenant_isolation_lead_notes ON lead_notes
   FOR ALL USING (tenant_id = current_tenant_id());
 
+DROP POLICY IF EXISTS tenant_isolation_health_profiles ON health_profiles;
 CREATE POLICY tenant_isolation_health_profiles ON health_profiles
   FOR ALL USING (tenant_id = current_tenant_id());
 
+DROP POLICY IF EXISTS tenant_isolation_conversations ON conversations;
 CREATE POLICY tenant_isolation_conversations ON conversations
   FOR ALL USING (tenant_id = current_tenant_id());
 
+DROP POLICY IF EXISTS tenant_isolation_messages ON messages;
 CREATE POLICY tenant_isolation_messages ON messages
   FOR ALL USING (tenant_id = current_tenant_id());
 
+DROP POLICY IF EXISTS tenant_isolation_pending_outbound ON pending_outbound;
 CREATE POLICY tenant_isolation_pending_outbound ON pending_outbound
   FOR ALL USING (tenant_id = current_tenant_id());
 
+DROP POLICY IF EXISTS tenant_isolation_meetings ON meetings;
 CREATE POLICY tenant_isolation_meetings ON meetings
   FOR ALL USING (tenant_id = current_tenant_id());
 
+DROP POLICY IF EXISTS tenant_isolation_scripts ON scripts;
 CREATE POLICY tenant_isolation_scripts ON scripts
   FOR ALL USING (tenant_id = current_tenant_id());
 
+DROP POLICY IF EXISTS tenant_isolation_script_variations ON script_variations;
 CREATE POLICY tenant_isolation_script_variations ON script_variations
   FOR ALL USING (tenant_id = current_tenant_id());
 
+DROP POLICY IF EXISTS tenant_isolation_lead_events ON lead_events;
 CREATE POLICY tenant_isolation_lead_events ON lead_events
   FOR ALL USING (tenant_id = current_tenant_id());
 
+DROP POLICY IF EXISTS tenant_isolation_optouts ON optouts;
 CREATE POLICY tenant_isolation_optouts ON optouts
   FOR ALL USING (tenant_id = current_tenant_id());
 
+DROP POLICY IF EXISTS tenant_isolation_tenant_usage ON tenant_usage;
 CREATE POLICY tenant_isolation_tenant_usage ON tenant_usage
   FOR ALL USING (tenant_id = current_tenant_id());
 
+DROP POLICY IF EXISTS tenant_isolation_tenant_billing ON tenant_billing;
 CREATE POLICY tenant_isolation_tenant_billing ON tenant_billing
   FOR ALL USING (tenant_id = current_tenant_id());
 
+DROP POLICY IF EXISTS tenant_isolation_notifications ON notifications;
 CREATE POLICY tenant_isolation_notifications ON notifications
   FOR ALL USING (tenant_id = current_tenant_id());
 
+DROP POLICY IF EXISTS tenant_isolation_notification_preferences ON notification_preferences;
 CREATE POLICY tenant_isolation_notification_preferences ON notification_preferences
   FOR ALL USING (
     user_id IN (SELECT id FROM users WHERE tenant_id = current_tenant_id())
   );
 
+DROP POLICY IF EXISTS tenant_isolation_tenant_notes ON tenant_notes;
 CREATE POLICY tenant_isolation_tenant_notes ON tenant_notes
   FOR ALL USING (tenant_id = current_tenant_id());
 
 -- Prompts: global Guilds (tenant_id IS NULL) acessível para todos;
 -- prompts customizados ficam isolados por tenant.
+DROP POLICY IF EXISTS tenant_isolation_prompt_versions ON prompt_versions;
 CREATE POLICY tenant_isolation_prompt_versions ON prompt_versions
   FOR ALL USING (tenant_id IS NULL OR tenant_id = current_tenant_id());
 
+DROP POLICY IF EXISTS tenant_isolation_idempotency_keys ON idempotency_keys;
 CREATE POLICY tenant_isolation_idempotency_keys ON idempotency_keys
   FOR ALL USING (tenant_id IS NULL OR tenant_id = current_tenant_id());
 
 -- Audit log: tenant só lê o próprio · admin Guilds usa BYPASSRLS
+DROP POLICY IF EXISTS tenant_isolation_audit_log ON audit_log;
 CREATE POLICY tenant_isolation_audit_log ON audit_log
   FOR ALL USING (tenant_id = current_tenant_id());
 

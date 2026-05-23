@@ -62,6 +62,8 @@ Claude revisa achados altos/críticos como avaliador independente. Gustavo decid
 
 ```
 1. PM/coordenador escreve a tarefa no spec da frente (ou abre issue no GitHub)
+   - Se for trabalho multiagente, criar pacote `MA-*` com `docs/auditoria/template-pacote-tarefa.md`
+   - Registrar status em `docs/auditoria/matriz-execucao-multiagente.md`
 2. Agente IA lê:
    - Spec da frente (contexto + contratos + critério de aceite)
    - Arquivos mencionados (input contracts)
@@ -72,6 +74,8 @@ Claude revisa achados altos/críticos como avaliador independente. Gustavo decid
 6. Se verde → push + abre PR
 7. Coordenador/revisor (Claude) revisa diff vs spec/contratos quando aplicável
 8. Codex executa gate de auditoria oficial conforme `docs/auditoria/`
+   - Troca de dono usa `docs/auditoria/template-handoff.md`
+   - Conflito usa `docs/auditoria/protocolo-conflitos.md`
 9. Se aprovado → merge em staging
 10. Sexta: PM aprova merge staging → main quando não houver bloqueio P0/P1
 ```
@@ -183,18 +187,20 @@ Triggers obrigatórios para **Codex bloquear** até nova evidência:
 
 ## 8. Onde estamos hoje
 
-| Frente | Spec escrito? | Agente alocado? | Implementação iniciada? | Auditoria |
+> **Fonte da verdade do estado:** [`docs/auditoria/status-cobertura.md`](../auditoria/status-cobertura.md) (atualizado por squad, ponderado, com motivo principal). Não trate esta tabela como autoritativa — ela é resumo derivado.
+
+| Frente | Spec | Implementação | Squad auditor | Gate atual |
 |---|---|---|---|---|
-| [A · Foundation](frente-a-foundation.md) | ✅ | — | ✅ | Gate P0/P1 aberto |
-| [B · Captura](frente-b-captura.md) | ✅ | — | ✅ | Em triagem |
-| [C · IA + WhatsApp](frente-c-ia-whatsapp.md) | ✅ | — | ✅ | Em triagem |
-| [D · Calendar + Admin](frente-d-calendar-admin.md) | ✅ | — | ✅ | Em triagem |
-| [E · Frontend painel + admin](frente-e-frontend.md) | ✅ | — | ✅ | Em triagem |
-| [F · Landing + Auth](frente-f-landing-auth.md) | ✅ | — | ✅ | Em triagem |
+| [A · Foundation](frente-a-foundation.md) | ✅ | ✅ real | 1 (Foundation/Security) | Parcial · P0 RLS resolvido local · CI DB-backed pendente |
+| [B · Captura](frente-b-captura.md) | ✅ | ✅ real | 2/3 | Em triagem |
+| [C · IA + WhatsApp](frente-c-ia-whatsapp.md) | ✅ | ✅ real | 3 (Workers/IA/WhatsApp) | Bloqueado go-live · DLQ física + E2E WhatsApp pendentes |
+| [D · Calendar + Admin](frente-d-calendar-admin.md) | ✅ | ✅ real | 2/3 | Em triagem |
+| [E · Frontend painel + admin](frente-e-frontend.md) | ✅ | ✅ real | 4 (Frontend/UX) | Bloqueado homologação ampla · estados estruturais + a11y |
+| [F · Landing + Auth](frente-f-landing-auth.md) | ✅ | ✅ real | 4/6 | Em mitigação · LGPD claims + termos juridicos |
 
-Estado atual: monorepo com implementação real em API, web, admin, landing, UI, mocks, Prisma, RLS e testes. O baseline auditável e os achados iniciais ficam em [`docs/auditoria/matriz-achados.md`](../auditoria/matriz-achados.md).
+**Estado atual** (snapshot · 23/05/2026): monorepo com implementação real, ~26 mil LOC de aplicação, 162 testes verdes, prova DB-backed RLS local, prova Redis/BullMQ real para idempotência, framework de auditoria com 35 achados, 0 P0 aberto, 18 P1 em vários estágios. **Prontidão auditável** estimada em ~89% pelo Squad 0; **prontidão para go-live** menor por causa de gaps estruturais (DLQ física, smoke E2E, LGPD operacional, revisão jurídica).
 
-**Próximo passo:** fechar achados P0/P1 da auditoria inicial antes de tratar qualquer resultado de agente como pronto para go-live.
+**Próximo passo:** reproduzir provas DB-backed em CI, fechar P1 de DLQ/auth integrada/LGPD, smoke E2E pós-login.
 
 ---
 
@@ -202,3 +208,4 @@ Estado atual: monorepo com implementação real em API, web, admin, landing, UI,
 
 - **v1.0** (21/05/2026): doc inicial.
 - **v1.1** (21/05/2026): adiciona Codex como Auditor Oficial com gate bloqueante e atualiza o estado das frentes para implementação iniciada.
+- **v1.2** (23/05/2026): tabela de status aponta para `docs/auditoria/status-cobertura.md` como fonte da verdade; snapshot 23/05 com 162 testes, prova DB-backed local e 35 achados.

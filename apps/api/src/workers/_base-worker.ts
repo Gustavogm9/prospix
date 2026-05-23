@@ -37,9 +37,8 @@ export abstract class BaseWorker<TPayload extends BaseJobPayload, TResult> {
 
     try {
       // 1. Wrap process execution inside the tenantContextStorage context.
-      // The Prisma Client query extension will automatically detect this tenantId and wrap
-      // all operations inside this async callback in an isolated, safe, pooled transaction!
-      const result = await tenantContextStorage.run({ tenantId }, async () => {
+      // The Prisma Client query extension detects this tenantId for tenant-scoped queries.
+      const result = await tenantContextStorage.run({ tenantId, bypassRls: false }, async () => {
         return await this.process(job);
       });
       
@@ -69,4 +68,3 @@ export abstract class BaseWorker<TPayload extends BaseJobPayload, TResult> {
     }
   }
 }
-

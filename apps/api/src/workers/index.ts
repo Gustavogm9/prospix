@@ -1,16 +1,82 @@
 import { createDedicatedRedisConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { prisma } from '../lib/prisma.js';
-import { createTenantQueue } from '../lib/queue.js';
+import { createTenantQueue, getTenantQueueName, observeQueueFailures, upsertTenantJobScheduler } from '../lib/queue.js';
+import type { QueueFailureObserver, TenantJobSchedule } from '../lib/queue.js';
 import { Worker } from 'bullmq';
 import { ProcessInboundWorker } from './process-inbound.js';
 import { SendMessagesWorker } from './send-messages.js';
 import { ScheduleMeetingWorker } from './schedule-meeting.js';
 import { HealthCheckWorker } from './health-check.js';
 import { BillingSuspensionWorker } from './billing-suspension.js';
+import { CaptureGoogleMapsWorker } from './capture-google-maps.js';
+import { EnrichLeadsWorker } from './enrich-leads.js';
+import { DailyDigestWorker } from './daily-digest.js';
+import { UsageAggregationWorker } from './usage-aggregation.js';
+import { SendNotificationWorker } from './send-notification.js';
 
 let activeWorkers: Worker[] = [];
+let activeQueueObservers: QueueFailureObserver[] = [];
 let healthCheckInterval: NodeJS.Timeout | null = null;
+
+export const workerQueueNames = [
+  'process-inbound',
+  'send-messages',
+  'send-notification',
+  'schedule-meeting',
+  'health-check',
+  'billing-suspension',
+  'capture-google-maps',
+  'enrich-leads',
+  'daily-digest',
+  'usage-aggregation',
+];
+
+const SCHEDULER_TIMEZONE = 'America/Sao_Paulo';
+
+type SchedulerPayload = {
+  tenant_id: string;
+  trace_id: string;
+  run_all_tenants?: boolean;
+};
+
+export function buildTenantScheduledJobs(tenantId: string): TenantJobSchedule<SchedulerPayload>[] {
+  return [
+    {
+      workerName: 'daily-digest',
+      schedulerId: `daily-digest:${tenantId}`,
+      jobName: 'daily-digest',
+      pattern: '0 8 * * *',
+      timezone: SCHEDULER_TIMEZONE,
+      data: {
+        tenant_id: tenantId,
+        trace_id: `scheduler:daily-digest:${tenantId}`,
+      },
+    },
+    {
+      workerName: 'usage-aggregation',
+      schedulerId: `usage-aggregation:${tenantId}`,
+      jobName: 'usage-aggregation',
+      pattern: '0 * * * *',
+      timezone: SCHEDULER_TIMEZONE,
+      data: {
+        tenant_id: tenantId,
+        trace_id: `scheduler:usage-aggregation:${tenantId}`,
+        run_all_tenants: false,
+      },
+    },
+  ];
+}
+
+export async function scheduleRecurringTenantJobs(tenants: Array<{ id: string }>): Promise<void> {
+  for (const tenant of tenants) {
+    const schedules = buildTenantScheduledJobs(tenant.id);
+
+    for (const schedule of schedules) {
+      await upsertTenantJobScheduler(tenant.id, schedule);
+    }
+  }
+}
 
 export async function startWorkers() {
   logger.info('🚀 Prospix Background Workers bootstrap initiated...');
@@ -19,16 +85,23 @@ export async function startWorkers() {
     // Instantiate Concrete Domain Worker Handlers
     const processInboundHandler = new ProcessInboundWorker();
     const sendMessagesHandler = new SendMessagesWorker();
+    const sendNotificationHandler = new SendNotificationWorker();
     const scheduleMeetingHandler = new ScheduleMeetingWorker();
     const healthCheckHandler = new HealthCheckWorker();
     const billingSuspensionHandler = new BillingSuspensionWorker();
+    const captureGoogleMapsHandler = new CaptureGoogleMapsWorker();
+    const enrichLeadsHandler = new EnrichLeadsWorker();
+    const dailyDigestHandler = new DailyDigestWorker();
+    const usageAggregationHandler = new UsageAggregationWorker();
+
+    activeQueueObservers = workerQueueNames.map((workerName) => observeQueueFailures(workerName));
 
     // 1. Initialize static, global Workers with dedicated connection sockets
-    // This allows radical scalability by using exactly 5 workers instead of N * 4 workers.
+    // This allows radical scalability by using one global worker per queue instead of N tenant workers.
 
     // A. Process Inbound Worker
     const inboundWorker = new Worker(
-      'queue:global:process-inbound',
+      getTenantQueueName('global', 'process-inbound'),
       async (job) => {
         return await processInboundHandler.run(job);
       },
@@ -41,7 +114,7 @@ export async function startWorkers() {
 
     // B. Send Messages Worker
     const sendWorker = new Worker(
-      'queue:global:send-messages',
+      getTenantQueueName('global', 'send-messages'),
       async (job) => {
         return await sendMessagesHandler.run(job);
       },
@@ -52,9 +125,22 @@ export async function startWorkers() {
     );
     activeWorkers.push(sendWorker);
 
-    // C. Schedule Meeting Worker
+    // C. Send Notification Worker
+    const notificationWorker = new Worker(
+      getTenantQueueName('global', 'send-notification'),
+      async (job) => {
+        return await sendNotificationHandler.run(job);
+      },
+      {
+        connection: createDedicatedRedisConnection(),
+        concurrency: sendNotificationHandler.concurrency,
+      }
+    );
+    activeWorkers.push(notificationWorker);
+
+    // D. Schedule Meeting Worker
     const meetingWorker = new Worker(
-      'queue:global:schedule-meeting',
+      getTenantQueueName('global', 'schedule-meeting'),
       async (job) => {
         return await scheduleMeetingHandler.run(job);
       },
@@ -65,9 +151,9 @@ export async function startWorkers() {
     );
     activeWorkers.push(meetingWorker);
 
-    // D. Health Check Worker
+    // E. Health Check Worker
     const hcWorker = new Worker(
-      'queue:global:health-check',
+      getTenantQueueName('global', 'health-check'),
       async (job) => {
         return await healthCheckHandler.run(job);
       },
@@ -78,9 +164,9 @@ export async function startWorkers() {
     );
     activeWorkers.push(hcWorker);
 
-    // E. Billing Suspension Worker (Asaas auto-suspension scheduler)
+    // F. Billing Suspension Worker (Asaas auto-suspension scheduler)
     const billingWorker = new Worker(
-      'queue:global:billing-suspension',
+      getTenantQueueName('global', 'billing-suspension'),
       async (job) => {
         return await billingSuspensionHandler.run(job);
       },
@@ -91,6 +177,58 @@ export async function startWorkers() {
     );
     activeWorkers.push(billingWorker);
 
+    // G. Capture Google Maps Worker
+    const captureWorker = new Worker(
+      getTenantQueueName('global', 'capture-google-maps'),
+      async (job) => {
+        return await captureGoogleMapsHandler.run(job);
+      },
+      {
+        connection: createDedicatedRedisConnection(),
+        concurrency: captureGoogleMapsHandler.concurrency,
+      }
+    );
+    activeWorkers.push(captureWorker);
+
+    // H. Enrich Leads Worker
+    const enrichWorker = new Worker(
+      getTenantQueueName('global', 'enrich-leads'),
+      async (job) => {
+        return await enrichLeadsHandler.run(job);
+      },
+      {
+        connection: createDedicatedRedisConnection(),
+        concurrency: enrichLeadsHandler.concurrency,
+      }
+    );
+    activeWorkers.push(enrichWorker);
+
+    // I. Daily Digest Worker
+    const digestWorker = new Worker(
+      getTenantQueueName('global', 'daily-digest'),
+      async (job) => {
+        return await dailyDigestHandler.run(job);
+      },
+      {
+        connection: createDedicatedRedisConnection(),
+        concurrency: dailyDigestHandler.concurrency,
+      }
+    );
+    activeWorkers.push(digestWorker);
+
+    // J. Usage Aggregation Worker
+    const usageWorker = new Worker(
+      getTenantQueueName('global', 'usage-aggregation'),
+      async (job) => {
+        return await usageAggregationHandler.run(job);
+      },
+      {
+        connection: createDedicatedRedisConnection(),
+        concurrency: usageAggregationHandler.concurrency,
+      }
+    );
+    activeWorkers.push(usageWorker);
+
     // 2. Fetch active tenants to trigger initial health checks
     const tenants = await prisma.tenant.findMany({
       where: {
@@ -100,6 +238,8 @@ export async function startWorkers() {
     });
 
     logger.info({ count: tenants.length }, `🏢 Enqueuing initial health checks for active tenants...`);
+    await scheduleRecurringTenantJobs(tenants);
+
     for (const tenant of tenants) {
       const hcQueue = createTenantQueue(tenant.id, 'health-check');
       await hcQueue.add('initial-check', { tenant_id: tenant.id });
@@ -149,8 +289,11 @@ async function shutdown() {
   }
 
   logger.info('🔌 Closing all BullMQ workers...');
-  const closing = activeWorkers.map((w) => w.close());
-  await Promise.all(closing);
+  const closingWorkers = activeWorkers.map((w) => w.close());
+  const closingObservers = activeQueueObservers.map((observer) => observer.close());
+  await Promise.all([...closingWorkers, ...closingObservers]);
+  activeWorkers = [];
+  activeQueueObservers = [];
   logger.info('✅ All workers stopped gracefully');
 }
 
@@ -162,4 +305,3 @@ if (isMainModule) {
     process.exit(1);
   });
 }
-

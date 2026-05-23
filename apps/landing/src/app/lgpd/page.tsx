@@ -11,17 +11,17 @@ export default function LgpdPage() {
 
         <div className="mt-8 space-y-6 text-xs text-text-secondary leading-relaxed">
           <p>
-            O Prospix, operado tecnicamente pela Guilds no modelo SaaS multi-tenant, atua em conformidade estrita com a Lei Geral de Proteção de Dados Pessoais (Lei nº 13.709/18). Nós agimos como <strong>Operador</strong> no processamento dos dados comerciais inseridos por nossos clientes (que exercem o papel de <strong>Controladores</strong>).
+            O Prospix, operado tecnicamente pela Guilds no modelo SaaS multi-tenant, busca atuar de forma alinhada à Lei Geral de Proteção de Dados Pessoais (Lei nº 13.709/18). Em geral, atuamos como <strong>Operador</strong> no processamento dos dados comerciais inseridos por nossos clientes, que exercem o papel de <strong>Controladores</strong>.
           </p>
 
-          <h3 className="text-sm font-bold text-text">1. Isolamento Físico via Row Level Security (RLS)</h3>
+          <h3 className="text-sm font-bold text-text">1. Isolamento Lógico e Row Level Security (RLS)</h3>
           <p>
-            Garantimos que todas as interações e registros cadastrais coletados por um corretor sejam inacessíveis a quaisquer outros usuários do sistema. Nosso isolamento lógico de banco de dados impede vazamentos ou compartilhamento indevido de carteiras e contatos comerciais.
+            Adotamos controles de segregação lógica por tenant, incluindo Row Level Security (RLS) quando aplicável, para reduzir o risco de acesso indevido entre carteiras e contatos comerciais. Esses controles fazem parte de uma estratégia mais ampla de segurança, auditoria e revisão contínua.
           </p>
 
           <h3 className="text-sm font-bold text-text">2. Direitos dos Titulares dos Dados</h3>
           <p>
-            Como titular, você tem o direito de solicitar a confirmação da existência de tratamento, o acesso aos seus dados pessoais e a exclusão definitiva das bases de prospecção comercial a qualquer momento. Para isso, entre em contato direto com o nosso encarregado de dados (DPO).
+            Como titular, você pode solicitar confirmação da existência de tratamento, acesso, correção ou exclusão de dados pessoais. Os pedidos serão analisados conforme a LGPD, os contratos aplicáveis e eventuais obrigações de retenção legal, segurança ou prevenção a fraudes.
           </p>
 
           <h3 className="text-sm font-bold text-text">3. Contato com o DPO</h3>

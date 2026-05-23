@@ -16,7 +16,7 @@ export default function LandingPage() {
   const faqs = [
     {
       q: 'Como funciona o isolamento dos dados da minha carteira?',
-      a: 'A segurança é nossa prioridade absoluta. O Prospix utiliza Row Level Security (RLS) físico a nível de banco de dados. Isso significa que as informações dos seus leads, clientes e conversas são criptografadas e separadas por uma barreira técnica intransponível de outros usuários. Suas credenciais do WhatsApp e Google Calendar também são salvas em um Vault criptografado com criptografia AES-256-GCM.',
+      a: 'A segurança é uma prioridade do Prospix. A plataforma adota controles de segregação lógica por tenant, incluindo Row Level Security (RLS) quando aplicável no banco de dados, para reduzir o risco de acesso indevido entre carteiras. Credenciais de integrações como WhatsApp e Google Calendar são tratadas em fluxos protegidos e com controles de criptografia conforme a configuração do ambiente.',
     },
     {
       q: 'A IA pode gerar banimento da minha conta do WhatsApp?',
@@ -359,7 +359,7 @@ export default function LandingPage() {
               },
               {
                 t: 'Líderes de Expansão Regional',
-                p: 'Tenha o controle consolidado de custos de IA, margens e qualidade do time em um dashboard unificado, bypassando restrições com total isolamento de RLS por corretor.',
+                p: 'Tenha o controle consolidado de custos de IA, margens e qualidade do time em um dashboard unificado, respeitando permissões e segregação de dados por corretor.',
               },
             ].map((card, idx) => (
               <div key={idx} className="bg-bg p-6 rounded border border-border hover:shadow-md transition-shadow">
@@ -691,7 +691,7 @@ export default function LandingPage() {
               <span className="text-md font-bold text-primary">Prospix</span>
             </div>
             <p className="text-2xs text-text-muted leading-relaxed">
-              Plataforma SaaS multi-tenant operando em total conformidade com a LGPD e RLS isolado de dados.
+              Plataforma SaaS multi-tenant com práticas alinhadas à LGPD e controles de isolamento lógico de dados.
             </p>
           </div>
           <div>

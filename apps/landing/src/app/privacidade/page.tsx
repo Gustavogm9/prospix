@@ -11,22 +11,22 @@ export default function PrivacidadePage() {
 
         <div className="mt-8 space-y-6 text-xs text-text-secondary leading-relaxed">
           <p>
-            O Prospix tem o compromisso inalienável de manter a confidencialidade e a segurança das suas informações de funil comercial. Esta política de privacidade descreve como coletamos e protegemos os seus dados de acesso em conformidade com as melhores práticas de mercado.
+            O Prospix se compromete a tratar informações do funil comercial com confidencialidade e controles de segurança compatíveis com uma aplicação SaaS multi-tenant. Esta política de privacidade descreve como coletamos, usamos e protegemos dados pessoais de acordo com a LGPD e com as práticas adotadas pela plataforma.
           </p>
 
           <h3 className="text-sm font-bold text-text">1. Coleta de Dados</h3>
           <p>
-            Coletamos dados básicos cadastrais (nome, WhatsApp, SUSEP e e-mail) fornecidos no momento do onboarding para gerenciar sua assinatura mensal. Não armazenamos ou compartilhamos dados de conversas com empresas terceiras.
+            Coletamos dados básicos cadastrais (nome, WhatsApp, SUSEP e e-mail) fornecidos no onboarding, além de informações necessárias para operar convites, autenticação, suporte, faturamento e fluxos comerciais configurados pelo cliente. Dados de conversas podem ser tratados quando necessários para executar, auditar ou melhorar a operação contratada, e não são vendidos a terceiros.
           </p>
 
-          <h3 className="text-sm font-bold text-text">2. Criptografia no Secrets Vault</h3>
+          <h3 className="text-sm font-bold text-text">2. Proteção de Credenciais</h3>
           <p>
-            Suas credenciais externas de conexão, como tokens da Evolution API ou chaves de API do Google OAuth, são encriptadas de forma unidirecional usando algoritmos AES-256-GCM. A decodificação só ocorre dinamicamente na memória RAM durante a execução dos workers.
+            Credenciais externas de conexão, como tokens da Evolution API ou chaves de API do Google OAuth, são protegidas por controles técnicos de acesso e criptografia quando aplicável. O uso dessas credenciais ocorre apenas para executar integrações configuradas pelo cliente e dentro dos limites necessários à operação.
           </p>
 
           <h3 className="text-sm font-bold text-text">3. Direitos e Exclusão</h3>
           <p>
-            Você pode requerer a remoção completa de seus dados e registros de conexão das nossas bases de dados entrando em contato direto com nosso encarregado legal.
+            Você pode solicitar acesso, correção ou exclusão de dados pessoais entrando em contato com nosso canal de privacidade. Cada solicitação será avaliada conforme a LGPD, os contratos aplicáveis e eventuais obrigações de retenção legal ou segurança.
           </p>
         </div>
 

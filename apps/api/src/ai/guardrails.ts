@@ -1,5 +1,6 @@
 import { AIRouter } from './router.js';
 import { logger } from '../lib/logger.js';
+import { AIQuotaExceededError } from './quota.js';
 
 export type GuardrailFailureReason =
   | 'mentions_specific_money'
@@ -166,7 +167,7 @@ export async function callAIWithGuardrails(params: {
 
       // Guardrail failed
       logger.warn(
-        { tenantId, attempt, reason: guardResult.reason, msg: msgToSend },
+        { tenantId, attempt, reason: guardResult.reason, outputLength: msgToSend.length },
         '🛡️ Guardrail validation failed'
       );
 
@@ -195,6 +196,29 @@ Por favor, gere uma nova resposta JSON em conformidade total com todas as Regras
         };
       }
     } catch (err: any) {
+      if (err instanceof AIQuotaExceededError) {
+        logger.warn(
+          {
+            tenantId,
+            currentCostCents: err.currentCostCents,
+            estimatedCostCents: err.estimatedCostCents,
+            limitCents: err.limitCents,
+          },
+          'AI quota exceeded before provider call'
+        );
+
+        return {
+          message_to_send: '',
+          escalated: true,
+          escalatedReason: 'ai_quota_exceeded',
+          tokensInput: cumulativeTokensInput,
+          tokensOutput: cumulativeTokensOutput,
+          costCents: cumulativeCostCents,
+          latencyMs: cumulativeLatencyMs,
+          llmModel: finalModel,
+        };
+      }
+
       logger.error({ err: err.message, tenantId, attempt }, '❌ Exception in callAIWithGuardrails');
       if (attempt === 1) {
         attempt++;

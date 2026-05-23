@@ -3,28 +3,29 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent, Button, Inpu
 import { Settings as SettingsIcon, Shield, CreditCard, Key, Calendar, Phone, Copy, Loader2, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
 import { useAuthStore } from '../store/auth-store';
 import { apiClient } from '../lib/api-client';
+import { canUseMockFallbacks } from '../lib/demo-mode';
 
 export default function Settings() {
   const { user } = useAuthStore();
   const [activeTab, setActiveTab] = useState('perfil');
 
   // Profile fields state
-  const [name, setName] = useState(user?.name || 'Gustavo Silva');
-  const [email, setEmail] = useState(user?.email || 'gustavo@corretora.com.br');
-  const [susep, setSusep] = useState('SUSEP-99887766');
+  const [name, setName] = useState(user?.name || '');
+  const [email, setEmail] = useState(user?.email || '');
+  const [susep, setSusep] = useState('');
 
   // Integrations states
   const [whatsappStatus, setWhatsappStatus] = useState<'connected' | 'disconnected' | 'loading'>('loading');
   const [instanceName, setInstanceName] = useState<string | null>(null);
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [isGeneratingQr, setIsGeneratingQr] = useState(false);
-  const [openaiKey, setOpenaiKey] = useState('••••••••••••••••••••••••••••••••');
+  const [openaiKey, setOpenaiKey] = useState(canUseMockFallbacks ? '••••••••••••••••••••••••••••••••' : '');
   const [isConfirmingDisconnect, setIsConfirmingDisconnect] = useState(false);
 
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Billing Mock Data (Asaas integration)
-  const billingData = {
+  const billingData = canUseMockFallbacks ? {
     planName: 'Prospix Premium',
     mrr: 'R$ 399,00 / mês',
     aiUsage: { used: 720, total: 1000, percentage: 72 },
@@ -33,9 +34,14 @@ export default function Settings() {
       { id: '2', dueDate: '10/05/2026', value: 'R$ 399,00', status: 'pago' },
       { id: '3', dueDate: '10/04/2026', value: 'R$ 399,00', status: 'pago' },
     ]
-  };
+  } : null;
 
   const handleCopyPix = (pixCode: string) => {
+    if (!canUseMockFallbacks) {
+      toast.error('Faturamento indisponível', 'As faturas reais ainda não estão conectadas neste ambiente.');
+      return;
+    }
+
     navigator.clipboard.writeText(pixCode);
     toast.success('Pix Copiado', 'Código Pix Copia e Cola copiado para a área de transferência!');
   };
@@ -188,7 +194,15 @@ export default function Settings() {
                     <Input value={susep} onChange={(e) => setSusep(e.target.value)} className="bg-white border-border text-text placeholder-text-secondary text-xs focus:border-border-strong h-10" />
                   </div>
                 </div>
-                <Button className="bg-primary hover:bg-primary-hover text-white font-semibold text-xs px-4 h-10 rounded-xl mt-4 shadow-md shadow-primary/10">
+                <Button
+                  disabled={!canUseMockFallbacks}
+                  onClick={() => {
+                    if (canUseMockFallbacks) {
+                      toast.info('Modo demo', 'Alterações de perfil não são persistidas no modo demo.');
+                    }
+                  }}
+                  className="bg-primary hover:bg-primary-hover text-white font-semibold text-xs px-4 h-10 rounded-xl mt-4 shadow-md shadow-primary/10 disabled:opacity-60 disabled:cursor-not-allowed"
+                >
                   Salvar Alterações
                 </Button>
               </CardContent>
@@ -445,9 +459,24 @@ export default function Settings() {
                   <div className="flex gap-2">
                     <div className="relative flex-1">
                       <Key className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary" />
-                      <Input type="password" value={openaiKey} onChange={(e) => setOpenaiKey(e.target.value)} className="pl-10 bg-white border-border text-text placeholder-text-secondary text-xs focus:border-border-strong h-10 font-mono" />
+                      <Input
+                        type="password"
+                        value={openaiKey}
+                        disabled={!canUseMockFallbacks}
+                        onChange={(e) => setOpenaiKey(e.target.value)}
+                        placeholder={canUseMockFallbacks ? undefined : 'Credenciais indisponíveis neste ambiente'}
+                        className="pl-10 bg-white border-border text-text placeholder-text-secondary text-xs focus:border-border-strong h-10 font-mono disabled:opacity-70"
+                      />
                     </div>
-                    <Button className="bg-surface-sunken hover:bg-border text-text-secondary border border-border/80 text-xs font-semibold px-4 h-10 rounded-xl">
+                    <Button
+                      disabled={!canUseMockFallbacks}
+                      onClick={() => {
+                        if (canUseMockFallbacks) {
+                          toast.info('Modo demo', 'Chaves de API não são persistidas no modo demo.');
+                        }
+                      }}
+                      className="bg-surface-sunken hover:bg-border text-text-secondary border border-border/80 text-xs font-semibold px-4 h-10 rounded-xl disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
                       Salvar Chave
                     </Button>
                   </div>
@@ -464,6 +493,20 @@ export default function Settings() {
                 <CardDescription className="text-text-secondary text-xs">Gerencie faturas corporativas e limites de uso de IA.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
+                {!billingData ? (
+                  <div className="rounded-xl border border-border bg-surface-sunken p-6 flex flex-col sm:flex-row sm:items-center gap-4">
+                    <div className="p-3 bg-white border border-border rounded-xl text-text-secondary w-fit">
+                      <AlertCircle className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-bold text-text font-heading">Faturamento indisponível neste ambiente</h4>
+                      <p className="text-xs text-text-secondary mt-1 leading-relaxed">
+                        Faturas, Pix e limites financeiros reais serão exibidos apenas quando a integração de cobrança estiver conectada ao backend.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                <>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="p-4 rounded-xl bg-surface-sunken border border-border">
                     <span className="text-[10px] text-text-secondary font-semibold uppercase tracking-wider block">Plano Atual</span>
@@ -521,6 +564,8 @@ export default function Settings() {
                     </table>
                   </div>
                 </div>
+                </>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

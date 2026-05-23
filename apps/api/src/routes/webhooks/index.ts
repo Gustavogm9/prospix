@@ -7,13 +7,30 @@ import { createTenantQueue } from '../../lib/queue.js';
 import { tenantContextStorage } from '../../lib/tenant-context-storage.js';
 import crypto from 'crypto';
 
+function createExternalEventJobId(provider: string, ...parts: Array<string | null | undefined>): string {
+  const hash = crypto
+    .createHash('sha256')
+    .update(parts.filter(Boolean).join('|'))
+    .digest('hex')
+    .slice(0, 32);
+
+  return `external-${provider}-${hash}`;
+}
+
+function getHeaderValue(value: FastifyRequest['headers'][string]): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
 export const webhookRoutes: FastifyPluginAsync = async (app) => {
   // POST /v1/webhooks/asaas
   app.post('/asaas', async (req: FastifyRequest, reply: FastifyReply) => {
-    // Optional: Validate Asaas token signature if configured in environment
-    const token = req.headers['asaas-token'];
+    // Prefer the documented header while accepting the legacy name during transition.
+    const token =
+      getHeaderValue(req.headers['asaas-access-token']) ??
+      getHeaderValue(req.headers['asaas-token']);
+
     if (env.ASAAS_WEBHOOK_SECRET && token !== env.ASAAS_WEBHOOK_SECRET) {
-      logger.warn({ token }, 'Unauthorized Asaas Webhook Attempt');
+      logger.warn({ hasToken: Boolean(token) }, 'Unauthorized Asaas Webhook Attempt');
       return reply.code(401).send({ error: 'Unauthorized', message: 'Invalid Asaas token' });
     }
 
@@ -103,7 +120,10 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
               billing_id: billing.id,
               trace_id: crypto.randomUUID(),
             },
-            { delay: delayMs }
+            {
+              delay: delayMs,
+              jobId: createExternalEventJobId('asaas', billing.tenantId, event, payment.id),
+            }
           );
 
           logger.info({ tenant_id: billing.tenantId, billing_id: billing.id }, 'Scheduled D+15 suspension check job');
@@ -116,4 +136,3 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
 };
 
 export default webhookRoutes;
-
