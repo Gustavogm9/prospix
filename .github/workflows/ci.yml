@@ -108,6 +108,8 @@ jobs:
       REDIS_URL: redis://localhost:6379
       SECRETS_ENCRYPTION_KEY: dGVzdF9rZXlfMzJfYnl0ZXNfbG9uZ19wYWRfeHh4eA==
       EVOLUTION_GUILDS_API_KEY: test-evolution-key
+      ALLOW_DESTRUCTIVE_SEED: '1'
+      SEED_ADMIN_PASSWORD: ci-test-admin-password
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

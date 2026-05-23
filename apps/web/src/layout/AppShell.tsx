@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/auth-store';
 import {
@@ -14,11 +14,16 @@ import {
   X,
   Bell,
   Search,
-  CheckCircle2,
   ChevronDown,
   User
 } from 'lucide-react';
 import { Avatar, Dropdown, DropdownItem } from '@prospix/ui';
+import { apiClient } from '../lib/api-client';
+
+interface AppShellCounters {
+  conversations: number;
+  leads: number;
+}
 
 export default function AppShell() {
   const { user, clearSession } = useAuthStore();
@@ -26,19 +31,43 @@ export default function AppShell() {
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [counters, setCounters] = useState<AppShellCounters | null>(null);
 
-  // Mock numbers for dynamic sidebar counters
-  const counters = {
-    conversations: 4,
-    leads: 12,
-  };
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchCounters = async () => {
+      try {
+        const response = await apiClient.get('/tenant/dashboard/today');
+        const data = response.data?.data ?? response.data;
+
+        if (!isMounted) return;
+
+        setCounters({
+          conversations: data?.conversations_ready ?? 0,
+          leads: data?.new_leads_today ?? 0,
+        });
+      } catch (error) {
+        console.error('Error fetching AppShell counters:', error);
+        if (isMounted) {
+          setCounters({ conversations: 0, leads: 0 });
+        }
+      }
+    };
+
+    fetchCounters();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const menuItems = [
     { name: 'Início', path: '/', icon: Home },
-    { name: 'Conversas', path: '/conversas', icon: MessageSquare, badge: counters.conversations },
+    { name: 'Conversas', path: '/conversas', icon: MessageSquare, badge: counters?.conversations },
     { name: 'Pipeline', path: '/funil', icon: Columns },
     { name: 'Agenda', path: '/agenda', icon: Calendar },
-    { name: 'Leads', path: '/leads', icon: Users, badge: counters.leads },
+    { name: 'Leads', path: '/leads', icon: Users, badge: counters?.leads },
     { name: 'Roteiros', path: '/roteiros', icon: FileText },
     { name: 'Configurações', path: '/configuracoes', icon: Settings },
   ];
@@ -47,15 +76,6 @@ export default function AppShell() {
     clearSession();
     navigate('/login');
   };
-
-  // Mock onboarding steps
-  const onboardingSteps = [
-    { label: 'Conectar WhatsApp', completed: true },
-    { label: 'Google Agenda', completed: false },
-    { label: 'Ativar Roteiro Base', completed: false },
-  ];
-
-  const completedStepsCount = onboardingSteps.filter(s => s.completed).length;
 
   return (
     <div className="min-h-screen bg-bg flex relative">
@@ -104,30 +124,6 @@ export default function AppShell() {
             );
           })}
         </nav>
-
-        {/* Onboarding Checklist Widget in Sidebar */}
-        {completedStepsCount < onboardingSteps.length && (
-          <div className="m-4 p-4 rounded-xl bg-surface-sunken border border-border space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-text">Onboarding</span>
-              <span className="text-[10px] font-mono text-text-secondary">{completedStepsCount}/{onboardingSteps.length}</span>
-            </div>
-            <div className="w-full bg-border h-1 rounded-full overflow-hidden">
-              <div 
-                className="bg-gradient-to-r from-primary to-secondary h-full rounded-full transition-all duration-500" 
-                style={{ width: `${(completedStepsCount / onboardingSteps.length) * 100}%` }}
-              />
-            </div>
-            <ul className="space-y-1.5 pt-1">
-              {onboardingSteps.map((step, idx) => (
-                <li key={idx} className="flex items-center gap-2 text-xs">
-                  <CheckCircle2 className={`w-3.5 h-3.5 shrink-0 ${step.completed ? 'text-success' : 'text-text-secondary/50'}`} />
-                  <span className={step.completed ? 'text-text-secondary line-through' : 'text-text'}>{step.label}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
 
         {/* Sidebar Footer User Section */}
         <div className="p-4 border-t border-border bg-surface-sunken/40">
@@ -246,7 +242,6 @@ export default function AppShell() {
                 className="p-2 rounded-xl bg-surface hover:bg-surface-sunken border border-border text-text-secondary hover:text-text transition-all relative"
               >
                 <Bell className="w-4 h-4" />
-                <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-primary" aria-hidden="true" />
               </button>
 
               {isNotificationsOpen && (
@@ -255,13 +250,8 @@ export default function AppShell() {
                   <div className="absolute right-0 mt-2 w-80 bg-surface border border-border rounded-2xl shadow-lg p-4 z-20 space-y-3 animate-fadeIn">
                     <h4 className="text-xs font-semibold text-text uppercase tracking-wider">Notificações</h4>
                     <div className="divide-y divide-border max-h-64 overflow-y-auto">
-                      <div className="py-2.5 text-xs">
-                        <p className="text-text font-medium leading-tight">Novo lead capturado</p>
-                        <p className="text-text-secondary text-[10px] mt-0.5 font-mono">10 minutos atrás</p>
-                      </div>
-                      <div className="py-2.5 text-xs">
-                        <p className="text-text font-medium leading-tight">Agendamento confirmado: Alice Souza</p>
-                        <p className="text-text-secondary text-[10px] mt-0.5 font-mono">1 hora atrás</p>
+                      <div className="py-4 text-xs">
+                        <p className="text-text-secondary leading-tight">Nenhuma notificação no momento.</p>
                       </div>
                     </div>
                   </div>

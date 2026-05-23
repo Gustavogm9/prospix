@@ -192,4 +192,26 @@ describe('EnrichLeads Worker', () => {
     const worker = new EnrichLeadsWorker();
     await expect(worker.run(mockJob)).rejects.toThrow('Evolution API is down');
   });
+
+  it('should fail closed when Evolution API key is not configured', async () => {
+    const originalEvolutionKey = process.env.EVOLUTION_GUILDS_API_KEY;
+    delete process.env.EVOLUTION_GUILDS_API_KEY;
+    vi.mocked(getDecryptedSecrets).mockResolvedValue({
+      evolutionBaseUrl: 'https://evo.prospix.com.br',
+      evolutionInstanceName: 'tenant_mock',
+      evolutionApiKey: null,
+    } as any);
+
+    try {
+      const worker = new EnrichLeadsWorker();
+      await expect(worker.run(mockJob)).rejects.toThrow('Evolution API key is required');
+      expect(prisma.lead.findMany).not.toHaveBeenCalled();
+    } finally {
+      if (originalEvolutionKey === undefined) {
+        delete process.env.EVOLUTION_GUILDS_API_KEY;
+      } else {
+        process.env.EVOLUTION_GUILDS_API_KEY = originalEvolutionKey;
+      }
+    }
+  });
 });

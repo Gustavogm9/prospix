@@ -95,8 +95,18 @@ export function createEvolutionClient() {
         }
 
         const data = (await response.json()) as any;
+        const messageId = data.key?.id || data.messageId || data.id;
+
+        if (!messageId) {
+          logger.error({ responseKeys: Object.keys(data || {}) }, 'Evolution API sendText did not return a message id');
+          return ResultHelper.failure({
+            code: 'EXTERNAL_SERVICE_DOWN',
+            message: 'Evolution API sendText did not return a message id',
+          });
+        }
+
         return ResultHelper.success({
-          messageId: data.key?.id || `mock_${Date.now()}`,
+          messageId,
         });
       } catch (err: any) {
         logger.error({ err }, 'Exception calling Evolution API sendText');

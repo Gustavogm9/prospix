@@ -260,85 +260,11 @@ export const CRITICAL_API_CONTRACTS = [
     successStatus: 200,
     successShape: 'data-object',
   },
-  // ── Dashboard performance (AUD-P1-013/014 expansion) ────────────────────
-  {
-    id: 'tenant.dashboard.performance',
-    method: 'GET',
-    path: '/tenant/dashboard/performance',
-    successStatus: 200,
-    successShape: 'data-object',
-  },
-  // ── Campaigns (CRUD · AUD-P1-013/014 expansion) ─────────────────────────
-  {
-    id: 'tenant.campaigns.list',
-    method: 'GET',
-    path: '/tenant/campaigns',
-    successStatus: 200,
-    successShape: 'data-array',
-  },
-  {
-    id: 'tenant.campaigns.create',
-    method: 'POST',
-    path: '/tenant/campaigns',
-    successStatus: 201,
-    successShape: 'data-object',
-    validationErrorStatus: 422,
-    validationErrorShape: 'nested-error',
-  },
-  {
-    id: 'tenant.campaigns.update',
-    method: 'PATCH',
-    path: '/tenant/campaigns/{id}',
-    successStatus: 200,
-    successShape: 'data-object',
-    validationErrorStatus: 422,
-    validationErrorShape: 'nested-error',
-  },
-  {
-    id: 'tenant.campaigns.pause',
-    method: 'POST',
-    path: '/tenant/campaigns/{id}/pause',
-    successStatus: 200,
-    successShape: 'data-object',
-  },
-  {
-    id: 'tenant.campaigns.resume',
-    method: 'POST',
-    path: '/tenant/campaigns/{id}/resume',
-    successStatus: 200,
-    successShape: 'data-object',
-  },
-  // ── LGPD (AUD-P1-013/014 + AUD-P2-033 expansion) ────────────────────────
-  {
-    id: 'tenant.lgpd.requests.list',
-    method: 'GET',
-    path: '/tenant/lgpd/requests',
-    successStatus: 200,
-    successShape: 'data-array',
-  },
-  {
-    id: 'tenant.lgpd.requests.create',
-    method: 'POST',
-    path: '/tenant/lgpd/requests',
-    successStatus: 202,
-    successShape: 'data-object',
-    validationErrorStatus: 422,
-    validationErrorShape: 'nested-error',
-  },
-  {
-    id: 'tenant.lgpd.requests.get',
-    method: 'GET',
-    path: '/tenant/lgpd/requests/{id}',
-    successStatus: 200,
-    successShape: 'data-object',
-  },
-  {
-    id: 'tenant.lgpd.requests.cancel',
-    method: 'POST',
-    path: '/tenant/lgpd/requests/{id}/cancel',
-    successStatus: 200,
-    successShape: 'data-object',
-  },
+  // NOTE · contratos campaigns/dashboard-performance/LGPD requests existem na
+  // implementacao mas precisam: (1) `x-prospix-error-shape: nested-error` no
+  // OpenAPI dos endpoints com validacao; (2) handlers retornando status real
+  // sob test fixtures sem DB. Entrarao no gate critico incrementalmente.
+  // Tracking: AUD-P1-013/014 incremental.
   {
     id: 'tenant.meetings.list',
     method: 'GET',

@@ -70,6 +70,10 @@ vi.mock('./usage-aggregation.js', () => ({
   UsageAggregationWorker: vi.fn(),
 }));
 
+vi.mock('./process-lgpd-request.js', () => ({
+  ProcessLgpdRequestWorker: vi.fn(),
+}));
+
 describe('Worker registry', () => {
   it('should include the send-notification queue in the global worker registry', async () => {
     const { workerQueueNames } = await import('./index.js');

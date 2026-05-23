@@ -22,6 +22,8 @@
 import { BaseWorker } from './_base-worker.js';
 import { prisma } from '../lib/prisma.js';
 import { logger } from '../lib/logger.js';
+import { isR2Configured, uploadLgpdExport } from '../lib/r2-storage.js';
+import { notifyCriticalAlert } from '../lib/alert-sink.js';
 import { LgpdRequestType, LgpdRequestStatus, TenantStatus, LeadStatus, Prisma } from '@prisma/client';
 import type { Job } from 'bullmq';
 import { BaseJobPayload } from '@prospix/shared-types';
@@ -192,23 +194,62 @@ export class ProcessLgpdRequestWorker extends BaseWorker<
       });
     }
 
-    // MVP: registra payload no scope.export_data. Quando R2 vier, substituir por upload + presigned URL.
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     const existingScope =
       request.scope && typeof request.scope === 'object' && !Array.isArray(request.scope)
         ? (request.scope as Record<string, unknown>)
         : {};
+
+    // Se R2 configurado, faz upload + gera presigned URL com TTL 7d.
+    // Caso contrario (dev/test sem R2 creds), mantem JSON inline (MVP fallback).
+    let downloadUrl: string | null = null;
+    let downloadExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    let exportMethod = 'inline-json-fallback';
+    let r2Key: string | undefined;
+
+    if (isR2Configured()) {
+      try {
+        const upload = await uploadLgpdExport({
+          tenantId: request.tenantId,
+          requestId: request.id,
+          payload: exportPayload,
+        });
+        downloadUrl = upload.presignedUrl;
+        downloadExpiresAt = upload.expiresAt;
+        r2Key = upload.key;
+        exportMethod = 'r2-presigned-url';
+      } catch (uploadErr) {
+        logger.error(
+          {
+            tenant_id: request.tenantId,
+            lgpd_request_id: request.id,
+            err: uploadErr instanceof Error ? { message: uploadErr.message } : uploadErr,
+          },
+          'lgpd-worker: R2 upload failed · falling back to inline JSON',
+        );
+        // Continua com fallback inline · nao quebra o request
+      }
+    }
+
+    const updatedScope: Record<string, unknown> = {
+      ...existingScope,
+      export_method: exportMethod,
+    };
+
+    if (r2Key) {
+      updatedScope.export_r2_key = r2Key;
+    } else {
+      // Fallback · inline payload
+      updatedScope.export_data = exportPayload;
+    }
+
     await prisma.lgpdRequest.update({
       where: { id: request.id },
       data: {
         status: LgpdRequestStatus.COMPLETED,
         processedAt: new Date(),
-        downloadExpiresAt: expiresAt,
-        scope: {
-          ...existingScope,
-          export_data: exportPayload as Prisma.InputJsonValue,
-          export_format_note: 'MVP · JSON inline; future iteration uploads ZIP to R2',
-        } as Prisma.InputJsonValue,
+        downloadUrl,
+        downloadExpiresAt,
+        scope: updatedScope as Prisma.InputJsonValue,
       },
     });
 
@@ -339,6 +380,19 @@ export class ProcessLgpdRequestWorker extends BaseWorker<
         action_required: 'manual-tenant-deletion-after-grace',
       },
       'lgpd-worker: DELETE_TENANT_DATA · tenant marked CHURNING (7d grace)',
+    );
+
+    // Pluga Sentry/Slack quando configurado
+    await notifyCriticalAlert(
+      {
+        event_name: 'lgpd:tenant-churning',
+        severity: 'critical',
+        action_required: 'manual-tenant-deletion-after-grace',
+        tenant_id: request.tenantId,
+        lgpd_request_id: request.id,
+        grace_until: graceUntil.toISOString(),
+      },
+      `Tenant ${request.tenantId} solicitou exclusao LGPD · CHURNING por 7d`,
     );
 
     return { status: 'completed', request_id: request.id };

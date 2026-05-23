@@ -2,7 +2,7 @@ import { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
 import { prisma } from '../../lib/prisma.js';
 import { redis } from '../../lib/redis.js';
 import { logger } from '../../lib/logger.js';
-import { MeetingStatus, LeadStatus, ConversationStatus } from '@prisma/client';
+import { MeetingStatus, LeadStatus, ConversationStatus, MeetingOutcome } from '@prisma/client';
 import { getAIPlanLimitCents } from '../../ai/quota.js';
 
 // Helper SWR function
@@ -62,6 +62,14 @@ async function withSWR<T>(
   return data;
 }
 
+function formatTime(date: Date): string {
+  return new Intl.DateTimeFormat('pt-BR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'America/Sao_Paulo',
+  }).format(date);
+}
+
 export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   // Enforce tenant context
   app.addHook('preHandler', async (req: FastifyRequest, reply: FastifyReply) => {
@@ -81,35 +89,69 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       const todayEnd = new Date();
       todayEnd.setHours(23, 59, 59, 999);
 
-      // Meetings count today
-      const meetingsToday = await prisma.meeting.count({
-        where: {
-          tenantId,
-          scheduledFor: { gte: todayStart, lte: todayEnd },
-          status: { in: [MeetingStatus.SCHEDULED, MeetingStatus.CONFIRMED] },
-        },
-      });
+      const scheduledStatuses = [MeetingStatus.SCHEDULED, MeetingStatus.CONFIRMED];
 
-      // Conversations active ready
-      const conversationsReady = await prisma.conversation.count({
-        where: {
-          tenantId,
-          status: ConversationStatus.ACTIVE,
-        },
-      });
-
-      // Leads needing callback (waiting feedback or similar)
-      const needCallback = await prisma.lead.count({
-        where: {
-          tenantId,
-          status: LeadStatus.CONTACTED,
-        },
-      });
+      const [
+        meetingsToday,
+        conversationsReady,
+        pendingManualConversations,
+        needCallback,
+        newLeadsToday,
+        nextMeeting,
+      ] = await Promise.all([
+        prisma.meeting.count({
+          where: {
+            tenantId,
+            scheduledFor: { gte: todayStart, lte: todayEnd },
+            status: { in: scheduledStatuses },
+          },
+        }),
+        prisma.conversation.count({
+          where: {
+            tenantId,
+            status: ConversationStatus.ACTIVE,
+            aiHandling: true,
+          },
+        }),
+        prisma.conversation.count({
+          where: {
+            tenantId,
+            status: { in: [ConversationStatus.PAUSED, ConversationStatus.ESCALATED] },
+            aiHandling: false,
+          },
+        }),
+        prisma.lead.count({
+          where: {
+            tenantId,
+            status: LeadStatus.CONTACTED,
+            deletedAt: null,
+          },
+        }),
+        prisma.lead.count({
+          where: {
+            tenantId,
+            createdAt: { gte: todayStart, lte: todayEnd },
+            deletedAt: null,
+          },
+        }),
+        prisma.meeting.findFirst({
+          where: {
+            tenantId,
+            scheduledFor: { gte: new Date() },
+            status: { in: scheduledStatuses },
+          },
+          orderBy: { scheduledFor: 'asc' },
+          select: { scheduledFor: true },
+        }),
+      ]);
 
       return {
         meetings_today: meetingsToday,
         conversations_ready: conversationsReady,
+        pending_manual_conversations: pendingManualConversations,
         need_callback: needCallback,
+        new_leads_today: newLeadsToday,
+        next_meeting_time: nextMeeting ? formatTime(nextMeeting.scheduledFor) : null,
       };
     });
 
@@ -174,7 +216,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       const financialAggregate = await prisma.meeting.aggregate({
         where: {
           tenantId,
-          outcome: MeetingOutcome_CLOSED_Bypass(),
+          outcome: MeetingOutcome.CLOSED,
         },
         _sum: {
           policyValueCents: true,
@@ -189,18 +231,15 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       const totalCommissionCents = financialAggregate._sum.commissionCents || 0;
       const salesCount = financialAggregate._count.id;
 
-      // Mock target goal (e.g. 50.000,00 R$ policy sales target)
-      const targetCents = 5000000;
-      const progressPercent = targetCents > 0 ? (totalPolicyCents / targetCents) * 100 : 0;
-
       return {
         total_policy_cents: totalPolicyCents,
         total_commission_cents: totalCommissionCents,
         sales_count: salesCount,
         goals: {
-          target_cents: targetCents,
-          progress_percent: Number(progressPercent.toFixed(1)),
-          goal_reached: totalPolicyCents >= targetCents,
+          configured: false,
+          target_cents: null,
+          progress_percent: null,
+          goal_reached: false,
         },
       };
     });
@@ -256,15 +295,5 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     return reply.send({ data });
   });
 };
-
-// Bypass for MeetingOutcome type safety mapping
-function MeetingOutcome_CLOSED_Bypass() {
-  // If enum is loaded, use 'CLOSED' otherwise mock the value
-  try {
-    return 'CLOSED' as any;
-  } catch (_) {
-    return 'CLOSED' as any;
-  }
-}
 
 export default dashboardRoutes;

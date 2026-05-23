@@ -9,6 +9,7 @@ import { logger } from './lib/logger.js';
 import { prisma } from './lib/prisma.js';
 import { redis } from './lib/redis.js';
 import { tenantContextStorage } from './lib/tenant-context-storage.js';
+import { initAlertSinks } from './lib/alert-sink.js';
 
 import { tenantContext } from './middlewares/tenant-context.js';
 import { idempotencyPlugin } from './middlewares/idempotency.js';
@@ -70,6 +71,9 @@ app.addHook('onResponse', (request, reply, done) => {
 // Bootstrap Function
 async function bootstrap() {
   logger.info('🚀 Starting Prospix Core API bootstrap...');
+
+  // 0. Initialize alert sinks (Sentry/Slack) · config-time · no-op if unset
+  initAlertSinks();
 
   // 1. Register security and utility plugins
   await app.register(cors, {

@@ -166,10 +166,16 @@ describe('Tenant API Routes', () => {
       // Mock Redis Cache Miss
       vi.mocked(redis.get).mockResolvedValue(null);
 
-      // Mock database aggregate counts
       vi.mocked(prisma.meeting.count).mockResolvedValue(3);
-      vi.mocked(prisma.conversation.count).mockResolvedValue(5);
-      vi.mocked(prisma.lead.count).mockResolvedValue(2);
+      vi.mocked(prisma.conversation.count)
+        .mockResolvedValueOnce(5)
+        .mockResolvedValueOnce(1);
+      vi.mocked(prisma.lead.count)
+        .mockResolvedValueOnce(2)
+        .mockResolvedValueOnce(4);
+      vi.mocked(prisma.meeting.findFirst).mockResolvedValue({
+        scheduledFor: new Date('2026-05-23T13:30:00.000Z'),
+      } as any);
 
       const res = await app.inject({
         method: 'GET',
@@ -185,6 +191,9 @@ describe('Tenant API Routes', () => {
       expect(body.data.meetings_today).toBe(3);
       expect(body.data.conversations_ready).toBe(5);
       expect(body.data.need_callback).toBe(2);
+      expect(body.data.pending_manual_conversations).toBe(1);
+      expect(body.data.new_leads_today).toBe(4);
+      expect(body.data.next_meeting_time).toBe('10:30');
       expect(redis.set).toHaveBeenCalled();
     });
   });

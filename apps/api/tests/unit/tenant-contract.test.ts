@@ -63,6 +63,7 @@ const prismaMock = vi.hoisted(() => ({
     update: vi.fn(),
     create: vi.fn(),
     count: vi.fn(),
+    aggregate: vi.fn(),
   },
   tenant: {
     findUnique: vi.fn(),
@@ -309,6 +310,15 @@ function seedCriticalContractMocks() {
   prismaMock.leadNote.create.mockResolvedValue({ id: 'note-1', tenantId, leadId: 'lead-1', content: 'Good fit' });
   prismaMock.leadNote.findMany.mockResolvedValue([{ id: 'note-1', tenantId, leadId: 'lead-1', content: 'Good fit' }]);
   prismaMock.meeting.count.mockResolvedValue(3);
+  prismaMock.meeting.aggregate.mockResolvedValue({
+    _sum: {
+      policyValueCents: 487000,
+      commissionCents: 58440,
+    },
+    _count: {
+      id: 1,
+    },
+  });
   prismaMock.meeting.findMany.mockResolvedValue([
     { id: meetingId, tenantId, leadId: 'lead-1', status: 'SCHEDULED' },
   ]);

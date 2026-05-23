@@ -8,8 +8,10 @@ import { useNavigate } from 'react-router-dom';
 interface DashboardStats {
   todayMeetings: number;
   pendingConversations: number;
+  pendingManualConversations: number;
   needsAttention: number;
   newLeadsToday: number;
+  nextMeetingTime: string | null;
   funnelData: Array<{ stage: string; value: number; color: string }>;
   weeklyPerformance: Array<{ label: string; value: number }>;
   hotLeads: Array<{
@@ -32,8 +34,10 @@ export default function Home() {
       const fallbackStats: DashboardStats = {
         todayMeetings: 3,
         pendingConversations: 8,
+        pendingManualConversations: 4,
         needsAttention: 5,
         newLeadsToday: 14,
+        nextMeetingTime: '14:30',
         funnelData: [
           { stage: 'Capturado', value: 120, color: '#1B3A6B' },
           { stage: 'Contatado', value: 85, color: '#3b82f6' },
@@ -58,8 +62,10 @@ export default function Home() {
       const emptyStats: DashboardStats = {
         todayMeetings: 0,
         pendingConversations: 0,
+        pendingManualConversations: 0,
         needsAttention: 0,
         newLeadsToday: 0,
+        nextMeetingTime: null,
         funnelData: [],
         weeklyPerformance: [],
         hotLeads: [],
@@ -75,8 +81,10 @@ export default function Home() {
             ...defaultStats,
             todayMeetings: data.meetings_today ?? defaultStats.todayMeetings,
             pendingConversations: data.conversations_ready ?? defaultStats.pendingConversations,
+            pendingManualConversations: data.pending_manual_conversations ?? data.manual_conversations ?? defaultStats.pendingManualConversations,
             needsAttention: data.need_callback ?? defaultStats.needsAttention,
             newLeadsToday: data.new_leads_today ?? defaultStats.newLeadsToday,
+            nextMeetingTime: data.next_meeting_time ?? defaultStats.nextMeetingTime,
             funnelData: data.funnel_data ?? defaultStats.funnelData,
             weeklyPerformance: data.weekly_performance ?? defaultStats.weeklyPerformance,
             hotLeads: data.hot_leads ?? defaultStats.hotLeads,
@@ -115,6 +123,15 @@ export default function Home() {
     );
   }
 
+  const nextMeetingText = stats.nextMeetingTime
+    ? `Próxima reunião às ${stats.nextMeetingTime}`
+    : stats.todayMeetings > 0
+      ? 'Agenda carregada sem próximo horário disponível'
+      : 'Nenhuma reunião agendada para hoje';
+  const pendingManualSuffix = stats.pendingManualConversations === 1
+    ? 'chat aguarda sua resposta manual'
+    : 'chats aguardam sua resposta manual';
+
   return (
     <div className="space-y-8 animate-fadeIn">
       {/* Welcome banner */}
@@ -148,8 +165,8 @@ export default function Home() {
               </div>
             </div>
             <p className="text-[10px] text-text-secondary font-medium mt-4 flex items-center gap-1.5">
-              <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
-              Próxima reunião às 14:30
+              <span className={`h-1.5 w-1.5 rounded-full ${stats.nextMeetingTime ? 'bg-success animate-pulse' : 'bg-border'}`} />
+              {nextMeetingText}
             </p>
           </CardContent>
         </Card>
@@ -165,9 +182,16 @@ export default function Home() {
                 <MessageSquare className="w-5 h-5" />
               </div>
             </div>
-            <p className="text-[10px] text-text-secondary font-medium mt-4">
-              <span className="text-purple-600 font-semibold font-mono">4 chats</span> aguardando sua resposta manual
-            </p>
+            {stats.pendingManualConversations > 0 ? (
+              <p className="text-[10px] text-text-secondary font-medium mt-4">
+                <span className="text-purple-600 font-semibold font-mono">{stats.pendingManualConversations}</span>{' '}
+                {pendingManualSuffix}
+              </p>
+            ) : (
+              <p className="text-[10px] text-text-secondary font-medium mt-4">
+                Nenhum chat aguardando resposta manual
+              </p>
+            )}
           </CardContent>
         </Card>
 

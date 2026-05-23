@@ -4,7 +4,24 @@ import { hashPassword } from '../src/lib/crypto.js';
 
 const prisma = new PrismaClient();
 
+function assertSeedIsAllowed() {
+  const nodeEnv = process.env.NODE_ENV || 'development';
+  if (nodeEnv === 'production' || nodeEnv === 'staging') {
+    throw new Error(`Refusing to seed a ${nodeEnv} database.`);
+  }
+
+  if (process.env.ALLOW_DESTRUCTIVE_SEED !== '1') {
+    throw new Error('Refusing to seed without ALLOW_DESTRUCTIVE_SEED=1. This script truncates application tables.');
+  }
+
+  if (!process.env.SEED_ADMIN_PASSWORD || process.env.SEED_ADMIN_PASSWORD.length < 12) {
+    throw new Error('SEED_ADMIN_PASSWORD with at least 12 characters is required to create the seed admin.');
+  }
+}
+
 async function main() {
+  assertSeedIsAllowed();
+
   console.log('🌱 Start seeding database...');
 
   // 1. Clear existing data safely
@@ -113,7 +130,7 @@ async function main() {
       name: SEED_USERS.guildsAdmin.name,
       email: SEED_USERS.guildsAdmin.email,
       whatsapp: SEED_USERS.guildsAdmin.whatsapp,
-      passwordHash: hashPassword('G.gm9189'),
+      passwordHash: hashPassword(process.env.SEED_ADMIN_PASSWORD!),
     },
   });
 

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { setupServer } from 'msw/node';
+import { http, HttpResponse } from 'msw';
 import { evolutionHandlers } from '@prospix/mocks';
 import { createEvolutionClient, validateEvolutionWebhookSignature } from '../../src/integrations/evolution.js';
 
@@ -30,6 +31,27 @@ describe('Evolution API Client Integration (with MSW Mock)', () => {
     if (result.ok) {
       expect(result.value.messageId).toBeDefined();
       expect(result.value.messageId.startsWith('mock_')).toBe(true);
+    }
+  });
+
+  it('should fail closed when sendText does not return a provider message id', async () => {
+    server.use(
+      http.post('*/message/sendText/:instance', () =>
+        HttpResponse.json({
+          status: 'PENDING',
+        })
+      )
+    );
+
+    const result = await client.sendText({
+      ...mockParams,
+      number: '5517998764422',
+      text: 'Olá, isso é um teste!',
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain('did not return a message id');
     }
   });
 

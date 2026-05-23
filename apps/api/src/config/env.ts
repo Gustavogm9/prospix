@@ -51,25 +51,57 @@ const envSchema = z.object({
 
   // Resend integration
   RESEND_API_KEY: z.string().default('mock-resend-key'),
+
+  // Cloudflare R2 storage (AUD-P2-033 fulfillment · LGPD export uploads)
+  // Aceita string vazia como undefined (env vars unset em .env podem vir como '')
+  R2_ACCOUNT_ID: z.string().optional().transform((v) => (v === '' ? undefined : v)),
+  R2_ACCESS_KEY_ID: z.string().optional().transform((v) => (v === '' ? undefined : v)),
+  R2_SECRET_ACCESS_KEY: z.string().optional().transform((v) => (v === '' ? undefined : v)),
+  R2_BUCKET: z.string().default('prospix'),
+  R2_PUBLIC_URL: z
+    .string()
+    .optional()
+    .transform((v) => (v === '' ? undefined : v))
+    .pipe(z.string().url().optional()),
+  R2_PRESIGN_TTL_SECONDS: z.coerce.number().default(7 * 24 * 60 * 60),
+
+  // Alert sinks (AUD-P1-021 + LGPD config-time)
+  SENTRY_DSN: z.string().optional().transform((v) => (v === '' ? undefined : v)),
+  SLACK_ALERT_WEBHOOK_URL: z
+    .string()
+    .optional()
+    .transform((v) => (v === '' ? undefined : v))
+    .pipe(z.string().url().optional()),
 }).superRefine((data, ctx) => {
-  if (data.NODE_ENV === 'production') {
+  const protectedRuntime = data.NODE_ENV === 'production' || data.NODE_ENV === 'staging';
+
+  if (protectedRuntime) {
     const mockCredentials = [
       { key: 'GOOGLE_CLIENT_ID', val: 'mock-client-id', name: 'Google Client ID' },
       { key: 'GOOGLE_CLIENT_SECRET', val: 'mock-client-secret', name: 'Google Client Secret' },
       { key: 'ASAAS_API_KEY', val: 'mock-asaas-key', name: 'Asaas API Key' },
       { key: 'ASAAS_WEBHOOK_SECRET', val: 'mock-asaas-webhook-secret', name: 'Asaas Webhook Secret' },
       { key: 'RESEND_API_KEY', val: 'mock-resend-key', name: 'Resend API Key' },
+      { key: 'EVOLUTION_GUILDS_API_KEY', val: 'mock_guilds_api_key', name: 'Evolution Guilds API Key' },
     ];
 
     for (const cred of mockCredentials) {
       if (data[cred.key as keyof typeof data] === cred.val) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: `In production mode, mock API keys are not allowed. Please supply a real value for: ${cred.name}.`,
+          message: `In ${data.NODE_ENV} mode, mock API keys are not allowed. Please supply a real value for: ${cred.name}.`,
           path: [cred.key],
         });
       }
     }
+  }
+
+  if (data.NODE_ENV === 'production' && data.ASAAS_BASE_URL.includes('sandbox.asaas.com')) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'In production mode, ASAAS_BASE_URL must point to the live Asaas API.',
+      path: ['ASAAS_BASE_URL'],
+    });
   }
 });
 
@@ -81,4 +113,3 @@ if (!_env.success) {
 }
 
 export const env = _env.data;
-

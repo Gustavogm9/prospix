@@ -59,7 +59,7 @@ const MOCK_MEETINGS: Meeting[] = [
 
 const mapBackendMeeting = (meeting: any): Meeting => {
   const lead = meeting.lead || {};
-  const scheduledAt = meeting.scheduledAt || meeting.scheduled_at || meeting.startAt || meeting.start_at;
+  const scheduledAt = meeting.scheduledFor || meeting.scheduled_for || meeting.scheduledAt || meeting.scheduled_at || meeting.startAt || meeting.start_at;
   const scheduledDate = scheduledAt ? new Date(scheduledAt) : null;
   const dayOfWeek = scheduledDate ? Math.max(1, Math.min(5, scheduledDate.getDay())) : 1;
   const timeSlot = scheduledDate
@@ -74,7 +74,7 @@ const mapBackendMeeting = (meeting: any): Meeting => {
     company: lead.metadata?.company || meeting.company || 'N/A',
     dayOfWeek,
     timeSlot,
-    durationMin: meeting.durationMin || meeting.duration_min || 30,
+    durationMin: meeting.durationMinutes || meeting.duration_minutes || meeting.durationMin || meeting.duration_min || 30,
     status: API_STATUS_TO_STATUS[meeting.status] || 'agendada',
   };
 };
@@ -195,10 +195,19 @@ export default function Schedule() {
                         </span>
                       </button>
                     ) : (
-                      <div className="w-full h-full rounded-lg hover:bg-surface-sunken border border-transparent hover:border-border/80 transition-all cursor-pointer flex items-center justify-center group">
-                        <span className="text-[10px] text-text-secondary opacity-0 group-hover:opacity-100 font-bold">
-                          + Agendar
-                        </span>
+                      <div
+                        className={`w-full h-full rounded-lg border border-transparent transition-all flex items-center justify-center ${
+                          canUseMockFallbacks
+                            ? 'hover:bg-surface-sunken hover:border-border/80 cursor-default group'
+                            : 'cursor-default'
+                        }`}
+                        title={!canUseMockFallbacks ? 'Criação de reunião ainda não está disponível nesta tela.' : undefined}
+                      >
+                        {canUseMockFallbacks && (
+                          <span className="text-[10px] text-text-secondary opacity-0 group-hover:opacity-100 font-bold">
+                            + Agendar
+                          </span>
+                        )}
                       </div>
                     )}
                   </div>

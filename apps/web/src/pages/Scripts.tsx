@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, Button, Input, Textarea, toast, Badge } from '@prospix/ui';
 import { Play, Sparkles, MessageSquare, Plus, Save, Trash2 } from 'lucide-react';
 import { apiClient } from '../lib/api-client';
@@ -11,20 +11,84 @@ interface ScriptVariation {
   content: string;
 }
 
+const DEMO_BASE_MESSAGE =
+  'Olá [Nome], notei que a [Empresa] é líder no setor em [Cidade]. Consegui uma cotação especial de Seguro Saúde Corporativo PME para vocês. Gostaria de receber uma tabela comparativa sem compromisso?';
+
+const DEMO_VARIATIONS: ScriptVariation[] = [
+  { id: '1', name: 'Variante A (Foco em Economia)', weight: 50, content: 'Olá [Nome], sabia que a [Empresa] pode reduzir até 35% do plano de saúde corporativo atual? Consegue me atender para um alinhamento rápido de 5 minutos?' },
+  { id: '2', name: 'Variante B (Foco em Rede Credenciada)', weight: 50, content: 'Olá [Nome], temos condições exclusivas com hospitais premium da rede Amil e SulAmérica para empresas em [Cidade]. Posso te enviar as tabelas comparativas?' },
+];
+
+const normalizeVariationWeight = (weight: unknown) => {
+  const numericWeight = Number(weight);
+  if (!Number.isFinite(numericWeight)) return 0;
+  return numericWeight <= 1 ? Math.round(numericWeight * 100) : Math.round(numericWeight);
+};
+
+const mapScriptVariations = (script: any): ScriptVariation[] => {
+  const flowVariations = Array.isArray(script?.flow?.variations) ? script.flow.variations : [];
+  if (flowVariations.length > 0) {
+    return flowVariations.map((variation: any, index: number) => ({
+      id: variation.id || `${script.id}-flow-variation-${index}`,
+      name: variation.name || `Variante ${String.fromCharCode(65 + index)}`,
+      weight: normalizeVariationWeight(variation.weight),
+      content: variation.content || variation.message || '',
+    }));
+  }
+
+  const storedVariations = Array.isArray(script?.variations) && script.variations.length > 0
+    ? script.variations.map((variation: any, index: number) => ({
+        id: variation.id || `${script.id}-variation-${index}`,
+        name: variation.name || `Variante ${variation.variantLetter || String.fromCharCode(65 + index)}`,
+        weight: normalizeVariationWeight(variation.weight),
+        content: variation.message || variation.content || '',
+      }))
+    : [];
+
+  return storedVariations;
+};
+
 export default function Scripts() {
-  const [baseMessage, setBaseMessage] = useState(
-    'Olá [Nome], notei que a [Empresa] é líder no setor em [Cidade]. Consegui uma cotação especial de Seguro Saúde Corporativo PME para vocês. Gostaria de receber uma tabela comparativa sem compromisso?'
-  );
-
-  const [variations, setVariations] = useState<ScriptVariation[]>([
-    { id: '1', name: 'Variante A (Foco em Economia)', weight: 50, content: 'Olá [Nome], sabia que a [Empresa] pode reduzir até 35% do plano de saúde corporativo atual? Consegue me atender para um alinhamento rápido de 5 minutos?' },
-    { id: '2', name: 'Variante B (Foco em Rede Credenciada)', weight: 50, content: 'Olá [Nome], temos condições exclusivas com hospitais premium da rede Amil e SulAmérica para empresas em [Cidade]. Posso te enviar as tabelas comparativas?' },
-  ]);
-
-  const [simulationInput, setSimulationInput] = useState('Quanto custa para 10 funcionários?');
+  const [currentScriptId, setCurrentScriptId] = useState<string | null>(null);
+  const [baseMessage, setBaseMessage] = useState(canUseMockFallbacks ? DEMO_BASE_MESSAGE : '');
+  const [variations, setVariations] = useState<ScriptVariation[]>(canUseMockFallbacks ? DEMO_VARIATIONS : []);
+  const [isLoadingScripts, setIsLoadingScripts] = useState(true);
+  const [simulationInput, setSimulationInput] = useState(canUseMockFallbacks ? 'Quanto custa para 10 funcionários?' : '');
   const [simulationResponse, setSimulationResponse] = useState<string | null>(null);
   const [simulatedVariant, setSimulatedVariant] = useState<string | null>(null);
   const [isLoadingSim, setIsLoadingSim] = useState(false);
+
+  useEffect(() => {
+    const fetchScripts = async () => {
+      try {
+        const response = await apiClient.get('/tenant/scripts');
+        const list = Array.isArray(response.data) ? response.data : response.data?.data;
+        const activeScript = (list || []).find((script: any) => script.status === 'ACTIVE') || list?.[0];
+
+        if (activeScript) {
+          setCurrentScriptId(activeScript.id);
+          setBaseMessage(activeScript.baseMessage || '');
+          setVariations(mapScriptVariations(activeScript));
+        } else if (!canUseMockFallbacks) {
+          setCurrentScriptId(null);
+          setBaseMessage('');
+          setVariations([]);
+        }
+      } catch (err) {
+        console.error('Error fetching scripts', err);
+        if (!canUseMockFallbacks) {
+          setCurrentScriptId(null);
+          setBaseMessage('');
+          setVariations([]);
+          toast.error('Erro de Conexão', 'Não foi possível carregar roteiros reais da API.');
+        }
+      } finally {
+        setIsLoadingScripts(false);
+      }
+    };
+
+    fetchScripts();
+  }, []);
 
   const handleAddVariation = () => {
     if (variations.length >= 3) {
@@ -34,9 +98,9 @@ export default function Scripts() {
 
     const newVar: ScriptVariation = {
       id: Date.now().toString(),
-      name: `Variante ${String.fromCharCode(65 + variations.length)} (Custom)`,
+      name: `Variante ${String.fromCharCode(65 + variations.length)}`,
       weight: 0,
-      content: 'Escreva a mensagem personalizada utilizando [Nome], [Empresa] ou [Cidade]...',
+      content: '',
     };
 
     setVariations([...variations, newVar]);
@@ -55,18 +119,45 @@ export default function Scripts() {
   };
 
   const handleSave = async () => {
+    if (!baseMessage.trim()) {
+      toast.error('Roteiro vazio', 'Informe a abordagem base antes de salvar.');
+      return;
+    }
+
+    if (variations.some((variation) => !variation.content.trim())) {
+      toast.error('Variante vazia', 'Preencha ou remova variantes sem mensagem antes de salvar.');
+      return;
+    }
+
     const totalWeight = variations.reduce((sum, v) => sum + v.weight, 0);
     if (variations.length > 0 && totalWeight !== 100) {
       toast.error('Pesos inválidos', `A soma dos pesos das variantes A/B/C deve ser exatamente 100%. Soma atual: ${totalWeight}%`);
       return;
     }
 
+    const payload = {
+      baseMessage: baseMessage.trim(),
+      variations: variations.map((variation) => ({
+        id: variation.id,
+        name: variation.name,
+        weight: variation.weight,
+        content: variation.content.trim(),
+      })),
+    };
+
     try {
-      await apiClient.post('/tenant/scripts', {
-        baseMessage,
-        variations,
-      });
-      toast.success('Roteiro Salvo!', 'Roteiros de IA atualizados e implantados em produção.');
+      const response = currentScriptId
+        ? await apiClient.patch(`/tenant/scripts/${currentScriptId}`, {
+            baseMessage: payload.baseMessage,
+            flow: { variations: payload.variations },
+          })
+        : await apiClient.post('/tenant/scripts', payload);
+
+      const savedScript = response?.data?.data ?? response?.data;
+      if (savedScript?.id) {
+        setCurrentScriptId(savedScript.id);
+      }
+      toast.success('Roteiro salvo', 'Alterações confirmadas pela API.');
     } catch (err: any) {
       toast.error('Erro ao salvar', err.response?.data?.message || 'Não foi possível confirmar a gravação do roteiro na API.');
     }
@@ -118,6 +209,7 @@ export default function Scripts() {
           <Button
             onClick={handleSave}
             className="bg-primary hover:bg-primary-hover text-white font-semibold px-4 h-10 rounded-xl flex items-center gap-2 shadow-lg shadow-primary/10"
+            disabled={isLoadingScripts}
           >
             <Save className="w-4 h-4" />
             <span>Salvar Roteiro</span>
@@ -205,6 +297,7 @@ export default function Scripts() {
                     rows={3}
                     value={v.content}
                     onChange={(e) => handleContentChange(v.id, e.target.value)}
+                    placeholder="Escreva a mensagem personalizada utilizando [Nome], [Empresa] ou [Cidade]..."
                     className="w-full bg-white border-border text-xs leading-relaxed focus:border-border-strong rounded-xl"
                   />
                 </div>

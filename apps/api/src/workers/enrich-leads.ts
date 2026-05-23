@@ -30,11 +30,15 @@ export class EnrichLeadsWorker extends BaseWorker<EnrichLeadsPayload, EnrichLead
 
     // 1. Fetch credentials for the Evolution API
     const decryptedSecrets = await getDecryptedSecrets(tenantId);
-    
-    // We expect these configuration parameters. If missing, we fallback to env variables or dummy values in dev.
+
     const baseUrl = decryptedSecrets?.evolutionBaseUrl || process.env.EVOLUTION_BASE_URL || 'https://evo.prospix.com.br';
     const instanceName = decryptedSecrets?.evolutionInstanceName || `tenant_${tenantId.slice(0, 8)}`;
-    const apiKey = decryptedSecrets?.evolutionApiKey || 'mock-key';
+    const apiKey = decryptedSecrets?.evolutionApiKey || process.env.EVOLUTION_GUILDS_API_KEY;
+
+    if (!apiKey || apiKey.startsWith('mock')) {
+      logger.error({ tenantId, hasTenantKey: Boolean(decryptedSecrets?.evolutionApiKey) }, 'Evolution API key missing for lead enrichment');
+      throw new Error('Evolution API key is required for lead enrichment');
+    }
 
     // 2. Fetch the tenant
     const tenant = await prisma.tenant.findUnique({

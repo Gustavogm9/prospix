@@ -41,6 +41,38 @@ export default function Leads() {
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  const handleExportCsv = () => {
+    if (leads.length === 0) {
+      toast.error('Exportação indisponível', 'Não há leads carregados para exportar.');
+      return;
+    }
+
+    const escapeCsv = (value: string | number) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+    const headers = ['ID', 'Empresa', 'Lead', 'Telefone', 'Faturamento', 'Fit Score', 'Cidade', 'Status', 'Cadastro'];
+    const rows = leads.map((lead) => [
+      lead.id,
+      lead.company,
+      lead.name,
+      lead.phone,
+      lead.faturamento,
+      lead.fitScore,
+      lead.city,
+      lead.status,
+      lead.createdAt,
+    ]);
+    const csv = [headers, ...rows].map((row) => row.map(escapeCsv).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `leads-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    toast.success('CSV exportado', 'Arquivo gerado com os leads carregados na tela.');
+  };
+
   // Debounce logic for search
   useEffect(() => {
     const handler = setTimeout(() => {
@@ -112,7 +144,11 @@ export default function Leads() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <Button className="bg-white border border-border text-text-secondary hover:text-text text-xs font-semibold px-4 h-10 rounded-xl flex items-center gap-2 hover:bg-surface-sunken">
+          <Button
+            onClick={handleExportCsv}
+            disabled={isLoading || leads.length === 0}
+            className="bg-white border border-border text-text-secondary hover:text-text text-xs font-semibold px-4 h-10 rounded-xl flex items-center gap-2 hover:bg-surface-sunken disabled:opacity-50 disabled:cursor-not-allowed"
+          >
             <Download className="w-4 h-4" />
             <span>Exportar CSV</span>
           </Button>
@@ -301,8 +337,13 @@ export default function Leads() {
             {/* Actions */}
             <div className="pt-4 border-t border-border/60">
               <Button
-                className="w-full bg-primary hover:bg-primary-hover text-white font-semibold h-11 rounded-xl transition-all shadow-lg shadow-primary/10 flex items-center justify-center gap-2"
+                className="w-full bg-primary hover:bg-primary-hover text-white font-semibold h-11 rounded-xl transition-all shadow-lg shadow-primary/10 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={!canUseMockFallbacks}
+                title={!canUseMockFallbacks ? 'Criação de conversa ainda não está disponível nesta tela.' : undefined}
                 onClick={() => {
+                  if (canUseMockFallbacks) {
+                    toast.info('Modo demo', 'A criação real de conversa não é executada no modo demo.');
+                  }
                   setSelectedLead(null);
                 }}
               >

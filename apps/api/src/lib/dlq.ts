@@ -14,6 +14,7 @@
  */
 import { Queue, type Job } from 'bullmq';
 import { logger } from './logger.js';
+import { notifyCriticalAlert } from './alert-sink.js';
 import { createTenantQueue, getTenantQueueName } from './queue.js';
 import { redisConnection } from './redis.js';
 
@@ -146,6 +147,23 @@ export async function enqueueToDlq(workerName: string, entry: DlqEntry): Promise
         runbook: 'docs/auditoria/runbook-dlq-replay.md',
       },
       'queue:dlq-enqueued',
+    );
+
+    // Pluga Sentry/Slack quando configurado (no-op silencioso senao)
+    await notifyCriticalAlert(
+      {
+        event_name: 'queue:dlq-enqueued',
+        severity: 'critical',
+        action_required: 'manual-dlq-triage',
+        tenant_id: entry.tenant_id,
+        trace_id: entry.trace_id,
+        worker: workerName,
+        queue: dlqName,
+        source_job_id: entry.source_job_id,
+        failed_reason: entry.failed_reason,
+        runbook: 'docs/auditoria/runbook-dlq-replay.md',
+      },
+      `Job esgotado em fila '${dlqName}' · triagem manual necessaria`,
     );
   } finally {
     await dlq.close();

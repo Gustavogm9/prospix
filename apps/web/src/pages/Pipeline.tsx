@@ -141,7 +141,16 @@ export default function Pipeline() {
           <p className="text-text-secondary text-sm mt-1">Gerencie suas apólices arrastando os cards entre as etapas do funil.</p>
         </div>
         <div className="flex items-center gap-3">
-          <Button className="bg-white border border-border text-text-secondary hover:text-text text-xs font-semibold px-4 h-10 rounded-xl flex items-center gap-2 hover:bg-surface-sunken">
+          <Button
+            disabled={!canUseMockFallbacks}
+            title={!canUseMockFallbacks ? 'Use a base de leads ou integrações para criar leads reais.' : undefined}
+            onClick={() => {
+              if (canUseMockFallbacks) {
+                toast.info('Modo demo', 'A criação manual de lead não é executada nesta visualização.');
+              }
+            }}
+            className="bg-white border border-border text-text-secondary hover:text-text text-xs font-semibold px-4 h-10 rounded-xl flex items-center gap-2 hover:bg-surface-sunken disabled:opacity-50 disabled:cursor-not-allowed"
+          >
             <Plus className="w-4 h-4 text-primary" />
             <span>Adicionar Lead</span>
           </Button>
