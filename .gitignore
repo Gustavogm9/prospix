@@ -25,6 +25,12 @@ vitest-results.json
 *.junit.xml
 junit.xml
 
+# Playwright
+test-results/
+playwright-report/
+playwright/.cache/
+e2e-results.junit.xml
+
 # Coverage / tests
 coverage/
 .nyc_output/

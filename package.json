@@ -19,6 +19,8 @@
     "test:unit": "pnpm --filter @prospix/shared-types test && pnpm --filter @prospix/api exec vitest run tests/unit tests/ai src/workers src/services",
     "test:integration": "pnpm --filter @prospix/api exec vitest run src/integrations",
     "test:e2e": "turbo run test:e2e",
+    "test:e2e:smoke": "playwright test",
+    "test:e2e:smoke:install": "playwright install --with-deps chromium",
     "test:multi-tenant": "pnpm --filter @prospix/api exec vitest run tests/multi-tenant",
     "db:migrate": "pnpm --filter @prospix/api db:migrate",
     "db:seed": "pnpm --filter @prospix/api db:seed",
@@ -29,6 +31,7 @@
     "clean": "turbo run clean && rm -rf node_modules"
   },
   "devDependencies": {
+    "@playwright/test": "1.60.0",
     "@types/node": "^22.10.0",
     "eslint": "^9.16.0",
     "prettier": "^3.4.2",
