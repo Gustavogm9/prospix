@@ -1,6 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, FunnelChart, BarChart, Badge, Button, Tooltip, toast } from '@prospix/ui';
 import { Calendar, MessageSquare, AlertCircle, UserPlus, ArrowUpRight, Flame, Info } from 'lucide-react';
+import { apiClient } from '../lib/api-client';
+import { canUseMockFallbacks } from '../lib/demo-mode';
+import { useNavigate } from 'react-router-dom';
+import { OnboardingChecklist } from '../components/OnboardingChecklist';
 
 const FIT_SCORE_EXPLAINER = (
   <div className="text-left space-y-1">
@@ -14,9 +18,6 @@ const FIT_SCORE_EXPLAINER = (
     <div className="opacity-80">≥ 8.5 = lead quente · ≥ 7.0 = morno</div>
   </div>
 );
-import { apiClient } from '../lib/api-client';
-import { canUseMockFallbacks } from '../lib/demo-mode';
-import { useNavigate } from 'react-router-dom';
 
 interface DashboardStats {
   todayMeetings: number;
@@ -41,6 +42,16 @@ export default function Home() {
   const navigate = useNavigate();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  const onboardingSignals = useMemo(() => {
+    if (!stats) return undefined;
+    const hasConversations = (stats.pendingConversations || 0) + (stats.pendingManualConversations || 0) > 0;
+    const hasLeads = (stats.newLeadsToday || 0) > 0 || (stats.hotLeads?.length || 0) > 0;
+    return {
+      whatsapp: hasConversations,
+      firstLead: hasLeads,
+    };
+  }, [stats]);
 
   useEffect(() => {
     const fetchDashboardData = async () => {
@@ -154,7 +165,7 @@ export default function Home() {
           <p className="text-text-secondary text-sm mt-1">Visão integrada das suas prospecções e metas do dia de hoje.</p>
         </div>
         <div className="flex items-center gap-3">
-          <Button 
+          <Button
             onClick={() => navigate('/funil')}
             className="bg-primary hover:bg-primary-hover text-white font-medium px-4 py-2 rounded-xl text-xs flex items-center gap-2 shadow-lg shadow-primary/10"
           >
@@ -163,6 +174,8 @@ export default function Home() {
           </Button>
         </div>
       </div>
+
+      <OnboardingChecklist signals={onboardingSignals} />
 
       {/* KPI Dashboard Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">

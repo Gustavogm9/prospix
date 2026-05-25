@@ -4,7 +4,21 @@ import { Settings as SettingsIcon, Shield, CreditCard, Key, Calendar, Phone, Loa
 import { useAuthStore } from '../store/auth-store';
 import { apiClient } from '../lib/api-client';
 import { AxiosError } from 'axios';
+import { z } from 'zod';
 import PrivacyTab from './settings/PrivacyTab';
+
+const profileSchema = z.object({
+  name: z.string().trim().min(2, 'Informe o nome completo (mínimo 2 caracteres).').max(120, 'Nome muito longo (máximo 120).'),
+  email: z.string().trim().toLowerCase().email('E-mail inválido. Use o formato exemplo@dominio.com.'),
+  susep: z
+    .string()
+    .trim()
+    .max(40, 'SUSEP muito longo.')
+    .optional()
+    .or(z.literal('')),
+});
+
+type ProfileErrors = Partial<Record<'name' | 'email' | 'susep', string>>;
 
 type CredentialState = {
   aiProvider: 'GUILDS_SHARED' | 'TENANT_OWN';
@@ -94,6 +108,7 @@ export default function Settings() {
   const [name, setName] = useState(user?.name || '');
   const [email, setEmail] = useState(user?.email || '');
   const [susep, setSusep] = useState('');
+  const [profileErrors, setProfileErrors] = useState<ProfileErrors>({});
   const [isProfileLoading, setIsProfileLoading] = useState(false);
   const [isProfileSaving, setIsProfileSaving] = useState(false);
 
@@ -149,12 +164,24 @@ export default function Settings() {
   };
 
   const handleSaveProfile = async () => {
+    const parsed = profileSchema.safeParse({ name, email, susep });
+    if (!parsed.success) {
+      const errs: ProfileErrors = {};
+      for (const issue of parsed.error.issues) {
+        const field = issue.path[0] as keyof ProfileErrors | undefined;
+        if (field && !errs[field]) errs[field] = issue.message;
+      }
+      setProfileErrors(errs);
+      toast.error('Corrija os campos destacados', 'Há informações inválidas no formulário.');
+      return;
+    }
+    setProfileErrors({});
     setIsProfileSaving(true);
     try {
       const response = await apiClient.patch('/tenant/profile', {
-        name: name.trim(),
-        email: email.trim(),
-        susep: susep.trim() || null,
+        name: parsed.data.name,
+        email: parsed.data.email,
+        susep: parsed.data.susep || null,
       });
       const profile = response.data?.data;
       setName(profile?.name || name);
@@ -428,16 +455,56 @@ export default function Settings() {
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider block mb-1">Nome Completo</label>
-                    <Input value={name} onChange={(e) => setName(e.target.value)} className="bg-white border-border text-text placeholder-text-secondary text-xs focus:border-border-strong h-10" />
+                    <label htmlFor="profile-name" className="text-xs font-semibold text-text-secondary uppercase tracking-wider block mb-1">Nome Completo</label>
+                    <Input
+                      id="profile-name"
+                      value={name}
+                      onChange={(e) => {
+                        setName(e.target.value);
+                        if (profileErrors.name) setProfileErrors((p) => ({ ...p, name: undefined }));
+                      }}
+                      aria-invalid={!!profileErrors.name}
+                      aria-describedby={profileErrors.name ? 'profile-name-error' : undefined}
+                      className={`bg-white text-text placeholder-text-secondary text-xs h-10 ${profileErrors.name ? 'border-red-500 focus:border-red-500' : 'border-border focus:border-border-strong'}`}
+                    />
+                    {profileErrors.name && (
+                      <p id="profile-name-error" className="text-[10px] text-red-600 mt-1" role="alert">{profileErrors.name}</p>
+                    )}
                   </div>
                   <div>
-                    <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider block mb-1">E-mail Profissional</label>
-                    <Input value={email} onChange={(e) => setEmail(e.target.value)} className="bg-white border-border text-text placeholder-text-secondary text-xs focus:border-border-strong h-10" />
+                    <label htmlFor="profile-email" className="text-xs font-semibold text-text-secondary uppercase tracking-wider block mb-1">E-mail Profissional</label>
+                    <Input
+                      id="profile-email"
+                      type="email"
+                      value={email}
+                      onChange={(e) => {
+                        setEmail(e.target.value);
+                        if (profileErrors.email) setProfileErrors((p) => ({ ...p, email: undefined }));
+                      }}
+                      aria-invalid={!!profileErrors.email}
+                      aria-describedby={profileErrors.email ? 'profile-email-error' : undefined}
+                      className={`bg-white text-text placeholder-text-secondary text-xs h-10 ${profileErrors.email ? 'border-red-500 focus:border-red-500' : 'border-border focus:border-border-strong'}`}
+                    />
+                    {profileErrors.email && (
+                      <p id="profile-email-error" className="text-[10px] text-red-600 mt-1" role="alert">{profileErrors.email}</p>
+                    )}
                   </div>
                   <div>
-                    <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider block mb-1">Código SUSEP</label>
-                    <Input value={susep} onChange={(e) => setSusep(e.target.value)} className="bg-white border-border text-text placeholder-text-secondary text-xs focus:border-border-strong h-10" />
+                    <label htmlFor="profile-susep" className="text-xs font-semibold text-text-secondary uppercase tracking-wider block mb-1">Código SUSEP</label>
+                    <Input
+                      id="profile-susep"
+                      value={susep}
+                      onChange={(e) => {
+                        setSusep(e.target.value);
+                        if (profileErrors.susep) setProfileErrors((p) => ({ ...p, susep: undefined }));
+                      }}
+                      aria-invalid={!!profileErrors.susep}
+                      aria-describedby={profileErrors.susep ? 'profile-susep-error' : undefined}
+                      className={`bg-white text-text placeholder-text-secondary text-xs h-10 ${profileErrors.susep ? 'border-red-500 focus:border-red-500' : 'border-border focus:border-border-strong'}`}
+                    />
+                    {profileErrors.susep && (
+                      <p id="profile-susep-error" className="text-[10px] text-red-600 mt-1" role="alert">{profileErrors.susep}</p>
+                    )}
                   </div>
                 </div>
                 <Button
