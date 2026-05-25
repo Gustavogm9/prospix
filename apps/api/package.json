@@ -14,7 +14,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:multi-tenant": "vitest run tests/multi-tenant",
-    "test:audit:db": "vitest run tests/multi-tenant tests/integration/auth-admin-login.rls-db.test.ts tests/integration/evolution-idempotency.redis-db.test.ts tests/integration/queue-dlq.redis.test.ts src/lib/queue.test.ts src/workers/index.test.ts",
+    "test:audit:db": "vitest run tests/multi-tenant tests/integration/auth-admin-login.rls-db.test.ts tests/integration/auth-broker-login.rls-db.test.ts tests/integration/evolution-idempotency.redis-db.test.ts tests/integration/queue-dlq.redis.test.ts src/lib/queue.test.ts src/workers/index.test.ts",
     "test:e2e": "playwright test",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy && tsx prisma/apply-rls.ts",

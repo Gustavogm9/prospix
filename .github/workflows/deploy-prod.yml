@@ -28,9 +28,12 @@ jobs:
         options: >-
           --health-cmd "redis-cli ping" --health-interval 5s
     env:
-      DATABASE_URL: postgresql://prospix:prospix_dev@localhost:5432/prospix_test
+      NODE_ENV: test
+      DATABASE_URL: postgresql://prospix:prospix_dev@localhost:5432/prospix_test?schema=public
       REDIS_URL: redis://localhost:6379
       SECRETS_ENCRYPTION_KEY: dGVzdF9rZXlfMzJfYnl0ZXNfbG9uZ19wYWRfeHh4eA==
+      ALLOW_DESTRUCTIVE_SEED: '1'
+      SEED_ADMIN_PASSWORD: ci-test-admin-password
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -63,8 +66,25 @@ jobs:
 
       - name: Pre-deploy Database Backup Snapshot
         run: |
-          echo "Triggering PG Database Backup Snapshot..."
-          # production backup pipeline triggers here
+          if [ "$BACKUP_ENABLED" = "true" ]; then
+            echo "Creating pre-deploy database backup..."
+            TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+            BACKUP_FILE="prospix_prod_${TIMESTAMP}.sql.gz"
+            pg_dump "$DATABASE_PROD_URL" --no-owner --no-acl | gzip > "$BACKUP_FILE"
+            echo "Backup created: $BACKUP_FILE ($(du -h "$BACKUP_FILE" | cut -f1))"
+            # Upload to R2/S3 if configured
+            if [ -n "$BACKUP_BUCKET_URL" ]; then
+              echo "Uploading backup to $BACKUP_BUCKET_URL..."
+              # TODO: Add aws s3 cp or rclone upload here
+            fi
+          else
+            echo "::warning::BACKUP_ENABLED is not set — skipping pre-deploy backup."
+            echo "Set BACKUP_ENABLED=true and DATABASE_PROD_URL in secrets to enable."
+          fi
+        env:
+          BACKUP_ENABLED: ${{ secrets.BACKUP_ENABLED }}
+          DATABASE_PROD_URL: ${{ secrets.DATABASE_PROD_URL }}
+          BACKUP_BUCKET_URL: ${{ secrets.BACKUP_BUCKET_URL }}
 
       - name: Run Production Database Migrations
         run: |

@@ -20,7 +20,14 @@ COPY --from=build /usr/src/app/package.json /usr/src/app/pnpm-workspace.yaml /us
 COPY --from=build /usr/src/app/packages/shared-types ./packages/shared-types
 COPY --from=build /usr/src/app/apps/api ./apps/api
 RUN pnpm install --prod --frozen-lockfile
-RUN pnpm --filter @prospix/api db:generate
+
+# Copy generated Prisma client from build stage (M-23: avoid redundant generate)
+COPY --from=build /usr/src/app/apps/api/node_modules/.prisma ./apps/api/node_modules/.prisma
+COPY --from=build /usr/src/app/node_modules/.prisma ./node_modules/.prisma
+
+# Run as non-root user for security (M-22)
+RUN addgroup --system prospix && adduser --system --ingroup prospix prospix
+USER prospix
 
 WORKDIR /app/apps/api
 EXPOSE 3000

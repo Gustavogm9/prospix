@@ -256,6 +256,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       whatsapp: z.string().min(8, 'WhatsApp number is required'),
       susep: z.string().optional().nullable(),
       city: z.string().optional().nullable(),
+      password: z.string().min(6, 'Password must be at least 6 characters long'),
     }),
     accept_terms: z.boolean().refine((val) => val === true, 'You must accept terms and conditions'),
   });
@@ -276,6 +277,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       whatsapp: user.whatsapp,
       susep: user.susep || undefined,
       city: user.city || undefined,
+      password: user.password,
     });
 
     if (!result.ok) {
@@ -297,7 +299,92 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     });
   });
 
-  // ── 7. POST /auth/admin-login ──────────────────────────────────────────────
+  // ── 7. POST /auth/login ────────────────────────────────────────────────────
+  const brokerLoginSchema = z.object({
+    email: z.string().email('Invalid email address'),
+    password: z.string().min(1, 'Password is required'),
+  });
+
+  app.post('/login', async (req: FastifyRequest, reply: FastifyReply) => {
+    const parseResult = brokerLoginSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return reply.code(400).send({
+        error: 'Validation Error',
+        message: parseResult.error.errors[0]?.message,
+      });
+    }
+
+    const { email, password } = parseResult.data;
+
+    // Verify user exists and is OWNER or ASSISTANT (scoped DB-role bypass for auth only)
+    const user = await withAuthRlsBypass((tx) => tx.user.findFirst({
+      where: {
+        email,
+        role: { in: ['OWNER', 'ASSISTANT'] },
+      },
+      include: {
+        tenant: true,
+      },
+    }));
+
+    if (!user) {
+      return reply.code(401).send({
+        error: 'UNAUTHORIZED',
+        message: 'Corretor não encontrado ou credenciais incorretas.',
+      });
+    }
+
+    // Check if tenant is active
+    if (!user.tenant || user.tenant.status !== 'ACTIVE') {
+      return reply.code(403).send({
+        error: 'TENANT_INACTIVE',
+        message: 'Acesso bloqueado. A corretora associada não está ativa.',
+      });
+    }
+
+    // Verify hashed password from the database
+    if (!user.passwordHash || !verifyPassword(password, user.passwordHash)) {
+      return reply.code(401).send({
+        error: 'UNAUTHORIZED',
+        message: 'Senha incorreta.',
+      });
+    }
+
+    // Create session in the database
+    const ipAddress = req.ip;
+    const userAgent = req.headers['user-agent'];
+    const session = await createSession({
+      userId: user.id,
+      ipAddress,
+      userAgent,
+    });
+
+    // Create JWT
+    const payload = {
+      sub: user.id,
+      tenant_id: user.tenantId,
+      role: user.role,
+      email: user.email,
+      name: user.name,
+      jti: session.accessTokenId,
+    };
+
+    const accessToken = app.jwt.sign(payload);
+
+    return reply.code(200).send({
+      access_token: accessToken,
+      refresh_token: session.refreshToken,
+      user: {
+        id: user.id,
+        tenant_id: user.tenantId,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      },
+    });
+  });
+
+  // ── 8. POST /auth/admin-login ──────────────────────────────────────────────
   const adminLoginSchema = z.object({
     email: z.string().email('Invalid email address'),
     password: z.string().min(1, 'Password is required'),

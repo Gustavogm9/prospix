@@ -2647,9 +2647,9 @@ ANTHROPIC_API_KEY=sk-ant-...        # fallback
 ANTHROPIC_MODEL_FALLBACK=claude-3-5-haiku-20241022
 
 # === Evolution API (instância Guilds pra magic links) ===
-ZAPI_GUILDS_INSTANCE=...
-ZAPI_GUILDS_TOKEN=...
-ZAPI_BASE_URL=https://api.z-api.io
+EVOLUTION_GUILDS_API_KEY=...
+EVOLUTION_BASE_URL=https://evo.prospix.com.br
+EVOLUTION_GUILDS_INSTANCE=guilds_master
 
 # === Vault (criptografia de tenant_secrets) ===
 SECRETS_ENCRYPTION_KEY=32-byte-base64-key
@@ -3403,18 +3403,20 @@ M12   · Marketplace de templates (se ≥ 20 tenants)
 
 ## M.3 Billing automatizado
 
-**Stack:** Stripe (preferência) ou Asaas (BR-friendly).
+**Stack:** Asaas (decidido para MVP · PIX + boleto + cartão BR). Stripe apenas se futuramente vender white-label internacional (Fase 3+).
+
+> **Decisão:** após avaliação, Asaas foi escolhido para o MVP por ser BR-native (PIX/boleto sem atrito), custos competitivos e régua de inadimplência integrada. Ver detalhes em `docs/integrations.md` seção 17.
 
 **Fluxo:**
-1. Tenant cadastra cartão / boleto no onboarding
-2. Stripe cria customer + subscription
-3. Webhook `invoice.paid` → atualiza `tenant_billing.status = paid`
-4. `invoice.payment_failed` → marca como `overdue` → email
-5. Após 3 falhas (D+15): suspende tenant
+1. Tenant cadastra cartão / boleto / PIX no onboarding
+2. Asaas cria customer + subscription
+3. Webhook `PAYMENT_CONFIRMED` → atualiza `tenant_billing.status = paid`
+4. `PAYMENT_OVERDUE` → marca como `overdue` → régua de inadimplência (D+3 lembrete, D+7 segundo aviso, D+15 suspende)
+5. Após D+15 overdue: suspende tenant
 
 **Excedentes:**
 - Worker `usage-aggregation` calcula tokens excedentes
-- Cria `invoice item` adicional no fim do mês
+- Cria cobrança adicional no fim do mês via Asaas
 - Cobra junto com próxima fatura
 
 ## M.4 White-label completo (upsell R$ 4.900 + R$ 290/mês)

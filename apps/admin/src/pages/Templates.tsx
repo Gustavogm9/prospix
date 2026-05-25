@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, Button, toast, Badge, Modal, Skeleton } from '@prospix/ui';
 import { Plus, Edit3, Trash2, Layers, AlertTriangle, Inbox, AlertCircle, RotateCw } from 'lucide-react';
 import { adminApiClient } from '../lib/api-client';
+import { AxiosError } from 'axios';
 
 interface ScriptNode {
   id: string;
@@ -55,9 +56,11 @@ export default function Templates() {
         };
       });
       setTemplates(mapped);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error fetching templates:', err);
-      const message = err?.response?.data?.error?.message || err?.message || 'Não foi possível carregar a lista de templates.';
+      const message = err instanceof AxiosError
+        ? err.response?.data?.error?.message || err.message || 'Não foi possível carregar a lista de templates.'
+        : err instanceof Error ? err.message : 'Não foi possível carregar a lista de templates.';
       setLoadError(message);
       toast.error('Erro de Conexão', message);
     } finally {
@@ -93,8 +96,9 @@ export default function Templates() {
       
       toast.success('Estrutura Salva!', 'Os nós do template master foram compilados e atualizados.');
       fetchTemplates();
-    } catch (e: any) {
-      toast.error('Erro ao salvar', e.message || 'Verifique se o JSON de grafos e nós está válido.');
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Verifique se o JSON de grafos e nós está válido.';
+      toast.error('Erro ao salvar', message);
     }
   };
 
@@ -109,7 +113,7 @@ export default function Templates() {
       await adminApiClient.delete(`/admin/templates/${templateToDelete}`);
       toast.success('Template Removido', 'Arquivo de fluxo master apagado com sucesso.');
       fetchTemplates();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error deleting template:', err);
       toast.error('Erro ao deletar', 'Não foi possível apagar o template.');
     } finally {
@@ -133,7 +137,7 @@ export default function Templates() {
       });
       toast.success('Template Inicializado', 'Novo template master adicionado à biblioteca de clones.');
       fetchTemplates();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error creating template:', err);
       toast.error('Erro ao criar', 'Não foi possível salvar o template no servidor.');
     }

@@ -6,44 +6,10 @@
  * + roda AxeBuilder com tags WCAG 2.1 AA e falha em critical/serious.
  */
 import { test, expect } from '@playwright/test';
-import AxeBuilder from '@axe-core/playwright';
+import { authState } from '../fixtures/auth';
+import { runAxe } from '../helpers/axe';
 
-const BLOCKING_IMPACTS = new Set(['critical', 'serious']);
-
-const MOCK_TENANT_ID = '11111111-1111-1111-1111-111111111111';
-const MOCK_OWNER_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-const MOCK_JWT =
-  'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJtb2NrIn0.eyJzaWduYXR1cmUtbW9jay1mb3ItZTJlIn0=';
-
-const authState = {
-  state: {
-    accessToken: MOCK_JWT,
-    refreshToken: 'mock-refresh',
-    tenantId: MOCK_TENANT_ID,
-    user: {
-      id: MOCK_OWNER_ID,
-      name: 'Giovane Carrara',
-      email: 'giovane@seed.prospix.dev',
-      role: 'OWNER',
-      tenant_id: MOCK_TENANT_ID,
-    },
-  },
-  version: 0,
-};
-
-async function runAxe(page: import('@playwright/test').Page, label: string) {
-  const results = await new AxeBuilder({ page })
-    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
-    .analyze();
-  const blocking = results.violations.filter((v) => v.impact && BLOCKING_IMPACTS.has(v.impact));
-  if (results.violations.length > 0) {
-    console.log(`\n[a11y · ${label}] violations:`, results.violations.length);
-    for (const v of results.violations) {
-      console.log(`  · ${v.impact ?? 'unknown'} · ${v.id} · ${v.help}`);
-    }
-  }
-  return blocking;
-}
+/* Auth state and axe helper imported from shared fixtures (L-16, L-17) */
 
 test.describe('Web · A11y · paginas pos-login (AUD-P3-035 cobertura completa)', () => {
   test.beforeEach(async ({ context, page }) => {
@@ -77,8 +43,8 @@ test.describe('Web · A11y · paginas pos-login (AUD-P3-035 cobertura completa)'
   for (const { path, label } of PAGES) {
     test(`${label} sem violacoes critical/serious`, async ({ page }) => {
       await page.goto(path);
-      await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => undefined);
-      const blocking = await runAxe(page, label);
+      await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => { /* networkidle timeout is non-fatal for smoke tests */ });
+      const { blocking } = await runAxe(page, label);
       expect(
         blocking,
         `${label} violations: ${blocking.map((v) => `${v.id} (${v.impact})`).join(', ')}`,

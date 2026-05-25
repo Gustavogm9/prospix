@@ -33,7 +33,7 @@ describe('RLS SQL hardening audit', () => {
     const rlsSql = readFileSync(rlsSqlPath, 'utf8');
     const userPolicy = rlsSql.match(/CREATE POLICY tenant_isolation_users ON users\s+FOR ALL USING \(([^;]+)\);/m);
 
-    expect(userPolicy?.[1]).toBe('tenant_id = current_tenant_id()');
+    expect(userPolicy?.[1]).toBe('tenant_id IS NULL OR tenant_id = current_tenant_id()');
     expect(userPolicy?.[1]).not.toContain('GUILDS_ADMIN');
   });
 });

@@ -349,6 +349,7 @@ function successRequestFor(contract: CriticalApiContract) {
         name: 'Contract Owner',
         email: 'owner@prospix.test',
         whatsapp: '+5517999999999',
+        password: 'super-secret-password-123',
       },
       accept_terms: true,
     },

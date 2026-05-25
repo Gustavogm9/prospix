@@ -20,7 +20,7 @@ test.describe('Web · /login publico', () => {
     await expect(page.locator('body')).toContainText(/whatsapp|telefone|celular/i);
 
     // Permite carregar widgets async
-    await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => undefined);
+    await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => { /* networkidle timeout is non-fatal for smoke tests */ });
 
     expect(consoleErrors, `console errors: ${consoleErrors.join('\n')}`).toEqual([]);
   });

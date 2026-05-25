@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { adminAuthState } from '../fixtures/auth';
 
 /**
  * Smoke admin · pos-login com mock de token + tenants list mockada.
@@ -7,21 +8,7 @@ import { test, expect } from '@playwright/test';
  *  - injeta `prospix-admin-auth-storage` em localStorage
  *  - intercepta /v1/admin/tenants e devolve fixture
  */
-const MOCK_ADMIN_TOKEN =
-  'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJndWlsZHMtYWRtaW4ifQ.eyJzaWduYXR1cmUtbW9jay1mb3ItZTJlIn0=';
-
-const adminAuthState = {
-  state: {
-    adminToken: MOCK_ADMIN_TOKEN,
-    adminUser: {
-      id: '99999999-9999-9999-9999-999999999999',
-      name: 'Gustavo Macedo',
-      email: 'gustavo.macedo@guilds.com.br',
-      role: 'GUILDS_ADMIN',
-    },
-  },
-  version: 0,
-};
+/* Auth state imported from shared fixtures (L-16) */
 
 test.describe('Admin · dashboard pos-login (mocked)', () => {
   test.beforeEach(async ({ context, page }) => {
@@ -93,7 +80,7 @@ test.describe('Admin · dashboard pos-login (mocked)', () => {
     const response = await page.goto('/');
     expect(response?.status()).toBeLessThan(400);
 
-    await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => undefined);
+    await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => { /* networkidle timeout is non-fatal for smoke tests */ });
 
     // Algum sinal de UI logada (sidebar/topbar/admin)
     await expect(page.locator('body')).toContainText(/tenant|admin|guilds|dashboard/i);

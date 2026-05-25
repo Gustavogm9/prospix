@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Button, Input, Badge, Tabs, TabsList, TabsTrigger, TabsContent, Avatar, toast } from '@prospix/ui';
 import { MessageSquare, Send, Bot, User, Phone, DollarSign, Award, Activity, Clock, ChevronLeft } from 'lucide-react';
 import { apiClient } from '../lib/api-client';
+import { AxiosError } from 'axios';
 import { canUseMockFallbacks } from '../lib/demo-mode';
 import { supabase } from '../lib/supabase';
 import { useAuthStore } from '../store/auth-store';
@@ -357,9 +358,12 @@ export default function Conversations() {
       });
       const savedMsg = mapBackendMessage(response.data);
       setMessages(prev => prev.map(m => m.id === tempId ? savedMsg : m));
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error sending message:', err);
-      toast.error('Erro ao enviar', err.response?.data?.message || 'Falha ao enviar a mensagem pelo gateway WhatsApp.');
+      const message = err instanceof AxiosError
+        ? err.response?.data?.message || 'Falha ao enviar a mensagem pelo gateway WhatsApp.'
+        : 'Falha ao enviar a mensagem pelo gateway WhatsApp.';
+      toast.error('Erro ao enviar', message);
       setMessages(prev => prev.filter(m => m.id !== tempId));
     }
   };
@@ -468,6 +472,7 @@ export default function Conversations() {
                 <button
                   onClick={() => setSelectedConv(null)}
                   className="md:hidden p-1 mr-1 rounded-lg hover:bg-surface-sunken text-text-secondary"
+                  aria-label="Voltar para lista de conversas"
                 >
                   <ChevronLeft className="w-5 h-5" />
                 </button>

@@ -32,6 +32,100 @@ export const meetingsRoutes: FastifyPluginAsync = async (app) => {
     return reply.send({ data: meetings });
   });
 
+  // POST /v1/tenant/meetings - Create a manual meeting for a lead
+  const createMeetingSchema = z.object({
+    leadId: z.string().uuid('Invalid lead ID format'),
+    scheduledFor: z.string().datetime(),
+    durationMinutes: z.number().int().min(15).max(240).default(30),
+    location: z.string().trim().max(500).optional(),
+  });
+
+  app.post('/', async (req: FastifyRequest, reply: FastifyReply) => {
+    const parseRes = createMeetingSchema.safeParse(req.body);
+    if (!parseRes.success) {
+      return reply.code(400).send({ error: 'Validation Error', message: parseRes.error.errors[0]?.message });
+    }
+
+    const tenantId = req.tenantId!;
+    const { leadId, durationMinutes, location } = parseRes.data;
+    const scheduledFor = new Date(parseRes.data.scheduledFor);
+
+    const lead = await prisma.lead.findFirst({
+      where: { id: leadId, tenantId, deletedAt: null },
+    });
+
+    if (!lead) {
+      return reply.code(404).send({ error: 'RESOURCE_NOT_FOUND', message: 'Lead not found' });
+    }
+
+    const conflictingMeeting = await prisma.meeting.findFirst({
+      where: {
+        tenantId,
+        scheduledFor,
+        status: { in: [MeetingStatus.SCHEDULED, MeetingStatus.CONFIRMED] },
+      },
+      select: { id: true },
+    });
+
+    if (conflictingMeeting) {
+      return reply.code(409).send({ error: 'SCHEDULE_CONFLICT', message: 'There is already a meeting at this time' });
+    }
+
+    const meeting = await prisma.$transaction(async (tx) => {
+      const created = await tx.meeting.create({
+        data: {
+          tenantId,
+          leadId,
+          scheduledFor,
+          durationMinutes,
+          location: location || null,
+          status: MeetingStatus.SCHEDULED,
+        },
+        include: {
+          lead: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              whatsapp: true,
+            },
+          },
+        },
+      });
+
+      await tx.lead.update({
+        where: { id: leadId },
+        data: { status: LeadStatus.MEETING_SCHEDULED },
+      });
+
+      await tx.leadEvent.create({
+        data: {
+          tenantId,
+          leadId,
+          eventType: 'meeting_scheduled',
+          actorId: req.userId || undefined,
+          payload: {
+            meeting_id: created.id,
+            scheduled_for: created.scheduledFor.toISOString(),
+            source: 'manual',
+          },
+        },
+      });
+
+      return created;
+    });
+
+    const meetingQueue = createTenantQueue(tenantId, 'schedule-meeting');
+    await meetingQueue.add('manual-schedule-sync', {
+      tenant_id: tenantId,
+      lead_id: leadId,
+      meeting_id: meeting.id,
+    });
+
+    logger.info({ meetingId: meeting.id, leadId }, 'Meeting scheduled manually');
+    return reply.code(201).send({ data: meeting });
+  });
+
   // PATCH /v1/tenant/meetings/:id - Update meeting outcome, goals and commissions
   const updateOutcomeSchema = z.object({
     outcome: z.nativeEnum(MeetingOutcome).optional(),

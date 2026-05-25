@@ -1,4 +1,6 @@
 import { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
+import { AIProvider } from '@prisma/client';
+import { z } from 'zod';
 import { prisma } from '../../lib/prisma.js';
 import { redis } from '../../lib/redis.js';
 import { env } from '../../config/env.js';
@@ -11,7 +13,137 @@ const WHATSAPP_STATUS_UNAVAILABLE = 'CONNECTION_STATE_UNAVAILABLE';
 const WHATSAPP_QR_UNAVAILABLE = 'QR_CODE_UNAVAILABLE';
 const WHATSAPP_INTEGRATION_ERROR_MESSAGE = 'Failed to process WhatsApp integration request';
 
+const ensureOwnerCanManageCredentials = (req: FastifyRequest, reply: FastifyReply) => {
+  if (req.role !== 'OWNER' && req.role !== 'GUILDS_ADMIN') {
+    reply.code(403).send({ error: 'Forbidden', message: 'Only tenant owners can manage integration credentials' });
+    return false;
+  }
+
+  return true;
+};
+
+const credentialStateFromSecret = (secret: {
+  aiProvider: AIProvider;
+  evolutionBaseUrl: string | null;
+  evolutionInstanceName: string | null;
+  evolutionApiKeyEncrypted: string | null;
+  evolutionWebhookSecret: string | null;
+  googleCalendarId: string | null;
+  googleOauthRefreshEncrypted: string | null;
+  googleOauthScope: string | null;
+  googleMapsApiKeyEncrypted: string | null;
+  openaiApiKeyEncrypted: string | null;
+  anthropicApiKeyEncrypted: string | null;
+  googleAiApiKeyEncrypted: string | null;
+  updatedAt: Date;
+} | null) => ({
+  aiProvider: secret?.aiProvider || AIProvider.GUILDS_SHARED,
+  keys: {
+    openai: { configured: Boolean(secret?.openaiApiKeyEncrypted) },
+    anthropic: { configured: Boolean(secret?.anthropicApiKeyEncrypted) },
+    googleAi: { configured: Boolean(secret?.googleAiApiKeyEncrypted) },
+    googleMaps: { configured: Boolean(secret?.googleMapsApiKeyEncrypted) },
+    evolution: { configured: Boolean(secret?.evolutionApiKeyEncrypted) },
+  },
+  whatsapp: {
+    baseUrlConfigured: Boolean(secret?.evolutionBaseUrl),
+    instanceConfigured: Boolean(secret?.evolutionInstanceName),
+    webhookConfigured: Boolean(secret?.evolutionWebhookSecret),
+  },
+  google: {
+    calendarConnected: Boolean(secret?.googleOauthRefreshEncrypted),
+    calendarId: secret?.googleCalendarId || null,
+    oauthScope: secret?.googleOauthScope || null,
+  },
+  updatedAt: secret?.updatedAt || null,
+});
+
+const credentialsSchema = z.object({
+  aiProvider: z.nativeEnum(AIProvider).optional(),
+  openaiApiKey: z.string().trim().min(1).max(500).nullable().optional(),
+  anthropicApiKey: z.string().trim().min(1).max(500).nullable().optional(),
+  googleAiApiKey: z.string().trim().min(1).max(500).nullable().optional(),
+  googleMapsApiKey: z.string().trim().min(1).max(500).nullable().optional(),
+  evolutionApiKey: z.string().trim().min(1).max(500).nullable().optional(),
+  evolutionBaseUrl: z.string().trim().url().max(500).nullable().optional(),
+});
+
 export const integrationsRoutes: FastifyPluginAsync = async (app) => {
+  // GET /v1/tenant/integrations/credentials - Safe credential status for Settings
+  app.get('/credentials', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!req.tenantId) {
+      return reply.code(401).send({ error: 'Unauthorized', message: 'Tenant context is required' });
+    }
+
+    const secret = await prisma.tenantSecret.findUnique({
+      where: { tenantId: req.tenantId },
+    });
+
+    return reply.send({ data: credentialStateFromSecret(secret) });
+  });
+
+  // PATCH /v1/tenant/integrations/credentials - Store tenant credentials encrypted
+  app.patch('/credentials', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!req.tenantId) {
+      return reply.code(401).send({ error: 'Unauthorized', message: 'Tenant context is required' });
+    }
+
+    if (!ensureOwnerCanManageCredentials(req, reply)) {
+      return;
+    }
+
+    const parseRes = credentialsSchema.safeParse(req.body);
+    if (!parseRes.success) {
+      return reply.code(400).send({ error: 'Validation Error', message: parseRes.error.errors[0]?.message });
+    }
+
+    const encryptOrClear = async (value: string | null | undefined) => {
+      if (value === undefined) return undefined;
+      if (value === null || value.trim() === '') return null;
+      return encryptSecret(value.trim());
+    };
+
+    const payload = parseRes.data;
+    const updateData: Record<string, unknown> = {};
+    const encryptedOpenAI = await encryptOrClear(payload.openaiApiKey);
+    const encryptedAnthropic = await encryptOrClear(payload.anthropicApiKey);
+    const encryptedGoogleAi = await encryptOrClear(payload.googleAiApiKey);
+    const encryptedGoogleMaps = await encryptOrClear(payload.googleMapsApiKey);
+    const encryptedEvolution = await encryptOrClear(payload.evolutionApiKey);
+
+    if (payload.aiProvider !== undefined) updateData.aiProvider = payload.aiProvider;
+    if (payload.evolutionBaseUrl !== undefined) updateData.evolutionBaseUrl = payload.evolutionBaseUrl || null;
+    if (encryptedOpenAI !== undefined) updateData.openaiApiKeyEncrypted = encryptedOpenAI;
+    if (encryptedAnthropic !== undefined) updateData.anthropicApiKeyEncrypted = encryptedAnthropic;
+    if (encryptedGoogleAi !== undefined) updateData.googleAiApiKeyEncrypted = encryptedGoogleAi;
+    if (encryptedGoogleMaps !== undefined) updateData.googleMapsApiKeyEncrypted = encryptedGoogleMaps;
+    if (encryptedEvolution !== undefined) updateData.evolutionApiKeyEncrypted = encryptedEvolution;
+
+    const hasTenantOwnedKey = Boolean(
+      updateData.openaiApiKeyEncrypted ||
+      updateData.anthropicApiKeyEncrypted ||
+      updateData.googleAiApiKeyEncrypted ||
+      updateData.googleMapsApiKeyEncrypted ||
+      updateData.evolutionApiKeyEncrypted
+    );
+
+    if (payload.aiProvider === undefined && hasTenantOwnedKey) {
+      updateData.aiProvider = AIProvider.TENANT_OWN;
+    }
+
+    const secret = await prisma.tenantSecret.upsert({
+      where: { tenantId: req.tenantId },
+      create: {
+        tenantId: req.tenantId,
+        ...updateData,
+      },
+      update: updateData,
+    });
+
+    logger.info({ tenantId: req.tenantId, userId: req.userId }, 'Tenant credentials updated from Settings');
+    return reply.send({ data: credentialStateFromSecret(secret) });
+  });
+
   // GET /v1/tenant/integrations/google/oauth - Generate Google Calendar consent URL
   app.get('/google/oauth', async (req: FastifyRequest, reply: FastifyReply) => {
     if (!req.tenantId) {

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, Button, Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell, toast, Input, Modal, Skeleton } from '@prospix/ui';
 import { Search, Ban, Play, Inbox, AlertCircle, RotateCw } from 'lucide-react';
 import { adminApiClient } from '../lib/api-client';
+import { AxiosError } from 'axios';
 
 interface Tenant {
   id: string;
@@ -11,6 +12,7 @@ interface Tenant {
   mrr: string;
   status: 'active' | 'suspended' | 'grace_period';
   health: 'excellent' | 'good' | 'fair' | 'critical';
+  healthMissing: string[];
   ownerName: string;
   ownerWhatsapp: string;
 }
@@ -44,9 +46,9 @@ export default function Tenants() {
         if (t.status === 'SUSPENDED') displayStatus = 'suspended';
         if (t.status === 'CHURNING') displayStatus = 'grace_period';
 
-        let displayHealth: 'excellent' | 'good' | 'fair' | 'critical' = 'excellent';
-        if (t.status === 'SUSPENDED') displayHealth = 'critical';
-        if (t.status === 'CHURNING') displayHealth = 'fair';
+        const displayHealth: 'excellent' | 'good' | 'fair' | 'critical' =
+          t.integrationHealth?.status || (t.status === 'SUSPENDED' ? 'critical' : t.status === 'CHURNING' ? 'fair' : 'excellent');
+        const healthMissing = Array.isArray(t.integrationHealth?.missing) ? t.integrationHealth.missing : [];
 
         const formattedMRR = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format((t.mrrCents || 0) / 100);
 
@@ -58,15 +60,18 @@ export default function Tenants() {
           mrr: formattedMRR,
           status: displayStatus,
           health: displayHealth,
+          healthMissing,
           ownerName: owner?.name || 'N/A',
           ownerWhatsapp: owner?.whatsapp || 'N/A',
         };
       });
 
       setTenants(mapped);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error fetching tenants:', err);
-      const message = err?.response?.data?.error?.message || err?.message || 'Não foi possível carregar a lista de tenants.';
+      const message = err instanceof AxiosError
+        ? err.response?.data?.error?.message || err.message || 'Não foi possível carregar a lista de tenants.'
+        : err instanceof Error ? err.message : 'Não foi possível carregar a lista de tenants.';
       setLoadError(message);
       toast.error('Erro de Conexão', message);
     } finally {
@@ -94,21 +99,27 @@ export default function Tenants() {
     try {
       await adminApiClient.post(`/admin/tenants/${tenantId}/suspend`);
       toast.success('Tenant Suspenso', 'Status atualizado via role CONNECTION guilds_admin.');
-    } catch (error: any) {
-      toast.error('Erro ao suspender', error?.message || 'Ocorreu um erro ao suspender o tenant no servidor.');
+    } catch (error: unknown) {
+      const message = error instanceof AxiosError
+        ? error.response?.data?.message || error.message || 'Ocorreu um erro ao suspender o tenant no servidor.'
+        : error instanceof Error ? error.message : 'Ocorreu um erro ao suspender o tenant no servidor.';
+      toast.error('Erro ao suspender', message);
       fetchTenants();
     }
   };
 
   const handleActivate = async (tenantId: string) => {
     // Optimistic Update
-    setTenants(prev => prev.map(t => t.id === tenantId ? { ...t, status: 'active', health: 'good' } : t));
+    setTenants(prev => prev.map(t => t.id === tenantId ? { ...t, status: 'active' } : t));
 
     try {
       await adminApiClient.post(`/admin/tenants/${tenantId}/resume`);
       toast.success('Tenant Ativado', 'Sessão e limites liberados.');
-    } catch (error: any) {
-      toast.error('Erro ao ativar', error?.message || 'Ocorreu um erro ao reativar o tenant no servidor.');
+    } catch (error: unknown) {
+      const message = error instanceof AxiosError
+        ? error.response?.data?.message || error.message || 'Ocorreu um erro ao reativar o tenant no servidor.'
+        : error instanceof Error ? error.message : 'Ocorreu um erro ao reativar o tenant no servidor.';
+      toast.error('Erro ao ativar', message);
       fetchTenants();
     }
   };
@@ -304,7 +315,9 @@ export default function Tenants() {
                     </div>
                   </TableCell>
                   <TableCell className="py-3.5 px-6">{getStatusBadge(t.status)}</TableCell>
-                  <TableCell className="py-3.5 px-6">{getHealthBadge(t.health)}</TableCell>
+                  <TableCell className="py-3.5 px-6" title={t.healthMissing.length ? `Pendente: ${t.healthMissing.join(', ')}` : 'Integrações essenciais configuradas'}>
+                    {getHealthBadge(t.health)}
+                  </TableCell>
                   <TableCell className="py-3.5 px-6 text-right">
                     <div className="flex items-center gap-1.5 justify-end">
                       {t.status === 'suspended' ? (

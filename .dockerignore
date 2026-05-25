@@ -1,0 +1,35 @@
+# Version control
+.git
+.gitignore
+
+# Dependencies (rebuilt in container)
+node_modules
+
+# Test artifacts
+test-results
+e2e
+coverage
+
+# Documentation & business docs
+docs
+business
+*.md
+!README.md
+
+# CI/CD & editor config
+.github
+.vscode
+.turbo
+.claude
+
+# Environment files (secrets)
+.env*
+!.env.example
+
+# Build artifacts & archives
+prospix.tar.gz
+multi-tenant-results.json
+
+# IDE / OS
+.DS_Store
+Thumbs.db

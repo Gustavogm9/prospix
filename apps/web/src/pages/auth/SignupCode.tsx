@@ -90,25 +90,25 @@ export default function SignupCode() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-zinc-950 text-zinc-50 relative overflow-hidden px-4">
+    <div className="auth-dark min-h-screen flex items-center justify-center bg-bg text-text relative overflow-hidden px-4">
       {/* Visual background lights */}
       <div className="absolute top-[-20%] right-[-10%] w-[50%] h-[50%] rounded-full bg-blue-500/10 blur-[120px] pointer-events-none" />
       <div className="absolute bottom-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full bg-emerald-500/10 blur-[120px] pointer-events-none" />
 
-      <div className="w-full max-w-[440px] bg-zinc-900/60 backdrop-blur-md border border-zinc-800 p-8 rounded-2xl shadow-2xl relative z-10">
+      <div className="w-full max-w-[440px] bg-surface backdrop-blur-md border border-border p-8 rounded-2xl shadow-2xl relative z-10">
         <div className="flex flex-col items-center mb-8">
           <div className="h-12 w-12 rounded-xl bg-gradient-to-tr from-blue-600 to-emerald-500 flex items-center justify-center shadow-lg shadow-blue-500/20 mb-4">
             <span className="font-heading text-xl font-bold text-white tracking-wider">P</span>
           </div>
-          <h2 className="text-2xl font-bold font-heading text-zinc-50">Resgatar Convite</h2>
-          <p className="text-sm text-zinc-400 mt-1 text-center">
+          <h2 className="text-2xl font-bold font-heading text-text">Resgatar Convite</h2>
+          <p className="text-sm text-text-secondary mt-1 text-center">
             A Prospix é uma plataforma exclusiva para corretores credenciados. Digite seu código para ingressar.
           </p>
         </div>
 
         <form onSubmit={handleVerify} className="space-y-5">
           <div>
-            <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider block mb-2">
+            <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider block mb-2">
               Código de Convite Gated
             </label>
             <Input
@@ -116,7 +116,7 @@ export default function SignupCode() {
               placeholder="PRSPX-XXXX-XXXX"
               value={code}
               onChange={handleCodeChange}
-              className="w-full bg-zinc-950/80 border-zinc-800 text-zinc-100 placeholder-zinc-700 text-center font-mono text-lg tracking-widest h-12 focus:border-blue-500/50"
+              className="w-full bg-[var(--surface-sunken)] border-border text-text placeholder-text-muted text-center font-mono text-lg tracking-widest h-12 focus:border-blue-500/50"
               disabled={isLoading}
               autoFocus
             />
@@ -138,8 +138,8 @@ export default function SignupCode() {
           </Button>
         </form>
 
-        <div className="mt-8 text-center pt-4 border-t border-zinc-800/40">
-          <p className="text-xs text-zinc-500">
+        <div className="mt-8 text-center pt-4 border-t border-border-subtle">
+          <p className="text-xs text-text-muted">
             Já possui acesso cadastrado?{' '}
             <button
               onClick={() => navigate('/login')}

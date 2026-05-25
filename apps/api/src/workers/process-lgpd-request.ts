@@ -201,6 +201,25 @@ export class ProcessLgpdRequestWorker extends BaseWorker<
 
     // Se R2 configurado, faz upload + gera presigned URL com TTL 7d.
     // Caso contrario (dev/test sem R2 creds), mantem JSON inline (MVP fallback).
+    //
+    // ┌─────────────────────────────────────────────────────────────────────┐
+    // │ ⚠️  LGPD INLINE STORAGE LIMITATION (M-9)                          │
+    // │                                                                     │
+    // │ When R2 (Cloudflare) is NOT configured (R2_ACCOUNT_ID,             │
+    // │ R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY unset), the full LGPD       │
+    // │ export payload — including PII (names, phone numbers, emails,      │
+    // │ professions, etc.) — is stored INLINE in the `lgpd_requests`       │
+    // │ table's `scope` JSON column (`scope.export_data`).                 │
+    // │                                                                     │
+    // │ This means:                                                         │
+    // │  • PII persists in the database beyond the download TTL window.    │
+    // │  • Database backups will contain exported PII snapshots.           │
+    // │  • There is no automatic expiration/cleanup of inline data.        │
+    // │                                                                     │
+    // │ For production deployments, R2 MUST be configured so that          │
+    // │ exports are uploaded to object storage with presigned URLs          │
+    // │ and a 7-day TTL, avoiding PII persistence in the DB.              │
+    // └─────────────────────────────────────────────────────────────────────┘
     let downloadUrl: string | null = null;
     let downloadExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     let exportMethod = 'inline-json-fallback';

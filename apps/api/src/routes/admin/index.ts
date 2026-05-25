@@ -52,11 +52,55 @@ function withAdminRole<TResult>(operation: (tx: AdminTransaction) => Promise<TRe
   );
 }
 
+function buildIntegrationHealth(tenant: Pick<TenantWithCredentialRecord, 'status' | 'secret'>) {
+  const secret = tenant.secret;
+  const checks = {
+    whatsappGatewayConfigured: Boolean(
+      secret?.evolutionBaseUrl &&
+      secret.evolutionInstanceName &&
+      secret.evolutionApiKeyEncrypted &&
+      secret.evolutionWebhookSecret
+    ),
+    googleCalendarConnected: Boolean(secret?.googleCalendarId && secret.googleOauthRefreshEncrypted),
+    googleMapsConfigured: Boolean(secret?.googleMapsApiKeyEncrypted),
+    aiConfigured: Boolean(
+      !secret ||
+      secret.aiProvider === 'GUILDS_SHARED' ||
+      secret.openaiApiKeyEncrypted ||
+      secret.anthropicApiKeyEncrypted ||
+      secret.googleAiApiKeyEncrypted
+    ),
+  };
+
+  const missing = [
+    !checks.whatsappGatewayConfigured ? 'WhatsApp/Evolution' : null,
+    !checks.googleCalendarConnected ? 'Google Calendar' : null,
+    !checks.googleMapsConfigured ? 'Google Maps' : null,
+    !checks.aiConfigured ? 'IA do tenant' : null,
+  ].filter(Boolean) as string[];
+
+  let status: 'excellent' | 'good' | 'fair' | 'critical' = 'excellent';
+  if (tenant.status === TenantStatus.SUSPENDED || tenant.status === TenantStatus.CHURNED || !checks.whatsappGatewayConfigured) {
+    status = 'critical';
+  } else if (tenant.status === TenantStatus.CHURNING || missing.length >= 2) {
+    status = 'fair';
+  } else if (missing.length === 1) {
+    status = 'good';
+  }
+
+  return {
+    status,
+    checks,
+    missing,
+  };
+}
+
 function toAdminTenantDetail(tenant: TenantWithCredentialRecord) {
   const { secret, ...safeTenant } = tenant;
 
   return {
     ...safeTenant,
+    integrationHealth: buildIntegrationHealth(tenant),
     credentialState: secret
       ? {
         exists: true,
@@ -133,10 +177,33 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
           where: { role: 'OWNER' },
           select: { id: true, name: true, email: true, whatsapp: true },
         },
+        secret: {
+          select: {
+            evolutionBaseUrl: true,
+            evolutionInstanceName: true,
+            evolutionApiKeyEncrypted: true,
+            evolutionWebhookSecret: true,
+            googleCalendarId: true,
+            googleOauthRefreshEncrypted: true,
+            googleMapsApiKeyEncrypted: true,
+            openaiApiKeyEncrypted: true,
+            anthropicApiKeyEncrypted: true,
+            googleAiApiKeyEncrypted: true,
+            aiProvider: true,
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
     }));
-    return reply.send({ data: tenants });
+    const tenantsWithHealth = tenants.map((tenant) => {
+      const { secret, ...safeTenant } = tenant;
+      return {
+        ...safeTenant,
+        integrationHealth: buildIntegrationHealth(tenant as Pick<TenantWithCredentialRecord, 'status' | 'secret'>),
+      };
+    });
+
+    return reply.send({ data: tenantsWithHealth });
   });
 
   // GET /tenants/:id (Get tenant detail)

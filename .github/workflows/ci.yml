@@ -24,14 +24,6 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - uses: actions/cache/save@v4
-        with:
-          path: |
-            node_modules
-            apps/*/node_modules
-            packages/*/node_modules
-            .turbo
-          key: ${{ runner.os }}-deps-${{ github.sha }}
 
   lint:
     name: Lint
@@ -224,11 +216,10 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Audit npm packages
+      - name: Audit npm packages (fail on high+ severity)
         run: pnpm audit --audit-level=high
-        continue-on-error: true # warning, not blocking
       - name: Check for secrets in code
-        uses: trufflesecurity/trufflehog@main
+        uses: trufflesecurity/trufflehog@v3.88.0
         with:
           path: ./
           base: ${{ github.event.repository.default_branch }}

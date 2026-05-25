@@ -106,6 +106,7 @@ async function main() {
       name: SEED_USERS.ownerA.name,
       email: SEED_USERS.ownerA.email,
       whatsapp: SEED_USERS.ownerA.whatsapp,
+      passwordHash: hashPassword(process.env.SEED_ADMIN_PASSWORD!),
     },
   });
 
@@ -118,6 +119,7 @@ async function main() {
       name: SEED_USERS.ownerB.name,
       email: SEED_USERS.ownerB.email,
       whatsapp: SEED_USERS.ownerB.whatsapp,
+      passwordHash: hashPassword(process.env.SEED_ADMIN_PASSWORD!),
     },
   });
 

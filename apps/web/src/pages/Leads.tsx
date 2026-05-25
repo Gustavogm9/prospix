@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, Button, Input, Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell, Drawer, toast } from '@prospix/ui';
 import { Search, Filter, Flame, MessageSquare, Download, RefreshCw, User, Phone, DollarSign } from 'lucide-react';
 import { apiClient } from '../lib/api-client';
+import { AxiosError } from 'axios';
 import { canUseMockFallbacks } from '../lib/demo-mode';
 
 interface Lead {
@@ -34,12 +36,14 @@ const mapBackendLead = (lead: any): Lead => {
 };
 
 export default function Leads() {
+  const navigate = useNavigate();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [fitFilter, setFitFilter] = useState<'all' | 'hot' | 'normal'>('all');
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isStartingChat, setIsStartingChat] = useState(false);
 
   const handleExportCsv = () => {
     if (leads.length === 0) {
@@ -71,6 +75,28 @@ export default function Leads() {
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
     toast.success('CSV exportado', 'Arquivo gerado com os leads carregados na tela.');
+  };
+
+  const handleStartConversation = async () => {
+    if (!selectedLead) return;
+
+    setIsStartingChat(true);
+    try {
+      await apiClient.post('/tenant/conversations', { leadId: selectedLead.id });
+      toast.success('Conversa criada', 'O lead está pronto para atendimento manual.');
+      setSelectedLead(null);
+      navigate('/conversas');
+    } catch (error: unknown) {
+      const message = error instanceof AxiosError
+        ? error.response?.data?.message || 'Não foi possível criar a conversa para este lead.'
+        : 'Não foi possível criar a conversa para este lead.';
+      toast.error(
+        'Erro ao iniciar conversa',
+        message
+      );
+    } finally {
+      setIsStartingChat(false);
+    }
   };
 
   // Debounce logic for search
@@ -338,17 +364,11 @@ export default function Leads() {
             <div className="pt-4 border-t border-border/60">
               <Button
                 className="w-full bg-primary hover:bg-primary-hover text-white font-semibold h-11 rounded-xl transition-all shadow-lg shadow-primary/10 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                disabled={!canUseMockFallbacks}
-                title={!canUseMockFallbacks ? 'Criação de conversa ainda não está disponível nesta tela.' : undefined}
-                onClick={() => {
-                  if (canUseMockFallbacks) {
-                    toast.info('Modo demo', 'A criação real de conversa não é executada no modo demo.');
-                  }
-                  setSelectedLead(null);
-                }}
+                disabled={isStartingChat}
+                onClick={handleStartConversation}
               >
                 <MessageSquare className="w-4 h-4" />
-                <span>Iniciar Chat de Prospecção</span>
+                <span>{isStartingChat ? 'Abrindo conversa...' : 'Iniciar Chat de Prospecção'}</span>
               </Button>
             </div>
           </div>

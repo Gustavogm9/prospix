@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, Button, Input, Textarea, toast, Badge } from '@prospix/ui';
-import { Play, Sparkles, MessageSquare, Plus, Save, Trash2 } from 'lucide-react';
+import { Play, Sparkles, MessageSquare, Plus, Save, Trash2, Wand2, X } from 'lucide-react';
 import { apiClient } from '../lib/api-client';
+import { AxiosError } from 'axios';
 import { canUseMockFallbacks } from '../lib/demo-mode';
 
 interface ScriptVariation {
@@ -57,6 +58,53 @@ export default function Scripts() {
   const [simulationResponse, setSimulationResponse] = useState<string | null>(null);
   const [simulatedVariant, setSimulatedVariant] = useState<string | null>(null);
   const [isLoadingSim, setIsLoadingSim] = useState(false);
+
+  // AI Script Generator State
+  const [isGenerateModalOpen, setIsGenerateModalOpen] = useState(false);
+  const [selectedNiche, setSelectedNiche] = useState<'DOCTOR' | 'LAWYER' | 'BUSINESS_OWNER' | 'OTHER'>('DOCTOR');
+  const [customNiche, setCustomNiche] = useState('');
+  const [selectedProduct, setSelectedProduct] = useState<'DIT' | 'KEYMAN' | 'PATRIMONY_SUCCESSION' | 'HEALTH_INSURANCE' | 'OTHER'>('DIT');
+  const [customProduct, setCustomProduct] = useState('');
+  const [selectedTone, setSelectedTone] = useState<'CONSULTATIVE' | 'FORMAL' | 'DIRECT'>('CONSULTATIVE');
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  const handleGenerate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsGenerating(true);
+
+    try {
+      const response = await apiClient.post('/tenant/scripts/generate', {
+        niche: selectedNiche,
+        customNiche: selectedNiche === 'OTHER' ? customNiche : null,
+        product: selectedProduct,
+        customProduct: selectedProduct === 'OTHER' ? customProduct : null,
+        tone: selectedTone,
+      });
+
+      const data = response.data?.data;
+      if (data) {
+        setBaseMessage(data.baseMessage);
+        
+        // Map variant weights dynamically
+        const mappedVariations = (data.variations || []).map((v: any, index: number) => ({
+          id: v.id || Date.now().toString() + index,
+          name: v.name || `Variante ${String.fromCharCode(65 + index)}`,
+          weight: v.weight || 50,
+          content: v.content || '',
+        }));
+
+        setVariations(mappedVariations);
+        toast.success('Roteiro Gerado com IA', 'As abordagens e variantes foram preenchidas no editor. Clique em "Salvar Roteiro" para confirmar.');
+        setIsGenerateModalOpen(false);
+      }
+    } catch (err: unknown) {
+      console.error('Error generating script with AI', err);
+      toast.error('Erro de Geração', 'Não foi possível gerar mensagens com a IA.');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
 
   useEffect(() => {
     const fetchScripts = async () => {
@@ -158,8 +206,11 @@ export default function Scripts() {
         setCurrentScriptId(savedScript.id);
       }
       toast.success('Roteiro salvo', 'Alterações confirmadas pela API.');
-    } catch (err: any) {
-      toast.error('Erro ao salvar', err.response?.data?.message || 'Não foi possível confirmar a gravação do roteiro na API.');
+    } catch (err: unknown) {
+      const message = err instanceof AxiosError
+        ? err.response?.data?.message || 'Não foi possível confirmar a gravação do roteiro na API.'
+        : 'Não foi possível confirmar a gravação do roteiro na API.';
+      toast.error('Erro ao salvar', message);
     }
   };
 
@@ -179,7 +230,7 @@ export default function Scripts() {
         setSimulatedVariant(response.data.variantUsed);
       }
       setIsLoadingSim(false);
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (canUseMockFallbacks) {
         setTimeout(() => {
           setSimulatedVariant('Variante A (Foco em Economia)');
@@ -190,7 +241,10 @@ export default function Scripts() {
         }, 1200);
         return;
       }
-      toast.error('Erro na simulação', err.response?.data?.message || 'A API não gerou uma resposta para a simulação.');
+      const message = err instanceof AxiosError
+        ? err.response?.data?.message || 'A API não gerou uma resposta para a simulação.'
+        : 'A API não gerou uma resposta para a simulação.';
+      toast.error('Erro na simulação', message);
       setIsLoadingSim(false);
     }
   };
@@ -206,6 +260,13 @@ export default function Scripts() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <Button
+            onClick={() => setIsGenerateModalOpen(true)}
+            className="bg-surface-sunken hover:bg-border text-text border border-border/80 font-semibold px-4 h-10 rounded-xl flex items-center gap-2 shadow-sm"
+          >
+            <Wand2 className="w-4 h-4 text-primary" />
+            <span>Gerar com IA</span>
+          </Button>
           <Button
             onClick={handleSave}
             className="bg-primary hover:bg-primary-hover text-white font-semibold px-4 h-10 rounded-xl flex items-center gap-2 shadow-lg shadow-primary/10"
@@ -273,6 +334,7 @@ export default function Scripts() {
                   <button
                     onClick={() => handleRemoveVariation(v.id)}
                     className="absolute top-4 right-4 p-1 rounded-lg hover:bg-red-50 text-text-secondary hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                    aria-label="Remover variação"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -369,6 +431,146 @@ export default function Scripts() {
           </CardContent>
         </Card>
       </div>
+
+      {/* ── AI Script Generator Modal ────────────────────────────────────── */}
+      {isGenerateModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-slate-900/40 backdrop-blur-sm">
+          <div className="bg-white border border-border rounded-2xl w-full max-w-[500px] p-6 space-y-5 shadow-2xl animate-scaleIn">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-primary-soft text-primary border border-primary/20 rounded-xl">
+                  <Wand2 className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold font-heading text-text">Gerar Roteiro com IA Premium</h3>
+                  <p className="text-xs text-text-secondary leading-none mt-0.5">Copywriting consultivo de alta conversão.</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsGenerateModalOpen(false)}
+                className="p-1.5 rounded-lg hover:bg-surface-sunken text-text-secondary transition-all"
+                aria-label="Fechar modal"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleGenerate} className="space-y-4">
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider block mb-1">
+                    Nicho de Atuação (Público-Alvo)
+                  </label>
+                  <select
+                    value={selectedNiche}
+                    onChange={(e: any) => setSelectedNiche(e.target.value)}
+                    className="w-full bg-white border border-border text-text rounded-xl h-10 px-3 text-xs focus:border-border-strong focus:outline-none"
+                    required
+                  >
+                    <option value="DOCTOR">Médicos, Dentistas e Saúde</option>
+                    <option value="LAWYER">Advogados e Jurídicos</option>
+                    <option value="BUSINESS_OWNER">Empresários e PMEs</option>
+                    <option value="OTHER">Outro nicho personalizado...</option>
+                  </select>
+                </div>
+
+                {selectedNiche === 'OTHER' && (
+                  <div className="animate-fadeIn">
+                    <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider block mb-1">
+                      Descreva o Nicho Personalizado
+                    </label>
+                    <Input
+                      placeholder="Ex: Engenheiros civis autônomos"
+                      value={customNiche}
+                      onChange={(e) => setCustomNiche(e.target.value)}
+                      className="bg-white border-border text-text placeholder-text-secondary text-xs focus:border-border-strong h-10"
+                      required
+                    />
+                  </div>
+                )}
+
+                <div>
+                  <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider block mb-1">
+                    Produto / Cobertura Foco
+                  </label>
+                  <select
+                    value={selectedProduct}
+                    onChange={(e: any) => setSelectedProduct(e.target.value)}
+                    className="w-full bg-white border border-border text-text rounded-xl h-10 px-3 text-xs focus:border-border-strong focus:outline-none"
+                    required
+                  >
+                    <option value="DIT">Diária de Incapacidade Temporária (DIT)</option>
+                    <option value="KEYMAN">Homem-Chave (Keyman) & Societário</option>
+                    <option value="PATRIMONY_SUCCESSION">Blindagem & Sucessão (Sem ITCMD)</option>
+                    <option value="HEALTH_INSURANCE">Seguro Saúde PME (Economia)</option>
+                    <option value="OTHER">Outra cobertura personalizada...</option>
+                  </select>
+                </div>
+
+                {selectedProduct === 'OTHER' && (
+                  <div className="animate-fadeIn">
+                    <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider block mb-1">
+                      Descreva o Produto/Cobertura
+                    </label>
+                    <Input
+                      placeholder="Ex: Seguro de Vida Resgatável MetLife"
+                      value={customProduct}
+                      onChange={(e) => setCustomProduct(e.target.value)}
+                      className="bg-white border-border text-text placeholder-text-secondary text-xs focus:border-border-strong h-10"
+                      required
+                    />
+                  </div>
+                )}
+
+                <div>
+                  <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider block mb-1">
+                    Tom de Voz
+                  </label>
+                  <select
+                    value={selectedTone}
+                    onChange={(e: any) => setSelectedTone(e.target.value)}
+                    className="w-full bg-white border border-border text-text rounded-xl h-10 px-3 text-xs focus:border-border-strong focus:outline-none"
+                    required
+                  >
+                    <option value="CONSULTATIVE">Consultivo & Amigável (Recomendado)</option>
+                    <option value="FORMAL">Corporativo & Formal</option>
+                    <option value="DIRECT">Direto ao Ponto & Objetivo</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <Button
+                  type="button"
+                  onClick={() => setIsGenerateModalOpen(false)}
+                  variant="outline"
+                  className="flex-1 border-border bg-white hover:bg-surface-sunken text-text-secondary h-10 rounded-xl font-bold"
+                  disabled={isGenerating}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  type="submit"
+                  className="flex-1 bg-primary hover:bg-primary-hover text-white font-bold h-10 rounded-xl transition-all shadow-lg shadow-primary/10 flex items-center justify-center gap-2"
+                  disabled={isGenerating}
+                >
+                  {isGenerating ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      <span>Gerando com LLM...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 className="w-3.5 h-3.5" />
+                      <span>Criar Abordagem</span>
+                    </>
+                  )}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

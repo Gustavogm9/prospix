@@ -5,6 +5,20 @@ body {
   overflow-y: auto;
 }
 
+/* Auth dark theme – maps to design-system token naming convention.
+   Scoped to .auth-dark so auth pages use variables instead of hardcoded zinc-*. */
+.auth-dark {
+  --bg: #09090b;              /* zinc-950 */
+  --surface: rgba(24, 24, 27, 0.6);  /* zinc-900/60 */
+  --surface-sunken: rgba(9, 9, 11, 0.8); /* zinc-950/80 */
+  --border: #27272a;          /* zinc-800 */
+  --border-subtle: rgba(39, 39, 42, 0.4); /* zinc-800/40 */
+  --text: #fafafa;            /* zinc-50 */
+  --text-secondary: #a1a1aa;  /* zinc-400 */
+  --text-muted: #71717a;      /* zinc-500 */
+  --text-placeholder: #3f3f46; /* zinc-700 */
+}
+
 /* Scrollbar styles for premium appearance */
 ::-webkit-scrollbar {
   width: 6px;

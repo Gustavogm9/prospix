@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { Button, Input, toast } from '@prospix/ui';
 import { useAdminAuthStore } from '../store/admin-auth-store';
 import { ShieldCheck, Lock, Mail } from 'lucide-react';
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
+import { API_BASE_URL } from '../lib/api-client';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -23,8 +24,7 @@ export default function Login() {
     setIsLoading(true);
 
     try {
-      const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000/v1';
-      const response = await axios.post(`${apiBaseUrl}/auth/admin-login`, {
+      const response = await axios.post(`${API_BASE_URL}/auth/admin-login`, {
         email,
         password,
       });
@@ -35,13 +35,16 @@ export default function Login() {
         id: user.id,
         name: user.name,
         email: user.email,
-        role: user.role === 'GUILDS_ADMIN' ? 'SUPER_ADMIN' : 'ADMIN',
+        role: user.role,
       });
 
       toast.success('Acesso Autorizado', 'Conexão ativa com o banco de dados.');
       navigate('/');
-    } catch (err: any) {
-      toast.error('Erro de Autenticação', err.response?.data?.message || 'Credenciais inválidas ou erro ao conectar com o servidor.');
+    } catch (err: unknown) {
+      const message = err instanceof AxiosError
+        ? err.response?.data?.message || 'Credenciais inválidas ou erro ao conectar com o servidor.'
+        : 'Credenciais inválidas ou erro ao conectar com o servidor.';
+      toast.error('Erro de Autenticação', message);
     } finally {
       setIsLoading(false);
     }

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { authState, MOCK_TENANT_ID } from '../fixtures/auth';
 
 /**
  * Smoke web · pos-login com mock de JWT em localStorage + API mockada.
@@ -12,26 +13,7 @@ import { test, expect } from '@playwright/test';
  * Resolve AUD-P1-028 (mocks em prod) parcialmente: prova que web logado renderiza
  * com dados mockados sem precisar de Evolution real.
  */
-const MOCK_TENANT_ID = '11111111-1111-1111-1111-111111111111';
-const MOCK_OWNER_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-const MOCK_JWT =
-  'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJtb2NrIn0.eyJzaWduYXR1cmUtbW9jay1mb3ItZTJlIn0=';
-
-const authState = {
-  state: {
-    accessToken: MOCK_JWT,
-    refreshToken: 'mock-refresh',
-    tenantId: MOCK_TENANT_ID,
-    user: {
-      id: MOCK_OWNER_ID,
-      name: 'Giovane Carrara',
-      email: 'giovane@seed.prospix.dev',
-      role: 'OWNER',
-      tenant_id: MOCK_TENANT_ID,
-    },
-  },
-  version: 0,
-};
+/* Auth state imported from shared fixtures (L-16) */
 
 test.describe('Web · dashboard pos-login (mocked)', () => {
   test.beforeEach(async ({ context, page }) => {
@@ -153,7 +135,7 @@ test.describe('Web · dashboard pos-login (mocked)', () => {
     expect(response?.status()).toBeLessThan(400);
 
     // Espera UI logada · 4 cards do dia + funil + algum lead quente
-    await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => undefined);
+    await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => { /* networkidle timeout is non-fatal for smoke tests */ });
 
     // Sidebar com items navegaveis (Conversas, Pipeline, Agenda, etc)
     await expect(page.locator('body')).toContainText(/conversa|pipeline|agenda|lead/i);

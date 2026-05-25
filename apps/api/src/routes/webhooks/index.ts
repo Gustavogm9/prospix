@@ -29,7 +29,7 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
       getHeaderValue(req.headers['asaas-access-token']) ??
       getHeaderValue(req.headers['asaas-token']);
 
-    if (env.ASAAS_WEBHOOK_SECRET && token !== env.ASAAS_WEBHOOK_SECRET) {
+    if (!token || token !== env.ASAAS_WEBHOOK_SECRET) {
       logger.warn({ hasToken: Boolean(token) }, 'Unauthorized Asaas Webhook Attempt');
       return reply.code(401).send({ error: 'Unauthorized', message: 'Invalid Asaas token' });
     }

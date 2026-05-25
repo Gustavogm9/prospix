@@ -27,11 +27,11 @@ const envSchema = z.object({
 
   JWT_PRIVATE_KEY: z.string().min(1, 'JWT_PRIVATE_KEY is required'),
   JWT_PUBLIC_KEY: z.string().min(1, 'JWT_PUBLIC_KEY is required'),
-  JWT_EXPIRES_IN: z.string().default('7d'),
+  JWT_EXPIRES_IN: z.string().default('15m'),
   REFRESH_TOKEN_EXPIRES_IN: z.string().default('30d'),
   MAGIC_LINK_TTL_SECONDS: z.coerce.number().default(600),
 
-  SECRETS_ENCRYPTION_KEY: z.string().min(1, 'SECRETS_ENCRYPTION_KEY is required'),
+  SECRETS_ENCRYPTION_KEY: z.string().min(32, 'SECRETS_ENCRYPTION_KEY must be at least 32 characters (256-bit minimum) for secure AES-256 encryption'),
 
   EVOLUTION_BASE_URL: z.string().url().default('https://evo.prospix.com.br'),
   EVOLUTION_GUILDS_INSTANCE: z.string().default('guilds_master'),
@@ -74,6 +74,14 @@ const envSchema = z.object({
     .pipe(z.string().url().optional()),
 }).superRefine((data, ctx) => {
   const protectedRuntime = data.NODE_ENV === 'production' || data.NODE_ENV === 'staging';
+  const isLocalhostUrl = (value: string) => {
+    try {
+      const hostname = new URL(value).hostname.toLowerCase();
+      return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+    } catch {
+      return false;
+    }
+  };
 
   if (protectedRuntime) {
     const mockCredentials = [
@@ -91,6 +99,24 @@ const envSchema = z.object({
           code: z.ZodIssueCode.custom,
           message: `In ${data.NODE_ENV} mode, mock API keys are not allowed. Please supply a real value for: ${cred.name}.`,
           path: [cred.key],
+        });
+      }
+    }
+
+    const runtimeUrls = [
+      'APP_URL',
+      'ADMIN_URL',
+      'LANDING_URL',
+      'API_URL',
+      'REDIS_URL',
+    ] as const;
+
+    for (const key of runtimeUrls) {
+      if (isLocalhostUrl(data[key])) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `In ${data.NODE_ENV} mode, ${key} must not point to localhost.`,
+          path: [key],
         });
       }
     }

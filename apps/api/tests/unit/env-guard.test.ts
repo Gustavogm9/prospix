@@ -5,10 +5,15 @@ const originalEnv = { ...process.env };
 const protectedRuntimes = ['staging', 'production'] as const;
 
 const requiredCoreEnv = {
-  DATABASE_URL: 'postgresql://prospix:secret@localhost:5432/prospix',
+  APP_URL: 'https://app.prospix.test',
+  ADMIN_URL: 'https://admin.prospix.test',
+  LANDING_URL: 'https://prospix.test',
+  API_URL: 'https://api.prospix.test',
+  DATABASE_URL: 'postgresql://prospix:secret@db.prospix.test:5432/prospix',
+  REDIS_URL: 'redis://redis.prospix.test:6379',
   JWT_PRIVATE_KEY: 'real-private-key',
   JWT_PUBLIC_KEY: 'real-public-key',
-  SECRETS_ENCRYPTION_KEY: 'real-secrets-encryption-key',
+  SECRETS_ENCRYPTION_KEY: 'real-secrets-encryption-key-32-chars-long',
   EVOLUTION_GUILDS_API_KEY: 'real-evolution-guilds-api-key',
 };
 
@@ -112,4 +117,18 @@ describe('environment production guards', () => {
 
     expect(loggedValidationOutput()).toContain('ASAAS_BASE_URL');
   });
+
+  it.each(['APP_URL', 'ADMIN_URL', 'LANDING_URL', 'API_URL', 'REDIS_URL'] as const)(
+    'rejects localhost %s in production',
+    async (key) => {
+      await expect(importEnv({
+        ...requiredCoreEnv,
+        ...realIntegrationEnv,
+        NODE_ENV: 'production',
+        [key]: key === 'REDIS_URL' ? 'redis://localhost:6379' : 'http://localhost:3000',
+      })).rejects.toThrow('Invalid environment variables');
+
+      expect(loggedValidationOutput()).toContain(key);
+    },
+  );
 });

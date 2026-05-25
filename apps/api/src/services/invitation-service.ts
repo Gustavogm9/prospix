@@ -6,6 +6,7 @@ import { ResultHelper } from '../lib/result.js';
 import { Result } from '@prospix/shared-types';
 import { TenantInvitation } from '@prisma/client';
 import { sendMagicLink } from './auth-service.js';
+import { hashPassword } from '../lib/crypto.js';
 
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Readable alphanumeric (omitted 0, 1, I, O)
 
@@ -200,11 +201,11 @@ export async function verifyInvitation(
 }
 
 /**
- * Redeems an invitation code, creating the user and sending a magic link.
+ * Redeems an invitation code, creating the user and optional password, and conditionally sending a magic link.
  */
 export async function redeemInvitation(
   code: string,
-  userData: { name: string; email: string; whatsapp: string; susep?: string; city?: string }
+  userData: { name: string; email: string; whatsapp: string; susep?: string; city?: string; password?: string }
 ): Promise<Result<{ userId: string; tenantId: string; magicLinkSent: boolean }>> {
   try {
     const verification = await verifyInvitation(code);
@@ -235,6 +236,7 @@ export async function redeemInvitation(
           whatsapp: userData.whatsapp,
           susep: userData.susep,
           city: userData.city,
+          passwordHash: userData.password ? hashPassword(userData.password) : undefined,
         },
       });
 
@@ -258,15 +260,19 @@ export async function redeemInvitation(
       return { userId: user.id, tenantId: invitation.tenantId };
     });
 
-    // 4. Send Magic Link via WhatsApp
-    const magicLinkRes = await sendMagicLink(userData.whatsapp);
+    // 4. Send Magic Link via WhatsApp (only if password not provided for backwards-compatibility)
+    let magicLinkSent = false;
+    if (!userData.password) {
+      const magicLinkRes = await sendMagicLink(userData.whatsapp);
+      magicLinkSent = magicLinkRes.ok;
+    }
     
     logger.info({ code, tenantId: result.tenantId, userId: result.userId }, '✨ Invitation redeemed successfully');
 
     return ResultHelper.success({
       userId: result.userId,
       tenantId: result.tenantId,
-      magicLinkSent: magicLinkRes.ok,
+      magicLinkSent,
     });
   } catch (err: any) {
     logger.error({ err, code }, '❌ Failed to redeem invitation');

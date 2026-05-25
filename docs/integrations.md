@@ -452,6 +452,29 @@ EMAIL_FROM="Guilds <no-reply@guilds.com.br>"
 
 ---
 
+## 15b. PostHog (Product analytics · pós-MVP) 🟢
+
+**O que é:** plataforma open-source de product analytics, session replay e feature flags.
+
+**Pra que usaríamos:**
+- Métricas de produto por tenant (PRD Anexo I.1 referencia "Posthog + custom")
+- Funil de conversão no painel
+- Session replay para debug de UX
+
+**Estado atual:** referenciado no PRD (Anexo I.1) e no `.env.example` (`POSTHOG_API_KEY`), mas o **provisionamento está adiado para pós-MVP**. Durante o MVP, as métricas de produto são coletadas via custom aggregation (worker `usage-aggregation`) e observabilidade via BetterStack + Sentry.
+
+**Quando provisionar:** pós-MVP, quando houver volume de tenants suficiente para justificar analytics de produto detalhado.
+
+**Variáveis (quando ativado):**
+```bash
+POSTHOG_API_KEY=phc_...
+POSTHOG_HOST=https://app.posthog.com   # ou self-hosted
+```
+
+**Custo:** grátis (1M events/mês) ou US$ 0.00031/event acima.
+
+**Doc:** https://posthog.com/docs
+
 ## 16. Twilio / Zenvia (Telefonia · Fase 2) 🟢
 
 **O que é:** telefonia pra botão "Ligar" (adicional 3.6).

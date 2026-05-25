@@ -1,3 +1,4 @@
+import '../multi-tenant/use-restricted-db.js';
 import '../../src/config/env.js';
 import fastify from 'fastify';
 import fastifyJwt from '@fastify/jwt';
@@ -77,7 +78,7 @@ describe('AUD-P1-017 admin login with RLS-backed database', () => {
       url: '/v1/auth/admin-login',
       payload: {
         email: 'gustavo.macedo@guilds.com.br',
-        password: 'G.gm9189',
+        password: process.env.SEED_ADMIN_PASSWORD || 'super-secret-password-123',
       },
     });
 

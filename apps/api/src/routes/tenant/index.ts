@@ -6,6 +6,7 @@ import { dashboardRoutes } from './dashboard.js';
 import { integrationsRoutes } from './integrations.js';
 import { notificationsRoutes } from './notifications.js';
 import { lgpdRoutes } from './lgpd.js';
+import { billingRoutes } from './billing.js';
 import { tenantRoutes as tenantContractRoutes } from '../tenant.js';
 
 export const tenantRoutes: FastifyPluginAsync = async (app) => {
@@ -17,6 +18,7 @@ export const tenantRoutes: FastifyPluginAsync = async (app) => {
   await app.register(integrationsRoutes, { prefix: '/integrations' });
   await app.register(notificationsRoutes, { prefix: '/notifications' });
   await app.register(lgpdRoutes, { prefix: '/lgpd' });
+  await app.register(billingRoutes, { prefix: '/billing' });
 };
 
 export default tenantRoutes;

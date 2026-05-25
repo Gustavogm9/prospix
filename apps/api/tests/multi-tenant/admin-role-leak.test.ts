@@ -1,3 +1,4 @@
+import './use-restricted-db.js';
 import '../../src/config/env.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { Prisma } from '@prisma/client';

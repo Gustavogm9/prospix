@@ -136,7 +136,7 @@ Para manter escopo justo e proposta limpa:
 
 ### Veja o protótipo antes de decidir
 
-**[Abra o painel demonstrativo](computer://C:\Users\gusta\Downloads\Guilds\Guilds Pricing\giovane_metlife_prototipo.html)** — montamos a tela que você operaria, com seu nome, seu fluxo, seu perfil de lead. É exatamente o que vai rodar.
+**[Abra o painel demonstrativo](./giovane_metlife_prototipo.html)** — montamos a tela que você operaria, com seu nome, seu fluxo, seu perfil de lead. É exatamente o que vai rodar.
 
 ### Três pacotes calibrados ao seu momento
 

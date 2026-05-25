@@ -14,6 +14,9 @@ const tenantId = 'tenant-contract-1';
 const userId = 'user-contract-1';
 const templateId = '11111111-1111-4111-8111-111111111111';
 const meetingId = '22222222-2222-4222-8222-222222222222';
+const conversationId = '33333333-3333-4333-8333-333333333333';
+const scriptId = '44444444-4444-4444-8444-444444444444';
+const leadId = '55555555-5555-4555-8555-555555555555';
 
 const prismaMock = vi.hoisted(() => ({
   conversation: {
@@ -67,6 +70,12 @@ const prismaMock = vi.hoisted(() => ({
   },
   tenant: {
     findUnique: vi.fn(),
+    findFirst: vi.fn(),
+  },
+  user: {
+    findFirst: vi.fn(),
+    findUnique: vi.fn(),
+    update: vi.fn(),
   },
   tenantSecret: {
     findUnique: vi.fn(),
@@ -76,6 +85,9 @@ const prismaMock = vi.hoisted(() => ({
   },
   tenantUsage: {
     findUnique: vi.fn(),
+  },
+  tenantBilling: {
+    findMany: vi.fn(),
   },
   notificationPreference: {
     findMany: vi.fn(),
@@ -142,13 +154,13 @@ vi.mock('../../src/integrations/evolution.js', () => ({
   createEvolutionClient: vi.fn(() => evolutionClientMock),
 }));
 
-async function buildTenantApp() {
+async function buildTenantApp(role = 'OWNER') {
   const app = fastify({ logger: false });
 
   app.addHook('preHandler', async (request) => {
     request.tenantId = tenantId;
     request.userId = userId;
-    request.role = 'OWNER';
+    request.role = role;
   });
 
   await app.register(tenantRoutes, { prefix: '/v1/tenant' });
@@ -247,17 +259,17 @@ function expectErrorShape(body: unknown, shape: ApiErrorShape) {
 }
 
 function seedCriticalContractMocks() {
-  prismaMock.conversation.findMany.mockResolvedValue([{ id: 'conversation-1', tenantId }]);
-  prismaMock.message.findMany.mockResolvedValue([{ id: 'message-1', tenantId, conversationId: 'conversation-1' }]);
-  prismaMock.conversation.findUnique.mockResolvedValue({ id: 'conversation-1', tenantId, aiHandling: false });
-  prismaMock.message.create.mockResolvedValue({ id: 'message-2', tenantId, conversationId: 'conversation-1' });
+  prismaMock.conversation.findMany.mockResolvedValue([{ id: conversationId, tenantId }]);
+  prismaMock.message.findMany.mockResolvedValue([{ id: 'message-1', tenantId, conversationId }]);
+  prismaMock.conversation.findUnique.mockResolvedValue({ id: conversationId, tenantId, aiHandling: false });
+  prismaMock.message.create.mockResolvedValue({ id: 'message-2', tenantId, conversationId });
   prismaMock.conversation.update.mockResolvedValue({
-    id: 'conversation-1',
+    id: conversationId,
     tenantId,
     aiHandling: false,
     status: 'PAUSED',
   });
-  prismaMock.script.findMany.mockResolvedValue([{ id: 'script-1', tenantId, variations: [] }]);
+  prismaMock.script.findMany.mockResolvedValue([{ id: scriptId, tenantId, variations: [] }]);
   prismaMock.scriptTemplate.findUnique.mockResolvedValue({
     id: templateId,
     name: 'Template',
@@ -269,24 +281,24 @@ function seedCriticalContractMocks() {
   });
   prismaMock.script.create.mockResolvedValue({ id: 'script-2', tenantId, status: 'DRAFT' });
   prismaMock.script.findUnique.mockResolvedValue({
-    id: 'script-1',
+    id: scriptId,
     tenantId,
     baseMessage: 'Preview',
     flow: { nodes: [{ id: 'node-1' }] },
     variations: [{ variantLetter: 'A', message: 'Variant A', active: true }],
   });
-  prismaMock.script.update.mockResolvedValue({ id: 'script-1', tenantId, name: 'Updated' });
+  prismaMock.script.update.mockResolvedValue({ id: scriptId, tenantId, name: 'Updated' });
   prismaMock.scriptVariation.upsert.mockResolvedValue({
     id: 'variation-1',
     tenantId,
-    scriptId: 'script-1',
+    scriptId,
     variantLetter: 'A',
   });
   prismaMock.lead.findMany.mockResolvedValue([
-    { id: 'lead-1', tenantId, name: 'Contract Lead', whatsapp: '5517998877665', status: 'CAPTURED' },
+    { id: leadId, tenantId, name: 'Contract Lead', whatsapp: '5517998877665', status: 'CAPTURED' },
   ]);
   prismaMock.lead.findFirst.mockResolvedValue({
-    id: 'lead-1',
+    id: leadId,
     tenantId,
     whatsapp: '5517998877665',
     status: 'CAPTURED',
@@ -301,14 +313,14 @@ function seedCriticalContractMocks() {
     status: 'CAPTURED',
   });
   prismaMock.lead.update.mockResolvedValue({
-    id: 'lead-1',
+    id: leadId,
     tenantId,
     status: 'ENRICHED',
   });
-  prismaMock.leadEvent.create.mockResolvedValue({ id: 'event-1', tenantId, leadId: 'lead-1' });
+  prismaMock.leadEvent.create.mockResolvedValue({ id: 'event-1', tenantId, leadId });
   prismaMock.optout.upsert.mockResolvedValue({ id: 'optout-1', tenantId, whatsapp: '5517998877665' });
-  prismaMock.leadNote.create.mockResolvedValue({ id: 'note-1', tenantId, leadId: 'lead-1', content: 'Good fit' });
-  prismaMock.leadNote.findMany.mockResolvedValue([{ id: 'note-1', tenantId, leadId: 'lead-1', content: 'Good fit' }]);
+  prismaMock.leadNote.create.mockResolvedValue({ id: 'note-1', tenantId, leadId, content: 'Good fit' });
+  prismaMock.leadNote.findMany.mockResolvedValue([{ id: 'note-1', tenantId, leadId, content: 'Good fit' }]);
   prismaMock.meeting.count.mockResolvedValue(3);
   prismaMock.meeting.aggregate.mockResolvedValue({
     _sum: {
@@ -320,12 +332,12 @@ function seedCriticalContractMocks() {
     },
   });
   prismaMock.meeting.findMany.mockResolvedValue([
-    { id: meetingId, tenantId, leadId: 'lead-1', status: 'SCHEDULED' },
+    { id: meetingId, tenantId, leadId, status: 'SCHEDULED' },
   ]);
   prismaMock.meeting.findFirst.mockResolvedValue({
     id: meetingId,
     tenantId,
-    leadId: 'lead-1',
+    leadId,
     scheduledFor: new Date('2026-05-23T13:00:00.000Z'),
     durationMinutes: 30,
     location: 'Google Meet',
@@ -334,7 +346,7 @@ function seedCriticalContractMocks() {
   prismaMock.meeting.create.mockResolvedValue({
     id: '33333333-3333-4333-8333-333333333333',
     tenantId,
-    leadId: 'lead-1',
+    leadId,
     status: 'SCHEDULED',
     scheduledFor: new Date('2026-05-24T13:00:00.000Z'),
   });
@@ -350,6 +362,29 @@ function seedCriticalContractMocks() {
     googleMapsCostCents: 100,
   });
   prismaMock.tenant.findUnique.mockResolvedValue({ plan: 'STANDARD', slug: 'tenant-contract' });
+  prismaMock.tenant.findFirst.mockResolvedValue({
+    id: tenantId,
+    name: 'Contract Tenant',
+    plan: 'STANDARD',
+    mrrCents: 15000,
+    status: 'ACTIVE',
+  });
+  prismaMock.tenantBilling.findMany.mockResolvedValue([
+    {
+      id: 'billing-1',
+      tenantId,
+      periodMonth: new Date('2026-05-01T00:00:00.000Z'),
+      mrrCents: 15000,
+      excessCents: 1600,
+      totalCents: 16600,
+      status: 'PENDING',
+      paidAt: null,
+      dueAt: new Date('2026-05-10T00:00:00.000Z'),
+      invoiceUrl: 'https://asaas.prospix.test/invoices/billing-1',
+      paymentMethod: 'pix',
+      externalInvoiceId: 'asaas-1',
+    },
+  ]);
   prismaMock.tenantSecret.findUnique.mockResolvedValue({
     tenantId,
     evolutionInstanceName: 'tenant_contract',
@@ -388,12 +423,12 @@ function seedCriticalContractMocks() {
 function successRequestFor(contract: CriticalApiContract) {
   const url = `/v1${contract.path}`
     .replace('{id}', contract.path.includes('conversations')
-      ? 'conversation-1'
+      ? conversationId
       : contract.path.includes('scripts')
-        ? 'script-1'
+        ? scriptId
         : contract.path.includes('meetings')
           ? meetingId
-          : 'lead-1');
+          : leadId);
 
   const payloadById: Record<string, unknown> = {
     'tenant.conversations.messages.create': { content: 'hello' },
@@ -488,12 +523,12 @@ describe('AUD-P1-012/AUD-P1-014 tenant contract routes', () => {
   });
 
   it('mounts documented conversation routes under /v1/tenant', async () => {
-    prismaMock.conversation.findMany.mockResolvedValue([{ id: 'conversation-1', tenantId }]);
-    prismaMock.message.findMany.mockResolvedValue([{ id: 'message-1', tenantId, conversationId: 'conversation-1' }]);
-    prismaMock.conversation.findUnique.mockResolvedValue({ id: 'conversation-1', tenantId, aiHandling: false });
-    prismaMock.message.create.mockResolvedValue({ id: 'message-2', tenantId, conversationId: 'conversation-1' });
+    prismaMock.conversation.findMany.mockResolvedValue([{ id: conversationId, tenantId }]);
+    prismaMock.message.findMany.mockResolvedValue([{ id: 'message-1', tenantId, conversationId }]);
+    prismaMock.conversation.findUnique.mockResolvedValue({ id: conversationId, tenantId, aiHandling: false });
+    prismaMock.message.create.mockResolvedValue({ id: 'message-2', tenantId, conversationId });
     prismaMock.conversation.update.mockResolvedValue({
-      id: 'conversation-1',
+      id: conversationId,
       tenantId,
       aiHandling: false,
       status: 'PAUSED',
@@ -505,16 +540,16 @@ describe('AUD-P1-012/AUD-P1-014 tenant contract routes', () => {
     });
     const messagesResponse = await app!.inject({
       method: 'GET',
-      url: '/v1/tenant/conversations/conversation-1/messages',
+      url: `/v1/tenant/conversations/${conversationId}/messages`,
     });
     const sendResponse = await app!.inject({
       method: 'POST',
-      url: '/v1/tenant/conversations/conversation-1/messages',
+      url: `/v1/tenant/conversations/${conversationId}/messages`,
       payload: { content: 'hello' },
     });
     const patchResponse = await app!.inject({
       method: 'PATCH',
-      url: '/v1/tenant/conversations/conversation-1',
+      url: `/v1/tenant/conversations/${conversationId}`,
       payload: { aiHandling: false },
     });
 
@@ -527,12 +562,12 @@ describe('AUD-P1-012/AUD-P1-014 tenant contract routes', () => {
       expect.objectContaining({ where: { tenantId } })
     );
     expect(prismaMock.message.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { tenantId, conversationId: 'conversation-1' } })
+      expect.objectContaining({ where: { tenantId, conversationId } })
     );
     expect(createTenantQueueMock).toHaveBeenCalledWith(tenantId, 'send-messages');
     expect(queueAddMock).toHaveBeenCalledWith('send-whatsapp', {
       tenant_id: tenantId,
-      conversation_id: 'conversation-1',
+      conversation_id: conversationId,
       message_id: 'message-2',
     }, {
       jobId: 'send-whatsapp-tenant-contract-1-message-2',
@@ -540,7 +575,7 @@ describe('AUD-P1-012/AUD-P1-014 tenant contract routes', () => {
   });
 
   it('mounts documented script routes under /v1/tenant', async () => {
-    prismaMock.script.findMany.mockResolvedValue([{ id: 'script-1', tenantId, variations: [] }]);
+    prismaMock.script.findMany.mockResolvedValue([{ id: scriptId, tenantId, variations: [] }]);
     prismaMock.scriptTemplate.findUnique.mockResolvedValue({
       id: templateId,
       name: 'Template',
@@ -552,17 +587,17 @@ describe('AUD-P1-012/AUD-P1-014 tenant contract routes', () => {
     });
     prismaMock.script.create.mockResolvedValue({ id: 'script-2', tenantId, status: 'DRAFT' });
     prismaMock.script.findUnique.mockResolvedValue({
-      id: 'script-1',
+      id: scriptId,
       tenantId,
       baseMessage: 'Preview',
       flow: { nodes: [{ id: 'node-1' }] },
       variations: [{ variantLetter: 'A', message: 'Variant A', active: true }],
     });
-    prismaMock.script.update.mockResolvedValue({ id: 'script-1', tenantId, name: 'Updated' });
+    prismaMock.script.update.mockResolvedValue({ id: scriptId, tenantId, name: 'Updated' });
     prismaMock.scriptVariation.upsert.mockResolvedValue({
       id: 'variation-1',
       tenantId,
-      scriptId: 'script-1',
+      scriptId,
       variantLetter: 'A',
     });
 
@@ -594,17 +629,17 @@ describe('AUD-P1-012/AUD-P1-014 tenant contract routes', () => {
     });
     const patchResponse = await app!.inject({
       method: 'PATCH',
-      url: '/v1/tenant/scripts/script-1',
+      url: `/v1/tenant/scripts/${scriptId}`,
       payload: { name: 'Updated', status: 'ACTIVE' },
     });
     const variationsResponse = await app!.inject({
       method: 'POST',
-      url: '/v1/tenant/scripts/script-1/variations',
+      url: `/v1/tenant/scripts/${scriptId}/variations`,
       payload: { variantLetter: 'A', message: 'Variant A', weight: 0.5 },
     });
     const testResponse = await app!.inject({
       method: 'POST',
-      url: '/v1/tenant/scripts/script-1/test',
+      url: `/v1/tenant/scripts/${scriptId}/test`,
     });
 
     expect(listResponse.statusCode).toBe(200);
@@ -639,7 +674,7 @@ describe('AUD-P1-012/AUD-P1-014 tenant contract routes', () => {
       expect.objectContaining({
         create: expect.objectContaining({
           tenantId,
-          scriptId: 'script-1',
+          scriptId,
           variantLetter: 'A',
         }),
       })
@@ -733,5 +768,179 @@ describe('AUD-P1-012/AUD-P1-014 tenant contract routes', () => {
     expect(disconnectResponse.statusCode).toBe(500);
     expect(disconnectResponse.payload).toContain('Failed to process WhatsApp integration request');
     expect(disconnectResponse.payload).not.toContain(sensitiveMessage);
+  });
+
+  it('persists tenant credentials encrypted without exposing plaintext', async () => {
+    prismaMock.tenantSecret.upsert.mockResolvedValueOnce({
+      tenantId,
+      aiProvider: 'TENANT_OWN',
+      evolutionBaseUrl: null,
+      evolutionInstanceName: null,
+      evolutionApiKeyEncrypted: null,
+      evolutionWebhookSecret: null,
+      googleCalendarId: null,
+      googleOauthRefreshEncrypted: null,
+      googleOauthScope: null,
+      googleMapsApiKeyEncrypted: null,
+      openaiApiKeyEncrypted: 'encrypted:sk-real-openai-key',
+      anthropicApiKeyEncrypted: null,
+      googleAiApiKeyEncrypted: null,
+      updatedAt: new Date('2026-05-23T12:00:00.000Z'),
+    });
+
+    const response = await app!.inject({
+      method: 'PATCH',
+      url: '/v1/tenant/integrations/credentials',
+      payload: {
+        aiProvider: 'TENANT_OWN',
+        openaiApiKey: 'sk-real-openai-key',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(prismaMock.tenantSecret.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { tenantId },
+      create: expect.objectContaining({
+        tenantId,
+        openaiApiKeyEncrypted: 'encrypted:sk-real-openai-key',
+      }),
+      update: expect.objectContaining({
+        openaiApiKeyEncrypted: 'encrypted:sk-real-openai-key',
+      }),
+    }));
+    expect(response.payload).toContain('"configured":true');
+    expect(response.payload).not.toContain('sk-real-openai-key');
+    expect(response.payload).not.toContain('encrypted:');
+  });
+
+  it('blocks assistant users from changing tenant credentials', async () => {
+    await app!.close();
+    app = await buildTenantApp('ASSISTANT');
+
+    const response = await app.inject({
+      method: 'PATCH',
+      url: '/v1/tenant/integrations/credentials',
+      payload: {
+        openaiApiKey: 'sk-assistant-should-not-save',
+      },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(prismaMock.tenantSecret.upsert).not.toHaveBeenCalled();
+    expect(response.payload).not.toContain('sk-assistant-should-not-save');
+  });
+
+  it('persists profile changes for the authenticated tenant user', async () => {
+    prismaMock.user.findFirst.mockResolvedValueOnce({
+      id: userId,
+      tenantId,
+      name: 'Old Name',
+      email: 'old@example.com',
+      susep: null,
+    });
+    prismaMock.user.findUnique.mockResolvedValueOnce(null);
+    prismaMock.user.update.mockResolvedValueOnce({
+      id: userId,
+      name: 'New Name',
+      email: 'new@example.com',
+      whatsapp: '+5511999999999',
+      susep: 'SUSEP-123',
+      role: 'OWNER',
+    });
+
+    const response = await app!.inject({
+      method: 'PATCH',
+      url: '/v1/tenant/profile',
+      payload: {
+        name: 'New Name',
+        email: 'new@example.com',
+        susep: 'SUSEP-123',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(prismaMock.user.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: userId },
+      data: expect.objectContaining({
+        name: 'New Name',
+        email: 'new@example.com',
+        susep: 'SUSEP-123',
+      }),
+    }));
+    expect(parsePayload(response.payload).data).toEqual(expect.objectContaining({
+      name: 'New Name',
+      email: 'new@example.com',
+      susep: 'SUSEP-123',
+    }));
+  });
+
+  it('returns tenant billing from persisted usage and invoices', async () => {
+    prismaMock.tenant.findFirst.mockResolvedValueOnce({
+      id: tenantId,
+      name: 'Contract Tenant',
+      plan: 'STANDARD',
+      mrrCents: 15000,
+      status: 'ACTIVE',
+    });
+    prismaMock.tenantUsage.findUnique.mockResolvedValueOnce({
+      llmTokensInput: BigInt(12000),
+      llmTokensOutput: BigInt(6000),
+      llmCostCents: 1200,
+      whatsappMessagesSent: 40,
+      whatsappCostCents: 300,
+      googleMapsCalls: 10,
+      googleMapsCostCents: 100,
+      conversationsStarted: 8,
+      meetingsScheduled: 3,
+    });
+    prismaMock.tenantBilling.findMany.mockResolvedValueOnce([
+      {
+        id: 'billing-1',
+        tenantId,
+        periodMonth: new Date('2026-05-01T00:00:00.000Z'),
+        mrrCents: 15000,
+        excessCents: 1600,
+        totalCents: 16600,
+        status: 'PENDING',
+        paidAt: null,
+        dueAt: new Date('2026-05-10T00:00:00.000Z'),
+        invoiceUrl: 'https://asaas.prospix.test/invoices/billing-1',
+        paymentMethod: 'pix',
+        externalInvoiceId: 'asaas-1',
+      },
+    ]);
+
+    const response = await app!.inject({
+      method: 'GET',
+      url: '/v1/tenant/billing',
+    });
+
+    const body = parsePayload(response.payload);
+
+    expect(response.statusCode).toBe(200);
+    expect(prismaMock.tenant.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: tenantId, deletedAt: null },
+    }));
+    expect(prismaMock.tenantBilling.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { tenantId },
+      take: 12,
+    }));
+    expect(body.data.tenant).toEqual(expect.objectContaining({
+      id: tenantId,
+      plan: 'STANDARD',
+      planName: 'Standard',
+      mrrCents: 15000,
+    }));
+    expect(body.data.usage).toEqual(expect.objectContaining({
+      llmTokensInput: 12000,
+      llmTokensOutput: 6000,
+      whatsappMessagesSent: 40,
+    }));
+    expect(body.data.currentInvoice).toEqual(expect.objectContaining({
+      id: 'billing-1',
+      totalCents: 16600,
+      status: 'PENDING',
+      invoiceUrl: 'https://asaas.prospix.test/invoices/billing-1',
+    }));
   });
 });

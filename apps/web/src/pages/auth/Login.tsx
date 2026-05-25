@@ -1,96 +1,63 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Input, toast } from '@prospix/ui';
 import { apiClient } from '../../lib/api-client';
+import { useAuthStore } from '../../store/auth-store';
 
 export default function Login() {
-  const [whatsapp, setWhatsapp] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [isSent, setIsSent] = useState(false);
-  const [countdown, setCountdown] = useState(60);
+  const setSession = useAuthStore((state) => state.setSession);
   const navigate = useNavigate();
-
-  // Handle WhatsApp masking: +55 (XX) XXXXX-XXXX
-  const handleWhatsappChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    let value = e.target.value.replace(/\D/g, '');
-    
-    // Auto prefix 55 if user didn't type it and types 10+ digits
-    if (value.length > 0 && !value.startsWith('55') && value.length >= 10) {
-      value = '55' + value;
-    } else if (value.length === 0) {
-      value = '';
-    }
-
-    // Format visual mask
-    let formatted = '';
-    if (value.length > 0) {
-      formatted += '+' + value.substring(0, 2);
-    }
-    if (value.length > 2) {
-      formatted += ' (' + value.substring(2, 4) + ')';
-    }
-    if (value.length > 4) {
-      formatted += ' ' + value.substring(4, 9);
-    }
-    if (value.length > 9) {
-      formatted += '-' + value.substring(9, 13);
-    }
-
-    setWhatsapp(formatted);
-  };
-
-  const getRawWhatsapp = (formatted: string) => {
-    return formatted.replace(/\D/g, '');
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const rawNumber = getRawWhatsapp(whatsapp);
-    
-    if (rawNumber.length < 12) {
+
+    if (!email.trim() || !email.includes('@')) {
       toast.error(
-        'Número inválido',
-        'Por favor, insira o número do WhatsApp com o DDD e o DDI (ex: +55 (11) 99999-9999).'
+        'E-mail inválido',
+        'Por favor, insira um e-mail válido para continuar.'
+      );
+      return;
+    }
+
+    if (!password.trim()) {
+      toast.error(
+        'Senha obrigatória',
+        'Por favor, informe sua senha de acesso.'
       );
       return;
     }
 
     setIsLoading(true);
     try {
-      const response = await apiClient.post('/auth/magic-link', {
-        whatsapp: rawNumber,
+      const response = await apiClient.post('/auth/login', {
+        email: email.trim(),
+        password,
       });
 
-      if (response.data.success) {
-        setIsSent(true);
-        setCountdown(60);
-        toast.success(
-          'Link Enviado!',
-          'Enviamos um link mágico de acesso para o seu WhatsApp cadastrado.'
-        );
-      }
+      const { access_token, refresh_token, user } = response.data;
+
+      // Save in Zustand auth store
+      setSession(access_token, refresh_token, user);
+
+      toast.success(
+        'Acesso Autorizado!',
+        `Olá, ${user.name}! Bem-vindo(a) de volta.`
+      );
+
+      // Redirect to main panel
+      setTimeout(() => navigate('/'), 1000);
     } catch (error: any) {
       toast.error(
-        'Erro ao enviar',
-        error.response?.data?.message || 'Verifique se este número está cadastrado.'
+        'Erro ao entrar',
+        error.response?.data?.message || 'E-mail ou senha incorretos. Verifique suas credenciais.'
       );
     } finally {
       setIsLoading(false);
     }
-  };
-
-  useEffect(() => {
-    let timer: NodeJS.Timeout;
-    if (isSent && countdown > 0) {
-      timer = setTimeout(() => setCountdown(countdown - 1), 1000);
-    }
-    return () => clearTimeout(timer);
-  }, [isSent, countdown]);
-
-  const handleResend = async () => {
-    if (countdown > 0) return;
-    setIsSent(false);
-    handleSubmit({ preventDefault: () => {} } as React.FormEvent);
   };
 
   return (
@@ -110,68 +77,72 @@ export default function Login() {
           </p>
         </div>
 
-        {!isSent ? (
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <div>
-              <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider block mb-2">
-                Número do WhatsApp
-              </label>
-              <Input
-                type="text"
-                placeholder="+55 (11) 99999-9999"
-                value={whatsapp}
-                onChange={handleWhatsappChange}
-                className="w-full bg-zinc-950/80 border-zinc-800 text-zinc-100 placeholder-zinc-500 focus-visible:bg-zinc-950/80 focus:border-blue-500/50 text-base h-12"
-                disabled={isLoading}
-                autoFocus
-              />
-            </div>
-
-            <Button
-              type="submit"
-              className="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium h-12 rounded-xl transition-all shadow-lg shadow-blue-600/10"
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <div>
+            <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider block mb-2">
+              E-mail Comercial
+            </label>
+            <Input
+              type="email"
+              placeholder="Ex: seuemail@corretora.com.br"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full bg-zinc-950/80 border-zinc-800 text-zinc-100 placeholder-zinc-500 focus-visible:bg-zinc-950/80 focus:border-blue-500/50 text-base h-12"
               disabled={isLoading}
-            >
-              {isLoading ? (
-                <div className="flex items-center justify-center gap-2">
-                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  <span>Enviando link...</span>
-                </div>
-              ) : (
-                'Receber Link Mágico via WhatsApp'
-              )}
-            </Button>
-          </form>
-        ) : (
-          <div className="text-center space-y-6 animate-fadeIn">
-            <div className="w-16 h-16 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mx-auto text-emerald-400">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3 19v-8.93a2 2 0 01.89-1.664l8-5.333a2 2 0 012.22 0l8 5.333A2 2 0 0121 10.07V19M3 19a2 2 0 002 2h14a2 2 0 002-2M3 19l6.75-4.5M21 19l-6.75-4.5M3 10l6.75 4.5M21 10l-6.75 4.5m0 0l-1.14.76a2 2 0 01-2.22 0l-1.14-.76" />
-              </svg>
-            </div>
-            <div className="space-y-2">
-              <h3 className="text-lg font-semibold text-zinc-100">Verifique seu WhatsApp</h3>
-              <p className="text-sm text-zinc-400 px-4">
-                Enviamos uma mensagem contendo o link de autenticação de clique único. Toque nele para acessar o painel.
-              </p>
-            </div>
+              autoFocus
+              required
+            />
+          </div>
 
-            <div className="pt-4 border-t border-zinc-800/60">
-              {countdown > 0 ? (
-                <p className="text-xs text-zinc-400">
-                  Aguarde <span className="text-zinc-400 font-mono font-medium">{countdown}s</span> para reenviar.
-                </p>
-              ) : (
-                <button
-                  onClick={handleResend}
-                  className="text-xs text-blue-400 hover:text-blue-300 font-semibold underline underline-offset-4"
-                >
-                  Não recebeu? Enviar novamente
-                </button>
-              )}
+          <div>
+            <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider block mb-2">
+              Senha de Acesso
+            </label>
+            <div className="relative">
+              <Input
+                type={showPassword ? 'text' : 'password'}
+                placeholder="Insira sua senha"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full bg-zinc-950/80 border-zinc-800 text-zinc-100 placeholder-zinc-500 focus-visible:bg-zinc-950/80 focus:border-blue-500/50 text-base h-12 pr-10"
+                disabled={isLoading}
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-200 focus:outline-none"
+                disabled={isLoading}
+              >
+                {showPassword ? (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18" />
+                  </svg>
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                )}
+              </button>
             </div>
           </div>
-        )}
+
+          <Button
+            type="submit"
+            className="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium h-12 rounded-xl transition-all shadow-lg shadow-blue-600/10 mt-2"
+            disabled={isLoading}
+          >
+            {isLoading ? (
+              <div className="flex items-center justify-center gap-2">
+                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <span>Autenticando...</span>
+              </div>
+            ) : (
+              'Entrar no Prospix'
+            )}
+          </Button>
+        </form>
 
         <div className="mt-8 text-center">
           <p className="text-xs text-zinc-400">

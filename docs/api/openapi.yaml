@@ -514,7 +514,7 @@ paths:
     get:
       tags: [Conversations]
       summary: Lista conversas ativas
-      x-prospix-response-shape: raw-array
+      x-prospix-response-shape: data-array
       parameters:
         - { name: status, in: query, schema: { type: string, enum: [active, paused, escalated, closed] } }
         - { name: filter, in: query, schema: { type: string, enum: [hot, waiting, scheduled] } }
@@ -526,8 +526,13 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items: { $ref: '#/components/schemas/Conversation' }
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Conversation' }
 
   /tenant/conversations/{id}/messages:
     parameters:
@@ -535,15 +540,20 @@ paths:
     get:
       tags: [Conversations]
       summary: Mensagens da conversa (ordem cronológica)
-      x-prospix-response-shape: raw-array
+      x-prospix-response-shape: data-array
       responses:
         '200':
           description: Lista de mensagens
           content:
             application/json:
               schema:
-                type: array
-                items: { $ref: '#/components/schemas/Message' }
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/Message' }
     post:
       tags: [Conversations]
       summary: Envia mensagem (só se user assumiu a conversa)

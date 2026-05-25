@@ -65,9 +65,13 @@ Este termo:
 - **NÃO** autoriza uso comercial além do treinamento da IA do próprio PARTICIPANTE
 - **NÃO** afeta os direitos da MetLife sobre material institucional MetLife que aparecer na gravação
 
-## 7. Foro
+## 7. Lei aplicável
 
-Eventuais disputas serão resolvidas no foro da Comarca de **{{COMARCA}}**, com renúncia expressa a qualquer outro.
+Este termo é regido pela legislação da República Federativa do Brasil, em especial a Lei nº 13.709/2018 (LGPD), o Código Civil (Lei nº 10.406/2002) e demais normas aplicáveis.
+
+## 8. Foro
+
+Eventuais disputas serão resolvidas no foro da Comarca de **{{COMARCA}}**, Estado de São Paulo, com renúncia expressa a qualquer outro, por mais privilegiado que seja.
 
 ---
 

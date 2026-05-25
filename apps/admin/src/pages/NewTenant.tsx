@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Card, CardContent, Button, Input, Select, toast, Badge } from '@prospix/ui';
 import { CheckCircle2, ChevronRight, ChevronLeft, Building, DollarSign, User, FileText, Cpu, Key, Copy, Sparkles } from 'lucide-react';
 import { adminApiClient } from '../lib/api-client';
+import { AxiosError } from 'axios';
 
 export default function NewTenant() {
   const [step, setStep] = useState(1);
@@ -156,12 +157,17 @@ export default function NewTenant() {
       setStep(6);
       
       toast.success('Tenant Criado com Sucesso!', 'Workspace registrado e convite gerado.');
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error creating tenant wizard:', err);
       setGeneratedCode(null);
+      const message = err instanceof AxiosError
+        ? err.response?.data?.message || err.message || 'A API não confirmou o provisionamento. Nenhum convite foi gerado.'
+        : err instanceof Error
+        ? err.message
+        : 'A API não confirmou o provisionamento. Nenhum convite foi gerado.';
       toast.error(
         'Falha ao criar tenant',
-        err.response?.data?.message || err.message || 'A API não confirmou o provisionamento. Nenhum convite foi gerado.'
+        message
       );
     } finally {
       setIsSubmitting(false);

@@ -28,9 +28,12 @@ jobs:
         options: >-
           --health-cmd "redis-cli ping" --health-interval 5s
     env:
-      DATABASE_URL: postgresql://prospix:prospix_dev@localhost:5432/prospix_test
+      NODE_ENV: test
+      DATABASE_URL: postgresql://prospix:prospix_dev@localhost:5432/prospix_test?schema=public
       REDIS_URL: redis://localhost:6379
       SECRETS_ENCRYPTION_KEY: dGVzdF9rZXlfMzJfYnl0ZXNfbG9uZ19wYWRfeHh4eA==
+      ALLOW_DESTRUCTIVE_SEED: '1'
+      SEED_ADMIN_PASSWORD: ci-test-admin-password
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

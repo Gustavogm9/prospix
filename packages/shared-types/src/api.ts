@@ -89,14 +89,14 @@ export const CRITICAL_API_CONTRACTS = [
     method: 'GET',
     path: '/tenant/conversations',
     successStatus: 200,
-    successShape: 'raw-array',
+    successShape: 'data-array',
   },
   {
     id: 'tenant.conversations.messages.list',
     method: 'GET',
     path: '/tenant/conversations/{id}/messages',
     successStatus: 200,
-    successShape: 'raw-array',
+    successShape: 'data-array',
   },
   {
     id: 'tenant.conversations.messages.create',

@@ -7,12 +7,45 @@ const loginUrl = process.env.NEXT_PUBLIC_LOGIN_URL || '/login';
 export default function LandingPage() {
   const [leadForm, setLeadForm] = useState({ name: '', phone: '', volume: '500' });
   const [submitted, setSubmitted] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [activeFaq, setActiveFaq] = useState<number | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  const handleFormSubmit = (e: React.FormEvent) => {
+  const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSubmitted(true);
+    setIsSubmitting(true);
+    setSubmitError(null);
+
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || '';
+      const res = await fetch(`${apiUrl}/v1/webhooks/landing-lead`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: leadForm.name,
+          phone: leadForm.phone,
+          volume: leadForm.volume,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(
+          body?.message || `Erro ${res.status}: falha ao enviar formulário.`
+        );
+      }
+
+      setSubmitted(true);
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setSubmitError(err.message);
+      } else {
+        setSubmitError('Ocorreu um erro inesperado. Tente novamente.');
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const faqs = [
@@ -668,11 +701,17 @@ export default function LandingPage() {
                     <a href="/privacidade" className="text-primary underline underline-offset-2 hover:text-primary-hover">Políticas de Privacidade</a>.
                   </label>
                 </div>
+                {submitError && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded text-xs text-red-700">
+                    {submitError}
+                  </div>
+                )}
                 <button
                   type="submit"
-                  className="w-full h-11 bg-primary text-white rounded text-sm font-semibold hover:bg-primary-hover transition-colors shadow"
+                  disabled={isSubmitting}
+                  className="w-full h-11 bg-primary text-white rounded text-sm font-semibold hover:bg-primary-hover transition-colors shadow disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  Solicitar Acesso & Código de Convite
+                  {isSubmitting ? 'Enviando...' : 'Solicitar Acesso & Código de Convite'}
                 </button>
               </form>
             )}

@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { Button, toast } from '@prospix/ui';
-import { Phone, DollarSign, Calendar, AlertCircle, Flame, Plus } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Button, Input, toast } from '@prospix/ui';
+import { Phone, DollarSign, Calendar, AlertCircle, Flame, Plus, X } from 'lucide-react';
 import { apiClient } from '../lib/api-client';
+import { AxiosError } from 'axios';
 import { canUseMockFallbacks } from '../lib/demo-mode';
 
 interface LeadCard {
@@ -72,26 +73,36 @@ export default function Pipeline() {
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [isDraggingOver, setIsDraggingOver] = useState<string | null>(null);
   const [activeMobileColumn, setActiveMobileColumn] = useState<string>('capturado');
+  const [isCreateLeadOpen, setIsCreateLeadOpen] = useState(false);
+  const [isCreatingLead, setIsCreatingLead] = useState(false);
+  const [newLead, setNewLead] = useState({
+    name: '',
+    company: '',
+    whatsapp: '',
+    email: '',
+    city: '',
+    faturamento: '',
+  });
+
+  const fetchLeads = useCallback(async () => {
+    try {
+      const response = await apiClient.get('/tenant/leads');
+      const list = Array.isArray(response.data) ? response.data : response.data?.data;
+      setLeads((list || []).map(mapBackendLeadToCard));
+    } catch (error) {
+      console.error('Error fetching pipeline leads:', error);
+      if (canUseMockFallbacks) {
+        setLeads(MOCK_LEADS);
+      } else {
+        setLeads([]);
+        toast.error('Erro de Conexão', 'Não foi possível carregar o pipeline real da API.');
+      }
+    }
+  }, []);
 
   useEffect(() => {
-    const fetchLeads = async () => {
-      try {
-        const response = await apiClient.get('/tenant/leads');
-        const list = Array.isArray(response.data) ? response.data : response.data?.data;
-        setLeads((list || []).map(mapBackendLeadToCard));
-      } catch (error) {
-        console.error('Error fetching pipeline leads:', error);
-        if (canUseMockFallbacks) {
-          setLeads(MOCK_LEADS);
-        } else {
-          setLeads([]);
-          toast.error('Erro de Conexão', 'Não foi possível carregar o pipeline real da API.');
-        }
-      }
-    };
-
     fetchLeads();
-  }, []);
+  }, [fetchLeads]);
 
   const handleDragStart = (e: React.DragEvent, id: string) => {
     setDraggedId(id);
@@ -133,6 +144,56 @@ export default function Pipeline() {
     }
   };
 
+  const resetLeadForm = () => {
+    setNewLead({
+      name: '',
+      company: '',
+      whatsapp: '',
+      email: '',
+      city: '',
+      faturamento: '',
+    });
+  };
+
+  const handleCreateLead = async (event: React.FormEvent) => {
+    event.preventDefault();
+
+    if (!newLead.whatsapp.trim()) {
+      toast.error('WhatsApp obrigatório', 'Informe um WhatsApp para criar o lead.');
+      return;
+    }
+
+    setIsCreatingLead(true);
+    try {
+      await apiClient.post('/tenant/leads', {
+        name: newLead.name.trim() || newLead.company.trim() || undefined,
+        whatsapp: newLead.whatsapp.trim(),
+        email: newLead.email.trim() || undefined,
+        address: newLead.city.trim() ? { city: newLead.city.trim() } : undefined,
+        metadata: {
+          company: newLead.company.trim() || undefined,
+          faturamento: newLead.faturamento.trim() || undefined,
+          source: 'pipeline_manual',
+        },
+      });
+
+      toast.success('Lead criado', 'O novo lead entrou no pipeline.');
+      setIsCreateLeadOpen(false);
+      resetLeadForm();
+      await fetchLeads();
+    } catch (error: unknown) {
+      const message = error instanceof AxiosError
+        ? error.response?.data?.message || 'Não foi possível salvar o lead no servidor.'
+        : 'Não foi possível salvar o lead no servidor.';
+      toast.error(
+        'Erro ao criar lead',
+        message
+      );
+    } finally {
+      setIsCreatingLead(false);
+    }
+  };
+
   return (
     <div className="space-y-6 h-[calc(100vh-120px)] flex flex-col animate-fadeIn">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 shrink-0">
@@ -142,13 +203,7 @@ export default function Pipeline() {
         </div>
         <div className="flex items-center gap-3">
           <Button
-            disabled={!canUseMockFallbacks}
-            title={!canUseMockFallbacks ? 'Use a base de leads ou integrações para criar leads reais.' : undefined}
-            onClick={() => {
-              if (canUseMockFallbacks) {
-                toast.info('Modo demo', 'A criação manual de lead não é executada nesta visualização.');
-              }
-            }}
+            onClick={() => setIsCreateLeadOpen(true)}
             className="bg-white border border-border text-text-secondary hover:text-text text-xs font-semibold px-4 h-10 rounded-xl flex items-center gap-2 hover:bg-surface-sunken disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Plus className="w-4 h-4 text-primary" />
@@ -275,6 +330,88 @@ export default function Pipeline() {
           );
         })}
       </div>
+
+      {isCreateLeadOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-slate-900/40 backdrop-blur-sm">
+          <form
+            onSubmit={handleCreateLead}
+            className="bg-white border border-border rounded-2xl w-full max-w-[520px] p-6 space-y-5 shadow-2xl animate-scaleIn"
+          >
+            <div className="flex justify-between items-start">
+              <div>
+                <h3 className="text-base font-bold font-heading text-text">Adicionar lead</h3>
+                <p className="text-xs text-text-secondary mt-1">Cadastro manual direto no pipeline.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCreateLeadOpen(false)}
+                className="p-1 rounded-lg hover:bg-surface-sunken text-text-secondary hover:text-text transition-colors"
+                aria-label="Fechar formulário"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Input
+                placeholder="Nome do contato"
+                value={newLead.name}
+                onChange={(e) => setNewLead({ ...newLead, name: e.target.value })}
+                className="h-10 text-xs"
+              />
+              <Input
+                placeholder="Empresa"
+                value={newLead.company}
+                onChange={(e) => setNewLead({ ...newLead, company: e.target.value })}
+                className="h-10 text-xs"
+              />
+              <Input
+                placeholder="WhatsApp"
+                value={newLead.whatsapp}
+                onChange={(e) => setNewLead({ ...newLead, whatsapp: e.target.value })}
+                className="h-10 text-xs"
+                required
+              />
+              <Input
+                placeholder="E-mail"
+                type="email"
+                value={newLead.email}
+                onChange={(e) => setNewLead({ ...newLead, email: e.target.value })}
+                className="h-10 text-xs"
+              />
+              <Input
+                placeholder="Cidade"
+                value={newLead.city}
+                onChange={(e) => setNewLead({ ...newLead, city: e.target.value })}
+                className="h-10 text-xs"
+              />
+              <Input
+                placeholder="Faturamento"
+                value={newLead.faturamento}
+                onChange={(e) => setNewLead({ ...newLead, faturamento: e.target.value })}
+                className="h-10 text-xs"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                type="button"
+                onClick={() => setIsCreateLeadOpen(false)}
+                className="bg-surface-sunken hover:bg-border text-text border border-border/80 text-xs font-semibold h-10 rounded-xl px-4"
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                disabled={isCreatingLead}
+                className="bg-primary hover:bg-primary-hover text-white text-xs font-semibold h-10 rounded-xl px-4 disabled:opacity-50"
+              >
+                {isCreatingLead ? 'Salvando...' : 'Salvar lead'}
+              </Button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

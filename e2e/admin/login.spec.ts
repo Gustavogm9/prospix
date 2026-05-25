@@ -16,7 +16,7 @@ test.describe('Admin · login publico', () => {
     // Espera-se um form de admin login (email + password ou similar)
     await expect(page.locator('body')).toContainText(/admin|guilds|prospix/i);
 
-    await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => undefined);
+    await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => { /* networkidle timeout is non-fatal for smoke tests */ });
 
     const realErrors = consoleErrors.filter(
       (e) => !/favicon|hmr|sourcemap|websocket|hot-?reload/i.test(e),

@@ -7,27 +7,9 @@
  * Mesma estrategia de mock dos outros specs pos-login.
  */
 import { test, expect } from '@playwright/test';
+import { authState } from '../fixtures/auth';
 
-const MOCK_TENANT_ID = '11111111-1111-1111-1111-111111111111';
-const MOCK_OWNER_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-const MOCK_JWT =
-  'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJtb2NrIn0.eyJzaWduYXR1cmUtbW9jay1mb3ItZTJlIn0=';
-
-const authState = {
-  state: {
-    accessToken: MOCK_JWT,
-    refreshToken: 'mock-refresh',
-    tenantId: MOCK_TENANT_ID,
-    user: {
-      id: MOCK_OWNER_ID,
-      name: 'Giovane Carrara',
-      email: 'giovane@seed.prospix.dev',
-      role: 'OWNER',
-      tenant_id: MOCK_TENANT_ID,
-    },
-  },
-  version: 0,
-};
+/* Auth state imported from shared fixtures (L-16) */
 
 test.describe('Web · navegacao pos-login (AUD-P1-028 expansion)', () => {
   test.beforeEach(async ({ context, page }) => {
@@ -50,7 +32,7 @@ test.describe('Web · navegacao pos-login (AUD-P1-028 expansion)', () => {
 
   test('sidebar mostra todos os items de navegacao', async ({ page }) => {
     await page.goto('/');
-    await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => undefined);
+    await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => { /* networkidle timeout is non-fatal for smoke tests */ });
 
     // Items esperados pela sidebar (PRD secao 6.5)
     const expectedNavItems = [/in[ií]cio|home/i, /conversa/i, /pipeline|funil/i, /agenda/i, /lead/i, /roteir/i, /configura/i];
@@ -75,7 +57,7 @@ test.describe('Web · navegacao pos-login (AUD-P1-028 expansion)', () => {
 
       const response = await page.goto(path);
       expect(response?.status(), `${path} response`).toBeLessThan(400);
-      await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => undefined);
+      await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => { /* networkidle timeout is non-fatal for smoke tests */ });
 
       // Confirma que nao foi redirecionado para /login (auth ainda valida)
       expect(page.url(), `${path} redirected to login`).not.toMatch(/\/login$/);
@@ -90,7 +72,7 @@ test.describe('Web · navegacao pos-login (AUD-P1-028 expansion)', () => {
 
   test('Settings · tab Privacidade renderiza com tabela vazia LGPD', async ({ page }) => {
     await page.goto('/configuracoes');
-    await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => undefined);
+    await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => { /* networkidle timeout is non-fatal for smoke tests */ });
 
     // Tab Privacidade tem data-testid 'settings-privacy-tab'
     const tabTrigger = page.locator('[data-testid="settings-privacy-tab"]');

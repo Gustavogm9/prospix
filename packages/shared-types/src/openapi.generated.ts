@@ -813,7 +813,9 @@ export interface paths {
                         readonly [name: string]: unknown;
                     };
                     content: {
-                        readonly "application/json": readonly components["schemas"]["Conversation"][];
+                        readonly "application/json": components["schemas"]["PaginatedResponse"] & {
+                            readonly data?: readonly components["schemas"]["Conversation"][];
+                        };
                     };
                 };
             };
@@ -853,7 +855,9 @@ export interface paths {
                         readonly [name: string]: unknown;
                     };
                     content: {
-                        readonly "application/json": readonly components["schemas"]["Message"][];
+                        readonly "application/json": components["schemas"]["PaginatedResponse"] & {
+                            readonly data?: readonly components["schemas"]["Message"][];
+                        };
                     };
                 };
             };

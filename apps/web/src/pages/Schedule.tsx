@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
-import { Card, Button, Badge, toast } from '@prospix/ui';
-import { Clock, Phone, Mail, Calendar, X } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Card, Button, Badge, Input, toast } from '@prospix/ui';
+import { Clock, Phone, Mail, Calendar, X, Plus } from 'lucide-react';
 import { apiClient } from '../lib/api-client';
+import { AxiosError } from 'axios';
 import { canUseMockFallbacks } from '../lib/demo-mode';
 
 interface Meeting {
@@ -14,6 +15,18 @@ interface Meeting {
   timeSlot: string; // "09:00", "10:30", etc.
   durationMin: number;
   status: 'agendada' | 'confirmada' | 'aconteceu' | 'cancelada';
+}
+
+interface LeadOption {
+  id: string;
+  name: string;
+  company: string;
+  whatsapp: string;
+}
+
+interface SelectedSlot {
+  day: number;
+  slot: string;
 }
 
 const TIME_SLOTS = [
@@ -84,30 +97,119 @@ export default function Schedule() {
 
   const [selectedMeeting, setSelectedMeeting] = useState<Meeting | null>(null);
   const [selectedMobileDay, setSelectedMobileDay] = useState<number>(1);
+  const [selectedSlot, setSelectedSlot] = useState<SelectedSlot | null>(null);
+  const [isCreateMeetingOpen, setIsCreateMeetingOpen] = useState(false);
+  const [leadOptions, setLeadOptions] = useState<LeadOption[]>([]);
+  const [selectedLeadId, setSelectedLeadId] = useState('');
+  const [meetingLocation, setMeetingLocation] = useState('');
+  const [meetingDuration, setMeetingDuration] = useState(30);
+  const [isLoadingLeads, setIsLoadingLeads] = useState(false);
+  const [isCreatingMeeting, setIsCreatingMeeting] = useState(false);
 
   const getMeetingAtSlot = (day: number, slot: string) => {
     return meetings.find(m => m.dayOfWeek === day && m.timeSlot === slot);
   };
 
-  useEffect(() => {
-    const fetchMeetings = async () => {
-      try {
-        const response = await apiClient.get('/tenant/meetings');
-        const list = Array.isArray(response.data) ? response.data : response.data?.data;
-        setMeetings((list || []).map(mapBackendMeeting));
-      } catch (error) {
-        console.error('Error fetching meetings:', error);
-        if (canUseMockFallbacks) {
-          setMeetings(MOCK_MEETINGS);
-        } else {
-          setMeetings([]);
-          toast.error('Erro de Conexão', 'Não foi possível carregar a agenda real da API.');
-        }
+  const fetchMeetings = useCallback(async () => {
+    try {
+      const response = await apiClient.get('/tenant/meetings');
+      const list = Array.isArray(response.data) ? response.data : response.data?.data;
+      setMeetings((list || []).map(mapBackendMeeting));
+    } catch (error) {
+      console.error('Error fetching meetings:', error);
+      if (canUseMockFallbacks) {
+        setMeetings(MOCK_MEETINGS);
+      } else {
+        setMeetings([]);
+        toast.error('Erro de Conexão', 'Não foi possível carregar a agenda real da API.');
       }
-    };
-
-    fetchMeetings();
+    }
   }, []);
+
+  useEffect(() => {
+    fetchMeetings();
+  }, [fetchMeetings]);
+
+  const fetchLeadOptions = async () => {
+    setIsLoadingLeads(true);
+    try {
+      const response = await apiClient.get('/tenant/leads');
+      const list = Array.isArray(response.data) ? response.data : response.data?.data;
+      const options = (list || []).map((lead: any) => ({
+        id: lead.id,
+        name: lead.name || 'Sem nome',
+        company: lead.metadata?.company || lead.name || 'N/A',
+        whatsapp: lead.whatsapp || '',
+      }));
+      setLeadOptions(options);
+      setSelectedLeadId((current) => current || options[0]?.id || '');
+    } catch (error) {
+      console.error('Error fetching leads for meeting:', error);
+      setLeadOptions([]);
+      toast.error('Erro de Conexão', 'Não foi possível carregar leads para agendamento.');
+    } finally {
+      setIsLoadingLeads(false);
+    }
+  };
+
+  const getSlotDate = (slot: SelectedSlot) => {
+    const [rawHours, rawMinutes] = slot.slot.split(':').map(Number);
+    const hours = rawHours ?? 9;
+    const minutes = rawMinutes ?? 0;
+    const date = new Date();
+    const daysUntilSlot = (slot.day - date.getDay() + 7) % 7;
+
+    date.setDate(date.getDate() + daysUntilSlot);
+    date.setHours(hours, minutes, 0, 0);
+
+    if (date <= new Date()) {
+      date.setDate(date.getDate() + 7);
+    }
+
+    return date;
+  };
+
+  const openCreateMeeting = async (day: number, slot: string) => {
+    setSelectedSlot({ day, slot });
+    setIsCreateMeetingOpen(true);
+    if (leadOptions.length === 0) {
+      await fetchLeadOptions();
+    }
+  };
+
+  const handleCreateMeeting = async () => {
+    if (!selectedSlot || !selectedLeadId) {
+      toast.error('Lead obrigatório', 'Selecione um lead para criar a reunião.');
+      return;
+    }
+
+    setIsCreatingMeeting(true);
+    try {
+      await apiClient.post('/tenant/meetings', {
+        leadId: selectedLeadId,
+        scheduledFor: getSlotDate(selectedSlot).toISOString(),
+        durationMinutes: meetingDuration,
+        location: meetingLocation.trim() || undefined,
+      });
+
+      toast.success('Reunião agendada', 'O compromisso foi salvo e enviado para sincronização.');
+      setIsCreateMeetingOpen(false);
+      setSelectedSlot(null);
+      setMeetingLocation('');
+      setMeetingDuration(30);
+      await fetchMeetings();
+    } catch (error: unknown) {
+      const message = error instanceof AxiosError
+        ? error.response?.data?.message || 'Não foi possível criar a reunião no servidor.'
+        : 'Não foi possível criar a reunião no servidor.';
+      toast.error(
+        'Erro ao agendar',
+        message
+      );
+    } finally {
+      setIsCreatingMeeting(false);
+    }
+  };
 
   const handleStatusChange = async (meetingId: string, newStatus: Meeting['status']) => {
     const previousMeetings = meetings;
@@ -195,20 +297,15 @@ export default function Schedule() {
                         </span>
                       </button>
                     ) : (
-                      <div
-                        className={`w-full h-full rounded-lg border border-transparent transition-all flex items-center justify-center ${
-                          canUseMockFallbacks
-                            ? 'hover:bg-surface-sunken hover:border-border/80 cursor-default group'
-                            : 'cursor-default'
-                        }`}
-                        title={!canUseMockFallbacks ? 'Criação de reunião ainda não está disponível nesta tela.' : undefined}
+                      <button
+                        onClick={() => openCreateMeeting(dayValue, slot)}
+                        className="w-full h-full rounded-lg border border-transparent transition-all flex items-center justify-center hover:bg-surface-sunken hover:border-border/80 group"
                       >
-                        {canUseMockFallbacks && (
-                          <span className="text-[10px] text-text-secondary opacity-0 group-hover:opacity-100 font-bold">
-                            + Agendar
-                          </span>
-                        )}
-                      </div>
+                        <span className="text-[10px] text-text-secondary opacity-0 group-hover:opacity-100 font-bold flex items-center gap-1">
+                          <Plus className="w-3 h-3" />
+                          Agendar
+                        </span>
+                      </button>
                     )}
                   </div>
                 );
@@ -247,9 +344,13 @@ export default function Schedule() {
                       </span>
                     </button>
                   ) : (
-                    <div className="text-[10px] text-text-secondary/40 py-2 italic">
-                      Sem compromissos
-                    </div>
+                    <button
+                      onClick={() => openCreateMeeting(selectedMobileDay, slot)}
+                      className="text-[10px] text-text-secondary/70 py-2 px-3 rounded-lg border border-dashed border-border hover:bg-surface-sunken hover:text-text transition-colors flex items-center gap-1"
+                    >
+                      <Plus className="w-3 h-3" />
+                      Agendar
+                    </button>
                   )}
                 </div>
               </div>
@@ -257,6 +358,98 @@ export default function Schedule() {
           })}
         </div>
       </Card>
+
+      {isCreateMeetingOpen && selectedSlot && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-slate-900/40 backdrop-blur-sm">
+          <div className="bg-white border border-border rounded-2xl w-full max-w-[500px] p-6 space-y-5 shadow-2xl animate-scaleIn">
+            <div className="flex justify-between items-start">
+              <div className="flex gap-3">
+                <div className="p-3 bg-primary-soft border border-primary/20 text-primary rounded-xl">
+                  <Calendar className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold font-heading text-text">Agendar reunião</h3>
+                  <p className="text-xs text-text-secondary leading-none mt-1">
+                    {DAYS_OF_WEEK.find(day => day.value === selectedSlot.day)?.label} às {selectedSlot.slot}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsCreateMeetingOpen(false)}
+                className="p-1 rounded-lg hover:bg-surface-sunken text-text-secondary hover:text-text transition-colors"
+                aria-label="Fechar agendamento"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <label className="block space-y-1.5">
+                <span className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Lead</span>
+                <select
+                  value={selectedLeadId}
+                  onChange={(event) => setSelectedLeadId(event.target.value)}
+                  disabled={isLoadingLeads}
+                  className="w-full bg-white border border-border text-xs rounded-xl px-3 h-10 text-text focus:border-primary focus:ring-1 focus:ring-primary outline-none disabled:opacity-60"
+                >
+                  {isLoadingLeads ? (
+                    <option>Carregando leads...</option>
+                  ) : leadOptions.length > 0 ? (
+                    leadOptions.map((lead) => (
+                      <option key={lead.id} value={lead.id}>
+                        {lead.name} - {lead.company}
+                      </option>
+                    ))
+                  ) : (
+                    <option value="">Nenhum lead disponível</option>
+                  )}
+                </select>
+              </label>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="block space-y-1.5">
+                  <span className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Duração</span>
+                  <select
+                    value={meetingDuration}
+                    onChange={(event) => setMeetingDuration(Number(event.target.value))}
+                    className="w-full bg-white border border-border text-xs rounded-xl px-3 h-10 text-text focus:border-primary focus:ring-1 focus:ring-primary outline-none"
+                  >
+                    <option value={30}>30 minutos</option>
+                    <option value={45}>45 minutos</option>
+                    <option value={60}>60 minutos</option>
+                    <option value={90}>90 minutos</option>
+                  </select>
+                </label>
+                <label className="block space-y-1.5">
+                  <span className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Local</span>
+                  <Input
+                    value={meetingLocation}
+                    onChange={(event) => setMeetingLocation(event.target.value)}
+                    placeholder="Meet, telefone ou endereço"
+                    className="h-10 text-xs"
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                onClick={() => setIsCreateMeetingOpen(false)}
+                className="bg-surface-sunken hover:bg-border text-text border border-border/80 text-xs font-semibold h-10 rounded-xl px-4"
+              >
+                Cancelar
+              </Button>
+              <Button
+                onClick={handleCreateMeeting}
+                disabled={isCreatingMeeting || isLoadingLeads || !selectedLeadId}
+                className="bg-primary hover:bg-primary-hover text-white text-xs font-semibold h-10 rounded-xl px-4 disabled:opacity-50"
+              >
+                {isCreatingMeeting ? 'Agendando...' : 'Agendar'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Meeting Detail Modal */}
       {selectedMeeting && (
@@ -275,6 +468,7 @@ export default function Schedule() {
               <button
                 onClick={() => setSelectedMeeting(null)}
                 className="p-1 rounded-lg hover:bg-surface-sunken text-text-secondary hover:text-text transition-colors"
+                aria-label="Fechar detalhes da reunião"
               >
                 <X className="w-5 h-5" />
               </button>

@@ -58,7 +58,7 @@ export default function Dashboard() {
           { label: 'WhatsApp', value: Number((costWhatsAppCents / 100).toFixed(2)) },
           { label: 'Google Maps', value: Number((costMapsCents / 100).toFixed(2)) },
         ]);
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error('Error fetching consolidated usage metrics:', err);
         toast.error('Erro de Conexão', 'Não foi possível carregar as métricas financeiras consolidadas.');
       } finally {

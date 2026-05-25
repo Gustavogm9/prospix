@@ -22,6 +22,13 @@ BEGIN
     CREATE ROLE guilds_admin BYPASSRLS NOINHERIT;
   END IF;
 
+  -- ⚠️  PRODUCTION OVERRIDE REQUIRED
+  -- The password 'prospix_dev' below is for LOCAL DEVELOPMENT ONLY.
+  -- In production and staging, override this password BEFORE running
+  -- the migration by setting the DATABASE_ROLE_PASSWORD environment
+  -- variable and replacing the literal below, e.g.:
+  --   ALTER ROLE prospix_app WITH PASSWORD :'db_role_password';
+  -- Never deploy with the default 'prospix_dev' password.
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'prospix_app') THEN
     CREATE ROLE prospix_app LOGIN PASSWORD 'prospix_dev' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
   ELSE
@@ -111,12 +118,12 @@ ALTER TABLE audit_log              FORCE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS tenant_isolation_users ON users;
 CREATE POLICY tenant_isolation_users ON users
-  FOR ALL USING (tenant_id = current_tenant_id());
+  FOR ALL USING (tenant_id IS NULL OR tenant_id = current_tenant_id());
 
 DROP POLICY IF EXISTS tenant_isolation_sessions ON sessions;
 CREATE POLICY tenant_isolation_sessions ON sessions
   FOR ALL USING (
-    user_id IN (SELECT id FROM users WHERE tenant_id = current_tenant_id())
+    user_id IN (SELECT id FROM users WHERE tenant_id IS NULL OR tenant_id = current_tenant_id())
   );
 
 DROP POLICY IF EXISTS tenant_isolation_tenant_secrets ON tenant_secrets;
