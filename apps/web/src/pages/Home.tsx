@@ -1,6 +1,19 @@
 import { useEffect, useState } from 'react';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, FunnelChart, BarChart, Badge, Button, toast } from '@prospix/ui';
-import { Calendar, MessageSquare, AlertCircle, UserPlus, ArrowUpRight, Flame } from 'lucide-react';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, FunnelChart, BarChart, Badge, Button, Tooltip, toast } from '@prospix/ui';
+import { Calendar, MessageSquare, AlertCircle, UserPlus, ArrowUpRight, Flame, Info } from 'lucide-react';
+
+const FIT_SCORE_EXPLAINER = (
+  <div className="text-left space-y-1">
+    <div className="font-semibold">Como calculamos o Fit Score (0–10)</div>
+    <ul className="list-disc pl-4 space-y-0.5">
+      <li>Aderência ao ICP (segmento + porte)</li>
+      <li>Sinais comerciais (Maps reviews, faturamento estimado)</li>
+      <li>Engajamento na conversa (respostas, tempo, intent)</li>
+      <li>Recência da captura</li>
+    </ul>
+    <div className="opacity-80">≥ 8.5 = lead quente · ≥ 7.0 = morno</div>
+  </div>
+);
 import { apiClient } from '../lib/api-client';
 import { canUseMockFallbacks } from '../lib/demo-mode';
 import { useNavigate } from 'react-router-dom';
@@ -292,7 +305,14 @@ export default function Home() {
                   <th className="text-left py-3 px-6">Localidade</th>
                   <th className="text-left py-3 px-6">Contato</th>
                   <th className="text-left py-3 px-6">Estágio</th>
-                  <th className="text-center py-3 px-6">Fit Score</th>
+                  <th className="text-center py-3 px-6">
+                    <Tooltip content={FIT_SCORE_EXPLAINER}>
+                      <span className="inline-flex items-center gap-1 cursor-help">
+                        Fit Score
+                        <Info className="w-3 h-3 opacity-70" aria-label="Como calculamos" />
+                      </span>
+                    </Tooltip>
+                  </th>
                   <th className="text-right py-3 px-6">Ações</th>
                 </tr>
               </thead>

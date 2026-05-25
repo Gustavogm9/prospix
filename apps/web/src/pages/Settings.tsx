@@ -314,7 +314,8 @@ export default function Settings() {
 
     return () => {
       if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
+        clearTimeout(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
       }
     };
   }, [activeTab]);
@@ -329,11 +330,20 @@ export default function Settings() {
       setInstanceName(data.instanceName);
       setIsGeneratingQr(false);
       
-      // Start polling status every 3 seconds to see if they scanned it
+      // Backoff incremental 3s → 5s → 10s (cap) para reduzir carga no Evolution
       if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
-      pollingIntervalRef.current = setInterval(() => {
-        checkStatus(true);
-      }, 3000);
+      const delays = [3000, 3000, 5000, 5000, 10000];
+      let attempt = 0;
+      const schedule = () => {
+        const delay = delays[Math.min(attempt, delays.length - 1)];
+        pollingIntervalRef.current = setTimeout(async () => {
+          attempt += 1;
+          await checkStatus(true);
+          // checkStatus limpa pollingIntervalRef.current quando conecta · só reagenda se ainda ativo
+          if (pollingIntervalRef.current) schedule();
+        }, delay) as unknown as NodeJS.Timeout;
+      };
+      schedule();
     } catch (err: unknown) {
       console.error('Error generating WhatsApp QR code:', err);
       const message = err instanceof AxiosError
