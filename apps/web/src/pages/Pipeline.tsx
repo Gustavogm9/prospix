@@ -1,6 +1,19 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Button, Input, toast } from '@prospix/ui';
+import { Button, Input, Tooltip, toast } from '@prospix/ui';
 import { Phone, DollarSign, Calendar, AlertCircle, Flame, Plus, X } from 'lucide-react';
+
+const FIT_SCORE_EXPLAINER = (
+  <div className="text-left space-y-1">
+    <div className="font-semibold">Fit Score (0–10)</div>
+    <ul className="list-disc pl-4 space-y-0.5">
+      <li>Aderência ao ICP (segmento + porte)</li>
+      <li>Sinais comerciais (Maps, faturamento)</li>
+      <li>Engajamento (respostas, intent, tempo)</li>
+      <li>Recência da captura</li>
+    </ul>
+    <div className="opacity-80">≥ 8.5 = quente · ≥ 7.0 = morno</div>
+  </div>
+);
 import { apiClient } from '../lib/api-client';
 import { AxiosError } from 'axios';
 import { canUseMockFallbacks } from '../lib/demo-mode';
@@ -310,11 +323,17 @@ export default function Pipeline() {
                         <Calendar className="w-2.5 h-2.5" />
                         <span>{lead.createdAt}</span>
                       </div>
-                      <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded ${
-                        lead.fitScore >= 8.5 ? 'bg-success-soft text-success-text' : 'bg-surface-sunken text-text-secondary'
-                      }`}>
-                        {lead.fitScore} Fit
-                      </span>
+                      <Tooltip content={FIT_SCORE_EXPLAINER}>
+                        <span
+                          className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded cursor-help ${
+                            lead.fitScore >= 8.5 ? 'bg-success-soft text-success-text' : 'bg-surface-sunken text-text-secondary'
+                          }`}
+                          tabIndex={0}
+                          aria-label={`Fit Score ${lead.fitScore}. Clique para ver critérios.`}
+                        >
+                          {lead.fitScore} Fit
+                        </span>
+                      </Tooltip>
                     </div>
                   </div>
                 ))}
