@@ -439,7 +439,7 @@ export default function Conversations() {
                 </div>
                 <p className="text-xs text-text-secondary/80 truncate">{conv.lastMessage}</p>
                 <div className="flex items-center justify-between pt-1">
-                  <div className="flex gap-1.5">
+                  <div className="flex gap-1.5 flex-wrap">
                     {conv.aiHandling ? (
                       <Badge className="bg-primary-soft text-primary border border-primary/20 text-[9px] px-1.5 py-0">
                         IA no Leme
@@ -447,6 +447,35 @@ export default function Conversations() {
                     ) : (
                       <Badge className="bg-surface-sunken text-text-secondary border border-border/60 text-[9px] px-1.5 py-0">
                         Manual
+                      </Badge>
+                    )}
+                    {conv.meetingId ? (
+                      <Badge
+                        className="bg-success-soft text-success-text border border-success/30 text-[9px] px-1.5 py-0"
+                        aria-label="Reunião agendada"
+                      >
+                        Reunião
+                      </Badge>
+                    ) : conv.unread ? (
+                      <Badge
+                        className="bg-warning-soft text-warning-text border border-warning/30 text-[9px] px-1.5 py-0"
+                        aria-label="Aguardando atenção"
+                      >
+                        Aguardando
+                      </Badge>
+                    ) : !conv.aiHandling ? (
+                      <Badge
+                        className="bg-amber-100 text-amber-800 border border-amber-300 text-[9px] px-1.5 py-0"
+                        aria-label="Escalado para humano"
+                      >
+                        Escalada
+                      </Badge>
+                    ) : (
+                      <Badge
+                        className="bg-surface-sunken text-text-secondary border border-border/60 text-[9px] px-1.5 py-0"
+                        aria-label="Conversa em curso"
+                      >
+                        Em curso
                       </Badge>
                     )}
                   </div>
