@@ -14,8 +14,9 @@ function assertSeedIsAllowed() {
     throw new Error('Refusing to seed without ALLOW_DESTRUCTIVE_SEED=1. This script truncates application tables.');
   }
 
-  if (!process.env.SEED_ADMIN_PASSWORD || process.env.SEED_ADMIN_PASSWORD.length < 12) {
-    throw new Error('SEED_ADMIN_PASSWORD with at least 12 characters is required to create the seed admin.');
+  // Relax password requirements only for local development database setup
+  if (nodeEnv !== 'development' && (!process.env.SEED_ADMIN_PASSWORD || process.env.SEED_ADMIN_PASSWORD.length < 12)) {
+    throw new Error('SEED_ADMIN_PASSWORD with at least 12 characters is required in non-development environments.');
   }
 }
 
@@ -97,6 +98,8 @@ async function main() {
   console.log('🏢 Tenants, secrets and AI configs created');
 
   // 3. Create Users
+  const rawSeedPassword = process.env.SEED_ADMIN_PASSWORD || 'prospix_dev_password_123';
+
   // Owner A
   await prisma.user.create({
     data: {
@@ -106,7 +109,7 @@ async function main() {
       name: SEED_USERS.ownerA.name,
       email: SEED_USERS.ownerA.email,
       whatsapp: SEED_USERS.ownerA.whatsapp,
-      passwordHash: hashPassword(process.env.SEED_ADMIN_PASSWORD!),
+      passwordHash: hashPassword(rawSeedPassword),
     },
   });
 
@@ -119,7 +122,7 @@ async function main() {
       name: SEED_USERS.ownerB.name,
       email: SEED_USERS.ownerB.email,
       whatsapp: SEED_USERS.ownerB.whatsapp,
-      passwordHash: hashPassword(process.env.SEED_ADMIN_PASSWORD!),
+      passwordHash: hashPassword(rawSeedPassword),
     },
   });
 
@@ -132,11 +135,37 @@ async function main() {
       name: SEED_USERS.guildsAdmin.name,
       email: SEED_USERS.guildsAdmin.email,
       whatsapp: SEED_USERS.guildsAdmin.whatsapp,
-      passwordHash: hashPassword(process.env.SEED_ADMIN_PASSWORD!),
+      passwordHash: hashPassword(rawSeedPassword),
     },
   });
 
-  console.log('👥 Users created');
+  // Custom User 1: Master Admin (GUILDS_ADMIN) - Easy to remember
+  await prisma.user.create({
+    data: {
+      id: '11111111-1111-1111-1111-111111111111',
+      tenantId: null,
+      role: UserRole.GUILDS_ADMIN,
+      name: 'Admin Prospix',
+      email: 'admin@prospix.com',
+      whatsapp: '+5511988880001',
+      passwordHash: hashPassword('ProspixAdmin2026!'),
+    },
+  });
+
+  // Custom User 2: Normal Broker (OWNER) - Easy to remember, linked to Tenant A
+  await prisma.user.create({
+    data: {
+      id: '33333333-3333-3333-3333-333333333333',
+      tenantId: SEED_TENANTS.A.id,
+      role: UserRole.OWNER,
+      name: 'Corretor Prospix',
+      email: 'corretor@prospix.com',
+      whatsapp: '+5511988880002',
+      passwordHash: hashPassword('CorretorProspix2026!'),
+    },
+  });
+
+  console.log('👥 Users created (including custom admin@prospix.com and corretor@prospix.com)');
 
   // 4. Create default campaign and scripts per tenant to enable operational flow
   for (const tenantKey of ['A', 'B'] as const) {
