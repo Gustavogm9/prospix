@@ -7,6 +7,7 @@ import { tenantContextStorage } from '../../lib/tenant-context-storage.js';
 import { env } from '../../config/env.js';
 import { Prisma, TenantStatus, TenantPlan, UserRole, CampaignStatus, BillingStatus } from '@prisma/client';
 import { registerAdminDlqRoutes } from './dlq.js';
+import { registerAdminObservabilityRoutes } from './observability.js';
 
 type AdminTransaction = Prisma.TransactionClient;
 
@@ -163,6 +164,7 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
 
   // DLQ admin endpoints (AUD-P1-021)
   registerAdminDlqRoutes(app);
+  registerAdminObservabilityRoutes(app);
 
   // =============================================================================
   // D8: CRUD /v1/admin/tenants

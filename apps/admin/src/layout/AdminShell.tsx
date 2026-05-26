@@ -25,6 +25,7 @@ export default function AdminShell() {
     { name: 'Gerenciar Tenants', path: '/tenants', icon: Building },
     { name: 'Cadastrar Tenant', path: '/tenants/novo', icon: PlusCircle },
     { name: 'Templates Master', path: '/templates', icon: FileText },
+    { name: 'Observabilidade', path: '/observabilidade', icon: Activity },
   ];
 
   const handleLogout = () => {
