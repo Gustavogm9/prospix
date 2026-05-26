@@ -18,8 +18,16 @@ interface Tenant {
   ownerWhatsapp: string;
 }
 
+interface ChurnRiskEntry {
+  tenantId: string;
+  score: number;
+  level: 'low' | 'medium' | 'high' | 'critical';
+  reasons: string[];
+}
+
 export default function Tenants() {
   const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [churnRisks, setChurnRisks] = useState<Record<string, ChurnRiskEntry>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -80,8 +88,21 @@ export default function Tenants() {
     }
   };
 
+  const fetchChurnRisk = async () => {
+    try {
+      const response = await adminApiClient.get('/admin/churn-risk');
+      const list: ChurnRiskEntry[] = response.data?.data?.tenants ?? [];
+      const map: Record<string, ChurnRiskEntry> = {};
+      for (const r of list) map[r.tenantId] = r;
+      setChurnRisks(map);
+    } catch (err) {
+      console.error('churn risk fetch failed:', err);
+    }
+  };
+
   useEffect(() => {
     fetchTenants();
+    fetchChurnRisk();
   }, []);
 
   const handleSuspendClick = (tenantId: string) => {
@@ -222,6 +243,7 @@ export default function Tenants() {
                 <TableHead className="py-3 px-6 text-left">Plano / MRR</TableHead>
                 <TableHead className="py-3 px-6 text-left">Status</TableHead>
                 <TableHead className="py-3 px-6 text-left">Saúde (QR)</TableHead>
+                <TableHead className="py-3 px-6 text-left">Risco</TableHead>
                 <TableHead className="py-3 px-6 text-right">Ações</TableHead>
               </TableRow>
             </TableHeader>
@@ -239,7 +261,7 @@ export default function Tenants() {
                 ))
               ) : loadError ? (
                 <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={6} className="py-16 px-6">
+                  <TableCell colSpan={7} className="py-16 px-6">
                     <div className="flex flex-col items-center justify-center gap-3 text-center" data-testid="tenants-error-state">
                       <div className="w-12 h-12 rounded-full bg-error-soft flex items-center justify-center">
                         <AlertCircle className="w-6 h-6 text-error-text" />
@@ -262,7 +284,7 @@ export default function Tenants() {
                 </TableRow>
               ) : filteredTenants.length === 0 ? (
                 <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={6} className="py-16 px-6">
+                  <TableCell colSpan={7} className="py-16 px-6">
                     <div className="flex flex-col items-center justify-center gap-3 text-center" data-testid="tenants-empty-state">
                       <div className="w-12 h-12 rounded-full bg-surface-sunken flex items-center justify-center">
                         <Inbox className="w-6 h-6 text-text-muted" />
@@ -318,6 +340,25 @@ export default function Tenants() {
                   <TableCell className="py-3.5 px-6">{getStatusBadge(t.status)}</TableCell>
                   <TableCell className="py-3.5 px-6" title={t.healthMissing.length ? `Pendente: ${t.healthMissing.join(', ')}` : 'Integrações essenciais configuradas'}>
                     {getHealthBadge(t.health)}
+                  </TableCell>
+                  <TableCell className="py-3.5 px-6">
+                    {(() => {
+                      const risk = churnRisks[t.id];
+                      if (!risk) return <span className="text-text-secondary text-[10px]">—</span>;
+                      const toneClass =
+                        risk.level === 'critical' ? 'bg-red-50 text-red-700 border-red-200' :
+                        risk.level === 'high' ? 'bg-amber-50 text-amber-800 border-amber-300' :
+                        risk.level === 'medium' ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                        'bg-success-soft/40 text-success-text border-success/30';
+                      return (
+                        <span
+                          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-bold ${toneClass}`}
+                          title={risk.reasons.join(' · ') || 'Sem sinais de risco'}
+                        >
+                          {risk.level.toUpperCase()} · {risk.score}
+                        </span>
+                      );
+                    })()}
                   </TableCell>
                   <TableCell className="py-3.5 px-6 text-right">
                     <div className="flex items-center gap-1.5 justify-end">

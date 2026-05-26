@@ -17,6 +17,7 @@ import {
   ShieldAlert
 } from 'lucide-react';
 import { Avatar, Dropdown, DropdownItem } from '@prospix/ui';
+import { GlobalSearch } from './GlobalSearch';
 
 export default function AdminShell() {
   const { adminUser, clearAdminSession } = useAdminAuthStore();
@@ -148,14 +149,15 @@ export default function AdminShell() {
       {/* Main Area */}
       <div className="flex-1 flex flex-col min-w-0 min-h-screen">
         <header className="h-[60px] border-b border-border bg-surface/80 backdrop-blur-md sticky top-0 z-30 flex items-center justify-between px-6 shrink-0 shadow-sm">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 flex-1 max-w-2xl">
             <button onClick={() => setIsMobileMenuOpen(true)} aria-label="Abrir menu admin" className="md:hidden p-1.5 rounded-lg hover:bg-surface-sunken text-text-secondary hover:text-text">
               <Menu className="w-5 h-5" />
             </button>
-            <div className="flex items-center gap-2 text-xs font-semibold text-text-secondary">
-              <Activity className="w-4 h-4 text-amber-800 animate-pulse" />
-              <span>Conexão bypass-RLS ativa: conexão direta com role connection guilds_admin</span>
+            <div className="hidden lg:flex items-center gap-2 text-[10px] font-semibold text-text-secondary shrink-0" title="Conexão bypass-RLS ativa">
+              <Activity className="w-3.5 h-3.5 text-amber-800 animate-pulse" />
+              <span>bypass-RLS</span>
             </div>
+            <GlobalSearch />
           </div>
 
           <Dropdown

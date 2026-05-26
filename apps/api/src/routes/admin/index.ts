@@ -715,6 +715,172 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     }
   });
 
+  // GET /search · busca universal por nome/slug/email/telefone → tenant/user/lead
+  const searchQuerySchema = z.object({
+    q: z.string().min(2).max(120),
+    limit: z.coerce.number().int().min(1).max(20).optional().default(10),
+  });
+
+  app.get('/search', async (req: FastifyRequest, reply: FastifyReply) => {
+    const parsed = searchQuerySchema.safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ error: 'VALIDATION', message: 'Query "q" mínimo 2 chars.' });
+    const { q, limit } = parsed.data;
+    const term = q.trim();
+    try {
+      const [tenants, users, leads] = await withAdminRole(async (tx) => {
+        return Promise.all([
+          tx.tenant.findMany({
+            where: {
+              OR: [
+                { name: { contains: term, mode: 'insensitive' } },
+                { slug: { contains: term, mode: 'insensitive' } },
+              ],
+            },
+            take: limit,
+            select: { id: true, name: true, slug: true, status: true },
+          }),
+          tx.user.findMany({
+            where: {
+              OR: [
+                { email: { contains: term, mode: 'insensitive' } },
+                { name: { contains: term, mode: 'insensitive' } },
+              ],
+              deletedAt: null,
+            },
+            take: limit,
+            select: { id: true, name: true, email: true, role: true, tenantId: true, tenant: { select: { name: true, slug: true } } },
+          }),
+          tx.lead.findMany({
+            where: {
+              OR: [
+                { name: { contains: term, mode: 'insensitive' } },
+                { whatsapp: { contains: term } },
+                { email: { contains: term, mode: 'insensitive' } },
+              ],
+              deletedAt: null,
+            },
+            take: limit,
+            select: { id: true, name: true, whatsapp: true, email: true, tenantId: true, tenant: { select: { name: true, slug: true } } },
+          }),
+        ]);
+      });
+
+      return reply.send({
+        data: {
+          tenants: tenants.map((t) => ({ kind: 'tenant', id: t.id, label: t.name, sub: `slug: ${t.slug} · ${t.status}`, href: `/tenants/${t.id}` })),
+          users: users.map((u) => ({ kind: 'user', id: u.id, label: u.name, sub: `${u.email} · ${u.role} · ${u.tenant?.name ?? '—'}`, href: `/tenants/${u.tenantId}` })),
+          leads: leads.map((l) => ({ kind: 'lead', id: l.id, label: l.name ?? l.whatsapp, sub: `${l.whatsapp} · ${l.email ?? ''} · ${l.tenant?.name ?? '—'}`, href: `/tenants/${l.tenantId}` })),
+        },
+      });
+    } catch (err) {
+      app.log.error({ err, q }, 'admin/search failed');
+      return reply.code(500).send({ error: 'INTERNAL', message: 'Falha na busca.' });
+    }
+  });
+
+  // GET /churn-risk · score heurístico cross-tenant (uso declining + billing overdue + dormancy)
+  app.get('/churn-risk', async (_req, reply) => {
+    try {
+      const now = new Date();
+      const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+      const startOfPrevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
+
+      const tenants = await withAdminRole(async (tx) => {
+        const activeTenants = await tx.tenant.findMany({
+          where: { status: { in: ['ACTIVE', 'CHURNING'] }, deletedAt: null },
+          select: { id: true, name: true, slug: true, status: true, mrrCents: true, plan: true, goLiveAt: true },
+        });
+
+        const enriched = await Promise.all(
+          activeTenants.map(async (t) => {
+            const [currentUsage, prevUsage, overdueBilling, lastConversation, activeCampaigns] = await Promise.all([
+              tx.tenantUsage.findFirst({ where: { tenantId: t.id, periodMonth: startOfMonth } }),
+              tx.tenantUsage.findFirst({ where: { tenantId: t.id, periodMonth: startOfPrevMonth } }),
+              tx.tenantBilling.count({ where: { tenantId: t.id, status: 'OVERDUE' } }),
+              tx.conversation.findFirst({
+                where: { tenantId: t.id },
+                orderBy: { startedAt: 'desc' },
+                select: { startedAt: true, lastInboundAt: true, lastOutboundAt: true },
+              }),
+              tx.campaign.count({ where: { tenantId: t.id, status: 'ACTIVE', updatedAt: { gte: sixtyDaysAgo } } }),
+            ]);
+
+            const currentMsgs = currentUsage ? Number(currentUsage.whatsappMessagesSent) : 0;
+            const prevMsgs = prevUsage ? Number(prevUsage.whatsappMessagesSent) : 0;
+            const usageDeltaPercent = prevMsgs > 0 ? Math.round(((currentMsgs - prevMsgs) / prevMsgs) * 100) : 0;
+            const lastActivity = lastConversation
+              ? (lastConversation.lastInboundAt ?? lastConversation.lastOutboundAt ?? lastConversation.startedAt)
+              : null;
+            const dormantDays = lastActivity ? Math.floor((now.getTime() - lastActivity.getTime()) / (1000 * 60 * 60 * 24)) : 999;
+
+            // Score 0-100 (maior = mais arriscado)
+            let score = 0;
+            const reasons: string[] = [];
+            if (overdueBilling > 0) {
+              score += 40;
+              reasons.push(`${overdueBilling} fatura(s) vencida(s)`);
+            }
+            if (usageDeltaPercent <= -30 && prevMsgs > 0) {
+              score += 25;
+              reasons.push(`uso WA caiu ${Math.abs(usageDeltaPercent)}% MoM`);
+            }
+            if (dormantDays > 30) {
+              score += 25;
+              reasons.push(`${dormantDays}d sem conversa nova`);
+            } else if (dormantDays > 14) {
+              score += 10;
+              reasons.push(`${dormantDays}d sem conversa nova`);
+            }
+            if (activeCampaigns === 0) {
+              score += 10;
+              reasons.push('sem campanhas ativas');
+            }
+            if (t.status === 'CHURNING') {
+              score = Math.max(score, 80);
+              reasons.unshift('marcado CHURNING');
+            }
+
+            const level: 'low' | 'medium' | 'high' | 'critical' = score >= 70 ? 'critical' : score >= 40 ? 'high' : score >= 20 ? 'medium' : 'low';
+
+            return {
+              tenantId: t.id,
+              tenantName: t.name,
+              tenantSlug: t.slug,
+              status: t.status,
+              mrrCents: t.mrrCents,
+              plan: t.plan,
+              score,
+              level,
+              reasons,
+              signals: {
+                overdueInvoices: overdueBilling,
+                usageDeltaPercent,
+                dormantDays: dormantDays >= 999 ? null : dormantDays,
+                activeCampaigns,
+              },
+            };
+          })
+        );
+
+        return enriched.sort((a, b) => b.score - a.score);
+      });
+
+      const summary = tenants.reduce(
+        (acc, t) => {
+          acc[t.level] = (acc[t.level] ?? 0) + 1;
+          return acc;
+        },
+        { critical: 0, high: 0, medium: 0, low: 0 } as Record<string, number>,
+      );
+
+      return reply.send({ data: { tenants, summary, generatedAt: now.toISOString() } });
+    } catch (err) {
+      app.log.error({ err }, 'admin/churn-risk failed');
+      return reply.code(500).send({ error: 'INTERNAL', message: 'Falha ao calcular churn risk.' });
+    }
+  });
+
   // GET /lgpd-requests · cross-tenant compliance view
   const lgpdQuerySchema = z.object({
     status: z.enum(['PENDING', 'PROCESSING', 'COMPLETED', 'REJECTED', 'CANCELED']).optional(),
