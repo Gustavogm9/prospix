@@ -35,7 +35,7 @@ const envSchema = z.object({
 
   EVOLUTION_BASE_URL: z.string().url().default('https://evo.prospix.com.br'),
   EVOLUTION_GUILDS_INSTANCE: z.string().default('guilds_master'),
-  EVOLUTION_GUILDS_API_KEY: z.string().min(1, 'EVOLUTION_GUILDS_API_KEY is required'),
+  EVOLUTION_GUILDS_API_KEY: z.string().default(''),
 
   INVITATION_CODE_TTL_DAYS: z.coerce.number().default(14),
   INVITATION_CODE_PREFIX: z.string().default('PRSPX'),
@@ -87,10 +87,6 @@ const envSchema = z.object({
     const mockCredentials = [
       { key: 'GOOGLE_CLIENT_ID', val: 'mock-client-id', name: 'Google Client ID' },
       { key: 'GOOGLE_CLIENT_SECRET', val: 'mock-client-secret', name: 'Google Client Secret' },
-      { key: 'ASAAS_API_KEY', val: 'mock-asaas-key', name: 'Asaas API Key' },
-      { key: 'ASAAS_WEBHOOK_SECRET', val: 'mock-asaas-webhook-secret', name: 'Asaas Webhook Secret' },
-      { key: 'RESEND_API_KEY', val: 'mock-resend-key', name: 'Resend API Key' },
-      { key: 'EVOLUTION_GUILDS_API_KEY', val: 'mock_guilds_api_key', name: 'Evolution Guilds API Key' },
     ];
 
     for (const cred of mockCredentials) {
@@ -122,13 +118,6 @@ const envSchema = z.object({
     }
   }
 
-  if (data.NODE_ENV === 'production' && data.ASAAS_BASE_URL.includes('sandbox.asaas.com')) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'In production mode, ASAAS_BASE_URL must point to the live Asaas API.',
-      path: ['ASAAS_BASE_URL'],
-    });
-  }
 });
 
 const _env = envSchema.safeParse(process.env);

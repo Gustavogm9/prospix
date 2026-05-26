@@ -44,6 +44,15 @@ export async function sendMagicLink(whatsapp: string): Promise<Result<{ expires_
     });
   }
 
+  // Check if Evolution API is configured for WhatsApp sending
+  if (!env.EVOLUTION_GUILDS_API_KEY) {
+    logger.warn({ whatsapp: normalizedNumber }, '🔑 Magic Link: Evolution API not configured, cannot send WhatsApp');
+    return ResultHelper.failure({
+      code: 'SERVICE_NOT_CONFIGURED',
+      message: 'WhatsApp gateway is not configured. Please use email/password login or contact support.',
+    });
+  }
+
   // 1. Verify if user exists (runs with DB role scoped to auth bypass)
   const user = await withAuthRlsBypass((tx) =>
     tx.user.findFirst({
