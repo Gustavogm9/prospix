@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { Card, CardContent, Button, Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell, toast, Input, Modal, Skeleton } from '@prospix/ui';
 import { Search, Ban, Play, Inbox, AlertCircle, RotateCw } from 'lucide-react';
 import { adminApiClient } from '../lib/api-client';
@@ -297,10 +298,10 @@ export default function Tenants() {
               ) : filteredTenants.map((t) => (
                 <TableRow key={t.id} className="hover:bg-surface-sunken/40">
                   <TableCell className="py-3.5 px-6 font-medium text-text">
-                    <div>
-                      <div className="text-xs font-bold text-text">{t.name}</div>
+                    <Link to={`/tenants/${t.id}`} className="block hover:text-primary transition-colors">
+                      <div className="text-xs font-bold text-text hover:text-primary underline-offset-2 hover:underline">{t.name}</div>
                       <div className="text-[10px] text-text-muted font-mono mt-0.5">slug: {t.slug}</div>
-                    </div>
+                    </Link>
                   </TableCell>
                   <TableCell className="py-3.5 px-6 text-text-secondary text-xs">
                     <div>

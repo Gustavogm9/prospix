@@ -643,6 +643,78 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
   // =============================================================================
 
   // GET /usage/consolidated
+  // GET /tenants/:id/insights · counts + usage 3m + billing history para o Tenant Detail Page
+  app.get('/tenants/:id/insights', async (req: FastifyRequest, reply: FastifyReply) => {
+    const { id } = req.params as { id: string };
+    try {
+      const now = new Date();
+      const threeMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 2, 1, 0, 0, 0, 0);
+
+      const insights = await withAdminRole(async (tx) => {
+        const tenant = await tx.tenant.findUnique({ where: { id }, select: { id: true } });
+        if (!tenant) return null;
+
+        const [leadsCount, conversationsActive, conversationsTotal, scriptsActive, lgpdPending, meetingsScheduled, usageRecords, billingHistory] = await Promise.all([
+          tx.lead.count({ where: { tenantId: id, deletedAt: null } }),
+          tx.conversation.count({ where: { tenantId: id, status: 'ACTIVE' } }),
+          tx.conversation.count({ where: { tenantId: id } }),
+          tx.script.count({ where: { tenantId: id, status: 'ACTIVE', archivedAt: null } }),
+          tx.lgpdRequest.count({ where: { tenantId: id, status: { in: ['PENDING', 'PROCESSING'] } } }),
+          tx.meeting.count({ where: { tenantId: id, status: 'SCHEDULED' } }),
+          tx.tenantUsage.findMany({
+            where: { tenantId: id, periodMonth: { gte: threeMonthsAgo } },
+            orderBy: { periodMonth: 'asc' },
+          }),
+          tx.tenantBilling.findMany({
+            where: { tenantId: id },
+            orderBy: { dueAt: 'desc' },
+            take: 6,
+          }),
+        ]);
+
+        return { leadsCount, conversationsActive, conversationsTotal, scriptsActive, lgpdPending, meetingsScheduled, usageRecords, billingHistory };
+      });
+
+      if (!insights) {
+        return reply.code(404).send({ error: 'RESOURCE_NOT_FOUND', message: 'Tenant not found' });
+      }
+
+      return reply.send({
+        data: {
+          counts: {
+            leads: insights.leadsCount,
+            conversationsActive: insights.conversationsActive,
+            conversationsTotal: insights.conversationsTotal,
+            scriptsActive: insights.scriptsActive,
+            lgpdPending: insights.lgpdPending,
+            meetingsScheduled: insights.meetingsScheduled,
+          },
+          usage3m: insights.usageRecords.map((u) => ({
+            periodMonth: u.periodMonth.toISOString().slice(0, 7),
+            llmCostCents: Number(u.llmCostCents),
+            whatsappCostCents: Number(u.whatsappCostCents),
+            googleMapsCostCents: Number(u.googleMapsCostCents),
+            totalCostCents: Number(u.llmCostCents) + Number(u.whatsappCostCents) + Number(u.googleMapsCostCents),
+            llmTokensInput: Number(u.llmTokensInput),
+            llmTokensOutput: Number(u.llmTokensOutput),
+            whatsappMessagesSent: Number(u.whatsappMessagesSent),
+          })),
+          billing: insights.billingHistory.map((b) => ({
+            id: b.id,
+            periodMonth: b.periodMonth.toISOString().slice(0, 7),
+            totalCents: b.totalCents,
+            status: b.status,
+            dueAt: b.dueAt.toISOString(),
+            paidAt: b.paidAt?.toISOString() ?? null,
+          })),
+        },
+      });
+    } catch (err) {
+      app.log.error({ err, tenantId: id }, 'admin/tenants/:id/insights failed');
+      return reply.code(500).send({ error: 'INTERNAL', message: 'Falha ao calcular insights do tenant.' });
+    }
+  });
+
   app.get('/usage/consolidated', async (_req, reply) => {
     const startOfMonth = new Date();
     startOfMonth.setDate(1);

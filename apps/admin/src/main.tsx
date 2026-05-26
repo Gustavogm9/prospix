@@ -11,6 +11,8 @@ import NewTenant from './pages/NewTenant';
 import Templates from './pages/Templates';
 import Observability from './pages/Observability';
 import Discovery from './pages/Discovery';
+import TenantDetail from './pages/TenantDetail';
+import Billing from './pages/Billing';
 import './index.css';
 
 // Protected Admin Route checking adminToken and session
@@ -55,9 +57,11 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route index element={<Dashboard />} />
           <Route path="tenants" element={<Tenants />} />
           <Route path="tenants/novo" element={<NewTenant />} />
+          <Route path="tenants/:id" element={<TenantDetail />} />
           <Route path="templates" element={<Templates />} />
           <Route path="observabilidade" element={<Observability />} />
           <Route path="discovery" element={<Discovery />} />
+          <Route path="faturamento" element={<Billing />} />
         </Route>
 
         {/* Catch-all Fallback */}

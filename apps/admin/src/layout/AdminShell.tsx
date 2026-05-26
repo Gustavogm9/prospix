@@ -11,7 +11,8 @@ import {
   X,
   ChevronDown,
   Activity,
-  Compass
+  Compass,
+  CreditCard
 } from 'lucide-react';
 import { Avatar, Dropdown, DropdownItem } from '@prospix/ui';
 
@@ -26,6 +27,7 @@ export default function AdminShell() {
     { name: 'Gerenciar Tenants', path: '/tenants', icon: Building },
     { name: 'Cadastrar Tenant', path: '/tenants/novo', icon: PlusCircle },
     { name: 'Templates Master', path: '/templates', icon: FileText },
+    { name: 'Faturamento', path: '/faturamento', icon: CreditCard },
     { name: 'Discovery', path: '/discovery', icon: Compass },
     { name: 'Observabilidade', path: '/observabilidade', icon: Activity },
   ];
