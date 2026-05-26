@@ -10,7 +10,7 @@ COPY apps/api/package.json ./apps/api/
 COPY apps/api/prisma ./apps/api/prisma
 RUN pnpm install --frozen-lockfile
 
-RUN rm -rf packages/shared-types/node_modules apps/api/node_modules
+RUN rm -rf packages/shared-types/node_modules
 COPY packages/shared-types ./packages/shared-types
 COPY apps/api ./apps/api
 RUN pnpm --filter @prospix/api db:generate
