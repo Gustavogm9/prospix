@@ -7,6 +7,7 @@ WORKDIR /usr/src/app
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.base.json ./
 COPY packages/shared-types/package.json ./packages/shared-types/
 COPY apps/api/package.json ./apps/api/
+COPY apps/api/prisma ./apps/api/prisma
 RUN pnpm install --frozen-lockfile
 
 COPY packages/shared-types ./packages/shared-types
