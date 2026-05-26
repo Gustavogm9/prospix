@@ -4,6 +4,8 @@ import { Compass, Loader2, AlertCircle, Save, FileText } from 'lucide-react';
 import { adminApiClient } from '../lib/api-client';
 import { AxiosError } from 'axios';
 import { MaterialsUploader } from './discovery/MaterialsUploader';
+import { DraftsEditor } from './discovery/DraftsEditor';
+import { PromotionPanel } from './discovery/PromotionPanel';
 
 type DiscoveryStatus =
   | 'NOT_STARTED'
@@ -366,6 +368,18 @@ export default function Discovery() {
                   />
                 </CardContent>
               </Card>
+
+              <DraftsEditor
+                tenantId={selectedTenantId}
+                onSaved={() => refreshDiscovery(selectedTenantId, true)}
+              />
+
+              <PromotionPanel
+                tenantId={selectedTenantId}
+                discoveryStatus={discovery.status}
+                validationRounds={discovery.validationRounds}
+                onChanged={() => refreshDiscovery(selectedTenantId, true)}
+              />
             </>
           ) : null}
         </>
