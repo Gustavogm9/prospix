@@ -14,9 +14,10 @@ function assertSeedIsAllowed() {
     throw new Error('Refusing to seed without ALLOW_DESTRUCTIVE_SEED=1. This script truncates application tables.');
   }
 
-  // Relax password requirements only for local development database setup
-  if (nodeEnv !== 'development' && (!process.env.SEED_ADMIN_PASSWORD || process.env.SEED_ADMIN_PASSWORD.length < 12)) {
-    throw new Error('SEED_ADMIN_PASSWORD with at least 12 characters is required in non-development environments.');
+  // SEED_ADMIN_PASSWORD must always meet length policy when destructive seed is allowed
+  // (a fraca passa por todos ambientes era convite a vazar credencial local)
+  if (!process.env.SEED_ADMIN_PASSWORD || process.env.SEED_ADMIN_PASSWORD.length < 12) {
+    throw new Error('SEED_ADMIN_PASSWORD with at least 12 characters is required.');
   }
 }
 

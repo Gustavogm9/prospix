@@ -14,7 +14,7 @@
   "scripts": {
     "lint": "eslint src --max-warnings=0",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "clean": "rm -rf .turbo"
   },
   "dependencies": {
@@ -37,6 +37,6 @@
     "react-dom": "^18.3.1",
     "tailwindcss": "^3.4.16",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "vitest": "^3.2.4"
   }
 }
