@@ -30,7 +30,8 @@
     "db:reset": "pnpm --filter @prospix/api db:reset",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "clean": "turbo run clean && rm -rf node_modules"
+    "clean": "turbo run clean && rm -rf node_modules",
+    "postinstall": "pnpm --filter @prospix/api db:generate"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.11.3",
