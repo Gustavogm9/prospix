@@ -111,6 +111,40 @@ export async function deleteR2Object(key: string): Promise<void> {
 }
 
 /**
+ * Gera URL presigned para upload (PUT direto pelo client) ao R2.
+ *
+ * Usado pelo flow Frente G Discovery (audio/video/transcrição/aprovação)
+ * onde o client envia o arquivo binário sem passar pelo backend.
+ *
+ * @param key path completo no bucket (caller monta com tenant prefix)
+ * @param contentType MIME enforçado no upload
+ * @param expiresInSeconds TTL do PUT URL (default 15min)
+ */
+export async function presignUpload(params: {
+  key: string;
+  contentType: string;
+  expiresInSeconds?: number;
+}): Promise<{ uploadUrl: string; expiresAt: Date }> {
+  if (!isR2Configured()) {
+    throw new Error('R2 not configured for presigned upload');
+  }
+  const client = getR2Client();
+  const ttl = params.expiresInSeconds ?? 900;
+  const uploadUrl = await getSignedUrl(
+    client,
+    new PutObjectCommand({
+      Bucket: env.R2_BUCKET,
+      Key: params.key,
+      ContentType: params.contentType,
+      CacheControl: 'private, no-cache',
+    }),
+    { expiresIn: ttl },
+  );
+  const expiresAt = new Date(Date.now() + ttl * 1000);
+  return { uploadUrl, expiresAt };
+}
+
+/**
  * Regenera URL presigned para um objeto existente.
  * Util quando a URL anterior expirou e o admin precisa nova.
  */

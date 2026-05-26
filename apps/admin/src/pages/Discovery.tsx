@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Badge, Button, Input, toast } from '@prospix/ui';
-import { Compass, Loader2, AlertCircle, CheckCircle2, Save, FileText } from 'lucide-react';
+import { Compass, Loader2, AlertCircle, Save, FileText } from 'lucide-react';
 import { adminApiClient } from '../lib/api-client';
 import { AxiosError } from 'axios';
+import { MaterialsUploader } from './discovery/MaterialsUploader';
 
 type DiscoveryStatus =
   | 'NOT_STARTED'
@@ -115,29 +116,34 @@ export default function Discovery() {
     })();
   }, []);
 
-  useEffect(() => {
-    if (!selectedTenantId) return;
-    (async () => {
-      setIsLoadingDiscovery(true);
-      setDiscoveryError(null);
-      try {
-        const response = await adminApiClient.get(`/admin/tenants/${selectedTenantId}/discovery`);
-        const payload: DiscoveryPayload = response.data?.data;
-        setDiscovery(payload);
+  const refreshDiscovery = async (id: string, silent = false) => {
+    if (!silent) setIsLoadingDiscovery(true);
+    setDiscoveryError(null);
+    try {
+      const response = await adminApiClient.get(`/admin/tenants/${id}/discovery`);
+      const payload: DiscoveryPayload = response.data?.data;
+      setDiscovery(payload);
+      if (!silent) {
         setDraftStatus(payload.status);
         setDraftScheduledFor(toInputDateTime(payload.scheduledFor));
         setDraftConductedAt(toInputDateTime(payload.conductedAt));
         setDraftNotes(payload.notes ?? '');
-      } catch (err: unknown) {
-        const message = err instanceof AxiosError
-          ? err.response?.data?.message || 'Falha ao carregar discovery.'
-          : 'Falha ao carregar discovery.';
-        setDiscoveryError(message);
-        setDiscovery(null);
-      } finally {
-        setIsLoadingDiscovery(false);
       }
-    })();
+    } catch (err: unknown) {
+      const message = err instanceof AxiosError
+        ? err.response?.data?.message || 'Falha ao carregar discovery.'
+        : 'Falha ao carregar discovery.';
+      setDiscoveryError(message);
+      if (!silent) setDiscovery(null);
+    } finally {
+      if (!silent) setIsLoadingDiscovery(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!selectedTenantId) return;
+    refreshDiscovery(selectedTenantId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTenantId]);
 
   const progressIndex = useMemo(() => STATUS_FLOW.indexOf(draftStatus), [draftStatus]);
@@ -341,21 +347,23 @@ export default function Discovery() {
                 <CardHeader className="pb-3">
                   <CardTitle className="text-base font-bold font-heading text-text flex items-center gap-2">
                     <FileText className="w-4 h-4 text-text-secondary" aria-hidden />
-                    Materiais e drafts
+                    Materiais da sessão
                   </CardTitle>
                   <CardDescription className="text-text-secondary text-xs">
-                    Funções de upload (R2) e editores de voice profile/roteiros chegam na L1 fase 2 (roadmap docs/agents/frente-g-discovery-onboarding.md).
+                    Áudio/vídeo/transcrição da call + prova de aprovação do owner. Uploads diretos ao Cloudflare R2 (presigned).
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
-                    <ChecklistItem label="Áudio carregado" done={discovery.hasAudio} />
-                    <ChecklistItem label="Vídeo carregado" done={discovery.hasVideo} />
-                    <ChecklistItem label="Transcrição" done={discovery.hasTranscript} />
-                    <ChecklistItem label="Voice profile draft" done={discovery.hasVoiceProfileDraft} />
-                    <ChecklistItem label="Scripts draft" done={discovery.hasScriptsDraft} />
-                    <ChecklistItem label="Prova de aprovação" done={discovery.hasApprovalProof} />
-                  </div>
+                  <MaterialsUploader
+                    tenantId={selectedTenantId}
+                    presentMaterials={{
+                      hasAudio: discovery.hasAudio,
+                      hasVideo: discovery.hasVideo,
+                      hasTranscript: discovery.hasTranscript,
+                      hasApprovalProof: discovery.hasApprovalProof,
+                    }}
+                    onMaterialChanged={() => refreshDiscovery(selectedTenantId, true)}
+                  />
                 </CardContent>
               </Card>
             </>
@@ -366,15 +374,3 @@ export default function Discovery() {
   );
 }
 
-function ChecklistItem({ label, done }: { label: string; done: boolean }) {
-  return (
-    <div
-      className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${
-        done ? 'bg-success-soft border-success/30 text-success-text' : 'bg-surface-sunken border-border text-text-secondary'
-      }`}
-    >
-      {done ? <CheckCircle2 className="w-4 h-4" aria-hidden /> : <AlertCircle className="w-4 h-4 opacity-50" aria-hidden />}
-      <span className="text-xs font-medium">{label}</span>
-    </div>
-  );
-}
