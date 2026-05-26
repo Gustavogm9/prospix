@@ -13,6 +13,8 @@ import Observability from './pages/Observability';
 import Discovery from './pages/Discovery';
 import TenantDetail from './pages/TenantDetail';
 import Billing from './pages/Billing';
+import AuditLog from './pages/AuditLog';
+import Compliance from './pages/Compliance';
 import './index.css';
 
 // Protected Admin Route checking adminToken and session
@@ -62,6 +64,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="observabilidade" element={<Observability />} />
           <Route path="discovery" element={<Discovery />} />
           <Route path="faturamento" element={<Billing />} />
+          <Route path="audit" element={<AuditLog />} />
+          <Route path="compliance" element={<Compliance />} />
         </Route>
 
         {/* Catch-all Fallback */}

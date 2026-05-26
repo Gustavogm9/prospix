@@ -715,6 +715,156 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     }
   });
 
+  // GET /lgpd-requests · cross-tenant compliance view
+  const lgpdQuerySchema = z.object({
+    status: z.enum(['PENDING', 'PROCESSING', 'COMPLETED', 'REJECTED', 'CANCELED']).optional(),
+    type: z.enum(['EXPORT_DATA', 'DELETE_TENANT_DATA', 'DELETE_LEAD_DATA', 'CORRECT_DATA', 'CONFIRM_DATA']).optional(),
+    tenantId: z.string().uuid().optional(),
+    limit: z.coerce.number().int().min(1).max(500).optional().default(100),
+    offset: z.coerce.number().int().min(0).optional().default(0),
+  });
+
+  app.get('/lgpd-requests', async (req: FastifyRequest, reply: FastifyReply) => {
+    const parsed = lgpdQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'VALIDATION', message: 'Query inválida.', issues: parsed.error.issues });
+    }
+    const { status, type, tenantId, limit, offset } = parsed.data;
+    try {
+      const where: Record<string, unknown> = {};
+      if (status) where.status = status;
+      if (type) where.type = type;
+      if (tenantId) where.tenantId = tenantId;
+
+      const [items, total, statusCounts] = await withAdminRole(async (tx) => {
+        return Promise.all([
+          tx.lgpdRequest.findMany({
+            where,
+            orderBy: { createdAt: 'desc' },
+            take: limit,
+            skip: offset,
+            include: {
+              tenant: { select: { id: true, name: true, slug: true } },
+              requestedByUser: { select: { id: true, name: true, email: true } },
+              processedBy: { select: { id: true, name: true, email: true } },
+            },
+          }),
+          tx.lgpdRequest.count({ where }),
+          tx.lgpdRequest.groupBy({
+            by: ['status'],
+            _count: { status: true },
+          }),
+        ]);
+      });
+
+      const counts: Record<string, number> = { PENDING: 0, PROCESSING: 0, COMPLETED: 0, REJECTED: 0, CANCELED: 0 };
+      for (const c of statusCounts) counts[c.status] = c._count.status;
+
+      return reply.send({
+        data: {
+          items: items.map((r) => ({
+            id: r.id,
+            tenantId: r.tenantId,
+            tenant: r.tenant,
+            type: r.type,
+            status: r.status,
+            scope: r.scope,
+            requestedByUser: r.requestedByUser,
+            requestedByLead: r.requestedByLead,
+            rejectionReason: r.rejectionReason,
+            processedBy: r.processedBy,
+            processedAt: r.processedAt?.toISOString() ?? null,
+            createdAt: r.createdAt.toISOString(),
+            updatedAt: r.updatedAt.toISOString(),
+            downloadExpiresAt: r.downloadExpiresAt?.toISOString() ?? null,
+          })),
+          pagination: { total, limit, offset, hasMore: offset + items.length < total },
+          statusCounts: counts,
+        },
+      });
+    } catch (err) {
+      app.log.error({ err }, 'admin/lgpd-requests failed');
+      return reply.code(500).send({ error: 'INTERNAL', message: 'Falha ao listar requisições LGPD.' });
+    }
+  });
+
+  // GET /audit-logs · viewer cross-tenant com filtros (action/tenant/date range/user)
+  const auditLogsQuerySchema = z.object({
+    action: z.string().min(1).max(128).optional(),
+    tenantId: z.string().uuid().optional(),
+    userId: z.string().uuid().optional(),
+    from: z.string().datetime().optional(),
+    to: z.string().datetime().optional(),
+    limit: z.coerce.number().int().min(1).max(500).optional().default(100),
+    offset: z.coerce.number().int().min(0).optional().default(0),
+  });
+
+  app.get('/audit-logs', async (req: FastifyRequest, reply: FastifyReply) => {
+    const parsed = auditLogsQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'VALIDATION', message: 'Query inválida.', issues: parsed.error.issues });
+    }
+    const { action, tenantId, userId, from, to, limit, offset } = parsed.data;
+    try {
+      const where: Record<string, unknown> = {};
+      if (action) where.action = action;
+      if (tenantId) where.tenantId = tenantId;
+      if (userId) where.userId = userId;
+      if (from || to) {
+        const range: Record<string, Date> = {};
+        if (from) range.gte = new Date(from);
+        if (to) range.lte = new Date(to);
+        where.createdAt = range;
+      }
+
+      const [logs, total, distinctActions] = await withAdminRole(async (tx) => {
+        return Promise.all([
+          tx.auditLog.findMany({
+            where,
+            orderBy: { createdAt: 'desc' },
+            take: limit,
+            skip: offset,
+            include: {
+              tenant: { select: { id: true, name: true, slug: true } },
+              user: { select: { id: true, name: true, email: true, role: true } },
+            },
+          }),
+          tx.auditLog.count({ where }),
+          tx.auditLog.findMany({
+            distinct: ['action'],
+            select: { action: true },
+            orderBy: { action: 'asc' },
+            take: 100,
+          }),
+        ]);
+      });
+
+      return reply.send({
+        data: {
+          items: logs.map((l) => ({
+            id: l.id.toString(),
+            tenantId: l.tenantId,
+            tenant: l.tenant ? { id: l.tenant.id, name: l.tenant.name, slug: l.tenant.slug } : null,
+            userId: l.userId,
+            user: l.user ? { id: l.user.id, name: l.user.name, email: l.user.email, role: l.user.role } : null,
+            action: l.action,
+            targetType: l.targetType,
+            targetId: l.targetId,
+            payload: l.payload,
+            ipAddress: l.ipAddress,
+            userAgent: l.userAgent,
+            createdAt: l.createdAt.toISOString(),
+          })),
+          pagination: { total, limit, offset, hasMore: offset + logs.length < total },
+          knownActions: distinctActions.map((a) => a.action),
+        },
+      });
+    } catch (err) {
+      app.log.error({ err }, 'admin/audit-logs failed');
+      return reply.code(500).send({ error: 'INTERNAL', message: 'Falha ao buscar audit logs.' });
+    }
+  });
+
   app.get('/usage/consolidated', async (_req, reply) => {
     const startOfMonth = new Date();
     startOfMonth.setDate(1);

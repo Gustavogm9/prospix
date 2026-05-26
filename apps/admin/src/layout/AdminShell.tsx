@@ -12,7 +12,9 @@ import {
   ChevronDown,
   Activity,
   Compass,
-  CreditCard
+  CreditCard,
+  History,
+  ShieldAlert
 } from 'lucide-react';
 import { Avatar, Dropdown, DropdownItem } from '@prospix/ui';
 
@@ -30,6 +32,8 @@ export default function AdminShell() {
     { name: 'Faturamento', path: '/faturamento', icon: CreditCard },
     { name: 'Discovery', path: '/discovery', icon: Compass },
     { name: 'Observabilidade', path: '/observabilidade', icon: Activity },
+    { name: 'Audit Log', path: '/audit', icon: History },
+    { name: 'Compliance LGPD', path: '/compliance', icon: ShieldAlert },
   ];
 
   const handleLogout = () => {
