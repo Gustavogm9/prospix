@@ -237,6 +237,7 @@ model Tenant {
   lgpdRequests       LgpdRequest[]
   promptVersions     PromptVersion[]
   idempotencyKeys    IdempotencyKey[]
+  discovery          TenantDiscovery?
 
   @@index([status])
   @@index([segment])
@@ -432,6 +433,7 @@ model User {
   auditLogs          AuditLog[]
   lgpdRequested      LgpdRequest[]            @relation("LgpdRequestedBy")
   lgpdProcessed      LgpdRequest[]            @relation("LgpdProcessedBy")
+  discoveriesPm      TenantDiscovery[]        @relation("DiscoveryPm")
 
   @@index([tenantId])
   @@index([email])
@@ -1054,6 +1056,59 @@ model TenantNote {
 
   @@index([tenantId, createdAt(sort: Desc)])
   @@map("tenant_notes")
+}
+
+// =============================================================================
+// TENANT DISCOVERY (Frente G · onboarding manual rastreável · 1 row por tenant)
+// Roadmap completo: docs/agents/frente-g-discovery-onboarding.md
+// =============================================================================
+model TenantDiscovery {
+  tenantId            String           @id @map("tenant_id") @db.Uuid
+  tenant              Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  status              DiscoveryStatus  @default(NOT_STARTED)
+
+  scheduledFor        DateTime?        @map("scheduled_for") @db.Timestamptz()
+  conductedAt         DateTime?        @map("conducted_at") @db.Timestamptz()
+
+  // Materiais (R2 keys · upload via endpoint dedicado · TODO L1 fase 2)
+  audioR2Key          String?          @map("audio_r2_key") @db.Text
+  videoR2Key          String?          @map("video_r2_key") @db.Text
+  transcriptR2Key     String?          @map("transcript_r2_key") @db.Text
+  attachments         Json?            // [{ r2_key, kind, label, uploaded_at }]
+
+  // Drafts editáveis (TODO L1 fase 2 · editor JSON com schema validation)
+  voiceProfileDraft   Json?            @map("voice_profile_draft")
+  scriptsDraft        Json?            @map("scripts_draft")
+
+  // Validação · max 2 rodadas
+  validatedAt         DateTime?        @map("validated_at") @db.Timestamptz()
+  validationRounds    Int              @default(0) @map("validation_rounds")
+
+  // Aprovação formal
+  approvedAt          DateTime?        @map("approved_at") @db.Timestamptz()
+  approvalProofR2Key  String?          @map("approval_proof_r2_key") @db.Text
+
+  pmUserId            String?          @map("pm_user_id") @db.Uuid
+  pmUser              User?            @relation("DiscoveryPm", fields: [pmUserId], references: [id])
+
+  notes               String?          @db.Text
+
+  createdAt           DateTime         @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt           DateTime         @updatedAt @map("updated_at") @db.Timestamptz()
+
+  @@index([status])
+  @@map("tenant_discoveries")
+}
+
+enum DiscoveryStatus {
+  NOT_STARTED
+  SCHEDULED
+  IN_SESSION
+  CONSOLIDATING
+  VALIDATING
+  APPROVED
+  CHURNED_BEFORE_APPROVAL
 }
 
 // =============================================================================
