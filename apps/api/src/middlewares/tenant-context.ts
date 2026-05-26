@@ -25,6 +25,7 @@ export async function tenantContext(req: FastifyRequest, reply: FastifyReply): P
   // 1. Bypass routes that do not need authentication/tenant context
   const isBypass = 
     url.startsWith('/auth/') || 
+    url.startsWith('/v1/auth/') ||
     url.startsWith('/webhooks/') || 
     url.startsWith('/v1/webhooks/') ||
     url.includes('/integrations/google/callback') ||
