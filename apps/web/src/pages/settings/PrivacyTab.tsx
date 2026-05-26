@@ -154,7 +154,7 @@ export default function PrivacyTab() {
       await apiClient.post(`/tenant/lgpd/requests/${requestId}/cancel`);
       toast.success('Solicitação cancelada', 'A solicitação foi marcada como cancelada.');
       await fetchRequests();
-    } catch (err) {
+    } catch {
       toast.error('Erro ao cancelar', 'Não foi possível cancelar agora. Tente novamente.');
     }
   };

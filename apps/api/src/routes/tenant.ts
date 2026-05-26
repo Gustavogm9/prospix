@@ -563,7 +563,7 @@ Lembre-se de utilizar ganchos conversacionais de alto impacto. Retorne apenas o 
       let parsedResponse;
       try {
         parsedResponse = JSON.parse(result.content);
-      } catch (err) {
+      } catch {
         // Fallback in case JSON is wrapped in markdown code blocks
         const cleaned = result.content.replace(/```json/g, '').replace(/```/g, '').trim();
         parsedResponse = JSON.parse(cleaned);

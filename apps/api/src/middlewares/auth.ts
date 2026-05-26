@@ -6,7 +6,7 @@ import { FastifyRequest, FastifyReply } from 'fastify';
 export async function verifyJWT(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   try {
     await (req as any).jwtVerify();
-  } catch (err) {
+  } catch {
     return reply.code(401).send({ error: 'Unauthorized', message: 'Invalid or expired token' });
   }
 }

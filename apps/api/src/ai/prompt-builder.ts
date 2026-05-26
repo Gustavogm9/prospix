@@ -68,7 +68,7 @@ export function replaceVariables(
 
   for (const [key, val] of Object.entries(replacements)) {
     // Replace all occurrences
-    result = result.replace(new RegExp(key.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g'), val);
+    result = result.replace(new RegExp(key.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g'), val);
   }
 
   return result;

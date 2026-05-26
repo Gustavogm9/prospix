@@ -149,7 +149,7 @@ export default function Pipeline() {
     try {
       await apiClient.patch(`/tenant/leads/${id}`, { status: STAGE_TO_STATUS[targetStage] });
       toast.success('Sucesso', 'Estágio atualizado no servidor.');
-    } catch (error) {
+    } catch {
       setLeads(leads.map(l => l.id === id ? { ...l, stage: originalStage } : l));
       toast.error('Falha na conexão', 'Erro ao salvar alterações no servidor.');
     } finally {

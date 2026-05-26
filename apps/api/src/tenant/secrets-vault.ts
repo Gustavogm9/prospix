@@ -58,7 +58,7 @@ export async function decryptSecret(ciphertext: string): Promise<string> {
     decrypted = Buffer.concat([decrypted, decipher.final()]);
 
     return decrypted.toString('utf8');
-  } catch (err) {
+  } catch {
     // Standard tampering error
     throw new Error('Decryption failed: AuthenticationFailed');
   }

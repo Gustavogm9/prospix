@@ -204,7 +204,8 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       orderBy: { createdAt: 'desc' },
     }));
     const tenantsWithHealth = tenants.map((tenant) => {
-      const { secret, ...safeTenant } = tenant;
+      const { secret: _secret, ...safeTenant } = tenant;
+      void _secret;
       return {
         ...safeTenant,
         integrationHealth: buildIntegrationHealth(tenant as Pick<TenantWithCredentialRecord, 'status' | 'secret'>),

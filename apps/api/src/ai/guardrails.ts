@@ -140,7 +140,7 @@ export async function callAIWithGuardrails(params: {
       try {
         const cleaned = response.content.replace(/```json|```/g, '').trim();
         parsed = JSON.parse(cleaned);
-      } catch (err) {
+      } catch {
         throw new Error('AI response is not valid JSON');
       }
 

@@ -38,6 +38,7 @@ export const Drawer = ({
       }, 300); // matches slide duration
       return () => clearTimeout(timer);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   React.useEffect(() => {

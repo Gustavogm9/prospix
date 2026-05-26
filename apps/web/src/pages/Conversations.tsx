@@ -200,6 +200,7 @@ export default function Conversations() {
 
   useEffect(() => {
     fetchConversations();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 2. Fetch Messages for selected conversation
@@ -295,6 +296,7 @@ export default function Conversations() {
     return () => {
       supabase.removeChannel(channel);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, selectedConv?.id]);
 
   // Scroll to bottom of chat
@@ -319,7 +321,7 @@ export default function Conversations() {
         aiHandling: false,
       });
       toast.success('Controle Manual Ativo', 'A IA foi desativada temporariamente. Você está no controle da conversa.');
-    } catch (err) {
+    } catch {
       toast.error('Erro de Conexão', 'Não foi possível alterar o status do bot.');
       const rolled = { ...selectedConv, aiHandling: true };
       setSelectedConv(rolled);
@@ -402,7 +404,7 @@ export default function Conversations() {
       setIsOutcomeModalOpen(false);
       setOutcomeValue('');
       setOutcomeCommission('');
-    } catch (error) {
+    } catch {
       toast.error('Erro ao registrar', 'Tente novamente ou verifique os valores.');
     }
   };

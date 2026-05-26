@@ -34,6 +34,7 @@ export const Modal = ({
       }, 200); // matches duration-200
       return () => clearTimeout(timer);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   React.useEffect(() => {

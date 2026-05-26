@@ -145,7 +145,7 @@ export default function Discovery() {
   useEffect(() => {
     if (!selectedTenantId) return;
     refreshDiscovery(selectedTenantId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
   }, [selectedTenantId]);
 
   const progressIndex = useMemo(() => STATUS_FLOW.indexOf(draftStatus), [draftStatus]);
