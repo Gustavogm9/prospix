@@ -48,11 +48,7 @@ function withAdminRole<TResult>(operation: (tx: AdminTransaction) => Promise<TRe
       userId: store?.userId ?? null,
       bypassRls: true,
     },
-    () =>
-      prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`SET LOCAL ROLE guilds_admin`;
-        return operation(tx as unknown as AdminTransaction);
-      })
+    () => operation(prisma as unknown as AdminTransaction)
   );
 }
 

@@ -91,3 +91,5 @@ temp/
 
 # Tooling
 .husky/_/
+.vercel
+.env*

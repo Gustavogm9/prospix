@@ -44,25 +44,9 @@ export const evolutionWebhookRoutes: FastifyPluginAsync = async (app) => {
 
   async function findTenantSecretByEvolutionInstance(instanceName: string) {
     return tenantContextStorage.run({ tenantId: null, bypassRls: true }, async () => {
-      const secretRecord = await prisma.tenantSecret.findFirst({
+      return prisma.tenantSecret.findFirst({
         where: { evolutionInstanceName: instanceName },
       });
-
-      if (secretRecord) {
-        return secretRecord;
-      }
-
-      try {
-        return await prisma.$transaction(async (tx) => {
-          await tx.$executeRaw`SET LOCAL ROLE guilds_admin`;
-          return tx.tenantSecret.findFirst({
-            where: { evolutionInstanceName: instanceName },
-          });
-        });
-      } catch (err) {
-        logger.warn({ err, instanceName }, '⚠️ Failed to resolve Evolution tenant secret with RLS bypass role');
-        return null;
-      }
     });
   }
 

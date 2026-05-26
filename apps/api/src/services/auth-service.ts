@@ -20,10 +20,7 @@ export async function withAuthRlsBypass<TResult>(
   operation: (client: RlsBypassClient) => Promise<TResult>
 ): Promise<TResult> {
   return tenantContextStorage.run({ tenantId: null, bypassRls: true }, () =>
-    prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SET LOCAL ROLE guilds_admin`;
-      return operation(tx as unknown as RlsBypassClient);
-    })
+    operation(prisma)
   );
 }
 
