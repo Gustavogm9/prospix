@@ -126,8 +126,8 @@ BACKEND   · Node.js 20 + Fastify + Prisma ORM
 BANCO     · PostgreSQL 16 (Supabase)
 CACHE/Q   · Redis (Upstash) + BullMQ para filas
 IA        · OpenAI GPT-4o-mini (default) | fallback Claude Haiku 3.5
-INFRA     · Railway (API + worker) + Supabase (DB) + Cloudflare R2 (assets)
-DEPLOY    · GitHub Actions → Railway (CI/CD)
+INFRA     · Hostinger VPS (API + worker + redis + proxies) + Supabase (DB) + Cloudflare R2 (assets)
+DEPLOY    · GitHub Actions / SSH script → Hostinger VPS (CI/CD)
 MONITOR   · Sentry (errors) + BetterStack (uptime) + Posthog (analytics)
 AUTH      · Supabase Auth (magic link via WhatsApp)
 ```
@@ -1081,7 +1081,7 @@ OBJETIVOS (ordem):
 | Serviço | Quem contrata | Status | Notas |
 |---|---|---|---|
 | Supabase (DB + Auth + Vault) | Guilds | Ativo | Projeto único · RLS isola tenants |
-| Railway (API + workers) | Guilds | Ativo | Cluster único · workers respeitam tenant_id |
+| Hostinger VPS (API + workers) | Guilds | Ativo | Servidor VPS próprio rodando Docker stack com isolamento |
 | Cloudflare R2 (storage) | Guilds | Ativo | Bucket único · paths prefixados com tenant_id |
 | Sentry (errors) | Guilds | Ativo | Tags `tenant_id` em todo evento |
 | BetterStack (uptime) | Guilds | Ativo | Monitora endpoints públicos |
@@ -1093,7 +1093,7 @@ OBJETIVOS (ordem):
 | Evolution API instância dedicada | Tenant (R$ 280/mês) | 1 instância · 1 número WhatsApp · armazenado em `tenant_secrets` |
 | Google Cloud (Maps + Calendar) | Tenant (custo direto) | Conta Google do owner · OAuth refresh em vault |
 | OpenAI API key própria (opcional) | Tenant | Plugável em `tenant_secrets.openai_api_key_encrypted` · ativa quando custo justifica |
-| Domínio próprio (opcional · Fase 3 white-label) | Tenant | DNS apontando pro Railway · cert SSL automático |
+| Domínio próprio (opcional · Fase 3 white-label) | Tenant | DNS apontando pro Hostinger VPS · cert SSL automático via Traefik |
 
 ### 14.3 Tenant #1 · Giovane Carrara (status kickoff)
 - [ ] Evolution API instância (a cadastrar)
@@ -1192,7 +1192,7 @@ prospix/                          # nome do produto (não "metlife-giovane")
 - [ ] Entrada paga (R$ 3.950)
 - [ ] Kickoff agendado (até D+5)
 - [ ] Reunião FOUNDRY · 3h com Giovane (gravada)
-- [ ] Setup repositório + Railway + Supabase
+- [ ] Setup repositório + Hostinger VPS + Supabase
 - [ ] Cadastro Evolution API + Google Cloud no nome do Giovane
 - [ ] Spec funcional aprovada até D+5
 - [ ] Início do desenvolvimento (Sprint A)

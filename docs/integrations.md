@@ -11,7 +11,7 @@
 | Serviço | Categoria | Quem paga | Custo | Quando provisionar | Crítico? |
 |---|---|---|---|---|---|
 | **Supabase** | DB + Auth + Realtime + Vault | Guilds | ~US$ 25/mês (Pro) | Dia 1 | 🔴 Sim |
-| **Railway** | Hosting API + workers | Guilds | ~US$ 20-50/mês | Dia 1 | 🔴 Sim |
+| **Hostinger VPS** | Hosting API + workers (Docker + Easypanel) | Guilds | ~US$ 10-30/mês | Dia 1 | 🔴 Sim |
 | **Cloudflare R2** | Storage (assets, exports) | Guilds | ~US$ 5/mês | Semana 1 | 🟡 Médio |
 | **OpenAI** | LLM (IA conversacional) | Guilds (franquia) | variável (~R$ 30-150/tenant/mês) | Dia 1 | 🔴 Sim |
 | **Anthropic** | LLM fallback | Guilds | variável (baixo) | Semana 2 | 🟢 Opcional |
@@ -65,34 +65,30 @@ SUPABASE_SERVICE_ROLE_KEY=eyJ...          # backend only · NUNCA expor no clien
 
 ---
 
-## 2. Railway (Hosting API + Workers) 🔴
+## 2. Hostinger VPS (Hosting API + Workers via Docker + Easypanel) 🔴
 
-**O que é:** PaaS pra rodar a API Node.js e os workers (BullMQ).
+**O que é:** Servidor Virtual Privado (VPS) da Hostinger rodando Docker Compose e Easypanel para hospedar a API Node.js e os workers (BullMQ).
 
 **Pra que usamos:**
-- Serviço `api` (Fastify · HTTP)
-- Serviço `worker` (BullMQ consumers)
-- Deploy via GitHub (push → build → deploy)
+- Serviço `api` (Fastify · HTTP rodando no contêiner `prospix-api`)
+- Serviço `worker` (BullMQ consumers rodando no contêiner `prospix-worker`)
+- Deploy via GitHub / script SSH que empacota o código e envia ao VPS, recriando as imagens Docker in-place.
 
-**Como criar:**
-1. Conta em https://railway.app (login GitHub)
-2. New Project → Deploy from GitHub repo
-3. Criar 3 serviços: `api`, `worker`, (`web` e `admin` podem ir pra Vercel/Cloudflare Pages)
-4. Configurar variáveis de ambiente (todas do `.env`)
-5. Configurar healthcheck path `/health`
+**Como configurar:**
+1. Servidor Hostinger VPS rodando Debian/Ubuntu com Easypanel instalado.
+2. Criar a estrutura em `/root/prospix` contendo o `docker-compose.yml` e as rotas de proxy reverso no Traefik (`/etc/easypanel/traefik/config/prospix.yaml`).
+3. As variáveis de ambiente ficam centralizadas no arquivo `/root/prospix/docker-compose.yml` no próprio VPS.
+4. O roteador Traefik mapeia o domínio `api.prospix.com.br` e gera o SSL Let's Encrypt de forma 100% automatizada.
 
-**Variáveis:**
+**Variáveis do contêiner:**
 ```bash
-# Railway injeta automaticamente:
-RAILWAY_ENVIRONMENT=production
-PORT=3000   # Railway define
+NODE_ENV=production
+PORT=3000
 ```
 
-**Custo:** ~US$ 20-50/mês (usage-based · escala com tráfego)
+**Custo:** ~US$ 10-30/mês (preço fixo da VPS Hostinger, extremamente econômico).
 
-**Alternativa:** Render.com (similar) ou Fly.io.
-
-**Doc:** https://docs.railway.app
+**Doc:** https://easypanel.io/docs
 
 ---
 
@@ -260,7 +256,7 @@ EVOLUTION_GUILDS_API_KEY=...
    - **Geocoding API** (opcional, pra normalizar endereços)
 5. Criar API Key · restringir por:
    - API (só Places + Geocoding)
-   - IP (servidores Railway)
+   - IP (IP do VPS Hostinger)
 
 **Variáveis (em `tenant_secrets`):**
 ```
@@ -382,7 +378,7 @@ SENTRY_DSN_FRONTEND=https://...
 **Como criar:**
 1. https://betterstack.com
 2. Uptime monitor → `/health` e `/ready`
-3. Logs → ingest do stdout do Railway
+3. Logs → ingest do stdout dos contêineres Docker no VPS Hostinger
 
 **Variáveis:**
 ```bash
@@ -536,7 +532,7 @@ ASAAS_WEBHOOK_SECRET=<gerado no painel>
 1. ✅ GitHub repo + org + branch protection
 2. ✅ Supabase project (São Paulo)
 3. ✅ Upstash Redis
-4. ✅ Railway (3 serviços)
+4. ✅ Hostinger VPS (Docker stack: API, Worker, Redis, Db-Proxy)
 5. ✅ OpenAI (key + billing)
 
 ### Semana 1 (Guilds)
@@ -656,7 +652,7 @@ TENANT_CHURNED_RETENTION_DAYS=90
 | Serviço | Se cair | Plano B |
 |---|---|---|
 | Supabase | Sistema fora | Backup R2 + restore (RTO 4h) |
-| Railway | API fora | Redeploy / failover region |
+| Hostinger VPS | API fora | Acesso SSH ➡️ reiniciar stack Docker com docker compose up -d |
 | OpenAI | IA não responde | Fallback Anthropic automático |
 | Evolution API | Não envia/recebe WhatsApp | Mensagens em fila · alerta · failover pra instância backup ou VPS reserva |
 | Google Maps | Captura para | Cache + pausa captura · não afeta conversas em andamento |
