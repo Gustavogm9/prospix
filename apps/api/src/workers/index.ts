@@ -15,6 +15,7 @@ import { DailyDigestWorker } from './daily-digest.js';
 import { UsageAggregationWorker } from './usage-aggregation.js';
 import { SendNotificationWorker } from './send-notification.js';
 import { ProcessLgpdRequestWorker } from './process-lgpd-request.js';
+import { AlertScanWorker } from './alert-scan.js';
 
 let activeWorkers: Worker[] = [];
 let activeQueueObservers: QueueFailureObserver[] = [];
@@ -32,6 +33,7 @@ export const workerQueueNames = [
   'daily-digest',
   'usage-aggregation',
   'process-lgpd-request',
+  'alert-scan',
 ];
 
 const SCHEDULER_TIMEZONE = 'America/Sao_Paulo';
@@ -96,6 +98,7 @@ export async function startWorkers() {
     const dailyDigestHandler = new DailyDigestWorker();
     const usageAggregationHandler = new UsageAggregationWorker();
     const lgpdRequestHandler = new ProcessLgpdRequestWorker();
+    const alertScanHandler = new AlertScanWorker();
 
     activeQueueObservers = workerQueueNames.map((workerName) => observeQueueFailures(workerName));
 
@@ -245,6 +248,19 @@ export async function startWorkers() {
     );
     activeWorkers.push(lgpdWorker);
 
+    // L. Alert Scan Worker (admin ops · daily cross-tenant scan)
+    const alertScanWorker = new Worker(
+      getTenantQueueName('global', 'alert-scan'),
+      async (job) => {
+        return await alertScanHandler.run(job);
+      },
+      {
+        connection: createDedicatedRedisConnection(),
+        concurrency: alertScanHandler.concurrency,
+      }
+    );
+    activeWorkers.push(alertScanWorker);
+
     // 2. Fetch active tenants to trigger initial health checks
     const tenants = await prisma.tenant.findMany({
       where: {
@@ -255,6 +271,17 @@ export async function startWorkers() {
 
     logger.info({ count: tenants.length }, `🏢 Enqueuing initial health checks for active tenants...`);
     await scheduleRecurringTenantJobs(tenants);
+
+    // Global scheduler · alert-scan diário 08:15 BRT (após daily-digest 08:00 settle)
+    await upsertTenantJobScheduler('global', {
+      workerName: 'alert-scan',
+      schedulerId: 'alert-scan:global',
+      jobName: 'alert-scan',
+      pattern: '15 8 * * *',
+      timezone: SCHEDULER_TIMEZONE,
+      data: { trace_id: 'scheduler:alert-scan:global', run_all_tenants: true } as never,
+    });
+    logger.info({ pattern: '15 8 * * *', tz: SCHEDULER_TIMEZONE }, '🚨 Alert scanner scheduled daily');
 
     for (const tenant of tenants) {
       const hcQueue = createTenantQueue(tenant.id, 'health-check');

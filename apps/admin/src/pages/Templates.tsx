@@ -32,6 +32,9 @@ export default function Templates() {
   // Delete Modal States
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [templateToDelete, setTemplateToDelete] = useState<string | null>(null);
+  const [impactPreview, setImpactPreview] = useState<{ scriptsCloned: number; tenantsCount: number; tenants: Array<{ id: string; name: string; slug: string }>; activeCampaigns: number } | null>(null);
+  const [isLoadingImpact, setIsLoadingImpact] = useState(false);
+  const [impacts, setImpacts] = useState<Record<string, { scriptsCloned: number; tenantsCount: number; activeCampaigns: number }>>({});
 
   const fetchTemplates = async () => {
     setIsLoading(true);
@@ -68,9 +71,33 @@ export default function Templates() {
     }
   };
 
+  const fetchAllImpacts = async (templates: Template[]) => {
+    const entries = await Promise.all(
+      templates.map(async (t) => {
+        try {
+          const response = await adminApiClient.get(`/admin/templates/${t.id}/impact`);
+          const d = response.data?.data;
+          return [t.id, { scriptsCloned: d?.scriptsCloned ?? 0, tenantsCount: d?.tenantsCount ?? 0, activeCampaigns: d?.activeCampaigns ?? 0 }] as const;
+        } catch {
+          return [t.id, { scriptsCloned: 0, tenantsCount: 0, activeCampaigns: 0 }] as const;
+        }
+      }),
+    );
+    const map: Record<string, { scriptsCloned: number; tenantsCount: number; activeCampaigns: number }> = {};
+    for (const [id, val] of entries) map[id] = val;
+    setImpacts(map);
+  };
+
   useEffect(() => {
-    fetchTemplates();
+    (async () => {
+      await fetchTemplates();
+    })();
   }, []);
+
+  useEffect(() => {
+    if (templates.length > 0) fetchAllImpacts(templates);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [templates.length]);
 
   const handleEditNodes = (tpl: Template) => {
     setSelectedTemplate(tpl);
@@ -102,9 +129,19 @@ export default function Templates() {
     }
   };
 
-  const handleDeleteClick = (id: string) => {
+  const handleDeleteClick = async (id: string) => {
     setTemplateToDelete(id);
+    setImpactPreview(null);
     setDeleteModalOpen(true);
+    setIsLoadingImpact(true);
+    try {
+      const response = await adminApiClient.get(`/admin/templates/${id}/impact`);
+      setImpactPreview(response.data?.data ?? null);
+    } catch (err) {
+      console.error('impact fetch failed:', err);
+    } finally {
+      setIsLoadingImpact(false);
+    }
   };
 
   const confirmDelete = async () => {
@@ -247,6 +284,23 @@ export default function Templates() {
                 <CardDescription className="text-text-secondary text-xs mt-3 leading-relaxed">
                   {tpl.description}
                 </CardDescription>
+                {impacts[tpl.id] && (
+                  <div className="mt-3 flex flex-wrap gap-1.5" title="Uso atual deste template em produção">
+                    <span className={`inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded border font-mono ${
+                      (impacts[tpl.id]?.tenantsCount ?? 0) > 0 ? 'bg-amber-50 text-amber-800 border-amber-300' : 'bg-success-soft/40 text-success-text border-success/30'
+                    }`}>
+                      {impacts[tpl.id]?.tenantsCount ?? 0} tenants
+                    </span>
+                    <span className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded border bg-surface-sunken text-text-secondary border-border/60 font-mono">
+                      {impacts[tpl.id]?.scriptsCloned ?? 0} scripts clonados
+                    </span>
+                    <span className={`inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded border font-mono ${
+                      (impacts[tpl.id]?.activeCampaigns ?? 0) > 0 ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-surface-sunken text-text-secondary border-border/60'
+                    }`}>
+                      {impacts[tpl.id]?.activeCampaigns ?? 0} campanhas ativas
+                    </span>
+                  </div>
+                )}
               </CardHeader>
               
               <CardContent className="pt-3 border-t border-border mt-4 flex items-center justify-between gap-3 bg-surface-sunken/20 rounded-b-xl">
@@ -376,18 +430,58 @@ export default function Templates() {
           </div>
         }
       >
-        <div className="flex items-start gap-3 py-1">
-          <div className="p-2 rounded-xl bg-error-soft text-error shrink-0">
-            <AlertTriangle className="w-5 h-5" />
+        <div className="space-y-3 py-1">
+          <div className="flex items-start gap-3">
+            <div className="p-2 rounded-xl bg-error-soft text-error shrink-0">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="font-semibold text-text text-sm mb-1">Apagar Template Master?</p>
+              <p className="text-text-secondary text-xs leading-relaxed">
+                Esta ação é um soft-delete (template marcado como inativo). Scripts já clonados em tenants continuam funcionando — apenas novos tenants não poderão mais clonar este fluxo durante o onboarding.
+              </p>
+            </div>
           </div>
-          <div>
-            <p className="font-semibold text-text text-sm mb-1">Apagar Template Master?</p>
-            <p className="text-text-secondary text-xs leading-relaxed">
-              Você tem certeza de que deseja deletar este template master permanente? 
-              Novos inquilinos (tenants) não poderão mais clonar este fluxo durante o onboarding. 
-              Esta ação não pode ser desfeita.
-            </p>
-          </div>
+
+          {isLoadingImpact ? (
+            <div className="bg-surface-sunken border border-border rounded-lg p-3 text-[10px] text-text-secondary text-center">
+              Calculando impacto...
+            </div>
+          ) : impactPreview ? (
+            <div className={`border rounded-lg p-3 text-xs ${
+              impactPreview.tenantsCount > 0 || impactPreview.activeCampaigns > 0
+                ? 'bg-amber-50 border-amber-300'
+                : 'bg-success-soft/40 border-success/30'
+            }`}>
+              <div className="font-bold text-text mb-2 text-[11px]">Impacto atual:</div>
+              <ul className="space-y-1 text-[10px] text-text">
+                <li>
+                  <span className="font-mono font-bold">{impactPreview.tenantsCount}</span> tenant(s) com scripts derivados deste template
+                </li>
+                <li>
+                  <span className="font-mono font-bold">{impactPreview.scriptsCloned}</span> script(s) ativo(s) clonado(s)
+                </li>
+                <li>
+                  <span className="font-mono font-bold">{impactPreview.activeCampaigns}</span> campanha(s) ativa(s) usando esses scripts
+                </li>
+              </ul>
+              {impactPreview.tenants.length > 0 && (
+                <details className="mt-2">
+                  <summary className="text-[10px] text-text-secondary cursor-pointer hover:text-text">
+                    Ver tenants ({impactPreview.tenants.length})
+                  </summary>
+                  <ul className="mt-1 text-[10px] text-text-secondary space-y-0.5 pl-3">
+                    {impactPreview.tenants.slice(0, 10).map((t) => (
+                      <li key={t.id} className="font-mono">
+                        · {t.name} <span className="opacity-60">({t.slug})</span>
+                      </li>
+                    ))}
+                    {impactPreview.tenants.length > 10 && <li className="italic">…e mais {impactPreview.tenants.length - 10}</li>}
+                  </ul>
+                </details>
+              )}
+            </div>
+          ) : null}
         </div>
       </Modal>
     </div>

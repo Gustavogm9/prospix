@@ -9,6 +9,8 @@ import { Prisma, TenantStatus, TenantPlan, UserRole, CampaignStatus, BillingStat
 import { registerAdminDlqRoutes } from './dlq.js';
 import { registerAdminObservabilityRoutes } from './observability.js';
 import { registerAdminDiscoveryRoutes } from './discovery.js';
+import { registerAdminFeatureFlagsRoutes } from './feature-flags.js';
+import { registerAdminAlertsRoutes } from './alerts.js';
 
 type AdminTransaction = Prisma.TransactionClient;
 
@@ -167,6 +169,8 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
   registerAdminDlqRoutes(app);
   registerAdminObservabilityRoutes(app);
   registerAdminDiscoveryRoutes(app);
+  registerAdminFeatureFlagsRoutes(app);
+  registerAdminAlertsRoutes(app);
 
   // =============================================================================
   // D8: CRUD /v1/admin/tenants
@@ -1221,6 +1225,50 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     }
 
     return reply.send({ data: updated });
+  });
+
+  // GET /templates/:id/impact · count uso por tenant para warn antes de delete
+  app.get('/templates/:id/impact', async (req: FastifyRequest, reply: FastifyReply) => {
+    const { id } = req.params as { id: string };
+    try {
+      const impact = await withAdminRole(async (tx) => {
+        const template = await tx.scriptTemplate.findUnique({ where: { id }, select: { id: true, name: true } });
+        if (!template) return null;
+
+        const [scriptsCloned, tenantsUsingRaw, activeCampaigns] = await Promise.all([
+          tx.script.count({ where: { clonedFromTemplateId: id, archivedAt: null } }),
+          tx.script.findMany({
+            where: { clonedFromTemplateId: id, archivedAt: null },
+            distinct: ['tenantId'],
+            select: { tenantId: true, tenant: { select: { id: true, name: true, slug: true, status: true } } },
+          }),
+          tx.campaign.count({
+            where: {
+              status: 'ACTIVE',
+              activeScript: { clonedFromTemplateId: id, archivedAt: null },
+            },
+          }),
+        ]);
+
+        return {
+          templateId: template.id,
+          templateName: template.name,
+          scriptsCloned,
+          tenantsCount: tenantsUsingRaw.length,
+          tenants: tenantsUsingRaw.map((s) => s.tenant).filter((t): t is NonNullable<typeof t> => !!t),
+          activeCampaigns,
+        };
+      });
+
+      if (!impact) {
+        return reply.code(404).send({ error: 'RESOURCE_NOT_FOUND', message: 'Template not found' });
+      }
+
+      return reply.send({ data: impact });
+    } catch (err) {
+      app.log.error({ err, templateId: id }, 'admin/templates/:id/impact failed');
+      return reply.code(500).send({ error: 'INTERNAL', message: 'Falha ao calcular impacto.' });
+    }
   });
 
   // DELETE /templates/:id (Soft delete/Deactivate template)

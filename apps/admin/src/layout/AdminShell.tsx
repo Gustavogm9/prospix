@@ -14,7 +14,9 @@ import {
   Compass,
   CreditCard,
   History,
-  ShieldAlert
+  ShieldAlert,
+  ToggleRight,
+  Bell
 } from 'lucide-react';
 import { Avatar, Dropdown, DropdownItem } from '@prospix/ui';
 import { GlobalSearch } from './GlobalSearch';
@@ -35,6 +37,8 @@ export default function AdminShell() {
     { name: 'Observabilidade', path: '/observabilidade', icon: Activity },
     { name: 'Audit Log', path: '/audit', icon: History },
     { name: 'Compliance LGPD', path: '/compliance', icon: ShieldAlert },
+    { name: 'Feature Flags', path: '/flags', icon: ToggleRight },
+    { name: 'Alertas', path: '/alertas', icon: Bell },
   ];
 
   const handleLogout = () => {

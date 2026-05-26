@@ -238,6 +238,8 @@ model Tenant {
   promptVersions     PromptVersion[]
   idempotencyKeys    IdempotencyKey[]
   discovery          TenantDiscovery?
+  featureFlags       FeatureFlag[]
+  alerts             OperationalAlert[]
 
   @@index([status])
   @@index([segment])
@@ -434,6 +436,7 @@ model User {
   lgpdRequested      LgpdRequest[]            @relation("LgpdRequestedBy")
   lgpdProcessed      LgpdRequest[]            @relation("LgpdProcessedBy")
   discoveriesPm      TenantDiscovery[]        @relation("DiscoveryPm")
+  alertsAcked        OperationalAlert[]       @relation("AlertAckBy")
 
   @@index([tenantId])
   @@index([email])
@@ -1056,6 +1059,62 @@ model TenantNote {
 
   @@index([tenantId, createdAt(sort: Desc)])
   @@map("tenant_notes")
+}
+
+// =============================================================================
+// FEATURE FLAGS · kill switches por tenant ou globais
+// tenantId NULL = flag global · setado = override por tenant (override > global)
+// Consultas via isFeatureEnabled(key, tenantId?) em src/lib/feature-flags.ts
+// =============================================================================
+model FeatureFlag {
+  id           String   @id @default(uuid()) @db.Uuid
+  key          String   @db.VarChar(120)
+  tenantId     String?  @map("tenant_id") @db.Uuid
+  tenant       Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  enabled      Boolean
+  reason       String?  @db.Text
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz()
+
+  @@unique([key, tenantId])
+  @@index([key])
+  @@index([tenantId])
+  @@map("feature_flags")
+}
+
+// =============================================================================
+// OPERATIONAL ALERTS · alertas proativos para ops center
+// type: 'billing.overdue' | 'lgpd.sla_near' | 'lgpd.sla_expired' | 'churn.critical' | 'dlq.accumulation' | ...
+// severity: INFO | WARNING | CRITICAL
+// =============================================================================
+model OperationalAlert {
+  id           String          @id @default(uuid()) @db.Uuid
+  type         String          @db.VarChar(120)
+  severity     AlertSeverity   @default(WARNING)
+  tenantId     String?         @map("tenant_id") @db.Uuid
+  tenant       Tenant?         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  title        String          @db.VarChar(255)
+  message      String          @db.Text
+  context      Json?
+  dedupKey     String?         @map("dedup_key") @db.VarChar(255) // evita duplicar alerta enquanto ativo
+  ackById      String?         @map("ack_by_id") @db.Uuid
+  ackBy        User?           @relation("AlertAckBy", fields: [ackById], references: [id])
+  ackAt        DateTime?       @map("ack_at") @db.Timestamptz()
+  resolvedAt   DateTime?       @map("resolved_at") @db.Timestamptz()
+  createdAt    DateTime        @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt    DateTime        @updatedAt @map("updated_at") @db.Timestamptz()
+
+  @@unique([dedupKey])
+  @@index([severity, resolvedAt])
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([type])
+  @@map("operational_alerts")
+}
+
+enum AlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
 }
 
 // =============================================================================

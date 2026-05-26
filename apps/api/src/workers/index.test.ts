@@ -87,7 +87,7 @@ describe('Worker registry', () => {
     expect(workerQueueNames).toContain('process-lgpd-request');
   });
 
-  it('registry covers all 11 critical worker queues (AUD-P1-020 fulfillment)', async () => {
+  it('registry covers all critical worker queues (incl. alert-scan)', async () => {
     const { workerQueueNames } = await import('./index.js');
 
     const expected = [
@@ -102,6 +102,7 @@ describe('Worker registry', () => {
       'daily-digest',
       'usage-aggregation',
       'process-lgpd-request',
+      'alert-scan',
     ];
 
     for (const name of expected) {
@@ -159,6 +160,7 @@ describe('Worker registry', () => {
     const { upsertTenantJobScheduler } = await import('../lib/queue.js');
     const { scheduleRecurringTenantJobs } = await import('./index.js');
 
+    vi.mocked(upsertTenantJobScheduler).mockReset();
     vi.mocked(upsertTenantJobScheduler).mockResolvedValue(undefined);
 
     await scheduleRecurringTenantJobs([{ id: 'tenant-a' }, { id: 'tenant-b' }]);
