@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, Button, Input, Tabs, TabsList, TabsTrigger, TabsContent, Badge, toast } from '@prospix/ui';
-import { Settings as SettingsIcon, Shield, CreditCard, Key, Calendar, Phone, Loader2, CheckCircle2, AlertCircle, RefreshCw, FileText, ExternalLink } from 'lucide-react';
+import { Button, Input, Badge, toast } from '@prospix/ui';
+import { Settings as SettingsIcon, Shield, CreditCard, Key, Calendar, Phone, Loader2, CheckCircle2, AlertCircle, RefreshCw, FileText, ExternalLink, Bell } from 'lucide-react';
 import { useAuthStore } from '../store/auth-store';
 import { apiClient } from '../lib/api-client';
 import { AxiosError } from 'axios';
@@ -100,6 +100,16 @@ type TenantBillingData = {
   invoices: BillingInvoice[];
 };
 
+type TabKey = 'perfil' | 'integracoes' | 'credenciais' | 'financeiro' | 'privacidade';
+
+const tabConfig: { key: TabKey; label: string; icon: React.ElementType }[] = [
+  { key: 'perfil', label: 'Meu Perfil', icon: SettingsIcon },
+  { key: 'integracoes', label: 'Conexões', icon: Shield },
+  { key: 'credenciais', label: 'Credenciais & APIs', icon: Key },
+  { key: 'financeiro', label: 'Faturamento', icon: CreditCard },
+  { key: 'privacidade', label: 'Privacidade & Dados', icon: FileText },
+];
+
 export default function Settings() {
   const { user } = useAuthStore();
   const [activeTab, setActiveTab] = useState('perfil');
@@ -111,6 +121,14 @@ export default function Settings() {
   const [profileErrors, setProfileErrors] = useState<ProfileErrors>({});
   const [isProfileLoading, setIsProfileLoading] = useState(false);
   const [isProfileSaving, setIsProfileSaving] = useState(false);
+
+  // Notification toggles
+  const [notifications, setNotifications] = useState([
+    { label: 'Lead respondeu', desc: 'Quando um lead responde a mensagem da IA', checked: true },
+    { label: 'Pediu ligação', desc: 'Quando um lead pede para falar com você', checked: true },
+    { label: 'Reunião agendada', desc: 'Quando a IA agenda uma reunião', checked: true },
+    { label: 'Resumo diário', desc: 'Email com resumo do dia às 18h', checked: false },
+  ]);
 
   // Integrations states
   const [whatsappStatus, setWhatsappStatus] = useState<'connected' | 'disconnected' | 'loading'>('loading');
@@ -328,6 +346,19 @@ export default function Settings() {
   useEffect(() => {
     if (activeTab === 'perfil') {
       fetchProfile();
+      // Fetch notification preferences from API
+      apiClient.get('/tenant/notifications/preferences')
+        .then(res => {
+          const prefs = res.data?.data ?? res.data;
+          if (Array.isArray(prefs) && prefs.length > 0) {
+            const EVENT_TYPES = ['lead_replied', 'lead_callback', 'meeting_scheduled', 'daily_summary'];
+            setNotifications(prev => prev.map((n, i) => {
+              const pref = prefs.find((p: any) => p.eventType === EVENT_TYPES[i]);
+              return pref ? { ...n, checked: pref.enabled } : n;
+            }));
+          }
+        })
+        .catch(() => { /* endpoint may not exist yet, keep defaults */ });
     }
 
     if (activeTab === 'integracoes') {
@@ -335,7 +366,11 @@ export default function Settings() {
       fetchCredentialState();
     }
 
-    if (activeTab === 'faturamento') {
+    if (activeTab === 'credenciais') {
+      fetchCredentialState();
+    }
+
+    if (activeTab === 'financeiro') {
       fetchBilling();
     }
 
@@ -397,489 +432,592 @@ export default function Settings() {
     }
   };
 
+  const toggleNotification = async (index: number) => {
+    const EVENT_TYPES = ['lead_replied', 'lead_callback', 'meeting_scheduled', 'daily_summary'];
+    setNotifications((prev) =>
+      prev.map((n, i) => (i === index ? { ...n, checked: !n.checked } : n))
+    );
+    try {
+      const eventType = EVENT_TYPES[index] || `notification_${index}`;
+      const newChecked = !notifications[index]?.checked;
+      await apiClient.put('/tenant/notifications/preferences', {
+        eventType,
+        channels: ['PUSH', 'EMAIL'],
+        enabled: newChecked,
+      });
+    } catch (err) {
+      console.error('Failed to save notification preference', err);
+    }
+  };
+
   return (
     <div className="space-y-6 flex flex-col h-full animate-fadeIn">
-      {/* Header Settings */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 shrink-0">
-        <div>
-          <h2 className="text-3xl font-bold font-heading text-text tracking-tight">Configurações Gerais</h2>
-          <p className="text-text-secondary text-sm mt-1">
-            Gerencie as preferências da sua conta, credenciais de APIs, conexões e faturamento financeiro.
-          </p>
-        </div>
+      {/* Info banner */}
+      <div className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-[rgba(27,58,107,0.04)] to-[rgba(232,152,28,0.06)] border border-[rgba(27,58,107,0.08)] rounded-xl text-[12.5px] text-[#0F172A] shrink-0">
+        <SettingsIcon className="w-4 h-4 text-[#1B3A6B] shrink-0" />
+        <div><strong>Configurações da sua conta e integrações.</strong> Gerencie perfil, credenciais, WhatsApp, Google Calendar e faturamento.</div>
       </div>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col lg:flex-row gap-6 items-start">
-        <Card className="bg-white border-border w-full lg:w-[260px] shrink-0 p-2 text-text-secondary shadow-sm">
-          <TabsList className="bg-transparent flex flex-col w-full h-auto space-y-1 p-0 rounded-none border-0">
-            <TabsTrigger
-              value="perfil"
-              className="w-full text-left justify-start px-3 py-2.5 rounded-xl text-xs font-semibold hover:bg-surface-sunken text-text-secondary data-[state=active]:bg-primary data-[state=active]:text-white transition-all"
-            >
-              <SettingsIcon className="w-4 h-4 mr-2.5" />
-              Meu Perfil
-            </TabsTrigger>
-            <TabsTrigger
-              value="integracoes"
-              className="w-full text-left justify-start px-3 py-2.5 rounded-xl text-xs font-semibold hover:bg-surface-sunken text-text-secondary data-[state=active]:bg-primary data-[state=active]:text-white transition-all"
-            >
-              <Shield className="w-4 h-4 mr-2.5" />
-              Conexões e APIs
-            </TabsTrigger>
-            <TabsTrigger
-              value="faturamento"
-              className="w-full text-left justify-start px-3 py-2.5 rounded-xl text-xs font-semibold hover:bg-surface-sunken text-text-secondary data-[state=active]:bg-primary data-[state=active]:text-white transition-all"
-            >
-              <CreditCard className="w-4 h-4 mr-2.5" />
-              Faturamento Asaas
-            </TabsTrigger>
-            <TabsTrigger
-              value="privacidade"
-              className="w-full text-left justify-start px-3 py-2.5 rounded-xl text-xs font-semibold hover:bg-surface-sunken text-text-secondary data-[state=active]:bg-primary data-[state=active]:text-white transition-all"
-              data-testid="settings-privacy-tab"
-            >
-              <FileText className="w-4 h-4 mr-2.5" />
-              Privacidade & Dados
-            </TabsTrigger>
-          </TabsList>
-        </Card>
+      {/* 2-column layout: sidebar pills + content */}
+      <div className="flex-1 flex flex-col lg:flex-row gap-6 items-start">
+        {/* Left sidebar pills */}
+        <div className="w-full lg:w-48 shrink-0 space-y-0.5">
+          {tabConfig.map(({ key, label, icon: Icon }) => (
+              <button
+                key={key}
+                onClick={() => setActiveTab(key)}
+                data-testid={key === 'privacidade' ? 'settings-privacy-tab' : undefined}
+                className={`w-full text-left flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-[13px] font-medium transition-all ${
+                  activeTab === key
+                    ? 'bg-[#1B3A6B] text-white shadow-sm'
+                    : 'text-[#475569] hover:bg-[#F1F3F6]'
+                }`}
+              >
+                <Icon className="w-4 h-4" />
+                {label}
+              </button>
+            ))}
+        </div>
 
-        <div className="flex-1 w-full min-w-0">
-          {/* TAB 1: PROFILE */}
-          <TabsContent value="perfil" className="m-0 space-y-6">
-            <Card className="bg-white border-border shadow-sm">
-              <CardHeader>
-                <CardTitle className="text-base font-bold font-heading text-text">Informações Cadastrais</CardTitle>
-                <CardDescription className="text-text-secondary text-xs">Atualize os dados pessoais de exibição do corretor.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label htmlFor="profile-name" className="text-xs font-semibold text-text-secondary uppercase tracking-wider block mb-1">Nome Completo</label>
-                    <Input
-                      id="profile-name"
-                      value={name}
-                      onChange={(e) => {
-                        setName(e.target.value);
-                        if (profileErrors.name) setProfileErrors((p) => ({ ...p, name: undefined }));
-                      }}
-                      aria-invalid={!!profileErrors.name}
-                      aria-describedby={profileErrors.name ? 'profile-name-error' : undefined}
-                      className={`bg-white text-text placeholder-text-secondary text-xs h-10 ${profileErrors.name ? 'border-red-500 focus:border-red-500' : 'border-border focus:border-border-strong'}`}
-                    />
-                    {profileErrors.name && (
-                      <p id="profile-name-error" className="text-[10px] text-red-600 mt-1" role="alert">{profileErrors.name}</p>
+        {/* Right content */}
+        <div className="flex-1 w-full min-w-0 space-y-5">
+
+          {/* ─── TAB: PERFIL ─── */}
+          {activeTab === 'perfil' && (
+            <>
+              {/* Informações Cadastrais */}
+              <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
+                  <div className="text-[14px] font-semibold text-[#0F172A]">Informações Cadastrais</div>
+                  <div className="text-[11px] text-[#94A3B8] mt-0.5">Atualize os dados pessoais de exibição do corretor.</div>
+                </div>
+                <div className="p-5 space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label htmlFor="profile-name" className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Nome Completo</label>
+                      <Input
+                        id="profile-name"
+                        value={name}
+                        onChange={(e) => {
+                          setName(e.target.value);
+                          if (profileErrors.name) setProfileErrors((p) => ({ ...p, name: undefined }));
+                        }}
+                        aria-invalid={!!profileErrors.name}
+                        aria-describedby={profileErrors.name ? 'profile-name-error' : undefined}
+                        className={`bg-white text-[#0F172A] placeholder-[#94A3B8] text-[13px] h-10 rounded-lg ${profileErrors.name ? 'border-[#D92D20] focus:border-[#D92D20]' : 'border-[#E5E7EB] focus:border-[#1B3A6B]'}`}
+                      />
+                      {profileErrors.name && (
+                        <p id="profile-name-error" className="text-[10px] text-[#D92D20] mt-1" role="alert">{profileErrors.name}</p>
+                      )}
+                    </div>
+                    <div>
+                      <label htmlFor="profile-email" className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">E-mail Profissional</label>
+                      <Input
+                        id="profile-email"
+                        type="email"
+                        value={email}
+                        onChange={(e) => {
+                          setEmail(e.target.value);
+                          if (profileErrors.email) setProfileErrors((p) => ({ ...p, email: undefined }));
+                        }}
+                        aria-invalid={!!profileErrors.email}
+                        aria-describedby={profileErrors.email ? 'profile-email-error' : undefined}
+                        className={`bg-white text-[#0F172A] placeholder-[#94A3B8] text-[13px] h-10 rounded-lg ${profileErrors.email ? 'border-[#D92D20] focus:border-[#D92D20]' : 'border-[#E5E7EB] focus:border-[#1B3A6B]'}`}
+                      />
+                      {profileErrors.email && (
+                        <p id="profile-email-error" className="text-[10px] text-[#D92D20] mt-1" role="alert">{profileErrors.email}</p>
+                      )}
+                    </div>
+                    <div>
+                      <label htmlFor="profile-susep" className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Código SUSEP</label>
+                      <Input
+                        id="profile-susep"
+                        value={susep}
+                        onChange={(e) => {
+                          setSusep(e.target.value);
+                          if (profileErrors.susep) setProfileErrors((p) => ({ ...p, susep: undefined }));
+                        }}
+                        aria-invalid={!!profileErrors.susep}
+                        aria-describedby={profileErrors.susep ? 'profile-susep-error' : undefined}
+                        className={`bg-white text-[#0F172A] placeholder-[#94A3B8] text-[13px] h-10 rounded-lg ${profileErrors.susep ? 'border-[#D92D20] focus:border-[#D92D20]' : 'border-[#E5E7EB] focus:border-[#1B3A6B]'}`}
+                      />
+                      {profileErrors.susep && (
+                        <p id="profile-susep-error" className="text-[10px] text-[#D92D20] mt-1" role="alert">{profileErrors.susep}</p>
+                      )}
+                    </div>
+                  </div>
+                  <Button
+                    disabled={isProfileLoading || isProfileSaving}
+                    onClick={handleSaveProfile}
+                    className="bg-[#1B3A6B] hover:bg-[#15305A] text-white font-semibold text-[13px] px-5 h-10 rounded-xl mt-2 shadow-md shadow-[#1B3A6B]/10 disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {isProfileSaving ? 'Salvando...' : 'Salvar Alterações'}
+                  </Button>
+                </div>
+              </div>
+
+              {/* Notificações */}
+              <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
+                  <div className="flex items-center gap-2">
+                    <Bell className="w-4 h-4 text-[#1B3A6B]" />
+                    <div className="text-[14px] font-semibold text-[#0F172A]">Notificações</div>
+                  </div>
+                  <div className="text-[11px] text-[#94A3B8] mt-0.5">Configure quais alertas você deseja receber.</div>
+                </div>
+                <div className="p-5 space-y-1">
+                  {notifications.map((n, i) => (
+                    <div key={i} className="flex items-center justify-between py-3 border-b border-[#F1F5F9] last:border-0">
+                      <div>
+                        <div className="text-[13px] font-medium text-[#0F172A]">{n.label}</div>
+                        <div className="text-[11px] text-[#94A3B8]">{n.desc}</div>
+                      </div>
+                      <button
+                        onClick={() => toggleNotification(i)}
+                        className={`w-10 h-6 rounded-full transition-colors ${
+                          n.checked ? 'bg-[#1B3A6B]' : 'bg-[#E5E7EB]'
+                        } relative`}
+                        aria-label={`Toggle ${n.label}`}
+                      >
+                        <span className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+                          n.checked ? 'right-1' : 'left-1'
+                        }`} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ─── TAB: INTEGRAÇÕES ─── */}
+          {activeTab === 'integracoes' && (
+            <>
+              {/* Integration Status Overview */}
+              <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
+                  <div className="text-[14px] font-semibold text-[#0F172A]">Status de Conexão</div>
+                  <div className="text-[11px] text-[#94A3B8] mt-0.5">Visão geral das integrações ativas e inativas.</div>
+                </div>
+                <div className="p-5 space-y-4">
+                  {/* WhatsApp status inline */}
+                  <div className="flex items-center justify-between p-3 rounded-xl border border-[#F1F5F9] hover:bg-[#FAFBFC] transition-colors">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-[#25D366]/10 flex items-center justify-center">
+                        <Phone className="w-5 h-5 text-[#25D366]" />
+                      </div>
+                      <div>
+                        <div className="text-[13px] font-semibold text-[#0F172A]">WhatsApp Business</div>
+                        <div className="text-[11px] text-[#94A3B8]">Envio e recebimento de mensagens</div>
+                      </div>
+                    </div>
+                    {whatsappStatus === 'loading' ? (
+                      <Loader2 className="w-4 h-4 text-[#1B3A6B] animate-spin" />
+                    ) : whatsappStatus === 'connected' ? (
+                      <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-[#ECFDF3] text-[#027A48]">
+                        ● Conectado
+                      </span>
+                    ) : (
+                      <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-[#FEF3F2] text-[#D92D20]">
+                        ● Desconectado
+                      </span>
                     )}
                   </div>
-                  <div>
-                    <label htmlFor="profile-email" className="text-xs font-semibold text-text-secondary uppercase tracking-wider block mb-1">E-mail Profissional</label>
-                    <Input
-                      id="profile-email"
-                      type="email"
-                      value={email}
-                      onChange={(e) => {
-                        setEmail(e.target.value);
-                        if (profileErrors.email) setProfileErrors((p) => ({ ...p, email: undefined }));
-                      }}
-                      aria-invalid={!!profileErrors.email}
-                      aria-describedby={profileErrors.email ? 'profile-email-error' : undefined}
-                      className={`bg-white text-text placeholder-text-secondary text-xs h-10 ${profileErrors.email ? 'border-red-500 focus:border-red-500' : 'border-border focus:border-border-strong'}`}
-                    />
-                    {profileErrors.email && (
-                      <p id="profile-email-error" className="text-[10px] text-red-600 mt-1" role="alert">{profileErrors.email}</p>
-                    )}
-                  </div>
-                  <div>
-                    <label htmlFor="profile-susep" className="text-xs font-semibold text-text-secondary uppercase tracking-wider block mb-1">Código SUSEP</label>
-                    <Input
-                      id="profile-susep"
-                      value={susep}
-                      onChange={(e) => {
-                        setSusep(e.target.value);
-                        if (profileErrors.susep) setProfileErrors((p) => ({ ...p, susep: undefined }));
-                      }}
-                      aria-invalid={!!profileErrors.susep}
-                      aria-describedby={profileErrors.susep ? 'profile-susep-error' : undefined}
-                      className={`bg-white text-text placeholder-text-secondary text-xs h-10 ${profileErrors.susep ? 'border-red-500 focus:border-red-500' : 'border-border focus:border-border-strong'}`}
-                    />
-                    {profileErrors.susep && (
-                      <p id="profile-susep-error" className="text-[10px] text-red-600 mt-1" role="alert">{profileErrors.susep}</p>
+
+                  {/* Google Calendar status inline */}
+                  <div className="flex items-center justify-between p-3 rounded-xl border border-[#F1F5F9] hover:bg-[#FAFBFC] transition-colors">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-[#4285F4]/10 flex items-center justify-center">
+                        <Calendar className="w-5 h-5 text-[#4285F4]" />
+                      </div>
+                      <div>
+                        <div className="text-[13px] font-semibold text-[#0F172A]">Google Calendar</div>
+                        <div className="text-[11px] text-[#94A3B8]">Sincronização de reuniões e agenda</div>
+                      </div>
+                    </div>
+                    {credentialState.google.calendarConnected ? (
+                      <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-[#ECFDF3] text-[#027A48]">
+                        ● Conectado
+                      </span>
+                    ) : (
+                      <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-[#FEF3F2] text-[#D92D20]">
+                        ● Desconectado
+                      </span>
                     )}
                   </div>
                 </div>
-                <Button
-                  disabled={isProfileLoading || isProfileSaving}
-                  onClick={handleSaveProfile}
-                  className="bg-primary hover:bg-primary-hover text-white font-semibold text-xs px-4 h-10 rounded-xl mt-4 shadow-md shadow-primary/10 disabled:opacity-60 disabled:cursor-not-allowed"
-                >
-                  {isProfileSaving ? 'Salvando...' : 'Salvar Alterações'}
-                </Button>
-              </CardContent>
-            </Card>
-          </TabsContent>
+              </div>
 
-          {/* TAB 2: INTEGRATIONS */}
-          <TabsContent value="integracoes" className="m-0 space-y-6">
-            {/* WhatsApp Integration Status */}
-            <Card className="bg-white border-border overflow-hidden shadow-sm">
-              <CardHeader>
-                <CardTitle className="text-base font-bold font-heading text-text flex items-center gap-2">
-                  <Phone className="w-5 h-5 text-success" />
-                  <span>WhatsApp (Evolution API)</span>
-                </CardTitle>
-                <CardDescription className="text-text-secondary text-xs">Conectividade e status do gateway móvel de envio para disparos e IA.</CardDescription>
-              </CardHeader>
-              
-              <CardContent className="border-t border-border/60 p-0 bg-surface-sunken/10">
-                {/* 1. Loading State */}
-                {whatsappStatus === 'loading' && (
-                  <div className="flex flex-col items-center justify-center py-12 px-6">
-                    <Loader2 className="w-8 h-8 text-primary animate-spin" />
-                    <span className="text-xs text-text-secondary mt-3 font-semibold">Verificando conexão da instância...</span>
+              {/* WhatsApp Integration Detail */}
+              <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
+                  <div className="flex items-center gap-2">
+                    <Phone className="w-4 h-4 text-[#25D366]" />
+                    <div className="text-[14px] font-semibold text-[#0F172A]">WhatsApp (Evolution API)</div>
                   </div>
-                )}
+                  <div className="text-[11px] text-[#94A3B8] mt-0.5">Conectividade e status do gateway de envio para disparos e IA.</div>
+                </div>
+                <div className="p-5">
+                  {/* 1. Loading State */}
+                  {whatsappStatus === 'loading' && (
+                    <div className="flex flex-col items-center justify-center py-12 px-6">
+                      <Loader2 className="w-8 h-8 text-[#1B3A6B] animate-spin" />
+                      <span className="text-[12px] text-[#94A3B8] mt-3 font-semibold">Verificando conexão da instância...</span>
+                    </div>
+                  )}
 
-                {/* 2. Connected State */}
-                {whatsappStatus === 'connected' && (
-                  <div className="p-6 space-y-6">
-                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-success-soft/20 border border-success/10 rounded-2xl p-5">
-                      <div className="flex items-center gap-4">
-                        <div className="p-3.5 bg-success-soft text-success-text rounded-2xl border border-success/20">
-                          <CheckCircle2 className="w-6 h-6 animate-pulse" />
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2.5">
-                            <h4 className="text-sm font-bold text-text font-heading">WhatsApp Ativo</h4>
-                            <Badge className="bg-success-soft text-success-text border border-success/20 text-[10px] uppercase font-bold tracking-wider px-2 py-0.5">
-                              Sincronizado
-                            </Badge>
+                  {/* 2. Connected State */}
+                  {whatsappStatus === 'connected' && (
+                    <div className="space-y-6">
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-[#ECFDF3] border border-[#A7F3D0] rounded-xl p-5">
+                        <div className="flex items-center gap-4">
+                          <div className="p-3 bg-[#D1FAE5] text-[#027A48] rounded-xl">
+                            <CheckCircle2 className="w-6 h-6 animate-pulse" />
                           </div>
-                          <p className="text-xs text-text-secondary mt-1 font-mono">
-                            Instância: <span className="text-success-text font-bold">{instanceName}</span>
-                          </p>
-                          <p className="text-[10px] text-text-secondary/80 mt-0.5">
-                            O bot do Prospix está monitorando ativamente este número e respondendo leads em tempo real.
-                          </p>
+                          <div>
+                            <div className="flex items-center gap-2.5">
+                              <h4 className="text-[14px] font-bold text-[#0F172A]">WhatsApp Ativo</h4>
+                              <Badge className="bg-[#D1FAE5] text-[#027A48] border border-[#A7F3D0] text-[10px] uppercase font-bold tracking-wider px-2 py-0.5">
+                                Sincronizado
+                              </Badge>
+                            </div>
+                            <p className="text-[12px] text-[#64748B] mt-1 font-mono">
+                              Instância: <span className="text-[#027A48] font-bold">{instanceName}</span>
+                            </p>
+                            <p className="text-[10px] text-[#94A3B8] mt-0.5">
+                              O bot do Prospix está monitorando ativamente este número e respondendo leads em tempo real.
+                            </p>
+                          </div>
+                        </div>
+                        
+                        {!isConfirmingDisconnect ? (
+                          <Button
+                            onClick={() => setIsConfirmingDisconnect(true)}
+                            className="bg-[#FEF3F2] hover:bg-[#D92D20] hover:text-white text-[#D92D20] text-[12px] font-semibold px-4 h-9 rounded-xl transition-all duration-300 w-full sm:w-auto border border-[#FECACA]"
+                          >
+                            Desconectar WhatsApp
+                          </Button>
+                        ) : (
+                          <div className="flex items-center gap-2 shrink-0 bg-white p-3 rounded-xl border border-[#E5E7EB] shadow-sm">
+                            <span className="text-[12px] text-[#D92D20] font-bold">Desconectar?</span>
+                            <Button
+                              onClick={handleDisconnectWhatsapp}
+                              className="bg-[#D92D20] hover:bg-[#B91C1C] text-white text-[10px] font-bold h-7 px-3 rounded-lg"
+                            >
+                              Sim
+                            </Button>
+                            <Button
+                              onClick={() => setIsConfirmingDisconnect(false)}
+                              className="bg-white border border-[#E5E7EB] text-[#64748B] text-[10px] font-bold h-7 px-3 rounded-lg"
+                            >
+                              Não
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Status Details */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E5E7EB]">
+                          <span className="text-[10px] text-[#94A3B8] font-bold uppercase tracking-wider block mb-1">Webhooks</span>
+                          <Badge className="bg-[#EFF6FF] text-[#1B3A6B] border border-[#1B3A6B]/20 text-[9px] font-bold">
+                            100% Configurado
+                          </Badge>
+                        </div>
+                        <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E5E7EB]">
+                          <span className="text-[10px] text-[#94A3B8] font-bold uppercase tracking-wider block mb-1">Taxa de Resposta da IA</span>
+                          <span className="text-[12px] text-[#0F172A] font-semibold font-mono">Real-time / Instantânea</span>
+                        </div>
+                        <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E5E7EB]">
+                          <span className="text-[10px] text-[#94A3B8] font-bold uppercase tracking-wider block mb-1">Status do Servidor</span>
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <div className="w-1.5 h-1.5 bg-[#039855] rounded-full animate-ping" />
+                            <span className="text-[12px] text-[#027A48] font-bold">Online</span>
+                          </div>
                         </div>
                       </div>
-                      
-                      {!isConfirmingDisconnect ? (
-                        <Button
-                          onClick={() => setIsConfirmingDisconnect(true)}
-                          className="bg-red-50 hover:bg-red-600 text-white text-xs font-semibold px-4 h-9.5 rounded-xl transition-all duration-300 shadow-md shadow-red-500/5 w-full sm:w-auto"
-                        >
-                          Desconectar WhatsApp
-                        </Button>
+                    </div>
+                  )}
+
+                  {/* 3. Disconnected State */}
+                  {whatsappStatus === 'disconnected' && (
+                    <>
+                      {/* A. If QR Code is visible or is generating */}
+                      {isGeneratingQr || qrCode ? (
+                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center bg-[#F8FAFC] border border-[#E5E7EB] p-6 rounded-xl">
+                          {/* Left Side: Step by step instructions */}
+                          <div className="lg:col-span-7 space-y-6">
+                            <div>
+                              <Badge className="bg-[#EFF6FF] text-[#1B3A6B] border border-[#1B3A6B]/20 text-[9px] uppercase font-bold tracking-wider mb-2">
+                                Aguardando Leitura
+                              </Badge>
+                              <h4 className="text-[15px] font-bold text-[#0F172A]">Como conectar o seu WhatsApp?</h4>
+                              <p className="text-[12px] text-[#94A3B8] mt-1">
+                                Siga as instruções passo a passo para conectar o robô de IA do Prospix ao seu número.
+                              </p>
+                            </div>
+
+                            <div className="space-y-4">
+                              <div className="flex items-start gap-3.5">
+                                <div className="flex items-center justify-center w-6 h-6 rounded-lg bg-[#EFF6FF] text-[#1B3A6B] border border-[#1B3A6B]/20 text-[11px] font-bold shrink-0">
+                                  1
+                                </div>
+                                <p className="text-[12px] text-[#64748B] leading-relaxed mt-0.5">
+                                  Abra o WhatsApp no seu smartphone (Android ou iPhone).
+                                </p>
+                              </div>
+                              
+                              <div className="flex items-start gap-3.5">
+                                <div className="flex items-center justify-center w-6 h-6 rounded-lg bg-[#EFF6FF] text-[#1B3A6B] border border-[#1B3A6B]/20 text-[11px] font-bold shrink-0">
+                                  2
+                                </div>
+                                <p className="text-[12px] text-[#64748B] leading-relaxed mt-0.5">
+                                  Toque no menu <span className="font-semibold text-[#0F172A]">Aparelhos Conectados</span> (ou Configurações &gt; Aparelhos Conectados).
+                                </p>
+                              </div>
+
+                              <div className="flex items-start gap-3.5">
+                                <div className="flex items-center justify-center w-6 h-6 rounded-lg bg-[#EFF6FF] text-[#1B3A6B] border border-[#1B3A6B]/20 text-[11px] font-bold shrink-0">
+                                  3
+                                </div>
+                                <p className="text-[12px] text-[#64748B] leading-relaxed mt-0.5">
+                                  Selecione <span className="font-semibold text-[#0F172A]">Conectar um Aparelho</span> e valide com sua biometria ou senha.
+                                </p>
+                              </div>
+
+                              <div className="flex items-start gap-3.5">
+                                <div className="flex items-center justify-center w-6 h-6 rounded-lg bg-[#EFF6FF] text-[#1B3A6B] border border-[#1B3A6B]/20 text-[11px] font-bold shrink-0">
+                                  4
+                                </div>
+                                <p className="text-[12px] text-[#64748B] leading-relaxed mt-0.5">
+                                  Aponte a câmera do seu celular para o QR Code ao lado para realizar o escaneamento.
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 pt-2 text-[10px] text-[#94A3B8]">
+                              <Loader2 className="w-3.5 h-3.5 text-[#1B3A6B] animate-spin" />
+                              <span>Aguardando a confirmação do escaneamento do QR Code...</span>
+                            </div>
+                          </div>
+
+                          {/* Right Side: QR Code frame */}
+                          <div className="lg:col-span-5 flex flex-col items-center justify-center">
+                            <div className="relative p-6 bg-white border border-[#E5E7EB] rounded-xl shadow-xl flex items-center justify-center w-[240px] h-[240px] overflow-hidden">
+                              {isGeneratingQr ? (
+                                <div className="flex flex-col items-center justify-center text-center">
+                                  <Loader2 className="w-8 h-8 text-[#1B3A6B] animate-spin" />
+                                  <span className="text-[10px] text-[#94A3B8] mt-2">Criando instância...</span>
+                                </div>
+                              ) : qrCode ? (
+                                <img
+                                  src={qrCode.startsWith('data:') ? qrCode : `data:image/png;base64,${qrCode}`}
+                                  alt="WhatsApp QR Code"
+                                  className="w-full h-full object-contain rounded-lg"
+                                />
+                              ) : (
+                                <div className="text-center p-4">
+                                  <AlertCircle className="w-8 h-8 text-[#D92D20] mx-auto" />
+                                  <span className="text-[12px] text-[#94A3B8] mt-2 block">Erro ao carregar QR Code</span>
+                                </div>
+                              )}
+                            </div>
+                            
+                            {qrCode && (
+                              <Button
+                                onClick={handleConnectWhatsapp}
+                                className="mt-3.5 text-[10px] font-bold h-7 px-3 rounded-lg border border-[#E5E7EB] bg-white hover:bg-[#F8FAFC] text-[#64748B]"
+                              >
+                                <RefreshCw className="w-3 h-3 mr-1.5" />
+                                Atualizar QR Code
+                              </Button>
+                            )}
+                          </div>
+                        </div>
                       ) : (
-                        <div className="flex items-center gap-2 shrink-0 bg-white p-3 rounded-xl border border-border shadow-sm">
-                          <span className="text-xs text-red-500 font-bold">Desconectar?</span>
+                        // B. Landing View - No QR Code active
+                        <div className="flex flex-col items-center justify-center text-center py-10 px-4 max-w-md mx-auto">
+                          <div className="p-4 bg-[#F8FAFC] border border-[#E5E7EB] rounded-xl text-[#64748B] shadow-sm">
+                            <Phone className="w-8 h-8" />
+                          </div>
+                          
+                          <h4 className="text-[16px] font-bold text-[#0F172A] mt-5">Conecte o seu WhatsApp Comercial</h4>
+                          <p className="text-[12px] text-[#94A3B8] mt-2 leading-relaxed">
+                            Conectando seu dispositivo móvel, o Prospix poderá disparar mensagens de prospecção ativa automaticamente e qualificar todos os seus leads em tempo real através da nossa Inteligência Artificial integrada.
+                          </p>
+                          
                           <Button
-                            onClick={handleDisconnectWhatsapp}
-                            className="bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold h-7 px-3 rounded-lg"
+                            onClick={handleConnectWhatsapp}
+                            className="bg-[#1B3A6B] hover:bg-[#15305A] text-white font-bold text-[13px] px-6 h-10 rounded-xl mt-6 shadow-lg shadow-[#1B3A6B]/10 w-full sm:w-auto"
                           >
-                            Sim
-                          </Button>
-                          <Button
-                            onClick={() => setIsConfirmingDisconnect(false)}
-                            className="bg-white border border-border text-text-secondary text-[10px] font-bold h-7 px-3 rounded-lg"
-                          >
-                            Não
+                            Conectar WhatsApp
                           </Button>
                         </div>
                       )}
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Google Calendar */}
+              <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
+                  <div className="flex items-center gap-2">
+                    <Calendar className="w-4 h-4 text-[#4285F4]" />
+                    <div className="text-[14px] font-semibold text-[#0F172A]">Google Agenda OAuth</div>
+                  </div>
+                  <div className="text-[11px] text-[#94A3B8] mt-0.5">Sincronize reuniões e agendamentos com seu calendário pessoal.</div>
+                </div>
+                <div className="p-5">
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-[#F8FAFC] border border-[#E5E7EB] rounded-xl p-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-[#4285F4]/10 flex items-center justify-center">
+                        <Calendar className="w-5 h-5 text-[#4285F4]" />
+                      </div>
+                      <div>
+                        <h4 className="text-[13px] font-bold text-[#0F172A]">Google Calendar API</h4>
+                        <p className="text-[11px] text-[#94A3B8] mt-0.5">Permite checar conflitos e marcar slots de 30min.</p>
+                      </div>
                     </div>
-
-                    {/* Premium Status Details */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <div className="p-4 rounded-xl bg-surface-sunken border border-border">
-                        <span className="text-[10px] text-text-secondary font-bold uppercase tracking-wider block mb-1">Webhooks</span>
-                        <Badge className="bg-primary-soft text-primary border border-primary/20 text-[9px] font-bold">
-                          100% Configurado
-                        </Badge>
-                      </div>
-                      <div className="p-4 rounded-xl bg-surface-sunken border border-border">
-                        <span className="text-[10px] text-text-secondary font-bold uppercase tracking-wider block mb-1">Taxa de Resposta da IA</span>
-                        <span className="text-xs text-text font-semibold font-mono">Real-time / Instantânea</span>
-                      </div>
-                      <div className="p-4 rounded-xl bg-surface-sunken border border-border">
-                        <span className="text-[10px] text-text-secondary font-bold uppercase tracking-wider block mb-1">Status do Servidor</span>
-                        <div className="flex items-center gap-1.5 mt-1">
-                          <div className="w-1.5 h-1.5 bg-success rounded-full animate-ping" />
-                          <span className="text-xs text-success-text font-bold">Online</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* 3. Disconnected State (Generating QR / QR Ready / Ready to connect) */}
-                {whatsappStatus === 'disconnected' && (
-                  <div className="p-6">
-                    {/* A. If QR Code is visible or is generating */}
-                    {isGeneratingQr || qrCode ? (
-                      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center bg-surface-sunken border border-border p-6 rounded-2xl">
-                        {/* Left Side: Step by step instructions */}
-                        <div className="lg:col-span-7 space-y-6">
-                          <div>
-                            <Badge className="bg-primary-soft text-primary border border-primary/20 text-[9px] uppercase font-bold tracking-wider mb-2">
-                              Aguardando Leitura
-                            </Badge>
-                            <h4 className="text-base font-bold text-text font-heading">Como conectar o seu WhatsApp?</h4>
-                            <p className="text-xs text-text-secondary mt-1">
-                              Siga as instruções passo a passo para conectar o robô de IA do Prospix ao seu número.
-                            </p>
-                          </div>
-
-                          <div className="space-y-4">
-                            <div className="flex items-start gap-3.5">
-                              <div className="flex items-center justify-center w-6 h-6 rounded-lg bg-primary-soft text-primary border border-primary/20 text-xs font-bold shrink-0">
-                                1
-                              </div>
-                              <p className="text-xs text-text-secondary leading-relaxed mt-0.5">
-                                Abra o WhatsApp no seu smartphone (Android ou iPhone).
-                              </p>
-                            </div>
-                            
-                            <div className="flex items-start gap-3.5">
-                              <div className="flex items-center justify-center w-6 h-6 rounded-lg bg-primary-soft text-primary border border-primary/20 text-xs font-bold shrink-0">
-                                2
-                              </div>
-                              <p className="text-xs text-text-secondary leading-relaxed mt-0.5">
-                                Toque no menu <span className="font-semibold text-text">Aparelhos Conectados</span> (ou Configurações &gt; Aparelhos Conectados).
-                              </p>
-                            </div>
-
-                            <div className="flex items-start gap-3.5">
-                              <div className="flex items-center justify-center w-6 h-6 rounded-lg bg-primary-soft text-primary border border-primary/20 text-xs font-bold shrink-0">
-                                3
-                              </div>
-                              <p className="text-xs text-text-secondary leading-relaxed mt-0.5">
-                                Selecione <span className="font-semibold text-text">Conectar um Aparelho</span> e valide com sua biometria ou senha.
-                              </p>
-                            </div>
-
-                            <div className="flex items-start gap-3.5">
-                              <div className="flex items-center justify-center w-6 h-6 rounded-lg bg-primary-soft text-primary border border-primary/20 text-xs font-bold shrink-0">
-                                4
-                              </div>
-                              <p className="text-xs text-text-secondary leading-relaxed mt-0.5">
-                                Aponte a câmera do seu celular para o QR Code ao lado para realizar o escaneamento.
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-2 pt-2 text-[10px] text-text-secondary">
-                            <Loader2 className="w-3.5 h-3.5 text-primary animate-spin" />
-                            <span>Aguardando a confirmação do escaneamento do QR Code...</span>
-                          </div>
-                        </div>
-
-                        {/* Right Side: QR Code frame */}
-                        <div className="lg:col-span-5 flex flex-col items-center justify-center">
-                          <div className="relative p-6 bg-white border border-border rounded-2xl shadow-xl flex items-center justify-center w-[240px] h-[240px] overflow-hidden">
-                            {isGeneratingQr ? (
-                              <div className="flex flex-col items-center justify-center text-center">
-                                <Loader2 className="w-8 h-8 text-primary animate-spin" />
-                                <span className="text-[10px] text-text-secondary mt-2">Criando instância...</span>
-                              </div>
-                            ) : qrCode ? (
-                              <img
-                                src={qrCode.startsWith('data:') ? qrCode : `data:image/png;base64,${qrCode}`}
-                                alt="WhatsApp QR Code"
-                                className="w-full h-full object-contain rounded-lg"
-                              />
-                            ) : (
-                              <div className="text-center p-4">
-                                <AlertCircle className="w-8 h-8 text-red-500 mx-auto" />
-                                <span className="text-xs text-text-secondary mt-2 block">Erro ao carregar QR Code</span>
-                              </div>
-                            )}
-                          </div>
-                          
-                          {qrCode && (
-                            <Button
-                              onClick={handleConnectWhatsapp}
-                              size="compact"
-                              variant="outline"
-                              className="mt-3.5 text-[10px] font-bold h-7.5 px-3 rounded-lg border-border bg-white hover:bg-surface-sunken text-text-secondary"
-                            >
-                              <RefreshCw className="w-3 h-3 mr-1.5" />
-                              Atualizar QR Code
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    ) : (
-                      // B. Landing View - No QR Code active
-                      <div className="flex flex-col items-center justify-center text-center py-10 px-4 max-w-md mx-auto">
-                        <div className="p-4 bg-surface-sunken border border-border rounded-2xl text-text-secondary shadow-sm">
-                          <Phone className="w-8 h-8" />
-                        </div>
-                        
-                        <h4 className="text-lg font-bold text-text mt-5 font-heading">Conecte o seu WhatsApp Comercial</h4>
-                        <p className="text-xs text-text-secondary mt-2 leading-relaxed">
-                          Conectando seu dispositivo móvel, o Prospix poderá disparar mensagens de prospecção ativa automaticamente e qualificar todos os seus leads em tempo real através da nossa Inteligência Artificial integrada.
-                        </p>
-                        
-                        <Button
-                          onClick={handleConnectWhatsapp}
-                          className="bg-primary hover:bg-primary-hover text-white font-bold text-xs px-6 h-10.5 rounded-xl mt-6 shadow-lg shadow-primary/10 w-full sm:w-auto"
-                        >
-                          Conectar WhatsApp
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Google Calendar Consent */}
-            <Card className="bg-white border-border shadow-sm">
-              <CardHeader>
-                <CardTitle className="text-base font-bold font-heading text-text">Google Agenda OAuth</CardTitle>
-                <CardDescription className="text-text-secondary text-xs">Sincronize reuniões e agendamentos com seu calendário pessoal.</CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col sm:flex-row items-center justify-between gap-4 p-6 bg-surface-sunken/40 border-t border-border">
-                <div className="flex items-center gap-3">
-                  <div className="p-3 bg-white border border-border rounded-xl">
-                    <Calendar className="w-5 h-5 text-text-secondary" />
-                  </div>
-                  <div>
-                    <h4 className="text-xs font-bold text-text font-heading">Google Calendar API</h4>
-                    <p className="text-[10px] text-text-secondary mt-1">Permite checar conflitos e marcar slots de 30min.</p>
+                    <Button onClick={handleGoogleConnect} className="bg-[#1B3A6B] hover:bg-[#15305A] text-white text-[12px] font-semibold px-4 h-9 rounded-xl shadow-lg shadow-[#1B3A6B]/10">
+                      Conectar Agenda
+                    </Button>
                   </div>
                 </div>
-                <Button onClick={handleGoogleConnect} className="bg-primary hover:bg-primary-hover text-white text-xs font-semibold px-4 h-9 rounded-xl shadow-lg shadow-primary/10">
-                  Conectar Agenda
-                </Button>
-              </CardContent>
-            </Card>
+              </div>
+            </>
+          )}
 
-            {/* Custom API Credentials */}
-            <Card className="bg-white border-border shadow-sm">
-              <CardHeader>
-                <CardTitle className="text-base font-bold font-heading text-text">Chaves de API (Bring Your Own Key)</CardTitle>
-                <CardDescription className="text-text-secondary text-xs">Insira suas chaves proprietárias para IA, enriquecimento e integrações. Os valores são armazenados criptografados.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
+          {/* ─── TAB: CREDENCIAIS ─── */}
+          {activeTab === 'credenciais' && (
+            <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
+              <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
+                <div className="flex items-center gap-2">
+                  <Key className="w-4 h-4 text-[#1B3A6B]" />
+                  <div className="text-[14px] font-semibold text-[#0F172A]">Chaves de API (Bring Your Own Key)</div>
+                </div>
+                <div className="text-[11px] text-[#94A3B8] mt-0.5">Insira suas chaves proprietárias para IA, enriquecimento e integrações. Os valores são armazenados criptografados.</div>
+              </div>
+              <div className="p-5 space-y-5">
+                {/* Status badges */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <div className="p-4 rounded-xl bg-surface-sunken border border-border">
-                    <span className="text-[10px] text-text-secondary font-bold uppercase tracking-wider block mb-1">Provedor IA</span>
+                  <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E5E7EB]">
+                    <span className="text-[10px] text-[#94A3B8] font-bold uppercase tracking-wider block mb-1">Provedor IA</span>
                     <select
                       value={credentialDraft.aiProvider}
                       onChange={(e) => setCredentialDraft({ ...credentialDraft, aiProvider: e.target.value as 'GUILDS_SHARED' | 'TENANT_OWN' })}
                       disabled={!canManageCredentials || isCredentialsLoading}
-                      className="w-full bg-white border border-border text-xs rounded-xl px-3 h-10 text-text focus:border-primary focus:ring-1 focus:ring-primary outline-none disabled:opacity-60"
+                      className="w-full bg-white border border-[#E5E7EB] text-[12px] rounded-lg px-3 h-10 text-[#0F172A] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none disabled:opacity-60"
                     >
                       <option value="GUILDS_SHARED">Guilds compartilhado</option>
                       <option value="TENANT_OWN">Chaves próprias</option>
                     </select>
                   </div>
-                  <div className="p-4 rounded-xl bg-surface-sunken border border-border">
-                    <span className="text-[10px] text-text-secondary font-bold uppercase tracking-wider block mb-1">OpenAI</span>
-                    <Badge className={credentialState.keys.openai.configured ? 'bg-success-soft text-success-text border border-success/20' : 'bg-white border-border text-text-secondary'}>
+                  <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E5E7EB]">
+                    <span className="text-[10px] text-[#94A3B8] font-bold uppercase tracking-wider block mb-1">OpenAI</span>
+                    <Badge className={credentialState.keys.openai.configured ? 'bg-[#ECFDF3] text-[#027A48] border border-[#A7F3D0]' : 'bg-white border-[#E5E7EB] text-[#94A3B8]'}>
                       {credentialState.keys.openai.configured ? 'Configurada' : 'Não configurada'}
                     </Badge>
                   </div>
-                  <div className="p-4 rounded-xl bg-surface-sunken border border-border">
-                    <span className="text-[10px] text-text-secondary font-bold uppercase tracking-wider block mb-1">Google Maps</span>
-                    <Badge className={credentialState.keys.googleMaps.configured ? 'bg-success-soft text-success-text border border-success/20' : 'bg-white border-border text-text-secondary'}>
+                  <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E5E7EB]">
+                    <span className="text-[10px] text-[#94A3B8] font-bold uppercase tracking-wider block mb-1">Google Maps</span>
+                    <Badge className={credentialState.keys.googleMaps.configured ? 'bg-[#ECFDF3] text-[#027A48] border border-[#A7F3D0]' : 'bg-white border-[#E5E7EB] text-[#94A3B8]'}>
                       {credentialState.keys.googleMaps.configured ? 'Configurada' : 'Não configurada'}
                     </Badge>
                   </div>
                 </div>
 
+                {/* API Key inputs */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider block mb-1">OpenAI API Key</label>
+                    <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">OpenAI API Key</label>
                     <div className="relative">
-                      <Key className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary" />
+                      <Key className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
                       <Input
                         type="password"
                         value={credentialDraft.openaiApiKey}
                         disabled={!canManageCredentials || isCredentialsLoading}
                         onChange={(e) => setCredentialDraft({ ...credentialDraft, openaiApiKey: e.target.value })}
                         placeholder={credentialState.keys.openai.configured ? 'Nova chave para substituir a atual' : 'sk-...'}
-                        className="pl-10 bg-white border-border text-text placeholder-text-secondary text-xs focus:border-border-strong h-10 font-mono disabled:opacity-70"
+                        className="pl-10 bg-white border-[#E5E7EB] text-[#0F172A] placeholder-[#94A3B8] text-[12px] focus:border-[#1B3A6B] h-10 font-mono disabled:opacity-70 rounded-lg"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider block mb-1">Anthropic API Key</label>
+                    <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Anthropic API Key</label>
                     <div className="relative">
-                      <Key className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary" />
+                      <Key className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
                       <Input
                         type="password"
                         value={credentialDraft.anthropicApiKey}
                         disabled={!canManageCredentials || isCredentialsLoading}
                         onChange={(e) => setCredentialDraft({ ...credentialDraft, anthropicApiKey: e.target.value })}
                         placeholder={credentialState.keys.anthropic.configured ? 'Nova chave para substituir a atual' : 'sk-ant-...'}
-                        className="pl-10 bg-white border-border text-text placeholder-text-secondary text-xs focus:border-border-strong h-10 font-mono disabled:opacity-70"
+                        className="pl-10 bg-white border-[#E5E7EB] text-[#0F172A] placeholder-[#94A3B8] text-[12px] focus:border-[#1B3A6B] h-10 font-mono disabled:opacity-70 rounded-lg"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider block mb-1">Google AI / Gemini API Key</label>
+                    <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Google AI / Gemini API Key</label>
                     <div className="relative">
-                      <Key className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary" />
+                      <Key className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
                       <Input
                         type="password"
                         value={credentialDraft.googleAiApiKey}
                         disabled={!canManageCredentials || isCredentialsLoading}
                         onChange={(e) => setCredentialDraft({ ...credentialDraft, googleAiApiKey: e.target.value })}
                         placeholder={credentialState.keys.googleAi.configured ? 'Nova chave para substituir a atual' : 'AIza...'}
-                        className="pl-10 bg-white border-border text-text placeholder-text-secondary text-xs focus:border-border-strong h-10 font-mono disabled:opacity-70"
+                        className="pl-10 bg-white border-[#E5E7EB] text-[#0F172A] placeholder-[#94A3B8] text-[12px] focus:border-[#1B3A6B] h-10 font-mono disabled:opacity-70 rounded-lg"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider block mb-1">Google Maps API Key</label>
+                    <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Google Maps API Key</label>
                     <div className="relative">
-                      <Key className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary" />
+                      <Key className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
                       <Input
                         type="password"
                         value={credentialDraft.googleMapsApiKey}
                         disabled={!canManageCredentials || isCredentialsLoading}
                         onChange={(e) => setCredentialDraft({ ...credentialDraft, googleMapsApiKey: e.target.value })}
                         placeholder={credentialState.keys.googleMaps.configured ? 'Nova chave para substituir a atual' : 'AIza...'}
-                        className="pl-10 bg-white border-border text-text placeholder-text-secondary text-xs focus:border-border-strong h-10 font-mono disabled:opacity-70"
+                        className="pl-10 bg-white border-[#E5E7EB] text-[#0F172A] placeholder-[#94A3B8] text-[12px] focus:border-[#1B3A6B] h-10 font-mono disabled:opacity-70 rounded-lg"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider block mb-1">Evolution API Key</label>
+                    <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Evolution API Key</label>
                     <div className="relative">
-                      <Key className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary" />
+                      <Key className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
                       <Input
                         type="password"
                         value={credentialDraft.evolutionApiKey}
                         disabled={!canManageCredentials || isCredentialsLoading}
                         onChange={(e) => setCredentialDraft({ ...credentialDraft, evolutionApiKey: e.target.value })}
                         placeholder={credentialState.keys.evolution.configured ? 'Nova chave para substituir a atual' : 'Token da Evolution API'}
-                        className="pl-10 bg-white border-border text-text placeholder-text-secondary text-xs focus:border-border-strong h-10 font-mono disabled:opacity-70"
+                        className="pl-10 bg-white border-[#E5E7EB] text-[#0F172A] placeholder-[#94A3B8] text-[12px] focus:border-[#1B3A6B] h-10 font-mono disabled:opacity-70 rounded-lg"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider block mb-1">Evolution Base URL</label>
+                    <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Evolution Base URL</label>
                     <Input
                       value={credentialDraft.evolutionBaseUrl}
                       disabled={!canManageCredentials || isCredentialsLoading}
                       onChange={(e) => setCredentialDraft({ ...credentialDraft, evolutionBaseUrl: e.target.value })}
                       placeholder={credentialState.whatsapp.baseUrlConfigured ? 'Nova URL para substituir a atual' : 'https://evo.seudominio.com.br'}
-                      className="bg-white border-border text-text placeholder-text-secondary text-xs focus:border-border-strong h-10 disabled:opacity-70"
+                      className="bg-white border-[#E5E7EB] text-[#0F172A] placeholder-[#94A3B8] text-[12px] focus:border-[#1B3A6B] h-10 disabled:opacity-70 rounded-lg"
                     />
                   </div>
                 </div>
 
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-border/60">
-                  <p className="text-[10px] text-text-secondary leading-relaxed">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-4 border-t border-[#EEF0F3]">
+                  <p className="text-[10px] text-[#94A3B8] leading-relaxed">
                     {canManageCredentials
                       ? 'Após salvar, os campos ficam vazios por segurança; a tela mostra apenas o estado configurado.'
                       : 'Sua função não permite alterar credenciais do tenant.'}
@@ -887,36 +1025,39 @@ export default function Settings() {
                   <Button
                     disabled={!canManageCredentials || isCredentialsSaving || isCredentialsLoading}
                     onClick={handleSaveCredentials}
-                    className="bg-primary hover:bg-primary-hover text-white border border-primary text-xs font-semibold px-4 h-10 rounded-xl disabled:opacity-60 disabled:cursor-not-allowed"
+                    className="bg-[#1B3A6B] hover:bg-[#15305A] text-white text-[12px] font-semibold px-5 h-10 rounded-xl disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     {isCredentialsSaving ? 'Salvando...' : 'Salvar Credenciais'}
                   </Button>
                 </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
+              </div>
+            </div>
+          )}
 
-          {/* TAB 3: BILLING */}
-          <TabsContent value="faturamento" className="m-0 space-y-6">
-            <Card className="bg-white border-border shadow-sm">
-              <CardHeader>
-                <CardTitle className="text-base font-bold font-heading text-text">Assinatura Ativa (Asaas)</CardTitle>
-                <CardDescription className="text-text-secondary text-xs">Acompanhe assinatura, faturas e consumo operacional do tenant.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
+          {/* ─── TAB: FINANCEIRO ─── */}
+          {activeTab === 'financeiro' && (
+            <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
+              <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
+                <div className="flex items-center gap-2">
+                  <CreditCard className="w-4 h-4 text-[#1B3A6B]" />
+                  <div className="text-[14px] font-semibold text-[#0F172A]">Assinatura Ativa (Asaas)</div>
+                </div>
+                <div className="text-[11px] text-[#94A3B8] mt-0.5">Acompanhe assinatura, faturas e consumo operacional do tenant.</div>
+              </div>
+              <div className="p-5 space-y-6">
                 {isBillingLoading ? (
-                  <div className="flex items-center gap-2 text-xs text-text-secondary py-8">
-                    <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                  <div className="flex items-center gap-2 text-[12px] text-[#94A3B8] py-8">
+                    <Loader2 className="w-4 h-4 animate-spin text-[#1B3A6B]" />
                     <span>Carregando faturamento real...</span>
                   </div>
                 ) : !billingData ? (
-                  <div className="rounded-xl border border-border bg-surface-sunken p-6 flex flex-col sm:flex-row sm:items-center gap-4">
-                    <div className="p-3 bg-white border border-border rounded-xl text-text-secondary w-fit">
+                  <div className="rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-6 flex flex-col sm:flex-row sm:items-center gap-4">
+                    <div className="p-3 bg-white border border-[#E5E7EB] rounded-xl text-[#64748B] w-fit">
                       <AlertCircle className="w-5 h-5" />
                     </div>
                     <div>
-                      <h4 className="text-sm font-bold text-text font-heading">Faturamento não encontrado</h4>
-                      <p className="text-xs text-text-secondary mt-1 leading-relaxed">
+                      <h4 className="text-[14px] font-bold text-[#0F172A]">Faturamento não encontrado</h4>
+                      <p className="text-[12px] text-[#94A3B8] mt-1 leading-relaxed">
                         Nenhuma fatura foi localizada para este tenant. Assim que o Asaas gerar cobranças, elas aparecerão aqui.
                       </p>
                     </div>
@@ -924,53 +1065,53 @@ export default function Settings() {
                 ) : (
                 <>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="p-4 rounded-xl bg-surface-sunken border border-border">
-                    <span className="text-[10px] text-text-secondary font-semibold uppercase tracking-wider block">Plano Atual</span>
-                    <h4 className="text-sm font-bold text-text mt-1">{billingData.tenant.planName}</h4>
-                    <p className="text-xs text-text-secondary mt-0.5">{formatBRL(billingData.tenant.mrrCents)} / mês</p>
+                  <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E5E7EB]">
+                    <span className="text-[10px] text-[#94A3B8] font-semibold uppercase tracking-wider block">Plano Atual</span>
+                    <h4 className="text-[14px] font-bold text-[#0F172A] mt-1">{billingData.tenant.planName}</h4>
+                    <p className="text-[12px] text-[#64748B] mt-0.5">{formatBRL(billingData.tenant.mrrCents)} / mês</p>
                   </div>
 
-                  <div className="p-4 rounded-xl bg-surface-sunken border border-border space-y-2">
-                    <div className="flex justify-between text-xs">
-                      <span className="text-text-secondary font-semibold uppercase tracking-wider text-[10px]">Uso de IA no mês</span>
-                      <span className="text-text-secondary font-mono font-medium">
+                  <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E5E7EB] space-y-2">
+                    <div className="flex justify-between text-[12px]">
+                      <span className="text-[#94A3B8] font-semibold uppercase tracking-wider text-[10px]">Uso de IA no mês</span>
+                      <span className="text-[#64748B] font-mono font-medium">
                         {(billingData.usage.llmTokensInput + billingData.usage.llmTokensOutput).toLocaleString('pt-BR')} tokens
                       </span>
                     </div>
                     <div className="grid grid-cols-3 gap-2 pt-1">
                       <div>
-                        <p className="text-[9px] text-text-secondary uppercase font-bold">IA</p>
-                        <p className="text-xs text-text font-mono">{formatBRL(billingData.usage.llmCostCents)}</p>
+                        <p className="text-[9px] text-[#94A3B8] uppercase font-bold">IA</p>
+                        <p className="text-[12px] text-[#0F172A] font-mono">{formatBRL(billingData.usage.llmCostCents)}</p>
                       </div>
                       <div>
-                        <p className="text-[9px] text-text-secondary uppercase font-bold">WhatsApp</p>
-                        <p className="text-xs text-text font-mono">{formatBRL(billingData.usage.whatsappCostCents)}</p>
+                        <p className="text-[9px] text-[#94A3B8] uppercase font-bold">WhatsApp</p>
+                        <p className="text-[12px] text-[#0F172A] font-mono">{formatBRL(billingData.usage.whatsappCostCents)}</p>
                       </div>
                       <div>
-                        <p className="text-[9px] text-text-secondary uppercase font-bold">Maps</p>
-                        <p className="text-xs text-text font-mono">{formatBRL(billingData.usage.googleMapsCostCents)}</p>
+                        <p className="text-[9px] text-[#94A3B8] uppercase font-bold">Maps</p>
+                        <p className="text-[12px] text-[#0F172A] font-mono">{formatBRL(billingData.usage.googleMapsCostCents)}</p>
                       </div>
                     </div>
                   </div>
                 </div>
 
                 {billingData.currentInvoice && (
-                  <div className="rounded-xl border border-border bg-surface-sunken p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div>
-                      <span className="text-[10px] text-text-secondary font-semibold uppercase tracking-wider block">Fatura atual</span>
-                      <p className="text-sm font-bold text-text mt-1">{formatBRL(billingData.currentInvoice.totalCents)}</p>
-                      <p className="text-xs text-text-secondary mt-0.5">
+                      <span className="text-[10px] text-[#94A3B8] font-semibold uppercase tracking-wider block">Fatura atual</span>
+                      <p className="text-[14px] font-bold text-[#0F172A] mt-1">{formatBRL(billingData.currentInvoice.totalCents)}</p>
+                      <p className="text-[12px] text-[#64748B] mt-0.5">
                         Vencimento em {formatDate(billingData.currentInvoice.dueAt)}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Badge className={billingData.currentInvoice.status === 'PAID' ? 'bg-success-soft text-success-text border border-success/20' : billingData.currentInvoice.status === 'OVERDUE' ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-warning-soft text-warning-text border border-warning/20'}>
+                      <Badge className={billingData.currentInvoice.status === 'PAID' ? 'bg-[#ECFDF3] text-[#027A48] border border-[#A7F3D0]' : billingData.currentInvoice.status === 'OVERDUE' ? 'bg-[#FEF3F2] text-[#D92D20] border border-[#FECACA]' : 'bg-[#FFFBEB] text-[#B45309] border border-[#FDE68A]'}>
                         {billingData.currentInvoice.status === 'PAID' ? 'Pago' : billingData.currentInvoice.status === 'OVERDUE' ? 'Em atraso' : 'Pendente'}
                       </Badge>
                       {billingData.currentInvoice.invoiceUrl && (
                         <Button
                           onClick={() => window.open(billingData.currentInvoice!.invoiceUrl!, '_blank', 'noopener,noreferrer')}
-                          className="bg-primary hover:bg-primary-hover text-white text-[10px] font-bold h-8 px-3 rounded-lg flex items-center gap-1.5"
+                          className="bg-[#1B3A6B] hover:bg-[#15305A] text-white text-[10px] font-bold h-8 px-3 rounded-lg flex items-center gap-1.5"
                         >
                           <ExternalLink className="w-3 h-3" />
                           Abrir fatura
@@ -981,24 +1122,24 @@ export default function Settings() {
                 )}
 
                 <div className="space-y-3">
-                  <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider block">Histórico de Cobrança (Faturas Asaas)</span>
+                  <span className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block">Histórico de Cobrança (Faturas Asaas)</span>
                   <div className="overflow-x-auto">
-                    <table className="w-full text-xs">
+                    <table className="w-full text-[12px]">
                       <thead>
-                        <tr className="border-b border-border text-[10px] text-text-secondary uppercase font-bold tracking-wider text-left">
+                        <tr className="border-b border-[#E5E7EB] text-[10px] text-[#94A3B8] uppercase font-bold tracking-wider text-left">
                           <th className="py-2.5">Data de Vencimento</th>
                           <th className="py-2.5">Valor</th>
                           <th className="py-2.5">Status</th>
                           <th className="py-2.5 text-right">Ação</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-border/60">
+                      <tbody className="divide-y divide-[#F1F5F9]">
                         {billingData.invoices.map((inv) => (
                           <tr key={inv.id}>
-                            <td className="py-3 font-medium text-text-secondary">{formatDate(inv.dueAt)}</td>
-                            <td className="py-3 font-mono font-medium text-text">{formatBRL(inv.totalCents)}</td>
+                            <td className="py-3 font-medium text-[#64748B]">{formatDate(inv.dueAt)}</td>
+                            <td className="py-3 font-mono font-medium text-[#0F172A]">{formatBRL(inv.totalCents)}</td>
                             <td className="py-3">
-                              <Badge className={inv.status === 'PAID' ? 'bg-success-soft text-success-text border border-success/20' : inv.status === 'OVERDUE' ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-warning-soft text-warning-text border border-warning/20'}>
+                              <Badge className={inv.status === 'PAID' ? 'bg-[#ECFDF3] text-[#027A48] border border-[#A7F3D0]' : inv.status === 'OVERDUE' ? 'bg-[#FEF3F2] text-[#D92D20] border border-[#FECACA]' : 'bg-[#FFFBEB] text-[#B45309] border border-[#FDE68A]'}>
                                 {inv.status === 'PAID' ? 'Pago' : inv.status === 'OVERDUE' ? 'Em atraso' : inv.status === 'WAIVED' ? 'Isenta' : inv.status === 'REFUNDED' ? 'Estornada' : 'Pendente'}
                               </Badge>
                             </td>
@@ -1006,7 +1147,7 @@ export default function Settings() {
                               {inv.invoiceUrl && (
                                 <Button
                                   onClick={() => window.open(inv.invoiceUrl!, '_blank', 'noopener,noreferrer')}
-                                  className="bg-surface-sunken hover:bg-border text-text border border-border text-[10px] font-bold h-7 px-2.5 rounded-lg flex items-center gap-1.5 ml-auto"
+                                  className="bg-[#F8FAFC] hover:bg-[#E5E7EB] text-[#0F172A] border border-[#E5E7EB] text-[10px] font-bold h-7 px-2.5 rounded-lg flex items-center gap-1.5 ml-auto"
                                 >
                                   <ExternalLink className="w-3 h-3" />
                                   <span>Abrir</span>
@@ -1017,7 +1158,7 @@ export default function Settings() {
                         ))}
                         {billingData.invoices.length === 0 && (
                           <tr>
-                            <td colSpan={4} className="py-8 text-center text-xs text-text-secondary">
+                            <td colSpan={4} className="py-8 text-center text-[12px] text-[#94A3B8]">
                               Nenhuma fatura real encontrada para este tenant.
                             </td>
                           </tr>
@@ -1028,16 +1169,16 @@ export default function Settings() {
                 </div>
                 </>
                 )}
-              </CardContent>
-            </Card>
-          </TabsContent>
+              </div>
+            </div>
+          )}
 
-          {/* TAB 4: PRIVACIDADE & DADOS (AUD-P2-033) */}
-          <TabsContent value="privacidade" className="m-0">
+          {/* ─── TAB: PRIVACIDADE ─── */}
+          {activeTab === 'privacidade' && (
             <PrivacyTab />
-          </TabsContent>
+          )}
         </div>
-      </Tabs>
+      </div>
     </div>
   );
 }

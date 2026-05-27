@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, Button, Input, Textarea, toast, Badge } from '@prospix/ui';
+import { Button, Input, Textarea, toast, Badge } from '@prospix/ui';
 import { Play, Sparkles, MessageSquare, Plus, Save, Trash2, Wand2, X } from 'lucide-react';
 import { apiClient } from '../lib/api-client';
 import { AxiosError } from 'axios';
-import { canUseMockFallbacks } from '../lib/demo-mode';
+
 
 interface ScriptVariation {
   id: string;
@@ -12,13 +12,7 @@ interface ScriptVariation {
   content: string;
 }
 
-const DEMO_BASE_MESSAGE =
-  'Olá [Nome], notei que a [Empresa] é líder no setor em [Cidade]. Consegui uma cotação especial de Seguro Saúde Corporativo PME para vocês. Gostaria de receber uma tabela comparativa sem compromisso?';
-
-const DEMO_VARIATIONS: ScriptVariation[] = [
-  { id: '1', name: 'Variante A (Foco em Economia)', weight: 50, content: 'Olá [Nome], sabia que a [Empresa] pode reduzir até 35% do plano de saúde corporativo atual? Consegue me atender para um alinhamento rápido de 5 minutos?' },
-  { id: '2', name: 'Variante B (Foco em Rede Credenciada)', weight: 50, content: 'Olá [Nome], temos condições exclusivas com hospitais premium da rede Amil e SulAmérica para empresas em [Cidade]. Posso te enviar as tabelas comparativas?' },
-];
+const VARIATION_BADGE_COLORS = ['bg-[#1B3A6B]', 'bg-[#5A2A82]', 'bg-[#B8740E]'];
 
 const normalizeVariationWeight = (weight: unknown) => {
   const numericWeight = Number(weight);
@@ -50,11 +44,12 @@ const mapScriptVariations = (script: any): ScriptVariation[] => {
 };
 
 export default function Scripts() {
+  const [activeSection, setActiveSection] = useState<'roteiro' | 'variantes' | 'simulacao'>('roteiro');
   const [currentScriptId, setCurrentScriptId] = useState<string | null>(null);
-  const [baseMessage, setBaseMessage] = useState(canUseMockFallbacks ? DEMO_BASE_MESSAGE : '');
-  const [variations, setVariations] = useState<ScriptVariation[]>(canUseMockFallbacks ? DEMO_VARIATIONS : []);
+  const [baseMessage, setBaseMessage] = useState('');
+  const [variations, setVariations] = useState<ScriptVariation[]>([]);
   const [isLoadingScripts, setIsLoadingScripts] = useState(true);
-  const [simulationInput, setSimulationInput] = useState(canUseMockFallbacks ? 'Quanto custa para 10 funcionários?' : '');
+  const [simulationInput, setSimulationInput] = useState('');
   const [simulationResponse, setSimulationResponse] = useState<string | null>(null);
   const [simulatedVariant, setSimulatedVariant] = useState<string | null>(null);
   const [isLoadingSim, setIsLoadingSim] = useState(false);
@@ -117,19 +112,17 @@ export default function Scripts() {
           setCurrentScriptId(activeScript.id);
           setBaseMessage(activeScript.baseMessage || '');
           setVariations(mapScriptVariations(activeScript));
-        } else if (!canUseMockFallbacks) {
+        } else {
           setCurrentScriptId(null);
           setBaseMessage('');
           setVariations([]);
         }
       } catch (err) {
         console.error('Error fetching scripts', err);
-        if (!canUseMockFallbacks) {
-          setCurrentScriptId(null);
-          setBaseMessage('');
-          setVariations([]);
-          toast.error('Erro de Conexão', 'Não foi possível carregar roteiros reais da API.');
-        }
+        setCurrentScriptId(null);
+        setBaseMessage('');
+        setVariations([]);
+        toast.error('Erro de Conexão', 'Não foi possível carregar os roteiros.');
       } finally {
         setIsLoadingScripts(false);
       }
@@ -164,6 +157,10 @@ export default function Scripts() {
 
   const handleContentChange = (id: string, value: string) => {
     setVariations(variations.map(v => v.id === id ? { ...v, content: value } : v));
+  };
+
+  const handleNameChange = (id: string, value: string) => {
+    setVariations(variations.map(v => v.id === id ? { ...v, name: value } : v));
   };
 
   const handleSave = async () => {
@@ -231,16 +228,6 @@ export default function Scripts() {
       }
       setIsLoadingSim(false);
     } catch (err: unknown) {
-      if (canUseMockFallbacks) {
-        setTimeout(() => {
-          setSimulatedVariant('Variante A (Foco em Economia)');
-          setSimulationResponse(
-            'Entendo sua dúvida! O custo por funcionário varia de acordo com a faixa etária de cada um. Na nossa Variante A, conseguimos planos a partir de R$ 140,00 mensais por colaborador com cobertura nacional. Para eu simular a cotação perfeita para as 10 vidas, você prefere que eu envie um formulário rápido pelo WhatsApp ou prefere uma ligação de 5 minutos?'
-          );
-          setIsLoadingSim(false);
-        }, 1200);
-        return;
-      }
       const message = err instanceof AxiosError
         ? err.response?.data?.message || 'A API não gerou uma resposta para a simulação.'
         : 'A API não gerou uma resposta para a simulação.';
@@ -250,109 +237,180 @@ export default function Scripts() {
   };
 
   return (
-    <div className="space-y-6 flex flex-col h-full animate-fadeIn">
-      {/* Header Scripts */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 shrink-0">
-        <div>
-          <h2 className="text-3xl font-bold font-heading text-text tracking-tight">Roteiros e Fluxos de IA</h2>
-          <p className="text-text-secondary text-sm mt-1">
-            Configure as abordagens de atração ativa e personalize as variantes de testes comparativos A/B.
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
+    <div className="space-y-5 flex flex-col h-full animate-fadeIn">
+      {/* Info banner */}
+      <div className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-[rgba(27,58,107,0.04)] to-[rgba(232,152,28,0.06)] border border-[rgba(27,58,107,0.08)] rounded-xl text-[12.5px] text-[#0F172A] shrink-0">
+        <MessageSquare className="w-4 h-4 text-[#1B3A6B] shrink-0" />
+        <div><strong>Roteiros definem a personalidade da IA.</strong> Crie variantes para testar qual abordagem converte mais. A IA faz testes A/B automaticamente e mostra resultados em Performance.</div>
+      </div>
+
+      {/* Toolbar */}
+      <div className="bg-white border border-[#E5E7EB] rounded-lg p-2.5 flex items-center gap-2 flex-wrap shadow-sm shrink-0">
+        <button
+          onClick={() => setActiveSection('roteiro')}
+          className={`h-8 px-3 rounded-md text-[12px] font-medium transition-all ${activeSection === 'roteiro' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}
+        >
+          Roteiro ativo
+        </button>
+        <button
+          onClick={() => setActiveSection('variantes')}
+          className={`h-8 px-3 rounded-md text-[12px] font-medium transition-all ${activeSection === 'variantes' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}
+        >
+          Variantes
+        </button>
+        <button
+          onClick={() => setActiveSection('simulacao')}
+          className={`h-8 px-3 rounded-md text-[12px] font-medium transition-all ${activeSection === 'simulacao' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}
+        >
+          Simulação
+        </button>
+        <div className="ml-auto flex items-center gap-2">
           <Button
             onClick={() => setIsGenerateModalOpen(true)}
-            className="bg-surface-sunken hover:bg-border text-text border border-border/80 font-semibold px-4 h-10 rounded-xl flex items-center gap-2 shadow-sm"
+            className="bg-[#F1F3F6] hover:bg-[#E5E7EB] text-[#0F172A] border border-[#E5E7EB] font-semibold px-3 h-8 rounded-lg flex items-center gap-1.5 text-[12px]"
           >
-            <Wand2 className="w-4 h-4 text-primary" />
-            <span>Gerar com IA</span>
+            <Wand2 className="w-3.5 h-3.5 text-[#1B3A6B]" />
+            Gerar com IA
           </Button>
           <Button
             onClick={handleSave}
-            className="bg-primary hover:bg-primary-hover text-white font-semibold px-4 h-10 rounded-xl flex items-center gap-2 shadow-lg shadow-primary/10"
+            className="bg-[#1B3A6B] hover:bg-[#142C52] text-white font-semibold px-3 h-8 rounded-lg flex items-center gap-1.5 text-[12px]"
             disabled={isLoadingScripts}
           >
-            <Save className="w-4 h-4" />
-            <span>Salvar Roteiro</span>
+            <Save className="w-3.5 h-3.5" />
+            Salvar
           </Button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 items-start">
-        {/* Editor Box */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* Base Message Box */}
-          <Card className="bg-white border-border shadow-sm">
-            <CardHeader>
-              <CardTitle className="text-base font-bold font-heading text-text">Abordagem Base (Frio)</CardTitle>
-              <CardDescription className="text-text-secondary text-xs">
-                Esta é a mensagem inicial de captação ativa enviada aos leads do Google Maps.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Textarea
-                rows={4}
-                value={baseMessage}
-                onChange={(e) => setBaseMessage(e.target.value)}
-                className="w-full bg-white border-border text-xs leading-relaxed focus:border-border-strong rounded-xl"
-              />
-              <div className="flex flex-wrap gap-2">
-                {['[Nome]', '[Empresa]', '[Cidade]'].map((tag) => (
-                  <span
-                    key={tag}
-                    onClick={() => setBaseMessage(baseMessage + ' ' + tag)}
-                    className="text-[10px] font-mono font-bold bg-surface-sunken hover:bg-border text-text-secondary border border-border/85 px-2.5 py-1 rounded-lg cursor-pointer transition-all"
-                  >
-                    {tag}
-                  </span>
-                ))}
+      {/* ── Roteiro ativo tab ──────────────────────────────────────────── */}
+      {activeSection === 'roteiro' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 flex-1 items-start">
+          {/* Base message editor */}
+          <div className="lg:col-span-2 space-y-5">
+            <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
+              <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
+                <div className="text-[14px] font-semibold text-[#0F172A]">Mensagem base da IA</div>
+                <div className="text-[11px] text-[#94A3B8] mt-0.5">Essa é a mensagem principal que a IA usa como base para abordar cada lead</div>
               </div>
-            </CardContent>
-          </Card>
+              <div className="p-5 space-y-4">
+                <Textarea
+                  rows={4}
+                  value={baseMessage}
+                  onChange={(e) => setBaseMessage(e.target.value)}
+                  className="w-full bg-white border border-[#E5E7EB] text-[13px] leading-relaxed focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B]/20 rounded-xl"
+                />
+                <div className="flex flex-wrap gap-2">
+                  {['[Nome]', '[Empresa]', '[Cidade]'].map((tag) => (
+                    <span
+                      key={tag}
+                      onClick={() => setBaseMessage(baseMessage + ' ' + tag)}
+                      className="text-[10px] font-mono font-bold bg-[#F8F9FB] hover:bg-[#EEF0F3] text-[#64748B] border border-[#E5E7EB] px-2.5 py-1 rounded-lg cursor-pointer transition-all"
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
 
-          {/* A/B Testing Variations */}
-          <Card className="bg-white border-border shadow-sm">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle className="text-base font-bold font-heading text-text">Testes A/B/C Comparativos</CardTitle>
-                <CardDescription className="text-text-secondary text-xs">
-                  Rotacione mensagens alternativas para mensurar qual performa melhor em conversões.
-                </CardDescription>
+          {/* Right column – preview */}
+          <div className="space-y-5">
+            <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
+              <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-[#1B3A6B]" />
+                  <div className="text-[14px] font-semibold text-[#0F172A]">Prévia da mensagem</div>
+                </div>
+                <div className="text-[11px] text-[#94A3B8] mt-0.5">Veja como a mensagem chegará para o lead</div>
               </div>
-              <Button
+              <div className="p-5">
+                <div className="bg-[#F8F9FB] border border-[#E5E7EB] rounded-xl p-4 text-[12px] leading-relaxed text-[#334155]">
+                  {baseMessage
+                    ? baseMessage
+                        .replace('[Nome]', 'Dr. Ricardo')
+                        .replace('[Empresa]', 'Clínica OrthoLife')
+                        .replace('[Cidade]', 'São Paulo')
+                    : <span className="text-[#94A3B8] italic">Escreva a mensagem base para visualizar a prévia aqui...</span>
+                  }
+                </div>
+              </div>
+            </div>
+
+            {/* Quick stats */}
+            <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
+              <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
+                <div className="text-[14px] font-semibold text-[#0F172A]">Resumo do roteiro</div>
+              </div>
+              <div className="p-5 space-y-3">
+                <div className="flex items-center justify-between text-[12px]">
+                  <span className="text-[#64748B]">Mensagem base</span>
+                  <span className="font-semibold text-[#0F172A]">{baseMessage.length} caracteres</span>
+                </div>
+                <div className="flex items-center justify-between text-[12px]">
+                  <span className="text-[#64748B]">Variantes ativas</span>
+                  <span className="font-semibold text-[#0F172A]">{variations.length} / 3</span>
+                </div>
+                <div className="flex items-center justify-between text-[12px]">
+                  <span className="text-[#64748B]">Status</span>
+                  <Badge className="bg-[#ECFDF3] text-[#039855] border border-[#039855]/20 text-[10px] font-bold px-2 py-0">
+                    {currentScriptId ? 'Ativo' : 'Rascunho'}
+                  </Badge>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Variantes tab ─────────────────────────────────────────────── */}
+      {activeSection === 'variantes' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 flex-1 items-start">
+          <div className="lg:col-span-2 space-y-5">
+            {/* Header row */}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-[14px] font-semibold text-[#0F172A]">Testes A/B/C Comparativos</div>
+                <div className="text-[11px] text-[#94A3B8] mt-0.5">Rotacione mensagens alternativas para mensurar qual performa melhor em conversões.</div>
+              </div>
+              <button
                 onClick={handleAddVariation}
-                variant="outline"
-                className="border-border text-text-secondary hover:text-text text-xs font-semibold px-3 h-8 hover:bg-surface-sunken flex items-center gap-1.5"
+                className="h-8 px-3 rounded-lg text-[12px] font-semibold text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6] flex items-center gap-1.5 transition-all"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>Variante</span>
-              </Button>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {variations.map((v) => (
-                <div key={v.id} className="p-4 rounded-xl bg-surface-sunken border border-border space-y-3 relative group">
-                  <button
-                    onClick={() => handleRemoveVariation(v.id)}
-                    className="absolute top-4 right-4 p-1 rounded-lg hover:bg-red-50 text-text-secondary hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
-                    aria-label="Remover variação"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                Variante
+              </button>
+            </div>
 
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <h4 className="text-xs font-bold text-text">{v.name}</h4>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-text-secondary font-semibold uppercase tracking-wider">Peso:</span>
-                      <div className="relative w-20">
-                        <Input
-                          type="number"
-                          value={v.weight}
-                          onChange={(e) => handleWeightChange(v.id, parseInt(e.target.value) || 0)}
-                          className="bg-white border-border h-7 text-text text-xs font-mono pl-2 pr-5 focus:border-border-strong"
-                        />
-                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] font-bold text-text-secondary font-mono">%</span>
+            {/* Variation cards */}
+            <div className="space-y-4">
+              {variations.length === 0 && (
+                <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm p-8 text-center">
+                  <div className="text-[13px] text-[#94A3B8]">Nenhuma variante criada ainda. Clique em <strong>"+ Variante"</strong> para adicionar.</div>
+                </div>
+              )}
+              {variations.map((v, i) => (
+                <div key={v.id} className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm p-4 space-y-3 group">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-white text-[12px] font-bold ${VARIATION_BADGE_COLORS[i % VARIATION_BADGE_COLORS.length]}`}>
+                        {String.fromCharCode(65 + i)}
                       </div>
+                      <input
+                        type="text"
+                        value={v.name}
+                        onChange={(e) => handleNameChange(v.id, e.target.value)}
+                        className="text-[13px] font-semibold text-[#0F172A] bg-transparent border-none outline-none focus:ring-0 p-0 w-auto min-w-[120px]"
+                      />
                     </div>
+                    <button
+                      onClick={() => handleRemoveVariation(v.id)}
+                      className="p-1.5 rounded-lg hover:bg-[#FEF2F2] text-[#94A3B8] hover:text-[#D92D20] opacity-0 group-hover:opacity-100 transition-all"
+                      aria-label="Remover variação"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                   </div>
 
                   <Textarea
@@ -360,77 +418,166 @@ export default function Scripts() {
                     value={v.content}
                     onChange={(e) => handleContentChange(v.id, e.target.value)}
                     placeholder="Escreva a mensagem personalizada utilizando [Nome], [Empresa] ou [Cidade]..."
-                    className="w-full bg-white border-border text-xs leading-relaxed focus:border-border-strong rounded-xl"
+                    className="w-full bg-[#F8F9FB] border border-[#E5E7EB] text-[12px] leading-relaxed focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B]/20 rounded-xl"
                   />
+
+                  <div className="flex items-center gap-3">
+                    <span className="text-[11px] text-[#94A3B8] font-medium">Peso:</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={v.weight}
+                      onChange={(e) => handleWeightChange(v.id, parseInt(e.target.value) || 0)}
+                      className="flex-1 h-1.5 accent-[#1B3A6B] cursor-pointer"
+                    />
+                    <span className="text-[12px] font-mono font-semibold text-[#0F172A] min-w-[36px] text-right">{v.weight}%</span>
+                  </div>
                 </div>
               ))}
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* AI Simulator Box */}
-        <Card className="bg-white border-border shadow-sm">
-          <CardHeader>
-            <CardTitle className="text-base font-bold font-heading text-text flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-primary" />
-              <span>Simulador de Respostas</span>
-            </CardTitle>
-            <CardDescription className="text-text-secondary text-xs">
-              Simule a resposta de um lead para testar o comportamento do robô de IA em tempo real.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <label className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">Mensagem da Lead</label>
-              <Textarea
-                rows={3}
-                placeholder="Ex: Gostaria de saber preços e quais operadoras atendem..."
-                value={simulationInput}
-                onChange={(e) => setSimulationInput(e.target.value)}
-                className="w-full bg-white border-border text-xs leading-relaxed focus:border-border-strong rounded-xl"
-              />
             </div>
 
-            <Button
-              onClick={handleSimulate}
-              className="w-full bg-surface-sunken hover:bg-border text-text border border-border/80 font-semibold h-10 rounded-xl transition-all flex items-center justify-center gap-2"
-              disabled={isLoadingSim}
-            >
-              {isLoadingSim ? (
-                <div className="flex items-center gap-2">
-                  <div className="w-3.5 h-3.5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
-                  <span>Processando LLM...</span>
-                </div>
-              ) : (
-                <>
-                  <Play className="w-3.5 h-3.5 text-primary fill-current" />
-                  <span>Simular Interação</span>
-                </>
-              )}
-            </Button>
-
-            {simulationResponse && (
-              <div className="pt-4 border-t border-border space-y-3.5 animate-fadeIn">
-                <div className="flex items-center justify-between">
-                  <span className="text-[9px] font-semibold text-text-secondary uppercase tracking-wider block">Resultado</span>
-                  <Badge className="bg-primary-soft text-primary border border-primary/20 text-[9px] font-bold px-2 py-0">
-                    {simulatedVariant}
-                  </Badge>
-                </div>
-                <div className="bg-surface-sunken p-4 border border-border rounded-xl space-y-2">
-                  <div className="flex items-center gap-1.5 text-[9px] font-semibold text-text-secondary">
-                    <MessageSquare className="w-3.5 h-3.5" />
-                    RESPOSTA GERADA PELA IA
-                  </div>
-                  <p className="text-xs text-text leading-relaxed font-medium">
-                    {simulationResponse}
-                  </p>
-                </div>
+            {/* Weight summary */}
+            {variations.length > 0 && (
+              <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm px-5 py-3 flex items-center justify-between">
+                <span className="text-[12px] text-[#64748B]">Soma dos pesos</span>
+                <span className={`text-[13px] font-mono font-bold ${variations.reduce((s, v) => s + v.weight, 0) === 100 ? 'text-[#039855]' : 'text-[#D92D20]'}`}>
+                  {variations.reduce((s, v) => s + v.weight, 0)}%
+                  {variations.reduce((s, v) => s + v.weight, 0) === 100 ? ' ✓' : ' (deve ser 100%)'}
+                </span>
               </div>
             )}
-          </CardContent>
-        </Card>
-      </div>
+          </div>
+
+          {/* Right column – preview */}
+          <div className="space-y-5">
+            <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
+              <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
+                <div className="text-[14px] font-semibold text-[#0F172A]">Distribuição A/B</div>
+                <div className="text-[11px] text-[#94A3B8] mt-0.5">Proporção de envio entre variantes</div>
+              </div>
+              <div className="p-5 space-y-3">
+                {variations.map((v, i) => (
+                  <div key={v.id} className="space-y-1.5">
+                    <div className="flex items-center justify-between text-[12px]">
+                      <div className="flex items-center gap-2">
+                        <div className={`w-2.5 h-2.5 rounded-sm ${VARIATION_BADGE_COLORS[i % VARIATION_BADGE_COLORS.length]}`} />
+                        <span className="text-[#334155] font-medium truncate max-w-[140px]">{v.name}</span>
+                      </div>
+                      <span className="font-mono font-semibold text-[#0F172A]">{v.weight}%</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-[#F1F3F6] rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${VARIATION_BADGE_COLORS[i % VARIATION_BADGE_COLORS.length]}`}
+                        style={{ width: `${v.weight}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+                {variations.length === 0 && (
+                  <div className="text-[12px] text-[#94A3B8] text-center py-4">Nenhuma variante</div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Simulação tab ─────────────────────────────────────────────── */}
+      {activeSection === 'simulacao' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 flex-1 items-start">
+          <div className="lg:col-span-2">
+            <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
+              <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-[#1B3A6B]" />
+                  <div className="text-[14px] font-semibold text-[#0F172A]">Simulador de Respostas</div>
+                </div>
+                <div className="text-[11px] text-[#94A3B8] mt-0.5">Simule a resposta de um lead para testar o comportamento do robô de IA em tempo real.</div>
+              </div>
+              <div className="p-5 space-y-4">
+                <div className="space-y-2">
+                  <label className="text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider block">Mensagem da Lead</label>
+                  <Textarea
+                    rows={3}
+                    placeholder="Ex: Gostaria de saber preços e quais operadoras atendem..."
+                    value={simulationInput}
+                    onChange={(e) => setSimulationInput(e.target.value)}
+                    className="w-full bg-[#F8F9FB] border border-[#E5E7EB] text-[13px] leading-relaxed focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B]/20 rounded-xl"
+                  />
+                </div>
+
+                <Button
+                  onClick={handleSimulate}
+                  className="w-full bg-[#F8F9FB] hover:bg-[#EEF0F3] text-[#0F172A] border border-[#E5E7EB] font-semibold h-10 rounded-xl transition-all flex items-center justify-center gap-2 text-[13px]"
+                  disabled={isLoadingSim}
+                >
+                  {isLoadingSim ? (
+                    <div className="flex items-center gap-2">
+                      <div className="w-3.5 h-3.5 border-2 border-[#1B3A6B]/30 border-t-[#1B3A6B] rounded-full animate-spin" />
+                      <span>Processando LLM...</span>
+                    </div>
+                  ) : (
+                    <>
+                      <Play className="w-3.5 h-3.5 text-[#1B3A6B] fill-current" />
+                      <span>Simular Interação</span>
+                    </>
+                  )}
+                </Button>
+
+                {simulationResponse && (
+                  <div className="pt-4 border-t border-[#EEF0F3] space-y-3.5 animate-fadeIn">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider block">Resultado</span>
+                      <Badge className="bg-[rgba(27,58,107,0.08)] text-[#1B3A6B] border border-[#1B3A6B]/20 text-[10px] font-bold px-2 py-0">
+                        {simulatedVariant}
+                      </Badge>
+                    </div>
+                    <div className="bg-[#F8F9FB] p-4 border border-[#E5E7EB] rounded-xl space-y-2">
+                      <div className="flex items-center gap-1.5 text-[10px] font-semibold text-[#94A3B8]">
+                        <MessageSquare className="w-3.5 h-3.5" />
+                        RESPOSTA GERADA PELA IA
+                      </div>
+                      <p className="text-[12px] text-[#0F172A] leading-relaxed font-medium">
+                        {simulationResponse}
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Right column – tips */}
+          <div className="space-y-5">
+            <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
+              <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
+                <div className="text-[14px] font-semibold text-[#0F172A]">Dicas de simulação</div>
+              </div>
+              <div className="p-5 space-y-3">
+                <div className="flex items-start gap-2.5">
+                  <div className="w-5 h-5 rounded-md bg-[rgba(27,58,107,0.08)] flex items-center justify-center shrink-0 mt-0.5">
+                    <span className="text-[10px] font-bold text-[#1B3A6B]">1</span>
+                  </div>
+                  <p className="text-[12px] text-[#64748B] leading-relaxed">Teste perguntas reais que seus leads costumam fazer</p>
+                </div>
+                <div className="flex items-start gap-2.5">
+                  <div className="w-5 h-5 rounded-md bg-[rgba(27,58,107,0.08)] flex items-center justify-center shrink-0 mt-0.5">
+                    <span className="text-[10px] font-bold text-[#1B3A6B]">2</span>
+                  </div>
+                  <p className="text-[12px] text-[#64748B] leading-relaxed">Verifique se o tom da resposta está adequado ao nicho</p>
+                </div>
+                <div className="flex items-start gap-2.5">
+                  <div className="w-5 h-5 rounded-md bg-[rgba(27,58,107,0.08)] flex items-center justify-center shrink-0 mt-0.5">
+                    <span className="text-[10px] font-bold text-[#1B3A6B]">3</span>
+                  </div>
+                  <p className="text-[12px] text-[#64748B] leading-relaxed">Compare respostas entre variantes diferentes</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── AI Script Generator Modal ────────────────────────────────────── */}
       {isGenerateModalOpen && (

@@ -17,6 +17,12 @@ import Schedule from './pages/Schedule';
 import Leads from './pages/Leads';
 import Scripts from './pages/Scripts';
 import Settings from './pages/Settings';
+import Campaigns from './pages/Campaigns';
+import Performance from './pages/Performance';
+import AIConsumption from './pages/AIConsumption';
+import LeadSources from './pages/LeadSources';
+import Referrals from './pages/Referrals';
+import AppMobile from './pages/AppMobile';
 import './index.css';
 
 // Protected Route Component injecting RLS authentication state
@@ -87,6 +93,12 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="agenda" element={<Schedule />} />
           <Route path="leads" element={<Leads />} />
           <Route path="roteiros" element={<Scripts />} />
+          <Route path="campanhas" element={<Campaigns />} />
+          <Route path="fontes" element={<LeadSources />} />
+          <Route path="indicacoes" element={<Referrals />} />
+          <Route path="performance" element={<Performance />} />
+          <Route path="consumo-ia" element={<AIConsumption />} />
+          <Route path="app-mobile" element={<AppMobile />} />
           <Route path="configuracoes" element={<Settings />} />
         </Route>
 

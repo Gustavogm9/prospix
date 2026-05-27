@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Card, Button, Badge, Input, toast } from '@prospix/ui';
-import { Clock, Phone, Mail, Calendar, X, Plus } from 'lucide-react';
+import { Clock, Phone, Mail, Calendar, X, Plus, Info } from 'lucide-react';
 import { apiClient } from '../lib/api-client';
 import { AxiosError } from 'axios';
-import { canUseMockFallbacks } from '../lib/demo-mode';
 
 interface Meeting {
   id: string;
@@ -31,6 +30,7 @@ interface SelectedSlot {
 
 const TIME_SLOTS = [
   '08:00', '08:30', '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
+  'LUNCH',
   '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30', '17:00'
 ];
 
@@ -63,13 +63,6 @@ const API_STATUS_TO_STATUS: Record<string, Meeting['status']> = {
   CANCELLED: 'cancelada',
 };
 
-const MOCK_MEETINGS: Meeting[] = [
-  { id: '1', leadName: 'Marcos de Oliveira', phone: '+55 11 98888-7777', email: 'marcos@oliveira.com.br', company: 'Oliveira Consultoria', dayOfWeek: 2, timeSlot: '14:30', durationMin: 30, status: 'confirmada' },
-  { id: '2', leadName: 'Ana Beatriz Reis', phone: '+55 21 97777-6666', email: 'ana@reis.com.br', company: 'Reis Arquitetura', dayOfWeek: 3, timeSlot: '10:00', durationMin: 60, status: 'agendada' },
-  { id: '3', leadName: 'Metalúrgica Alfa', phone: '+55 19 96666-5555', email: 'vendas@alfa.com.br', company: 'Alfa Ltda', dayOfWeek: 1, timeSlot: '09:00', durationMin: 30, status: 'aconteceu' },
-  { id: '4', leadName: 'Julia Silveira', phone: '+55 31 95555-4444', email: 'julia@silveira.med.br', company: 'Clinica Silveira', dayOfWeek: 4, timeSlot: '16:00', durationMin: 30, status: 'cancelada' },
-];
-
 const mapBackendMeeting = (meeting: any): Meeting => {
   const lead = meeting.lead || {};
   const scheduledAt = meeting.scheduledFor || meeting.scheduled_for || meeting.scheduledAt || meeting.scheduled_at || meeting.startAt || meeting.start_at;
@@ -93,7 +86,31 @@ const mapBackendMeeting = (meeting: any): Meeting => {
 };
 
 export default function Schedule() {
-  const [meetings, setMeetings] = useState<Meeting[]>(canUseMockFallbacks ? MOCK_MEETINGS : []);
+  const [meetings, setMeetings] = useState<Meeting[]>([]);
+  const [weekOffset, setWeekOffset] = useState(0);
+
+  const getWeekMonday = (offset: number) => {
+    const now = new Date();
+    const day = now.getDay(); // 0=Sun
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1) + offset * 7;
+    const monday = new Date(now);
+    monday.setDate(diff);
+    monday.setHours(0, 0, 0, 0);
+    return monday;
+  };
+
+  const weekMonday = getWeekMonday(weekOffset);
+
+  const DAYS_OF_WEEK_WITH_DATES = DAYS_OF_WEEK.map((day, i) => {
+    const date = new Date(weekMonday);
+    date.setDate(date.getDate() + i);
+    return {
+      ...day,
+      dateStr: date.toLocaleDateString('pt-BR', { day: 'numeric', month: 'short' }),
+      fullDate: date,
+      isToday: date.toDateString() === new Date().toDateString(),
+    };
+  });
 
   const [selectedMeeting, setSelectedMeeting] = useState<Meeting | null>(null);
   const [selectedMobileDay, setSelectedMobileDay] = useState<number>(1);
@@ -117,12 +134,8 @@ export default function Schedule() {
       setMeetings((list || []).map(mapBackendMeeting));
     } catch (error) {
       console.error('Error fetching meetings:', error);
-      if (canUseMockFallbacks) {
-        setMeetings(MOCK_MEETINGS);
-      } else {
-        setMeetings([]);
-        toast.error('Erro de Conexão', 'Não foi possível carregar a agenda real da API.');
-      }
+      setMeetings([]);
+      toast.error('Erro de Conexão', 'Não foi possível carregar a agenda.');
     }
   }, []);
 
@@ -156,16 +169,10 @@ export default function Schedule() {
     const [rawHours, rawMinutes] = slot.slot.split(':').map(Number);
     const hours = rawHours ?? 9;
     const minutes = rawMinutes ?? 0;
-    const date = new Date();
-    const daysUntilSlot = (slot.day - date.getDay() + 7) % 7;
-
-    date.setDate(date.getDate() + daysUntilSlot);
+    // Use weekMonday so the date matches the displayed week
+    const date = new Date(weekMonday);
+    date.setDate(date.getDate() + (slot.day - 1)); // day 1=Mon → +0, day 5=Fri → +4
     date.setHours(hours, minutes, 0, 0);
-
-    if (date <= new Date()) {
-      date.setDate(date.getDate() + 7);
-    }
-
     return date;
   };
 
@@ -229,28 +236,53 @@ export default function Schedule() {
   };
 
   return (
-    <div className="space-y-6 flex flex-col h-full animate-fadeIn">
-      {/* Header Schedule */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 shrink-0">
-        <div>
-          <h2 className="text-3xl font-bold font-heading text-text tracking-tight">Agenda Semanal</h2>
-          <p className="text-text-secondary text-sm mt-1">
-            Controle de compromissos integrados ao Google Agenda com detecção automática de conflitos.
-          </p>
-        </div>
+    <div className="space-y-4 flex flex-col h-full animate-fadeIn">
+      {/* Info banner */}
+      <div className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-[rgba(27,58,107,0.04)] to-[rgba(232,152,28,0.06)] border border-[rgba(27,58,107,0.08)] rounded-xl text-[12.5px] text-[#0F172A] shrink-0">
+        <Info className="w-4 h-4 text-[#1B3A6B] shrink-0" />
+        <div><strong>Tudo aqui foi agendado pela IA</strong> e sincronizado com seu Google Calendar. Você recebe lembrete 1h antes. Após cada reunião, clique em <strong>"Marcar resultado"</strong> para a IA disparar follow-up e pedir indicações.</div>
+      </div>
+
+      {/* Toolbar */}
+      <div className="bg-white border border-[#E5E7EB] rounded-lg p-2.5 flex items-center gap-2 flex-wrap shadow-sm shrink-0">
+        <button onClick={() => setWeekOffset(0)} className={`h-8 px-3 rounded-md text-[12px] font-medium ${weekOffset === 0 ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Esta semana</button>
+        <button onClick={() => setWeekOffset(1)} className={`h-8 px-3 rounded-md text-[12px] font-medium ${weekOffset === 1 ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Próxima semana</button>
+        <button onClick={() => setWeekOffset(w => w > 0 ? w - 1 : 0)} className="h-8 w-8 rounded-md text-[12px] font-medium text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6] flex items-center justify-center">←</button>
+        <button onClick={() => setWeekOffset(w => w + 1)} className="h-8 w-8 rounded-md text-[12px] font-medium text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6] flex items-center justify-center">→</button>
+        <div className="w-px h-6 bg-[#E5E7EB] mx-1" />
+        <button
+          onClick={async () => {
+            try {
+              await apiClient.post('/tenant/integrations/calendar/sync');
+              toast.success('Sincronizado!', 'Google Calendar atualizado com sucesso.');
+              await fetchMeetings();
+            } catch {
+              toast.error('Integração pendente', 'Configure o Google Calendar em Configurações → Integrações.');
+            }
+          }}
+          className="h-8 px-3 rounded-md text-[12px] font-medium text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6] flex items-center gap-1.5"
+        >
+          <Calendar className="w-3 h-3" />
+          Sync Google Calendar
+        </button>
+        <span className="ml-auto text-[11px] text-[#475569] flex items-center gap-1.5">
+          <span className="w-[6px] h-[6px] rounded-full bg-[#039855] animate-pulse" />
+          {meetings.length > 0 ? `${meetings.length} reuniões carregadas` : 'Nenhuma reunião'}
+        </span>
       </div>
 
       {/* Mobile Day Selector Tabs */}
       <div className="flex md:hidden overflow-x-auto gap-1 p-1 bg-surface-sunken border border-border rounded-xl shrink-0">
-        {DAYS_OF_WEEK.map(day => (
+        {DAYS_OF_WEEK_WITH_DATES.map(day => (
           <button
             key={day.value}
             onClick={() => setSelectedMobileDay(day.value)}
-            className={`flex-1 text-center text-xs py-2 rounded-lg font-bold whitespace-nowrap transition-all ${
-              selectedMobileDay === day.value ? 'bg-primary text-white shadow-sm' : 'text-text-secondary hover:text-text'
+            className={`flex-1 text-center text-xs py-1.5 rounded-lg font-bold whitespace-nowrap transition-all ${
+              selectedMobileDay === day.value ? 'bg-primary text-white shadow-sm' : day.isToday ? 'text-[#1B3A6B]' : 'text-text-secondary hover:text-text'
             }`}
           >
-            {day.label.split('-')[0]}
+            <div>{day.label.split('-')[0]}</div>
+            <div className={`text-[9px] mt-0.5 ${selectedMobileDay === day.value ? 'text-white/80' : 'text-text-secondary/60'} font-medium`}>{day.dateStr}</div>
           </button>
         ))}
       </div>
@@ -260,9 +292,14 @@ export default function Schedule() {
         {/* DESKTOP CALENDAR GRID */}
         <div className="hidden md:grid grid-cols-6 border-b border-border bg-surface-sunken/40 text-center text-xs font-semibold py-3 shrink-0">
           <div className="text-text-secondary/70 font-mono">Horário</div>
-          {DAYS_OF_WEEK.map(day => (
-            <div key={day.value} className="text-text">
-              {day.label}
+          {DAYS_OF_WEEK_WITH_DATES.map(day => (
+            <div key={day.value} className="text-center">
+              <div className={`text-[12px] font-semibold ${day.isToday ? 'text-[#1B3A6B]' : 'text-[#0F172A]'}`}>
+                {day.label.split('-')[0]}
+              </div>
+              <div className={`text-[10px] mt-0.5 ${day.isToday ? 'text-[#1B3A6B] font-bold' : 'text-[#94A3B8]'}`}>
+                {day.dateStr}
+              </div>
             </div>
           ))}
         </div>
@@ -270,6 +307,12 @@ export default function Schedule() {
         {/* Table/Grid Body Scrollable - Desktop */}
         <div className="hidden md:flex flex-col flex-1 overflow-y-auto divide-y divide-border/60 select-none">
           {TIME_SLOTS.map((slot) => (
+            slot === 'LUNCH' ? (
+              <div key="lunch" className="grid grid-cols-6 items-center min-h-[32px] bg-[#F9FAFB] border-y border-[#EEF0F3]">
+                <div className="flex items-center justify-center text-[10px] text-[#94A3B8] font-medium">☕</div>
+                <div className="col-span-5 text-center text-[10px] text-[#94A3B8] italic">Almoço · 12:00 – 13:30</div>
+              </div>
+            ) : (
             <div key={slot} className="grid grid-cols-6 items-stretch min-h-[46px] divide-x divide-border/30">
               <div className="flex items-center justify-center text-[10px] text-text-secondary/70 font-mono font-medium py-2">
                 {slot}
@@ -311,12 +354,21 @@ export default function Schedule() {
                 );
               })}
             </div>
+            )
           ))}
         </div>
 
         {/* MOBILE LIST AGENDA VIEW */}
         <div className="flex flex-col md:hidden flex-1 overflow-y-auto divide-y divide-border/60">
           {TIME_SLOTS.map((slot) => {
+            if (slot === 'LUNCH') {
+              return (
+                <div key="lunch-mobile" className="flex items-center gap-4 p-3 bg-[#F9FAFB] border-y border-[#EEF0F3]">
+                  <div className="text-xs font-mono font-bold text-[#94A3B8] w-12 shrink-0">☕</div>
+                  <div className="flex-1 text-[10px] text-[#94A3B8] italic">Almoço · 12:00 – 13:30</div>
+                </div>
+              );
+            }
             const meeting = getMeetingAtSlot(selectedMobileDay, slot);
             return (
               <div key={slot} className="flex items-center gap-4 p-3 hover:bg-surface-sunken/40 transition-colors">

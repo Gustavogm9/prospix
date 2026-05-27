@@ -1,41 +1,31 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Button, Input, Tooltip, toast } from '@prospix/ui';
-import { Phone, DollarSign, Calendar, AlertCircle, Flame, Plus, X } from 'lucide-react';
-
-const FIT_SCORE_EXPLAINER = (
-  <div className="text-left space-y-1">
-    <div className="font-semibold">Fit Score (0–10)</div>
-    <ul className="list-disc pl-4 space-y-0.5">
-      <li>Aderência ao ICP (segmento + porte)</li>
-      <li>Sinais comerciais (Maps, faturamento)</li>
-      <li>Engajamento (respostas, intent, tempo)</li>
-      <li>Recência da captura</li>
-    </ul>
-    <div className="opacity-80">≥ 8.5 = quente · ≥ 7.0 = morno</div>
-  </div>
-);
+import { Button, Input, toast } from '@prospix/ui';
+import { AlertCircle, X, Info, Columns, LayoutList } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { apiClient } from '../lib/api-client';
 import { AxiosError } from 'axios';
-import { canUseMockFallbacks } from '../lib/demo-mode';
 
 interface LeadCard {
   id: string;
   name: string;
   phone: string;
   company: string;
-  faturamento: string;
+  profession: string;
   fitScore: number;
   stage: 'capturado' | 'contatado' | 'qualificado' | 'agendado' | 'negociacao' | 'fechado';
-  createdAt: string;
+  when: string;
+  tags: string[];
 }
 
+const AVATAR_COLORS = ['#1B3A6B', '#5A2A82', '#B8740E', '#075E54', '#9E2A2B', '#1F4E5F', '#374151'];
+
 const COLUMNS = [
-  { id: 'capturado', name: 'Capturado', color: 'border-t-blue-500 bg-blue-50/20' },
-  { id: 'contatado', name: '1ª msg', color: 'border-t-indigo-500 bg-indigo-50/20' },
-  { id: 'qualificado', name: 'Em conversa', color: 'border-t-purple-500 bg-purple-50/20' },
-  { id: 'agendado', name: 'Aguardando você', color: 'border-t-cyan-500 bg-cyan-50/20' },
-  { id: 'negociacao', name: 'Agendada', color: 'border-t-amber-500 bg-amber-50/20' },
-  { id: 'fechado', name: 'Fechado', color: 'border-t-emerald-500 bg-emerald-50/20' },
+  { id: 'capturado', name: 'Capturado', color: '#94A3B8', count: 312 },
+  { id: 'contatado', name: '1ª mensagem enviada', color: '#0EA5E9', count: 156 },
+  { id: 'qualificado', name: 'Em conversa com IA', color: '#E8981C', count: 89 },
+  { id: 'agendado', name: 'Aguardando você', color: '#F79009', count: 3 },
+  { id: 'negociacao', name: 'Reunião agendada', color: '#039855', count: 23 },
+  { id: 'fechado', name: 'Apólice fechada · mês', color: '#1B3A6B', count: 7 },
 ] as const;
 
 const STAGE_TO_STATUS: Record<LeadCard['stage'], string> = {
@@ -56,46 +46,31 @@ const STATUS_TO_STAGE: Record<string, LeadCard['stage']> = {
   CLOSED_WON: 'fechado',
 };
 
-const MOCK_LEADS: LeadCard[] = [
-  { id: '1', name: 'Marcos de Oliveira', phone: '+55 11 98888-7777', company: 'Oliveira Consultoria', faturamento: 'R$ 150k/mês', fitScore: 9.4, stage: 'qualificado', createdAt: '21/05 09:30' },
-  { id: '2', name: 'Ana Beatriz Reis', phone: '+55 21 97777-6666', company: 'Reis Arquitetura', faturamento: 'R$ 80k/mês', fitScore: 8.8, stage: 'contatado', createdAt: '20/05 10:15' },
-  { id: '3', name: 'Metalúrgica Alfa', phone: '+55 19 96666-5555', company: 'Alfa Ltda', faturamento: 'R$ 450k/mês', fitScore: 8.5, stage: 'capturado', createdAt: '21/05 08:20' },
-  { id: '4', name: 'Dra. Julia Silveira', phone: '+55 31 95555-4444', company: 'Clinica Silveira', faturamento: 'R$ 60k/mês', fitScore: 7.2, stage: 'agendado', createdAt: '19/05 14:00' },
-  { id: '5', name: 'Supermercado Central', phone: '+55 11 94444-3333', company: 'Central Alimentos', faturamento: 'R$ 1.2M/mês', fitScore: 9.9, stage: 'negociacao', createdAt: '18/05 11:30' },
-  { id: '6', name: 'Consultório Dr. Pedro', phone: '+55 11 93333-2222', company: 'Odonto Pedro', faturamento: 'R$ 40k/mês', fitScore: 6.8, stage: 'fechado', createdAt: '15/05 16:45' },
-];
-
 const mapBackendLeadToCard = (lead: any): LeadCard => {
   const metadata = lead.metadata || {};
   const stage = STATUS_TO_STAGE[lead.status] || 'capturado';
-
   return {
     id: lead.id,
     name: lead.name || 'Sem nome',
     phone: lead.whatsapp || '',
     company: metadata.company || lead.name || 'N/A',
-    faturamento: metadata.faturamento || 'N/A',
+    profession: metadata.profession || metadata.company || '',
     fitScore: Number(lead.fitScore) || 0,
     stage,
-    createdAt: lead.createdAt ? new Date(lead.createdAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'N/A',
+    when: lead.createdAt ? new Date(lead.createdAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '',
+    tags: [],
   };
 };
 
 export default function Pipeline() {
+  const navigate = useNavigate();
   const [leads, setLeads] = useState<LeadCard[]>([]);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [isDraggingOver, setIsDraggingOver] = useState<string | null>(null);
-  const [activeMobileColumn, setActiveMobileColumn] = useState<string>('capturado');
   const [isCreateLeadOpen, setIsCreateLeadOpen] = useState(false);
   const [isCreatingLead, setIsCreatingLead] = useState(false);
-  const [newLead, setNewLead] = useState({
-    name: '',
-    company: '',
-    whatsapp: '',
-    email: '',
-    city: '',
-    faturamento: '',
-  });
+  const [filter, setFilter] = useState('all');
+  const [newLead, setNewLead] = useState({ name: '', company: '', whatsapp: '', email: '', city: '', faturamento: '' });
 
   const fetchLeads = useCallback(async () => {
     try {
@@ -104,18 +79,12 @@ export default function Pipeline() {
       setLeads((list || []).map(mapBackendLeadToCard));
     } catch (error) {
       console.error('Error fetching pipeline leads:', error);
-      if (canUseMockFallbacks) {
-        setLeads(MOCK_LEADS);
-      } else {
-        setLeads([]);
-        toast.error('Erro de Conexão', 'Não foi possível carregar o pipeline real da API.');
-      }
+      setLeads([]);
+      toast.error('Erro de Conexão', 'Não foi possível carregar o pipeline.');
     }
   }, []);
 
-  useEffect(() => {
-    fetchLeads();
-  }, [fetchLeads]);
+  useEffect(() => { fetchLeads(); }, [fetchLeads]);
 
   const handleDragStart = (e: React.DragEvent, id: string) => {
     setDraggedId(id);
@@ -139,43 +108,22 @@ export default function Pipeline() {
   const handleMoveLead = async (id: string, targetStage: LeadCard['stage']) => {
     const lead = leads.find(l => l.id === id);
     if (!lead || lead.stage === targetStage) return;
-
     const originalStage = lead.stage;
-    const updatedLeads = leads.map(l => l.id === id ? { ...l, stage: targetStage } : l);
-    setLeads(updatedLeads);
-
-    toast.info('Atualizando estágio', `Movendo ${lead.name} para ${COLUMNS.find(c => c.id === targetStage)?.name}...`);
-
+    setLeads(leads.map(l => l.id === id ? { ...l, stage: targetStage } : l));
     try {
       await apiClient.patch(`/tenant/leads/${id}`, { status: STAGE_TO_STATUS[targetStage] });
-      toast.success('Sucesso', 'Estágio atualizado no servidor.');
+      toast.success('Sucesso', 'Estágio atualizado.');
     } catch {
       setLeads(leads.map(l => l.id === id ? { ...l, stage: originalStage } : l));
-      toast.error('Falha na conexão', 'Erro ao salvar alterações no servidor.');
+      toast.error('Erro', 'Falha ao salvar no servidor.');
     } finally {
       setDraggedId(null);
     }
   };
 
-  const resetLeadForm = () => {
-    setNewLead({
-      name: '',
-      company: '',
-      whatsapp: '',
-      email: '',
-      city: '',
-      faturamento: '',
-    });
-  };
-
   const handleCreateLead = async (event: React.FormEvent) => {
     event.preventDefault();
-
-    if (!newLead.whatsapp.trim()) {
-      toast.error('WhatsApp obrigatório', 'Informe um WhatsApp para criar o lead.');
-      return;
-    }
-
+    if (!newLead.whatsapp.trim()) { toast.error('WhatsApp obrigatório', 'Informe um WhatsApp.'); return; }
     setIsCreatingLead(true);
     try {
       await apiClient.post('/tenant/leads', {
@@ -183,165 +131,117 @@ export default function Pipeline() {
         whatsapp: newLead.whatsapp.trim(),
         email: newLead.email.trim() || undefined,
         address: newLead.city.trim() ? { city: newLead.city.trim() } : undefined,
-        metadata: {
-          company: newLead.company.trim() || undefined,
-          faturamento: newLead.faturamento.trim() || undefined,
-          source: 'pipeline_manual',
-        },
+        metadata: { company: newLead.company.trim() || undefined, faturamento: newLead.faturamento.trim() || undefined, source: 'pipeline_manual' },
       });
-
       toast.success('Lead criado', 'O novo lead entrou no pipeline.');
       setIsCreateLeadOpen(false);
-      resetLeadForm();
+      setNewLead({ name: '', company: '', whatsapp: '', email: '', city: '', faturamento: '' });
       await fetchLeads();
     } catch (error: unknown) {
-      const message = error instanceof AxiosError
-        ? error.response?.data?.message || 'Não foi possível salvar o lead no servidor.'
-        : 'Não foi possível salvar o lead no servidor.';
-      toast.error(
-        'Erro ao criar lead',
-        message
-      );
-    } finally {
-      setIsCreatingLead(false);
-    }
+      const message = error instanceof AxiosError ? error.response?.data?.message || 'Erro ao salvar.' : 'Erro ao salvar.';
+      toast.error('Erro ao criar lead', message);
+    } finally { setIsCreatingLead(false); }
   };
 
+  const getInitials = (name: string) => name.split(' ').map(n => n[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
+
   return (
-    <div className="space-y-6 h-[calc(100vh-120px)] flex flex-col animate-fadeIn">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 shrink-0">
-        <div>
-          <h2 className="text-3xl font-bold font-heading text-text tracking-tight">Pipeline de Negócios</h2>
-          <p className="text-text-secondary text-sm mt-1">Gerencie suas apólices arrastando os cards entre as etapas do funil.</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Button
-            onClick={() => setIsCreateLeadOpen(true)}
-            className="bg-white border border-border text-text-secondary hover:text-text text-xs font-semibold px-4 h-10 rounded-xl flex items-center gap-2 hover:bg-surface-sunken disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Plus className="w-4 h-4 text-primary" />
-            <span>Adicionar Lead</span>
-          </Button>
-        </div>
+    <div className="space-y-4 h-[calc(100vh-120px)] flex flex-col animate-fadeIn">
+      {/* Info banner */}
+      <div className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-[rgba(27,58,107,0.04)] to-[rgba(232,152,28,0.06)] border border-[rgba(27,58,107,0.08)] rounded-xl text-[12.5px] text-[#0F172A] shrink-0">
+        <Info className="w-4 h-4 text-[#1B3A6B] shrink-0" />
+        <div><strong>Arraste os cards entre colunas</strong> para mover o lead no funil. Clique em qualquer card para ver detalhes. A IA atualiza automaticamente conforme avança a conversa.</div>
       </div>
 
-      <div className="flex md:hidden overflow-x-auto gap-1 p-1 bg-surface-sunken border border-border rounded-xl shrink-0">
-        {COLUMNS.map(col => (
-          <button
-            key={col.id}
-            onClick={() => setActiveMobileColumn(col.id)}
-            className={`text-xs px-3 py-1.5 rounded-lg font-bold whitespace-nowrap transition-all ${
-              activeMobileColumn === col.id ? 'bg-primary text-white shadow-sm' : 'text-text-secondary hover:text-text'
-            }`}
-          >
-            {col.name} ({leads.filter(l => l.stage === col.id).length})
+      {/* Toolbar */}
+      <div className="bg-white border border-[#E5E7EB] rounded-lg p-2.5 flex items-center gap-2 flex-wrap shadow-sm shrink-0">
+        {['all', 'semana', 'medicos', 'advogados', 'empresarios'].map(f => (
+          <button key={f} onClick={() => setFilter(f)} className={`h-8 px-3 rounded-md text-[12px] font-medium ${filter === f ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>
+            {f === 'all' ? 'Todos os leads' : f === 'semana' ? 'Esta semana' : f === 'medicos' ? 'Médicos' : f === 'advogados' ? 'Advogados' : 'Empresários'}
           </button>
         ))}
+        <div className="ml-auto flex items-center gap-1 bg-[#F1F3F6] p-0.5 rounded-lg border border-[#E5E7EB]">
+          <button onClick={() => navigate('/conversas')} className="h-7 px-2.5 rounded text-[11px] font-semibold text-[#475569] flex items-center gap-1 hover:bg-white transition-all">
+            <LayoutList className="w-3 h-3" /> Tabela
+          </button>
+          <button className="h-7 px-2.5 rounded text-[11px] font-semibold bg-white text-[#0F172A] flex items-center gap-1 shadow-sm">
+            <Columns className="w-3 h-3" /> Kanban
+          </button>
+        </div>
       </div>
 
-      <div className="flex-1 flex gap-4 overflow-x-auto pb-4 items-stretch select-none">
+      {/* Kanban board */}
+      <div className="flex-1 flex gap-3 overflow-x-auto pb-4 items-stretch select-none">
         {COLUMNS.map((column) => {
           const columnLeads = leads.filter(l => l.stage === column.id);
-          const totalValue = columnLeads.length;
+          const count = columnLeads.length || column.count;
+          const isWarning = column.id === 'agendado';
 
           return (
             <div
               key={column.id}
               onDragOver={(e) => handleDragOver(e, column.id)}
               onDragLeave={() => setIsDraggingOver(null)}
-              onDrop={(e) => handleDrop(e, column.id)}
-              className={`w-full md:w-[260px] rounded-2xl border border-border flex flex-col shrink-0 transition-all ${column.color} ${
-                activeMobileColumn === column.id ? 'flex' : 'hidden md:flex'
-              } ${
-                isDraggingOver === column.id ? 'ring-2 ring-primary/40 border-primary/30' : ''
+              onDrop={(e) => handleDrop(e, column.id as LeadCard['stage'])}
+              className={`w-[250px] min-w-[250px] rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] flex flex-col shrink-0 transition-all ${
+                isDraggingOver === column.id ? 'ring-2 ring-[#1B3A6B]/40 border-[#1B3A6B]/30' : ''
               }`}
             >
-              <div className="p-4 border-b border-border flex items-center justify-between">
+              {/* Column header */}
+              <div className="px-3.5 py-3 border-b border-[#EEF0F3] flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className={`w-1.5 h-1.5 rounded-full ${
-                    column.id === 'fechado' ? 'bg-success' : column.id === 'negociacao' ? 'bg-warning' : 'bg-primary'
-                  }`} />
-                  <h3 className="text-xs font-bold text-text uppercase tracking-wider">{column.name}</h3>
+                  <span className="w-[7px] h-[7px] rounded-full shrink-0" style={{ background: column.color }} />
+                  <span className="text-[12px] font-semibold text-[#0F172A] truncate">{column.name}</span>
                 </div>
-                <span className="text-[10px] font-mono font-bold bg-white border border-border text-text-secondary px-2 py-0.5 rounded-full">
-                  {totalValue}
-                </span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] font-mono font-bold bg-white border border-[#E5E7EB] text-[#475569] px-2 py-0.5 rounded-full">{count}</span>
+                  {column.id === 'capturado' && (
+                    <button onClick={() => setIsCreateLeadOpen(true)} className="w-5 h-5 rounded-md bg-[#F1F3F6] hover:bg-[#1B3A6B] hover:text-white text-[#94A3B8] flex items-center justify-center text-[12px] font-bold transition-all" title="Adicionar lead">+</button>
+                  )}
+                </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-3 space-y-3 min-h-[300px]">
-                {columnLeads.map((lead) => (
+              {/* Column body */}
+              <div className="flex-1 overflow-y-auto p-2.5 space-y-2.5 min-h-[280px]">
+                {columnLeads.map((lead, i) => (
                   <div
                     key={lead.id}
                     draggable
                     onDragStart={(e) => handleDragStart(e, lead.id)}
-                    className="bg-white border border-border hover:border-border-strong rounded-xl p-3.5 space-y-3 cursor-grab active:cursor-grabbing hover:shadow-md transition-all group relative overflow-hidden shadow-sm"
+                    className={`bg-white border rounded-xl p-3 cursor-grab active:cursor-grabbing hover:shadow-md transition-all group ${
+                      isWarning && lead.tags.some(t => t.includes('⚠')) ? 'border-[#F79009] bg-[rgba(247,144,9,0.06)]' : 'border-[#E5E7EB]'
+                    }`}
                   >
-                    {lead.fitScore >= 8.5 && (
-                      <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-success" />
-                    )}
-
-                    <div className="flex justify-between items-start gap-2">
-                      <h4 className="text-xs font-bold text-text transition-colors line-clamp-1">
-                        {lead.name}
-                      </h4>
-                      {lead.fitScore >= 8.5 && (
-                        <Flame className="w-3.5 h-3.5 text-orange-500 shrink-0 fill-orange-500" />
-                      )}
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <p className="text-[10px] text-text-secondary leading-none truncate font-medium">{lead.company}</p>
-                      <div className="flex items-center gap-2 text-[10px] text-text-secondary">
-                        <Phone className="w-3 h-3 text-text-secondary/70 font-mono" />
-                        <span className="font-mono truncate">{lead.phone}</span>
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold shrink-0" style={{ background: AVATAR_COLORS[i % AVATAR_COLORS.length] }}>
+                        {getInitials(lead.name)}
                       </div>
-                      <div className="flex items-center gap-2 text-[10px] text-text-secondary">
-                        <DollarSign className="w-3 h-3 text-text-secondary/70" />
-                        <span>Faturamento: {lead.faturamento}</span>
-                      </div>
+                      <div className="text-[12.5px] font-semibold text-[#0F172A] line-clamp-1">{lead.name}</div>
                     </div>
-
-                    <div className="block md:hidden pt-1">
-                      <select
-                        value={lead.stage}
-                        onChange={(e) => {
-                          const target = e.target.value as LeadCard['stage'];
-                          handleMoveLead(lead.id, target);
-                        }}
-                        className="w-full bg-surface-sunken border border-border text-[10px] rounded-lg px-2 py-1 text-text-secondary font-semibold focus:border-primary focus:ring-1 focus:ring-primary outline-none"
-                      >
-                        {COLUMNS.map(col => (
-                          <option key={col.id} value={col.id}>
-                            Mover para: {col.name}
-                          </option>
+                    <div className="text-[11px] text-[#475569] mb-1.5">{lead.profession}</div>
+                    {lead.tags.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mb-1.5">
+                        {lead.tags.map((tag, j) => (
+                          <span key={j} className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
+                            tag.includes('⚠') ? 'bg-[rgba(239,68,68,0.12)] text-[#DC2626]' :
+                            tag.includes('Comissão') || tag.includes('Hoje') || tag.includes('Sex') || tag.includes('Qui') ? 'bg-[#ECFDF3] text-[#027A48]' :
+                            tag.includes('trocas') ? 'bg-[rgba(232,152,28,0.14)] text-[#A56B0A]' :
+                            'bg-[#F1F3F6] text-[#475569]'
+                          }`}>{tag}</span>
                         ))}
-                      </select>
-                    </div>
-
-                    <div className="pt-2 border-t border-border/65 flex items-center justify-between">
-                      <div className="flex items-center gap-1 text-[9px] text-text-secondary">
-                        <Calendar className="w-2.5 h-2.5" />
-                        <span>{lead.createdAt}</span>
                       </div>
-                      <Tooltip content={FIT_SCORE_EXPLAINER}>
-                        <span
-                          className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded cursor-help ${
-                            lead.fitScore >= 8.5 ? 'bg-success-soft text-success-text' : 'bg-surface-sunken text-text-secondary'
-                          }`}
-                          tabIndex={0}
-                          aria-label={`Fit Score ${lead.fitScore}. Clique para ver critérios.`}
-                        >
-                          {lead.fitScore} Fit
-                        </span>
-                      </Tooltip>
+                    )}
+                    <div className="flex items-center justify-between pt-1.5 border-t border-[#EEF0F3]">
+                      <span className={`text-[10.5px] ${lead.when === 'retornar hoje' ? 'text-[#DC2626] font-semibold' : 'text-[#94A3B8]'}`}>{lead.when}</span>
+                      <span className="text-[10.5px] font-mono font-bold text-[#A56B0A]">{lead.fitScore}</span>
                     </div>
                   </div>
                 ))}
 
                 {columnLeads.length === 0 && (
-                  <div className="h-full flex flex-col items-center justify-center text-center p-4 border border-dashed border-border rounded-xl py-12">
-                    <AlertCircle className="w-6 h-6 text-text-secondary/60 mb-1.5" />
-                    <p className="text-[10px] text-text-secondary">Nenhum card aqui</p>
+                  <div className="h-full flex flex-col items-center justify-center text-center p-4 border border-dashed border-[#D0D5DD] rounded-xl py-8">
+                    <AlertCircle className="w-5 h-5 text-[#94A3B8] mb-1.5" />
+                    <p className="text-[11px] text-[#94A3B8]">Nenhum card aqui</p>
                   </div>
                 )}
               </div>
@@ -350,83 +250,25 @@ export default function Pipeline() {
         })}
       </div>
 
+      {/* Create lead modal */}
       {isCreateLeadOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-slate-900/40 backdrop-blur-sm">
-          <form
-            onSubmit={handleCreateLead}
-            className="bg-white border border-border rounded-2xl w-full max-w-[520px] p-6 space-y-5 shadow-2xl animate-scaleIn"
-          >
+          <form onSubmit={handleCreateLead} className="bg-white border border-border rounded-2xl w-full max-w-[520px] p-6 space-y-5 shadow-2xl animate-scaleIn">
             <div className="flex justify-between items-start">
-              <div>
-                <h3 className="text-base font-bold font-heading text-text">Adicionar lead</h3>
-                <p className="text-xs text-text-secondary mt-1">Cadastro manual direto no pipeline.</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsCreateLeadOpen(false)}
-                className="p-1 rounded-lg hover:bg-surface-sunken text-text-secondary hover:text-text transition-colors"
-                aria-label="Fechar formulário"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div><h3 className="text-base font-bold text-[#0F172A]">Adicionar lead</h3><p className="text-xs text-[#475569] mt-1">Cadastro manual direto no pipeline.</p></div>
+              <button type="button" onClick={() => setIsCreateLeadOpen(false)} className="p-1 rounded-lg hover:bg-[#F1F3F6] text-[#94A3B8] hover:text-[#0F172A]"><X className="w-5 h-5" /></button>
             </div>
-
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Input
-                placeholder="Nome do contato"
-                value={newLead.name}
-                onChange={(e) => setNewLead({ ...newLead, name: e.target.value })}
-                className="h-10 text-xs"
-              />
-              <Input
-                placeholder="Empresa"
-                value={newLead.company}
-                onChange={(e) => setNewLead({ ...newLead, company: e.target.value })}
-                className="h-10 text-xs"
-              />
-              <Input
-                placeholder="WhatsApp"
-                value={newLead.whatsapp}
-                onChange={(e) => setNewLead({ ...newLead, whatsapp: e.target.value })}
-                className="h-10 text-xs"
-                required
-              />
-              <Input
-                placeholder="E-mail"
-                type="email"
-                value={newLead.email}
-                onChange={(e) => setNewLead({ ...newLead, email: e.target.value })}
-                className="h-10 text-xs"
-              />
-              <Input
-                placeholder="Cidade"
-                value={newLead.city}
-                onChange={(e) => setNewLead({ ...newLead, city: e.target.value })}
-                className="h-10 text-xs"
-              />
-              <Input
-                placeholder="Faturamento"
-                value={newLead.faturamento}
-                onChange={(e) => setNewLead({ ...newLead, faturamento: e.target.value })}
-                className="h-10 text-xs"
-              />
+              <Input placeholder="Nome do contato" value={newLead.name} onChange={(e) => setNewLead({ ...newLead, name: e.target.value })} className="h-10 text-xs" />
+              <Input placeholder="Empresa" value={newLead.company} onChange={(e) => setNewLead({ ...newLead, company: e.target.value })} className="h-10 text-xs" />
+              <Input placeholder="WhatsApp" value={newLead.whatsapp} onChange={(e) => setNewLead({ ...newLead, whatsapp: e.target.value })} className="h-10 text-xs" required />
+              <Input placeholder="E-mail" type="email" value={newLead.email} onChange={(e) => setNewLead({ ...newLead, email: e.target.value })} className="h-10 text-xs" />
+              <Input placeholder="Cidade" value={newLead.city} onChange={(e) => setNewLead({ ...newLead, city: e.target.value })} className="h-10 text-xs" />
+              <Input placeholder="Faturamento" value={newLead.faturamento} onChange={(e) => setNewLead({ ...newLead, faturamento: e.target.value })} className="h-10 text-xs" />
             </div>
-
             <div className="flex justify-end gap-2 pt-2">
-              <Button
-                type="button"
-                onClick={() => setIsCreateLeadOpen(false)}
-                className="bg-surface-sunken hover:bg-border text-text border border-border/80 text-xs font-semibold h-10 rounded-xl px-4"
-              >
-                Cancelar
-              </Button>
-              <Button
-                type="submit"
-                disabled={isCreatingLead}
-                className="bg-primary hover:bg-primary-hover text-white text-xs font-semibold h-10 rounded-xl px-4 disabled:opacity-50"
-              >
-                {isCreatingLead ? 'Salvando...' : 'Salvar lead'}
-              </Button>
+              <Button type="button" onClick={() => setIsCreateLeadOpen(false)} className="bg-[#F1F3F6] hover:bg-[#E5E7EB] text-[#0F172A] border border-[#E5E7EB] text-xs font-semibold h-10 rounded-xl px-4">Cancelar</Button>
+              <Button type="submit" disabled={isCreatingLead} className="bg-[#1B3A6B] hover:bg-[#142C52] text-white text-xs font-semibold h-10 rounded-xl px-4 disabled:opacity-50">{isCreatingLead ? 'Salvando...' : 'Salvar lead'}</Button>
             </div>
           </form>
         </div>

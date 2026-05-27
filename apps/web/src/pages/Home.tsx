@@ -1,23 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, FunnelChart, BarChart, Badge, Button, Tooltip, toast } from '@prospix/ui';
-import { Calendar, MessageSquare, AlertCircle, UserPlus, ArrowUpRight, Flame, Info } from 'lucide-react';
+import { FunnelChart, BarChart, toast } from '@prospix/ui';
+import { Calendar, MessageSquare, Phone, Search, Info, ChevronRight } from 'lucide-react';
 import { apiClient } from '../lib/api-client';
-import { canUseMockFallbacks } from '../lib/demo-mode';
 import { useNavigate } from 'react-router-dom';
 import { OnboardingChecklist } from '../components/OnboardingChecklist';
-
-const FIT_SCORE_EXPLAINER = (
-  <div className="text-left space-y-1">
-    <div className="font-semibold">Como calculamos o Fit Score (0–10)</div>
-    <ul className="list-disc pl-4 space-y-0.5">
-      <li>Aderência ao ICP (segmento + porte)</li>
-      <li>Sinais comerciais (Maps reviews, faturamento estimado)</li>
-      <li>Engajamento na conversa (respostas, tempo, intent)</li>
-      <li>Recência da captura</li>
-    </ul>
-    <div className="opacity-80">≥ 8.5 = lead quente · ≥ 7.0 = morno</div>
-  </div>
-);
 
 interface DashboardStats {
   todayMeetings: number;
@@ -38,6 +24,21 @@ interface DashboardStats {
   }>;
 }
 
+const AVATAR_COLORS = ['#1B3A6B','#5A2A82','#B8740E','#075E54','#9E2A2B','#1F4E5F','#374151'];
+
+function getInitials(name: string): string {
+  return name.split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
+}
+
+function getStatusBadge(status: string) {
+  switch (status) {
+    case 'Qualificado': return { label: '✓ Agendada', cls: 'bg-[#ECFDF3] text-[#027A48]' };
+    case 'Contatado': return { label: 'IA respondendo', cls: 'bg-[rgba(232,152,28,0.14)] text-[#A56B0A]' };
+    case 'Negociação': return { label: '⚠ Pediu ligação', cls: 'bg-[#FFFAEB] text-[#B54708]' };
+    default: return { label: status, cls: 'bg-[rgba(27,58,107,0.08)] text-[#1B3A6B]' };
+  }
+}
+
 export default function Home() {
   const navigate = useNavigate();
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -55,312 +56,331 @@ export default function Home() {
 
   useEffect(() => {
     const fetchDashboardData = async () => {
-      const fallbackStats: DashboardStats = {
-        todayMeetings: 3,
-        pendingConversations: 8,
-        pendingManualConversations: 4,
-        needsAttention: 5,
-        newLeadsToday: 14,
-        nextMeetingTime: '14:30',
-        funnelData: [
-          { stage: 'Capturado', value: 120, color: '#1B3A6B' },
-          { stage: 'Contatado', value: 85, color: '#3b82f6' },
-          { stage: 'Qualificado', value: 50, color: '#6366f1' },
-          { stage: 'Agendado', value: 28, color: '#06b6d4' },
-          { stage: 'Negociação', value: 12, color: '#10b981' },
-          { stage: 'Fechado', value: 6, color: '#10b981' },
-        ],
-        weeklyPerformance: [
-          { label: 'Seg', value: 4 },
-          { label: 'Ter', value: 12 },
-          { label: 'Qua', value: 8 },
-          { label: 'Qui', value: 14 },
-          { label: 'Sex', value: 10 },
-        ],
-        hotLeads: [
-          { id: '1', name: 'Marcos de Oliveira', city: 'São Paulo - SP', fitScore: 9.4, phone: '+55 11 98888-7777', status: 'Qualificado' },
-          { id: '2', name: 'Ana Beatriz Reis', city: 'Rio de Janeiro - RJ', fitScore: 8.8, phone: '+55 21 97777-6666', status: 'Contatado' },
-          { id: '3', name: 'Indústrias Metalúrgicas Alfa', city: 'Campinas - SP', fitScore: 8.5, phone: '+55 19 96666-5555', status: 'Capturado' },
-        ],
-      };
       const emptyStats: DashboardStats = {
-        todayMeetings: 0,
-        pendingConversations: 0,
-        pendingManualConversations: 0,
-        needsAttention: 0,
-        newLeadsToday: 0,
-        nextMeetingTime: null,
-        funnelData: [],
-        weeklyPerformance: [],
-        hotLeads: [],
+        todayMeetings: 0, pendingConversations: 0, pendingManualConversations: 0,
+        needsAttention: 0, newLeadsToday: 0, nextMeetingTime: null,
+        funnelData: [], weeklyPerformance: [], hotLeads: [],
       };
-      const defaultStats = canUseMockFallbacks ? fallbackStats : emptyStats;
 
       try {
-        const response = await apiClient.get('/tenant/dashboard/today');
-        
-        if (response?.data) {
-          const data = response.data.data ?? response.data;
-          setStats({
-            ...defaultStats,
-            todayMeetings: data.meetings_today ?? defaultStats.todayMeetings,
-            pendingConversations: data.conversations_ready ?? defaultStats.pendingConversations,
-            pendingManualConversations: data.pending_manual_conversations ?? data.manual_conversations ?? defaultStats.pendingManualConversations,
-            needsAttention: data.need_callback ?? defaultStats.needsAttention,
-            newLeadsToday: data.new_leads_today ?? defaultStats.newLeadsToday,
-            nextMeetingTime: data.next_meeting_time ?? defaultStats.nextMeetingTime,
-            funnelData: data.funnel_data ?? defaultStats.funnelData,
-            weeklyPerformance: data.weekly_performance ?? defaultStats.weeklyPerformance,
-            hotLeads: data.hot_leads ?? defaultStats.hotLeads,
-          });
-        } else {
-          setStats(defaultStats);
-        }
+        // Fetch all dashboard data in parallel from real endpoints
+        const [todayRes, funnelRes, leadsRes] = await Promise.allSettled([
+          apiClient.get('/tenant/dashboard/today'),
+          apiClient.get('/tenant/dashboard/funnel'),
+          apiClient.get('/tenant/leads', { params: { limit: 50 } }),
+        ]);
+
+        const todayData = todayRes.status === 'fulfilled' ? (todayRes.value.data?.data ?? todayRes.value.data) : {};
+        const funnelRaw = funnelRes.status === 'fulfilled' ? (funnelRes.value.data?.data ?? funnelRes.value.data) : null;
+        const leadsRaw = leadsRes.status === 'fulfilled' ? (leadsRes.value.data?.data ?? leadsRes.value.data) : [];
+
+        // Convert funnel stages to chart format
+        const funnelData: DashboardStats['funnelData'] = funnelRaw?.stages ? [
+          { stage: 'Novos', value: funnelRaw.stages.NEW || 0, color: '#1B3A6B' },
+          { stage: 'Contatados', value: funnelRaw.stages.CONTACTED || 0, color: '#3b82f6' },
+          { stage: 'Qualificados', value: funnelRaw.stages.QUALIFIED || 0, color: '#6366f1' },
+          { stage: 'Negociação', value: funnelRaw.stages.NEGOTIATING || 0, color: '#06b6d4' },
+          { stage: 'Fechados', value: funnelRaw.stages.CLOSED_WON || 0, color: '#10b981' },
+        ] : [];
+
+        // Convert leads to hot leads format
+        const hotLeads: DashboardStats['hotLeads'] = (Array.isArray(leadsRaw) ? leadsRaw : [])
+          .slice(0, 5)
+          .map((l: any) => ({
+            id: l.id,
+            name: l.name || l.fullName || 'Lead',
+            city: l.city || l.region || '',
+            fitScore: l.fitScore ?? l.fit_score ?? 0,
+            phone: l.phone || l.whatsapp || '',
+            status: l.status || 'NEW',
+          }));
+
+        setStats({
+          todayMeetings: todayData.meetings_today ?? 0,
+          pendingConversations: todayData.conversations_ready ?? 0,
+          pendingManualConversations: todayData.pending_manual_conversations ?? 0,
+          needsAttention: todayData.need_callback ?? 0,
+          newLeadsToday: todayData.new_leads_today ?? 0,
+          nextMeetingTime: todayData.next_meeting_time ?? null,
+          funnelData,
+          weeklyPerformance: (() => {
+            const dayNames = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+            const now = new Date();
+            const days = Array.from({ length: 7 }, (_, i) => {
+              const d = new Date(now);
+              d.setDate(d.getDate() - (6 - i));
+              d.setHours(0, 0, 0, 0);
+              return { date: d, label: dayNames[d.getDay()], count: 0 };
+            });
+            const allLeads = Array.isArray(leadsRaw) ? leadsRaw : [];
+            allLeads.forEach((l: any) => {
+              if (!l.createdAt) return;
+              const created = new Date(l.createdAt);
+              created.setHours(0, 0, 0, 0);
+              const match = days.find(d => d.date.getTime() === created.getTime());
+              if (match) match.count++;
+            });
+            return days.map(d => ({ label: d.label as string, value: d.count }));
+          })(),
+          hotLeads,
+        });
       } catch (err) {
         console.error('Error fetching dashboard stats', err);
-        setStats(defaultStats);
-        if (!canUseMockFallbacks) {
-          toast.error('Erro de Conexão', 'Não foi possível carregar o dashboard real da API.');
-        }
+        setStats(emptyStats);
+        toast.error('Erro de Conexão', 'Não foi possível carregar o dashboard.');
       } finally {
         setIsLoading(false);
       }
     };
-
     fetchDashboardData();
   }, []);
 
   if (isLoading || !stats) {
     return (
-      <div className="space-y-6">
-        <div className="h-10 w-[250px] bg-surface-sunken animate-pulse rounded-lg" />
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="h-32 bg-white animate-pulse rounded-2xl border border-border shadow-sm" />
-          ))}
+      <div className="space-y-5">
+        <div className="h-20 bg-white animate-pulse rounded-xl border border-[#E5E7EB]" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[1,2,3,4].map(i => <div key={i} className="h-36 bg-white animate-pulse rounded-xl border border-[#E5E7EB]" />)}
         </div>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="h-96 bg-white animate-pulse rounded-2xl border border-border shadow-sm lg:col-span-2" />
-          <div className="h-96 bg-white animate-pulse rounded-2xl border border-border shadow-sm" />
-        </div>
+        <div className="h-40 bg-white animate-pulse rounded-xl border border-[#E5E7EB]" />
       </div>
     );
   }
 
-  const nextMeetingText = stats.nextMeetingTime
-    ? `Próxima reunião às ${stats.nextMeetingTime}`
-    : stats.todayMeetings > 0
-      ? 'Agenda carregada sem próximo horário disponível'
-      : 'Nenhuma reunião agendada para hoje';
-  const pendingManualSuffix = stats.pendingManualConversations === 1
-    ? 'chat aguarda sua resposta manual'
-    : 'chats aguardam sua resposta manual';
+  const actionCount = [
+    stats.todayMeetings > 0, stats.pendingConversations > 0,
+    stats.needsAttention > 0, stats.newLeadsToday > 0,
+  ].filter(Boolean).length || 4;
+
+  const totalCaptured = stats.funnelData?.[0]?.value || 0;
 
   return (
-    <div className="space-y-8 animate-fadeIn">
-      {/* Welcome banner */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div className="space-y-5 animate-fadeIn">
+
+      {/* ═══ Greeting Banner ═══ */}
+      <div className="bg-white border border-[#E5E7EB] rounded-xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm">
         <div>
-          <h2 className="text-3xl font-bold font-heading text-text tracking-tight">Painel Operacional</h2>
-          <p className="text-text-secondary text-sm mt-1">Visão integrada das suas prospecções e metas do dia de hoje.</p>
+          <h1 className="text-[21px] font-bold text-[#0F172A] tracking-tight mb-1">
+            Hoje você só precisa de você em {actionCount} coisas. 👆
+          </h1>
+          <p className="text-[13px] text-[#475569] leading-relaxed">
+            Sua máquina está rodando. A IA já{' '}
+            <strong className="text-[#0F172A]">capturou {stats.newLeadsToday} novos leads</strong>,{' '}
+            mandou <strong className="text-[#0F172A]">{stats.pendingConversations + stats.pendingManualConversations} mensagens</strong> e{' '}
+            conversa com <strong className="text-[#0F172A]">{stats.pendingConversations} pessoas agora</strong>.{' '}
+            Aqui está o que precisa do seu tempo:
+          </p>
         </div>
-        <div className="flex items-center gap-3">
-          <Button
-            onClick={() => navigate('/funil')}
-            className="bg-primary hover:bg-primary-hover text-white font-medium px-4 py-2 rounded-xl text-xs flex items-center gap-2 shadow-lg shadow-primary/10"
-          >
-            <span>Ver Pipeline</span>
-            <ArrowUpRight className="w-3.5 h-3.5" />
-          </Button>
+        <div className="flex flex-col items-end gap-0.5 text-right shrink-0">
+          <span className="text-[10px] uppercase tracking-wider text-[#94A3B8] font-semibold">Receita Projetada · 90d</span>
+          <span className="text-[23px] font-bold text-[#A56B0A] font-mono leading-none">
+            R$ {Math.round((stats.todayMeetings * 30 * 0.35 * 5500) / 1000)}k
+          </span>
+          <span className="text-[11px] text-[#94A3B8]">{stats.todayMeetings * 30} reuniões × 35% × R$5,5k</span>
         </div>
       </div>
 
+      {/* Onboarding Checklist */}
       <OnboardingChecklist signals={onboardingSignals} />
 
-      {/* KPI Dashboard Cards Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-        <Card className="bg-white border-border hover:border-border-strong hover:shadow-md transition-all shadow-sm">
-          <CardContent className="pt-6">
-            <div className="flex justify-between items-start">
-              <div className="space-y-1.5">
-                <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider block">Reuniões Hoje</span>
-                <span className="text-3xl font-bold font-heading tracking-tight text-text font-mono">{stats.todayMeetings}</span>
-              </div>
-              <div className="p-3 bg-primary-soft border border-primary/10 text-primary rounded-xl">
-                <Calendar className="w-5 h-5" />
-              </div>
-            </div>
-            <p className="text-[10px] text-text-secondary font-medium mt-4 flex items-center gap-1.5">
-              <span className={`h-1.5 w-1.5 rounded-full ${stats.nextMeetingTime ? 'bg-success animate-pulse' : 'bg-border'}`} />
-              {nextMeetingText}
-            </p>
-          </CardContent>
-        </Card>
+      {/* ═══ Action Cards (4 cards) ═══ */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Reuniões hoje */}
+        <div
+          className="bg-white border border-[#E5E7EB] rounded-xl p-4 cursor-pointer transition-all hover:-translate-y-[3px] hover:shadow-md hover:border-[#1B3A6B] shadow-sm"
+          onClick={() => navigate('/agenda')}
+        >
+          <div className="w-10 h-10 rounded-lg bg-[rgba(27,58,107,0.08)] text-[#1B3A6B] flex items-center justify-center mb-3">
+            <Calendar className="w-5 h-5" />
+          </div>
+          <div className="text-[28px] font-bold text-[#0F172A] font-mono leading-none">{stats.todayMeetings}</div>
+          <div className="text-[13.5px] font-semibold text-[#0F172A] mt-1.5">Reuniões hoje</div>
+          <div className="text-[12px] text-[#475569] mt-1 leading-relaxed">
+            {stats.nextMeetingTime ? `Próxima às ${stats.nextMeetingTime}` : 'Nenhuma agendada'}
+          </div>
+          <div className="text-[12px] font-semibold text-[#1B3A6B] mt-3 flex items-center gap-1 group-hover:gap-2 transition-all">
+            Ver agenda →
+          </div>
+        </div>
 
-        <Card className="bg-white border-border hover:border-border-strong hover:shadow-md transition-all shadow-sm">
-          <CardContent className="pt-6">
-            <div className="flex justify-between items-start">
-              <div className="space-y-1.5">
-                <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider block">Chats Pendentes</span>
-                <span className="text-3xl font-bold font-heading tracking-tight text-text font-mono">{stats.pendingConversations}</span>
-              </div>
-              <div className="p-3 bg-purple-50 border border-purple-100 text-purple-600 rounded-xl">
-                <MessageSquare className="w-5 h-5" />
-              </div>
-            </div>
-            {stats.pendingManualConversations > 0 ? (
-              <p className="text-[10px] text-text-secondary font-medium mt-4">
-                <span className="text-purple-600 font-semibold font-mono">{stats.pendingManualConversations}</span>{' '}
-                {pendingManualSuffix}
-              </p>
-            ) : (
-              <p className="text-[10px] text-text-secondary font-medium mt-4">
-                Nenhum chat aguardando resposta manual
-              </p>
-            )}
-          </CardContent>
-        </Card>
+        {/* Conversas prontas - GREEN */}
+        <div
+          className="bg-white border-2 border-[#039855] rounded-xl p-4 cursor-pointer transition-all hover:-translate-y-[3px] hover:shadow-md shadow-sm bg-gradient-to-b from-[#ECFDF3] to-white"
+          onClick={() => navigate('/conversas')}
+        >
+          <div className="w-10 h-10 rounded-lg bg-[#ECFDF3] text-[#039855] flex items-center justify-center mb-3">
+            <MessageSquare className="w-5 h-5" />
+          </div>
+          <div className="text-[28px] font-bold text-[#0F172A] font-mono leading-none">{stats.pendingConversations}</div>
+          <div className="text-[13.5px] font-semibold text-[#0F172A] mt-1.5">Conversas prontas pra fechar</div>
+          <div className="text-[12px] text-[#475569] mt-1 leading-relaxed">Leads que aceitaram a abordagem e aguardam você.</div>
+          <div className="text-[12px] font-semibold text-[#1B3A6B] mt-3 flex items-center gap-1">Ver conversas →</div>
+        </div>
 
-        <Card className="bg-white border-border hover:border-border-strong hover:shadow-md transition-all shadow-sm">
-          <CardContent className="pt-6">
-            <div className="flex justify-between items-start">
-              <div className="space-y-1.5">
-                <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider block">Atenção Necessária</span>
-                <span className="text-3xl font-bold font-heading tracking-tight text-text font-mono">{stats.needsAttention}</span>
-              </div>
-              <div className="p-3 bg-error-soft border border-error/10 text-error-text rounded-xl">
-                <AlertCircle className="w-5 h-5" />
-              </div>
-            </div>
-            <p className="text-[10px] text-error-text font-medium mt-4">
-              Leads parados há mais de 48h sem interação
-            </p>
-          </CardContent>
-        </Card>
+        {/* Pediu ligação - RED urgent */}
+        <div
+          className="bg-white border border-[rgba(217,45,32,0.35)] rounded-xl p-4 cursor-pointer transition-all hover:-translate-y-[3px] hover:shadow-md shadow-sm bg-gradient-to-b from-[#FEF3F2] to-white"
+          onClick={() => navigate('/conversas')}
+        >
+          <div className="w-10 h-10 rounded-lg bg-[#FEF3F2] text-[#D92D20] flex items-center justify-center mb-3">
+            <Phone className="w-5 h-5" />
+          </div>
+          <div className="text-[28px] font-bold text-[#0F172A] font-mono leading-none">{stats.needsAttention}</div>
+          <div className="text-[13.5px] font-semibold text-[#0F172A] mt-1.5">Pediu ligação direta</div>
+          <div className="text-[12px] text-[#475569] mt-1 leading-relaxed">Leads que querem falar com você hoje.</div>
+          <div className="text-[12px] font-semibold text-[#1B3A6B] mt-3 flex items-center gap-1">Ver detalhes →</div>
+        </div>
 
-        <Card className="bg-white border-border hover:border-border-strong hover:shadow-md transition-all shadow-sm">
-          <CardContent className="pt-6">
-            <div className="flex justify-between items-start">
-              <div className="space-y-1.5">
-                <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider block">Novos Leads Hoje</span>
-                <span className="text-3xl font-bold font-heading tracking-tight text-text font-mono">{stats.newLeadsToday}</span>
-              </div>
-              <div className="p-3 bg-success-soft border border-success/10 text-success-text rounded-xl">
-                <UserPlus className="w-5 h-5" />
-              </div>
-            </div>
-            <p className="text-[10px] text-text-secondary font-medium mt-4">
-              Enriquecimento e Fit Score processados
-            </p>
-          </CardContent>
-        </Card>
+        {/* Novos leads */}
+        <div
+          className="bg-white border border-[#E5E7EB] rounded-xl p-4 cursor-pointer transition-all hover:-translate-y-[3px] hover:shadow-md hover:border-[#1B3A6B] shadow-sm"
+          onClick={() => navigate('/leads')}
+        >
+          <div className="w-10 h-10 rounded-lg bg-[rgba(27,58,107,0.08)] text-[#1B3A6B] flex items-center justify-center mb-3">
+            <Search className="w-5 h-5" />
+          </div>
+          <div className="text-[28px] font-bold text-[#0F172A] font-mono leading-none">+{stats.newLeadsToday}</div>
+          <div className="text-[13.5px] font-semibold text-[#0F172A] mt-1.5">Novos leads capturados</div>
+          <div className="text-[12px] text-[#475569] mt-1 leading-relaxed">Profissionais que a IA encontrou hoje.</div>
+          <div className="text-[12px] font-semibold text-[#1B3A6B] mt-3 flex items-center gap-1">Ver leads →</div>
+        </div>
       </div>
 
-      {/* Main Charts & Table Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Funnel Graph Box */}
-        <Card className="lg:col-span-2 bg-white border-border shadow-sm">
-          <CardHeader>
-            <CardTitle className="text-base font-bold font-heading text-text">Funil de Vendas de Seguros</CardTitle>
-            <CardDescription className="text-text-secondary text-xs">Conversão volumétrica agregada das leads ativas por estágio.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex items-center justify-center py-6 min-h-[300px]">
-            <div className="w-full max-w-[560px]">
-              <FunnelChart 
+      {/* ═══ Pipeline Visualization ═══ */}
+      <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
+        <div className="px-5 py-3.5 border-b border-[#EEF0F3] flex items-center justify-between">
+          <div>
+            <div className="text-[14px] font-semibold text-[#0F172A] flex items-center gap-2">
+              Como sua máquina trabalha
+              <span className="w-4 h-4 rounded-full bg-[#F1F3F6] text-[#94A3B8] flex items-center justify-center text-[10px] font-bold cursor-help">?</span>
+            </div>
+            <div className="text-[11px] text-[#94A3B8] mt-0.5">
+              Atualizado há 14s · {totalCaptured} contatos viraram {stats.todayMeetings} reuniões neste mês
+            </div>
+          </div>
+          <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-[rgba(232,152,28,0.14)] text-[#A56B0A] flex items-center gap-1.5">
+            <span className="w-[5px] h-[5px] rounded-full bg-[#E8981C] animate-pulse" />
+            Rodando agora
+          </span>
+        </div>
+        <div className="p-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {[
+              { num: '✓', name: 'Captura', desc: 'Busca no Google Maps', count: totalCaptured, style: 'done' },
+              { num: '✓', name: 'Qualificação', desc: 'Valida WhatsApp e perfil', count: stats.funnelData?.[1]?.value || 0, style: 'done' },
+              { num: '●', name: 'Conversa IA', desc: 'WhatsApp com sua linguagem', count: stats.pendingConversations, style: 'active' },
+              { num: '4', name: 'Reunião marcada', desc: 'Cai na sua agenda', count: stats.todayMeetings, style: 'pending' },
+            ].map((stage, i) => (
+              <div key={i} className="relative bg-[#F1F3F6] border border-[#EEF0F3] rounded-lg p-3 text-center cursor-pointer transition-all hover:border-[#1B3A6B] hover:-translate-y-0.5">
+                <div className={`absolute -top-2.5 left-1/2 -translate-x-1/2 w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold border-2 border-white text-white ${
+                  stage.style === 'done' ? 'bg-[#039855]' : stage.style === 'active' ? 'bg-[#E8981C]' : 'bg-[#1B3A6B]'
+                }`}>{stage.num}</div>
+                <div className="text-[12.5px] font-semibold text-[#0F172A] mt-1">{stage.name}</div>
+                <div className="text-[11px] text-[#475569] mt-0.5">{stage.desc}</div>
+                <div className={`text-[17px] font-bold font-mono mt-1.5 ${
+                  stage.style === 'done' ? 'text-[#039855]' : stage.style === 'active' ? 'text-[#A56B0A]' : 'text-[#1B3A6B]'
+                }`}>{stage.count.toLocaleString('pt-BR')}</div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3.5 px-3.5 py-2.5 bg-[rgba(27,58,107,0.04)] rounded-lg text-[12px] text-[#475569] flex items-center gap-2">
+            <Info className="w-4 h-4 text-[#1B3A6B] shrink-0" />
+            <div><strong className="text-[#0F172A]">Antes:</strong> você ligava 100 para falar com 10. <strong className="text-[#0F172A]">Agora:</strong> a IA fala com {totalCaptured} e te entrega {stats.todayMeetings} prontas.</div>
+          </div>
+        </div>
+      </div>
+
+      {/* ═══ Conversations + Funnel (two-column) ═══ */}
+      <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-4">
+        {/* Conversations panel */}
+        <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-[#EEF0F3] flex items-center justify-between">
+            <div>
+              <div className="text-[14px] font-semibold text-[#0F172A]">{stats.hotLeads.length} conversas prontas pra fechar</div>
+              <div className="text-[11px] text-[#94A3B8] mt-0.5">Clique em qualquer linha para ver tudo</div>
+            </div>
+            <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-[rgba(232,152,28,0.14)] text-[#A56B0A] flex items-center gap-1.5">
+              <span className="w-[5px] h-[5px] rounded-full bg-[#E8981C] animate-pulse" />
+              ao vivo
+            </span>
+          </div>
+
+          {stats.hotLeads.length > 0 ? (
+            stats.hotLeads.map((lead, i) => {
+              const badge = getStatusBadge(lead.status);
+              return (
+                <div
+                  key={lead.id}
+                  className="px-5 py-3 border-b border-[#EEF0F3] flex items-center gap-3 cursor-pointer transition-all hover:bg-[rgba(27,58,107,0.04)] border-l-[3px] border-l-transparent hover:border-l-[#1B3A6B]"
+                  onClick={() => navigate('/conversas')}
+                >
+                  <div
+                    className="w-9 h-9 rounded-full flex items-center justify-center text-white text-[12px] font-bold shrink-0"
+                    style={{ background: AVATAR_COLORS[i % AVATAR_COLORS.length] }}
+                  >{getInitials(lead.name)}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[13px] font-semibold text-[#0F172A] flex items-center gap-2 flex-wrap">
+                      {lead.name}
+                      <span className={`text-[10.5px] font-semibold px-1.5 py-0.5 rounded-full ${badge.cls}`}>{badge.label}</span>
+                    </div>
+                    <div className="text-[11.5px] text-[#475569]">{lead.city}</div>
+                  </div>
+                  <div className="text-right shrink-0 min-w-[60px]">
+                    <div className="text-[11.5px] font-semibold text-[#0F172A]">Fit {lead.fitScore}</div>
+                  </div>
+                  <div className="w-8 h-8 flex items-center justify-center rounded-lg bg-[#F1F3F6] text-[#94A3B8] shrink-0 hover:bg-[#1B3A6B] hover:text-white transition-all">
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <div className="px-5 py-8 text-center text-[12.5px] text-[#94A3B8]">
+              Nenhuma conversa ativa no momento. Crie uma campanha para começar.
+            </div>
+          )}
+
+          <div className="px-5 py-3 text-center bg-[#F1F3F6] border-t border-[#EEF0F3]">
+            <button onClick={() => navigate('/conversas')} className="text-[12.5px] font-semibold text-[#1B3A6B]">
+              Ver todas as {stats.pendingConversations || stats.hotLeads.length} conversas →
+            </button>
+          </div>
+        </div>
+
+        {/* Funnel panel */}
+        <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
+            <div className="text-[14px] font-semibold text-[#0F172A]">Funil do mês</div>
+            <div className="text-[11px] text-[#94A3B8] mt-0.5">
+              A cada {totalCaptured && stats.todayMeetings ? Math.round(totalCaptured / Math.max(stats.todayMeetings, 1)) : 80} contatos → 1 reunião
+            </div>
+          </div>
+          <div className="p-5 flex items-center justify-center min-h-[240px]">
+            <div className="w-full max-w-[300px]">
+              <FunnelChart
                 stages={stats.funnelData.map((item, _idx, arr) => ({
                   label: item.stage,
                   count: item.value,
                   percentage: arr[0]?.value ? Math.round((item.value / arr[0].value) * 100) : 100
-                }))} 
+                }))}
               />
             </div>
-          </CardContent>
-        </Card>
-
-        {/* Weekly Performance Bar Chart */}
-        <Card className="bg-white border-border shadow-sm">
-          <CardHeader>
-            <CardTitle className="text-base font-bold font-heading text-text">Novas Leads na Semana</CardTitle>
-            <CardDescription className="text-text-secondary text-xs">Distribuição diária de captação pelo Google Maps.</CardDescription>
-          </CardHeader>
-          <CardContent className="py-6 flex items-end justify-center min-h-[300px]">
-            <div className="w-full max-w-[280px]">
-              <BarChart items={stats.weeklyPerformance} />
-            </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       </div>
 
-      {/* Hot Leads (Fit Score >= 8.0) */}
-      <Card className="bg-white border-border shadow-sm">
-        <CardHeader className="flex flex-row items-center justify-between">
-          <div>
-            <CardTitle className="text-base font-bold font-heading text-text flex items-center gap-2">
-              <Flame className="w-4 h-4 text-orange-500 fill-orange-500" />
-              <span>Leads Quentes do Dia (Fit Score &ge; 8.0)</span>
-            </CardTitle>
-            <CardDescription className="text-text-secondary text-xs">Leads qualificadas de alto valor prontas para fechamento.</CardDescription>
+      {/* ═══ Weekly Performance ═══ */}
+      <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
+        <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
+          <div className="text-[14px] font-semibold text-[#0F172A]">Novas Leads na Semana</div>
+          <div className="text-[11px] text-[#94A3B8] mt-0.5">Distribuição diária de captação pelo Google Maps.</div>
+        </div>
+        <div className="py-6 flex items-end justify-center min-h-[200px]">
+          <div className="w-full max-w-[400px] px-5">
+            <BarChart items={stats.weeklyPerformance} />
           </div>
-          <Button 
-            onClick={() => navigate('/leads')}
-            variant="outline" 
-            className="border-border text-text-secondary hover:text-text text-xs font-semibold px-3 py-1.5 h-8 hover:bg-surface-sunken"
-          >
-            Ver Todas
-          </Button>
-        </CardHeader>
-        <CardContent className="px-0 pb-0">
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-sm">
-              <thead>
-                <tr className="border-b border-border text-[10px] text-text-secondary font-semibold uppercase tracking-wider">
-                  <th className="text-left py-3 px-6">Lead</th>
-                  <th className="text-left py-3 px-6">Localidade</th>
-                  <th className="text-left py-3 px-6">Contato</th>
-                  <th className="text-left py-3 px-6">Estágio</th>
-                  <th className="text-center py-3 px-6">
-                    <Tooltip content={FIT_SCORE_EXPLAINER}>
-                      <span className="inline-flex items-center gap-1 cursor-help">
-                        Fit Score
-                        <Info className="w-3 h-3 opacity-70" aria-label="Como calculamos" />
-                      </span>
-                    </Tooltip>
-                  </th>
-                  <th className="text-right py-3 px-6">Ações</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/60">
-                {stats.hotLeads.map((lead) => (
-                  <tr key={lead.id} className="hover:bg-surface-sunken transition-all group">
-                    <td className="py-3.5 px-6 font-medium text-text">{lead.name}</td>
-                    <td className="py-3.5 px-6 text-text-secondary text-xs">{lead.city}</td>
-                    <td className="py-3.5 px-6 text-text-secondary text-xs font-mono">{lead.phone}</td>
-                    <td className="py-3.5 px-6">
-                      <Badge className="bg-surface-sunken border-border text-text-secondary text-[10px]">
-                        {lead.status}
-                      </Badge>
-                    </td>
-                    <td className="py-3.5 px-6 text-center">
-                      <span className="text-success-text font-mono font-bold text-xs bg-success-soft px-2.5 py-1 border border-success/20 rounded-full">
-                        {lead.fitScore}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-6 text-right">
-                      <Button
-                        onClick={() => navigate('/conversas')}
-                        className="bg-surface-sunken hover:bg-border text-text border border-border/80 text-[10px] px-2.5 py-1 h-7 rounded-lg font-semibold flex items-center gap-1.5 ml-auto"
-                      >
-                        <MessageSquare className="w-3 h-3 text-primary" />
-                        <span>Abrir Chat</span>
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }

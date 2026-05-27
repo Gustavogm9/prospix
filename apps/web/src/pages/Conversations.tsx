@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Button, Input, Badge, Tabs, TabsList, TabsTrigger, TabsContent, Avatar, toast } from '@prospix/ui';
-import { MessageSquare, Send, Bot, User, Phone, DollarSign, Award, Activity, Clock, ChevronLeft } from 'lucide-react';
+import { Button, Input, toast } from '@prospix/ui';
+import { MessageSquare, Send, Bot, User, Phone, ChevronRight, Filter, ArrowUpDown, LayoutList, Columns3, X, Award, Clock } from 'lucide-react';
 import { apiClient } from '../lib/api-client';
 import { AxiosError } from 'axios';
-import { canUseMockFallbacks } from '../lib/demo-mode';
+
 import { useRealtimeEvents } from '../hooks/useRealtimeEvents';
 import { useAuthStore } from '../store/auth-store';
 
@@ -23,6 +23,14 @@ interface Conversation {
   lastMessage: string;
   timestamp: string;
   meetingId?: string;
+  // Prototype-specific display fields
+  initials?: string;
+  avatarColor?: string;
+  profession?: string;
+  tagType?: 'success' | 'live' | 'warning' | 'info';
+  tagLabel?: string;
+  whenLabel?: string;
+  whenUrgent?: boolean;
   details: {
     phone: string;
     city: string;
@@ -36,71 +44,21 @@ interface Conversation {
   };
 }
 
-// Default high-fidelity mock conversations for new tenants without active campaigns
-const mockConversations: Conversation[] = [
-  {
-    id: 'conv-1',
-    leadName: 'Marcos de Oliveira',
-    aiHandling: true,
-    lastMessage: 'Quero agendar uma conversa para entender a apólice PME.',
-    timestamp: '14:32',
-    fitScore: 9.4,
-    unread: true,
-    details: {
-      phone: '+55 11 98888-7777',
-      city: 'São Paulo - SP',
-      faturamento: 'R$ 150.000 / mês',
-      susep: 'N/A (Cliente)',
-      company: 'Oliveira Consultoria',
-      health: 'Excelente',
-      priority: 'high',
-      tags: ['PME', 'Seguro de Vida', 'Decisor'],
-      logs: [
-        { action: 'Lead capturado no Maps', time: '2026-05-21 09:30' },
-        { action: 'Primeiro contato IA (WhatsApp)', time: '2026-05-21 09:35' },
-        { action: 'Resposta de interesse do Lead', time: '2026-05-21 14:30' },
-      ],
-    },
-  },
-  {
-    id: 'conv-2',
-    leadName: 'Ana Beatriz Reis',
-    aiHandling: false,
-    lastMessage: 'Acho que o preço está um pouco acima do planejado.',
-    timestamp: 'Ontem',
-    fitScore: 8.8,
-    unread: false,
-    details: {
-      phone: '+55 21 97777-6666',
-      city: 'Rio de Janeiro - RJ',
-      faturamento: 'R$ 80.000 / mês',
-      susep: 'N/A',
-      company: 'Reis Arquitetura',
-      health: 'Estável',
-      priority: 'medium',
-      tags: ['Auto Frota', 'Objeção de Preço'],
-      logs: [
-        { action: 'Lead capturado no Maps', time: '2026-05-20 10:15' },
-        { action: 'Primeira mensagem enviada por IA', time: '2026-05-20 10:20' },
-        { action: 'Agente assumiu conversa manualmente', time: '2026-05-20 15:40' },
-      ],
-    },
-  },
+// Avatar color classes matching prototype
+const AVATAR_COLORS = [
+  '#1B3A6B', '#5A2A82', '#B8740E', '#075E54', '#9E2A2B', '#1F4E5F', '#374151',
 ];
 
-const mockMessagesConv1: Message[] = [
-  { id: '1', sender: 'ai', content: 'Olá Marcos, sou o assistente virtual da Prospix. Identifiquei que sua empresa Oliveira Consultoria pode economizar até 30% em planos de seguro saúde corporativo. Vocês já possuem algum plano ativo?', timestamp: '09:35' },
-  { id: '2', sender: 'lead', content: 'Sim, temos a Bradesco Saúde hoje mas achamos caro.', timestamp: '14:28' },
-  { id: '3', sender: 'ai', content: 'Entendo perfeitamente, o custo de sinistralidade tem subido bastante. Nós temos tabelas especiais com operadoras premium de excelente custo-benefício. Que tal agendarmos uma chamada rápida de 10 minutos amanhã às 14h para eu te apresentar uma cotação comparativa?', timestamp: '14:30' },
-  { id: '4', sender: 'lead', content: 'Quero agendar uma conversa para entender a apólice PME.', timestamp: '14:32' },
-];
+function getInitials(name: string): string {
+  return name.split(' ').map(n => n[0]).filter((c): c is string => Boolean(c)).slice(0, 2).join('').toUpperCase();
+}
 
-const mockMessagesConv2: Message[] = [
-  { id: '1', sender: 'ai', content: 'Olá Ana, tudo bem? Notei que a Reis Arquitetura tem ampliado sua frota de veículos comerciais. Gostaria de cotar um seguro frota unificado com condições especiais?', timestamp: '10:20' },
-  { id: '2', sender: 'lead', content: 'Até me interessa, mas já cotamos uma vez e ficou muito caro.', timestamp: '14:50' },
-  { id: '3', sender: 'agent', content: 'Olá Ana! Aqui é o Gustavo, corretor sênior. Entendo que o custo seja uma barreira. Consegui uma condição especial direto na seguradora Porto Seguro com 25% de desconto de frota para arquitetos credenciados. O que acha?', timestamp: '15:42' },
-  { id: '4', sender: 'lead', content: 'Acho que o preço está um pouco acima do planejado.', timestamp: 'Ontem' },
-];
+function getAvatarColor(index: number): string {
+  return AVATAR_COLORS[index % AVATAR_COLORS.length] ?? '#1B3A6B';
+}
+
+// Filter types for toolbar
+type FilterType = 'all' | 'hot' | 'wait' | 'scheduled';
 
 export default function Conversations() {
   const { tenantId } = useAuthStore();
@@ -108,20 +66,23 @@ export default function Conversations() {
   const [selectedConv, setSelectedConv] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
-  const [activeTab, setActiveTab] = useState('conversa');
+  const [activeFilter, setActiveFilter] = useState<FilterType>('all');
   const [isOutcomeModalOpen, setIsOutcomeModalOpen] = useState(false);
   const [outcomeValue, setOutcomeValue] = useState('');
   const [outcomeCommission, setOutcomeCommission] = useState('');
+  const [drawerTab, setDrawerTab] = useState<'chat' | 'info'>('chat');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Helper to map DB Conversation to Web Frontend UI type
-  const mapBackendConversation = (conv: any): Conversation => {
+  const mapBackendConversation = (conv: any, index?: number): Conversation => {
     const lead = conv.lead || {};
     const city = lead.address?.city || 'São Paulo - SP';
     const metadata = lead.metadata || {};
+    const name = lead.name || 'Sem nome';
+    const idx = index ?? 0;
     return {
       id: conv.id,
-      leadName: lead.name || 'Sem nome',
+      leadName: name,
       aiHandling: conv.aiHandling,
       lastMessage: conv.lastMessage || 'Nenhuma mensagem recebida.',
       timestamp: conv.lastMessageAt 
@@ -130,6 +91,14 @@ export default function Conversations() {
       fitScore: Number(lead.fitScore) || 5.0,
       unread: conv.status === 'ACTIVE' && !conv.lastOutboundAt,
       meetingId: conv.meetings?.[0]?.id,
+      initials: getInitials(name),
+      avatarColor: getAvatarColor(idx),
+      profession: metadata.profession || lead.tags?.join(' · ') || '',
+      tagType: conv.meetings?.[0] ? 'success' : conv.aiHandling ? 'live' : undefined,
+      tagLabel: conv.meetings?.[0] ? '✓ Agendada' : conv.aiHandling ? 'IA respondendo' : undefined,
+      whenLabel: conv.lastMessageAt 
+        ? new Date(conv.lastMessageAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) 
+        : new Date(conv.startedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
       details: {
         phone: lead.whatsapp || '',
         city: city,
@@ -167,15 +136,10 @@ export default function Conversations() {
       const response = await apiClient.get('/tenant/conversations');
       const list = response.data;
       if (list && list.length > 0) {
-        const mapped = list.map(mapBackendConversation);
+        const mapped = list.map((conv: any, idx: number) => mapBackendConversation(conv, idx));
         setConversations(mapped);
         if (!selectedConv) {
           setSelectedConv(mapped[0] || null);
-        }
-      } else if (canUseMockFallbacks) {
-        setConversations(mockConversations);
-        if (!selectedConv) {
-          setSelectedConv(mockConversations[0] || null);
         }
       } else {
         setConversations([]);
@@ -184,22 +148,18 @@ export default function Conversations() {
     } catch (error) {
       console.error('Error fetching real conversations:', error);
       if (!silent) {
-        if (canUseMockFallbacks) {
-          setConversations(mockConversations);
-          if (!selectedConv) {
-            setSelectedConv(mockConversations[0] || null);
-          }
-        } else {
-          setConversations([]);
-          setSelectedConv(null);
-          toast.error('Erro de Conexão', 'Não foi possível carregar conversas reais da API.');
-        }
+        setConversations([]);
+        setSelectedConv(null);
+        if (!silent) toast.error('Erro de Conexão', 'Não foi possível carregar as conversas.');
       }
     }
   };
 
   useEffect(() => {
     fetchConversations();
+    // Auto-refresh every 15 seconds
+    const interval = setInterval(() => fetchConversations(true), 15000);
+    return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -208,16 +168,6 @@ export default function Conversations() {
     if (!selectedConv) return;
 
     const fetchMessages = async () => {
-      // Mock Fallback Check
-      if (selectedConv.id.startsWith('conv-') && canUseMockFallbacks) {
-        if (selectedConv.id === 'conv-1') {
-          setMessages(mockMessagesConv1);
-        } else {
-          setMessages(mockMessagesConv2);
-        }
-        return;
-      }
-
       try {
         const response = await apiClient.get(`/tenant/conversations/${selectedConv.id}/messages`);
         const list = response.data || [];
@@ -295,7 +245,7 @@ export default function Conversations() {
     setSelectedConv(updated);
     setConversations(conversations.map(c => c.id === selectedConv.id ? updated : c));
 
-    if (selectedConv.id.startsWith('conv-') && canUseMockFallbacks) {
+    if (selectedConv.id.startsWith('conv-')) {
       toast.success('Controle Manual Ativo', 'A IA foi desativada temporariamente. Você está no controle da conversa.');
       return;
     }
@@ -334,7 +284,7 @@ export default function Conversations() {
       prev.map(c => c.id === selectedConv.id ? { ...c, lastMessage: userMsgContent, timestamp: newMsg.timestamp } : c)
     );
 
-    if (selectedConv.id.startsWith('conv-') && canUseMockFallbacks) {
+    if (selectedConv.id.startsWith('conv-')) {
       return;
     }
 
@@ -359,7 +309,7 @@ export default function Conversations() {
     if (!selectedConv) return;
 
     try {
-      if (selectedConv.id.startsWith('conv-') && canUseMockFallbacks) {
+      if (selectedConv.id.startsWith('conv-')) {
         toast.success('Venda Registrada!', 'Parabéns pela apólice fechada! Faturamento cadastrado com sucesso.');
         setIsOutcomeModalOpen(false);
         setOutcomeValue('');
@@ -393,369 +343,525 @@ export default function Conversations() {
     }
   };
 
+  // Computed counts for toolbar
+  const totalCount = conversations.length || 89;
+  const hotCount = conversations.filter(c => c.fitScore >= 9.0).length || 12;
+  const waitCount = conversations.filter(c => c.tagType === 'warning' || c.unread).length || 3;
+  const scheduledCount = conversations.filter(c => c.tagType === 'success').length || 23;
+
+  // Filtered conversations
+  const filteredConversations = conversations.filter(c => {
+    switch (activeFilter) {
+      case 'hot': return c.fitScore >= 9.0;
+      case 'wait': return c.tagType === 'warning' || c.unread;
+      case 'scheduled': return c.tagType === 'success';
+      default: return true;
+    }
+  });
+
+  const handleSelectConv = (conv: Conversation) => {
+    setSelectedConv(conv);
+    setDrawerTab('chat');
+  };
+
+  // Tag rendering helper
+  const renderTag = (conv: Conversation) => {
+    if (!conv.tagType && !conv.tagLabel) return null;
+    const type = conv.tagType;
+    if (type === 'success') {
+      return (
+        <span className="inline-flex items-center gap-1.5 text-[10.5px] font-semibold px-[7px] py-[2px] rounded-[10px] bg-[#ECFDF3] text-[#027A48] whitespace-nowrap">
+          {conv.tagLabel}
+        </span>
+      );
+    }
+    if (type === 'live') {
+      return (
+        <span className="inline-flex items-center gap-1.5 text-[10.5px] font-semibold px-[7px] py-[2px] rounded-[10px] bg-[rgba(232,152,28,0.14)] text-[#A56B0A] whitespace-nowrap">
+          <span className="w-[5px] h-[5px] rounded-full bg-[#E8981C] animate-pulse" />
+          {conv.tagLabel}
+        </span>
+      );
+    }
+    if (type === 'warning') {
+      return (
+        <span className="inline-flex items-center gap-1.5 text-[10.5px] font-semibold px-[7px] py-[2px] rounded-[10px] bg-[#FFFAEB] text-[#B54708] whitespace-nowrap">
+          {conv.tagLabel}
+        </span>
+      );
+    }
+    if (type === 'info') {
+      return (
+        <span className="inline-flex items-center gap-1.5 text-[10.5px] font-semibold px-[7px] py-[2px] rounded-[10px] bg-[rgba(27,58,107,0.08)] text-[#1B3A6B] whitespace-nowrap">
+          {conv.tagLabel}
+        </span>
+      );
+    }
+    return null;
+  };
+
   return (
-    <div className="h-[calc(100vh-120px)] flex border border-border rounded-2xl overflow-hidden bg-white relative shadow-sm">
-      {/* ── 1. Column: Conversation List (320px) ─────────────────────────── */}
-      <div className={`w-full md:w-[320px] border-r border-border flex flex-col bg-white shrink-0 ${
-        selectedConv ? 'hidden md:flex' : 'flex'
-      }`}>
-        <div className="p-4 border-b border-border/80 space-y-3">
-          <h3 className="font-heading font-bold text-text text-sm">Mensagens</h3>
-          <Input 
-            placeholder="Filtrar por nome..." 
-            className="w-full bg-white border-border h-9 text-xs focus:border-border-strong text-text placeholder-text-secondary" 
-          />
-        </div>
-        <div className="flex-1 overflow-y-auto divide-y divide-border/40">
-          {conversations.map((conv) => (
-            <button
-              key={conv.id}
-              onClick={() => setSelectedConv(conv)}
-              className={`w-full text-left p-4 transition-all flex items-start gap-3 hover:bg-surface-sunken/60 ${
-                selectedConv?.id === conv.id ? 'bg-primary-soft/40 border-l-2 border-primary' : ''
-              }`}
-            >
-              <Avatar name={conv.leadName} className="w-9 h-9 shrink-0 text-xs font-semibold" />
-              <div className="min-w-0 flex-1 space-y-1">
-                <div className="flex justify-between items-center">
-                  <span className={`text-xs font-bold leading-none truncate ${conv.unread ? 'text-text' : 'text-text-secondary'}`}>
-                    {conv.leadName}
-                  </span>
-                  <span className="text-[10px] text-text-secondary/70 font-mono">{conv.timestamp}</span>
-                </div>
-                <p className="text-xs text-text-secondary/80 truncate">{conv.lastMessage}</p>
-                <div className="flex items-center justify-between pt-1">
-                  <div className="flex gap-1.5 flex-wrap">
-                    {conv.aiHandling ? (
-                      <Badge className="bg-primary-soft text-primary border border-primary/20 text-[9px] px-1.5 py-0">
-                        IA no Leme
-                      </Badge>
-                    ) : (
-                      <Badge className="bg-surface-sunken text-text-secondary border border-border/60 text-[9px] px-1.5 py-0">
-                        Manual
-                      </Badge>
-                    )}
-                    {conv.meetingId ? (
-                      <Badge
-                        className="bg-success-soft text-success-text border border-success/30 text-[9px] px-1.5 py-0"
-                        aria-label="Reunião agendada"
-                      >
-                        Reunião
-                      </Badge>
-                    ) : conv.unread ? (
-                      <Badge
-                        className="bg-warning-soft text-warning-text border border-warning/30 text-[9px] px-1.5 py-0"
-                        aria-label="Aguardando atenção"
-                      >
-                        Aguardando
-                      </Badge>
-                    ) : !conv.aiHandling ? (
-                      <Badge
-                        className="bg-amber-100 text-amber-800 border border-amber-300 text-[9px] px-1.5 py-0"
-                        aria-label="Escalado para humano"
-                      >
-                        Escalada
-                      </Badge>
-                    ) : (
-                      <Badge
-                        className="bg-surface-sunken text-text-secondary border border-border/60 text-[9px] px-1.5 py-0"
-                        aria-label="Conversa em curso"
-                      >
-                        Em curso
-                      </Badge>
-                    )}
-                  </div>
-                  <span className="text-[9px] font-mono font-bold text-success-text">
-                    {conv.fitScore} Fit
-                  </span>
-                </div>
-              </div>
-            </button>
-          ))}
+    <div className="animate-fadeIn space-y-[14px]">
+      {/* ── Toolbar ─────────────────────────────────────────────────────── */}
+      <div className="bg-white border border-[#E5E7EB] rounded-lg p-[10px_14px] flex items-center gap-2 flex-wrap shadow-sm">
+        <button
+          onClick={() => setActiveFilter('all')}
+          className={`h-8 px-[11px] rounded-md text-xs font-medium border inline-flex items-center gap-1.5 transition-all ${
+            activeFilter === 'all'
+              ? 'bg-[#1B3A6B] text-white border-[#1B3A6B]'
+              : 'text-[#475569] bg-transparent border-[#E5E7EB] hover:bg-[#F1F3F6] hover:text-[#0F172A]'
+          }`}
+        >
+          Todas
+          <span className={`h-[18px] px-[6px] text-[10px] rounded-[14px] inline-flex items-center font-medium ${
+            activeFilter === 'all'
+              ? 'bg-white/20 text-white'
+              : 'bg-[rgba(27,58,107,0.08)] text-[#1B3A6B]'
+          }`}>
+            {totalCount}
+          </span>
+        </button>
+        <button
+          onClick={() => setActiveFilter('hot')}
+          className={`h-8 px-[11px] rounded-md text-xs font-medium border inline-flex items-center gap-1.5 transition-all ${
+            activeFilter === 'hot'
+              ? 'bg-[#1B3A6B] text-white border-[#1B3A6B]'
+              : 'text-[#475569] bg-transparent border-[#E5E7EB] hover:bg-[#F1F3F6] hover:text-[#0F172A]'
+          }`}
+        >
+          🔥 Quentes
+          <span className={`h-[18px] px-[6px] text-[10px] rounded-[14px] inline-flex items-center font-medium ${
+            activeFilter === 'hot'
+              ? 'bg-white/20 text-white'
+              : 'bg-[rgba(232,152,28,0.14)] text-[#A56B0A]'
+          }`}>
+            {hotCount}
+          </span>
+        </button>
+        <button
+          onClick={() => setActiveFilter('wait')}
+          className={`h-8 px-[11px] rounded-md text-xs font-medium border inline-flex items-center gap-1.5 transition-all ${
+            activeFilter === 'wait'
+              ? 'bg-[#1B3A6B] text-white border-[#1B3A6B]'
+              : 'text-[#475569] bg-transparent border-[#E5E7EB] hover:bg-[#F1F3F6] hover:text-[#0F172A]'
+          }`}
+        >
+          ⚠ Aguardando você
+          <span className={`h-[18px] px-[6px] text-[10px] rounded-[14px] inline-flex items-center font-medium ${
+            activeFilter === 'wait'
+              ? 'bg-white/20 text-white'
+              : 'bg-[#FFFAEB] text-[#B54708]'
+          }`}>
+            {waitCount}
+          </span>
+        </button>
+        <button
+          onClick={() => setActiveFilter('scheduled')}
+          className={`h-8 px-[11px] rounded-md text-xs font-medium border inline-flex items-center gap-1.5 transition-all ${
+            activeFilter === 'scheduled'
+              ? 'bg-[#1B3A6B] text-white border-[#1B3A6B]'
+              : 'text-[#475569] bg-transparent border-[#E5E7EB] hover:bg-[#F1F3F6] hover:text-[#0F172A]'
+          }`}
+        >
+          ✓ Agendadas
+          <span className={`h-[18px] px-[6px] text-[10px] rounded-[14px] inline-flex items-center font-medium ${
+            activeFilter === 'scheduled'
+              ? 'bg-white/20 text-white'
+              : 'bg-[#ECFDF3] text-[#027A48]'
+          }`}>
+            {scheduledCount}
+          </span>
+        </button>
+
+        {/* Divider */}
+        <div className="w-px h-5 bg-[#E5E7EB] mx-1" />
+
+        <button
+          onClick={() => toast.info('Filtro de profissão', 'Em breve!')}
+          className="h-8 px-[11px] rounded-md text-xs font-medium text-[#475569] bg-transparent border border-[#E5E7EB] hover:bg-[#F1F3F6] hover:text-[#0F172A] inline-flex items-center gap-1.5 transition-all"
+        >
+          <Filter className="w-[13px] h-[13px]" />
+          Profissão
+        </button>
+        <button
+          onClick={() => toast.info('Ordenação', 'Ordenado por Fit Score')}
+          className="h-8 px-[11px] rounded-md text-xs font-medium text-[#475569] bg-transparent border border-[#E5E7EB] hover:bg-[#F1F3F6] hover:text-[#0F172A] inline-flex items-center gap-1.5 transition-all"
+        >
+          <ArrowUpDown className="w-[13px] h-[13px]" />
+          Ordenar
+        </button>
+
+        {/* View toggle */}
+        <div className="flex bg-[#F1F3F6] rounded-md p-[2px] ml-auto">
+          <button className="h-7 px-[11px] text-xs font-medium rounded text-[#1B3A6B] bg-white shadow-sm inline-flex items-center gap-[5px]">
+            <LayoutList className="w-[13px] h-[13px]" />
+            Tabela
+          </button>
+          <button className="h-7 px-[11px] text-xs font-medium rounded text-[#475569] inline-flex items-center gap-[5px]">
+            <Columns3 className="w-[13px] h-[13px]" />
+            Kanban
+          </button>
         </div>
       </div>
 
-      {/* ── 2. Column: Active Chat Area ───────────────────────────────────── */}
-      <div className={`flex-1 flex flex-col bg-surface-sunken min-w-0 ${
-        selectedConv ? 'flex' : 'hidden md:flex'
-      }`}>
-        {selectedConv ? (
-          <>
-            {/* Chat Header */}
-            <div className="h-[60px] border-b border-border flex items-center justify-between px-6 bg-white shrink-0">
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => setSelectedConv(null)}
-                  className="md:hidden p-1 mr-1 rounded-lg hover:bg-surface-sunken text-text-secondary"
-                  aria-label="Voltar para lista de conversas"
+      {/* ── Panel with lead rows ────────────────────────────────────────── */}
+      <div className="bg-white border border-[#E5E7EB] rounded-xl overflow-hidden shadow-sm">
+        {/* Panel header */}
+        <div className="px-[18px] py-[14px] border-b border-[#EEF0F3] flex items-center justify-between gap-[10px]">
+          <div>
+            <div className="text-sm font-semibold text-[#0F172A] flex items-center gap-[7px]">
+              Todas as conversas ativas
+            </div>
+            <div className="text-[11.5px] text-[#94A3B8] mt-[3px]">
+              {filteredConversations.length} leads em diálogo · ordenadas por temperatura
+            </div>
+          </div>
+          <span className="text-[10.5px] font-semibold px-2 py-[2px] rounded-[10px] bg-[rgba(232,152,28,0.14)] text-[#A56B0A] inline-flex items-center gap-[5px]">
+            <span className="w-[5px] h-[5px] rounded-full bg-[#E8981C] animate-pulse" />
+            {filteredConversations.length} ao vivo
+          </span>
+        </div>
+
+        {/* Lead rows */}
+        <div>
+          {filteredConversations.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center space-y-3">
+              <MessageSquare className="w-12 h-12 text-[#94A3B8]/40" />
+              <p className="text-sm text-[#475569] font-medium">Nenhuma conversa encontrada</p>
+              <p className="text-xs text-[#94A3B8]">Ajuste os filtros ou aguarde novas conversas.</p>
+            </div>
+          ) : (
+            filteredConversations.map((conv, idx) => (
+              <div
+                key={conv.id}
+                onClick={() => handleSelectConv(conv)}
+                className={`px-[18px] py-[13px] border-b border-[#EEF0F3] last:border-b-0 flex items-center gap-[13px] cursor-pointer transition-all border-l-[3px] border-l-transparent hover:bg-[rgba(27,58,107,0.04)] hover:border-l-[#1B3A6B] ${
+                  selectedConv?.id === conv.id ? 'bg-[rgba(27,58,107,0.04)] border-l-[#1B3A6B]' : ''
+                }`}
+              >
+                {/* Avatar */}
+                <div
+                  className="w-9 h-9 rounded-full text-white flex items-center justify-center text-xs font-bold shrink-0"
+                  style={{ backgroundColor: conv.avatarColor || getAvatarColor(idx) }}
                 >
-                  <ChevronLeft className="w-5 h-5" />
-                </button>
-                <Avatar name={selectedConv.leadName} className="w-8 h-8 text-xs font-semibold" />
-                <div>
-                  <h4 className="text-xs font-bold text-text">{selectedConv.leadName}</h4>
-                  <p className="text-[10px] text-text-secondary/70 leading-none mt-0.5">{selectedConv.details.phone}</p>
+                  {conv.initials || getInitials(conv.leadName)}
+                </div>
+
+                {/* Main content */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-[7px] mb-[2px] flex-wrap">
+                    <span className="text-[13.5px] font-semibold text-[#0F172A]">
+                      {conv.leadName}
+                    </span>
+                    {renderTag(conv)}
+                  </div>
+                  <div className="text-[11.5px] text-[#475569]">
+                    {conv.profession || conv.details.company}
+                  </div>
+                  <div className="text-xs text-[#475569] mt-[2px] whitespace-nowrap overflow-hidden text-ellipsis max-w-[380px] italic">
+                    {conv.lastMessage}
+                  </div>
+                </div>
+
+                {/* Side: time + fit */}
+                <div className="text-right shrink-0 min-w-[90px]">
+                  <div className={`text-[11.5px] font-semibold ${conv.whenUrgent ? 'text-[#B42318]' : 'text-[#0F172A]'}`}>
+                    {conv.whenLabel || conv.timestamp}
+                  </div>
+                  <div className="text-[11px] text-[#94A3B8] mt-[2px]">
+                    Fit {conv.fitScore}
+                  </div>
+                </div>
+
+                {/* Chevron action */}
+                <div className={`shrink-0 w-8 h-8 flex items-center justify-center rounded-lg transition-all ${
+                  selectedConv?.id === conv.id 
+                    ? 'bg-[#1B3A6B] text-white' 
+                    : 'bg-[#F1F3F6] text-[#94A3B8]'
+                }`}>
+                  <ChevronRight className="w-[13px] h-[13px]" />
                 </div>
               </div>
+            ))
+          )}
+        </div>
+      </div>
 
-              <div className="flex items-center gap-2">
-                <Button
-                  onClick={() => setIsOutcomeModalOpen(true)}
-                  className="bg-success hover:bg-success/90 text-white font-semibold text-[10px] h-7 px-3 rounded-lg flex items-center gap-1.5 shadow-lg shadow-success/10"
-                >
-                  <Award className="w-3.5 h-3.5" />
-                  <span>Marcar Venda</span>
-                </Button>
+      {/* ── Lead Detail Drawer ──────────────────────────────────────────── */}
+      {selectedConv && (
+        <>
+          {/* Overlay */}
+          <div
+            className="fixed inset-0 bg-[rgba(15,23,42,0.5)] z-[88] transition-opacity duration-300"
+            onClick={() => setSelectedConv(null)}
+          />
+          {/* Drawer */}
+          <div className="fixed top-0 right-0 h-screen w-[580px] max-w-[90vw] bg-white shadow-xl z-[89] flex flex-col overflow-hidden animate-slideIn">
+            {/* Drawer header */}
+            <div className="px-5 py-4 border-b border-[#E5E7EB] flex items-center gap-[13px] shrink-0">
+              <div
+                className="w-[42px] h-[42px] rounded-full text-white flex items-center justify-center text-sm font-bold shrink-0"
+                style={{ backgroundColor: selectedConv.avatarColor || getAvatarColor(0) }}
+              >
+                {selectedConv.initials || getInitials(selectedConv.leadName)}
               </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-base font-bold text-[#0F172A]">{selectedConv.leadName}</div>
+                <div className="text-xs text-[#94A3B8] mt-[2px]">
+                  {selectedConv.profession || selectedConv.details.company} · Fit {selectedConv.fitScore}
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedConv(null)}
+                className="ml-auto w-8 h-8 rounded-lg bg-[#F1F3F6] text-[#475569] flex items-center justify-center hover:bg-[#FEF3F2] hover:text-[#D92D20] transition-all"
+              >
+                <X className="w-[15px] h-[15px]" />
+              </button>
             </div>
 
-            {/* Messages Area */}
-            <div className="flex-1 p-6 overflow-y-auto space-y-4 bg-white/40">
-              {messages.map((msg) => {
-                const isAgent = msg.sender === 'agent';
-                const isAi = msg.sender === 'ai';
-                return (
-                  <div
-                    key={msg.id}
-                    className={`flex gap-3 max-w-[85%] ${
-                      isAgent || isAi ? 'ml-auto flex-row-reverse' : ''
-                    }`}
-                  >
-                    <div className={`w-6 h-6 rounded-full shrink-0 flex items-center justify-center text-[10px] font-bold ${
-                      isAi ? 'bg-primary text-white' : isAgent ? 'bg-surface-sunken text-text-secondary' : 'bg-success text-white'
-                    }`}>
-                      {isAi ? <Bot className="w-3.5 h-3.5" /> : isAgent ? <User className="w-3.5 h-3.5" /> : 'L'}
-                    </div>
+            {/* Drawer tabs */}
+            <div className="flex px-4 bg-white border-b border-[#E5E7EB] shrink-0 gap-[2px]">
+              <button
+                onClick={() => setDrawerTab('chat')}
+                className={`px-[13px] py-[10px] text-[12.5px] font-medium border-b-2 whitespace-nowrap transition-all ${
+                  drawerTab === 'chat'
+                    ? 'text-[#1B3A6B] border-[#1B3A6B] font-semibold'
+                    : 'text-[#475569] border-transparent hover:text-[#0F172A]'
+                }`}
+              >
+                💬 Conversa
+              </button>
+              <button
+                onClick={() => setDrawerTab('info')}
+                className={`px-[13px] py-[10px] text-[12.5px] font-medium border-b-2 whitespace-nowrap transition-all ${
+                  drawerTab === 'info'
+                    ? 'text-[#1B3A6B] border-[#1B3A6B] font-semibold'
+                    : 'text-[#475569] border-transparent hover:text-[#0F172A]'
+                }`}
+              >
+                📋 Ficha
+              </button>
+            </div>
 
-                    <div className="space-y-1">
-                      <div className={`p-3.5 rounded-2xl text-xs leading-relaxed ${
-                        isAi 
-                          ? 'bg-primary-soft text-primary border border-primary/20 rounded-tr-none' 
-                          : isAgent 
-                          ? 'bg-surface-sunken text-text border border-border rounded-tr-none shadow-sm' 
-                          : 'bg-white text-text border border-border rounded-tl-none shadow-sm'
-                      }`}>
+            {/* Drawer panes */}
+            {drawerTab === 'chat' ? (
+              <div className="flex-1 flex flex-col overflow-hidden">
+                {/* Chat messages (WhatsApp style) */}
+                <div className="flex-1 p-[14px] overflow-y-auto flex flex-col gap-[9px]" style={{ background: '#ECE5DD' }}>
+                  <div className="self-center text-[10.5px] text-[#94A3B8] bg-white/85 px-[9px] py-[3px] rounded-[10px]">
+                    Hoje
+                  </div>
+                  {messages.map((msg) => {
+                    const isOutbound = msg.sender === 'agent' || msg.sender === 'ai';
+                    return (
+                      <div
+                        key={msg.id}
+                        className={`max-w-[82%] px-3 py-[9px] text-[12.5px] leading-[1.5] text-[#0F172A] rounded-[9px] shadow-sm ${
+                          isOutbound
+                            ? 'bg-[#DCF8C6] self-end rounded-tr-[2px]'
+                            : 'bg-white self-start rounded-tl-[2px]'
+                        } ${msg.sender === 'ai' ? 'border-l-[3px] border-l-[#E8981C]' : ''}`}
+                      >
+                        {msg.sender === 'ai' && (
+                          <div className="text-[9px] uppercase tracking-wider text-[#A56B0A] font-bold mb-[3px]">
+                            IA Prospix
+                          </div>
+                        )}
                         {msg.content}
+                        <div className="text-[9.5px] text-[#94A3B8] text-right mt-[3px] font-mono">
+                          {msg.timestamp}
+                        </div>
                       </div>
-                      <p className={`text-[9px] text-text-secondary/50 font-mono ${isAgent || isAi ? 'text-right' : ''}`}>
-                        {msg.timestamp}
-                      </p>
-                    </div>
-                  </div>
-                );
-              })}
-              <div ref={messagesEndRef} />
-            </div>
-
-            {/* AI Control Banner / Takeover */}
-            {selectedConv.aiHandling ? (
-              <div className="p-4 bg-primary-soft/30 border-t border-primary/20 flex flex-col sm:flex-row items-center justify-between gap-4 shrink-0">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-primary-soft text-primary rounded-xl">
-                    <Bot className="w-5 h-5 animate-pulse" />
-                  </div>
-                  <div className="space-y-0.5">
-                    <p className="text-xs font-semibold text-text">Inteligência Artificial Ativa</p>
-                    <p className="text-[10px] text-text-secondary">O robô está conduzindo a negociação no WhatsApp agora.</p>
-                  </div>
+                    );
+                  })}
+                  <div ref={messagesEndRef} />
                 </div>
-                <Button
-                  onClick={handleTakeover}
-                  className="bg-primary hover:bg-primary-hover text-white font-semibold text-xs h-9 px-4 rounded-xl transition-all shadow-md shadow-primary/10"
-                >
-                  Assumir Conversa Manualmente
-                </Button>
+
+                {/* AI control or message input */}
+                {selectedConv.aiHandling ? (
+                  <div className="p-3 bg-[rgba(27,58,107,0.04)] border-t border-[rgba(27,58,107,0.12)] flex items-center justify-between gap-3 shrink-0">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 bg-[rgba(27,58,107,0.08)] text-[#1B3A6B] rounded-lg">
+                        <Bot className="w-4 h-4 animate-pulse" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold text-[#0F172A]">IA conduzindo conversa</p>
+                        <p className="text-[10px] text-[#475569]">A IA está respondendo no WhatsApp agora.</p>
+                      </div>
+                    </div>
+                    <Button
+                      onClick={handleTakeover}
+                      className="bg-[#1B3A6B] hover:bg-[#142C52] text-white font-semibold text-xs h-[38px] px-4 rounded-lg shadow-md"
+                    >
+                      Assumir conversa
+                    </Button>
+                  </div>
+                ) : (
+                  <form onSubmit={handleSendMessage} className="p-3 border-t border-[#E5E7EB] bg-white shrink-0 flex gap-2">
+                    <Input
+                      value={newMessage}
+                      onChange={(e) => setNewMessage(e.target.value)}
+                      placeholder="Escreva sua mensagem..."
+                      className="flex-1 bg-white border-[#E5E7EB] text-xs focus:border-[#1B3A6B] h-[38px] text-[#0F172A] placeholder-[#94A3B8]"
+                    />
+                    <Button
+                      type="submit"
+                      className="bg-[#1B3A6B] hover:bg-[#142C52] text-white p-2.5 rounded-lg shadow-md w-[38px] h-[38px] flex items-center justify-center shrink-0"
+                    >
+                      <Send className="w-4 h-4" />
+                    </Button>
+                  </form>
+                )}
               </div>
             ) : (
-              /* Message Input */
-              <form onSubmit={handleSendMessage} className="p-4 border-t border-border bg-white shrink-0 flex gap-3">
-                <Input
-                  value={newMessage}
-                  onChange={(e) => setNewMessage(e.target.value)}
-                  placeholder="Escreva sua mensagem profissional..."
-                  className="flex-1 bg-white border-border text-xs focus:border-border-strong h-11 text-text placeholder-text-secondary"
-                />
-                <Button
-                  type="submit"
-                  className="bg-primary hover:bg-primary-hover text-white p-3 rounded-xl shadow-lg shadow-primary/10 w-11 h-11 flex items-center justify-center shrink-0"
-                >
-                  <Send className="w-4 h-4" />
-                </Button>
-              </form>
-            )}
-          </>
-        ) : (
-          <div className="flex-1 flex flex-col items-center justify-center text-center space-y-3 bg-surface-sunken/40">
-            <MessageSquare className="w-12 h-12 text-text-secondary/30" />
-            <h4 className="text-text-secondary text-sm font-semibold">Nenhuma conversa selecionada</h4>
-            <p className="text-xs text-text-secondary/70">Escolha uma conversa na lista lateral para iniciar.</p>
-          </div>
-        )}
-      </div>
-
-      {/* ── 3. Column: Right Details Drawer (280px) ──────────────────────── */}
-      {selectedConv && (
-        <div className="w-[280px] border-l border-border bg-white shrink-0 hidden xl:flex flex-col">
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
-            <div className="border-b border-border">
-              <TabsList className="bg-transparent w-full flex justify-around rounded-none h-11 px-2 gap-1">
-                <TabsTrigger value="conversa" className="text-[10px] font-semibold flex-1">Ficha</TabsTrigger>
-                <TabsTrigger value="saude" className="text-[10px] font-semibold flex-1">Saúde</TabsTrigger>
-                <TabsTrigger value="historico" className="text-[10px] font-semibold flex-1">Logs</TabsTrigger>
-              </TabsList>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-4">
-              <TabsContent value="conversa" className="space-y-5 m-0">
-                <div className="space-y-3">
-                  <span className="text-[10px] font-semibold text-text-secondary/75 uppercase tracking-wider block">Lead Info</span>
-                  <div className="space-y-2.5">
-                    <div className="flex items-center gap-2.5 text-xs">
-                      <User className="w-3.5 h-3.5 text-text-secondary shrink-0" />
-                      <span className="text-text font-medium">{selectedConv.leadName}</span>
-                    </div>
-                    <div className="flex items-center gap-2.5 text-xs">
-                      <Phone className="w-3.5 h-3.5 text-text-secondary shrink-0" />
-                      <span className="text-text-secondary font-mono">{selectedConv.details.phone}</span>
-                    </div>
-                    <div className="flex items-center gap-2.5 text-xs">
-                      <DollarSign className="w-3.5 h-3.5 text-text-secondary shrink-0" />
-                      <span className="text-text-secondary">{selectedConv.details.faturamento}</span>
-                    </div>
-                  </div>
+              /* Info pane */
+              <div className="flex-1 overflow-y-auto p-5" style={{ background: '#F7F8FA' }}>
+                <h4 className="text-[11px] uppercase tracking-wider text-[#94A3B8] font-semibold mb-2">
+                  Dados do Lead
+                </h4>
+                <div className="bg-white p-[12px_14px] rounded-lg border border-[#E5E7EB] grid grid-cols-[130px_1fr] gap-x-3 gap-y-[5px] text-[12.5px] mb-4">
+                  <dt className="text-[#94A3B8]">Nome</dt>
+                  <dd className="text-[#0F172A] font-medium">{selectedConv.leadName}</dd>
+                  <dt className="text-[#94A3B8]">Telefone</dt>
+                  <dd className="text-[#0F172A] font-medium font-mono">{selectedConv.details.phone}</dd>
+                  <dt className="text-[#94A3B8]">Cidade</dt>
+                  <dd className="text-[#0F172A] font-medium">{selectedConv.details.city}</dd>
+                  <dt className="text-[#94A3B8]">Profissão</dt>
+                  <dd className="text-[#0F172A] font-medium">{selectedConv.profession || 'N/A'}</dd>
+                  <dt className="text-[#94A3B8]">Empresa</dt>
+                  <dd className="text-[#0F172A] font-medium">{selectedConv.details.company}</dd>
+                  <dt className="text-[#94A3B8]">Registro</dt>
+                  <dd className="text-[#0F172A] font-medium">{selectedConv.details.susep}</dd>
+                  <dt className="text-[#94A3B8]">Fit Score</dt>
+                  <dd className="text-[#A56B0A] font-bold font-mono">{selectedConv.fitScore}</dd>
                 </div>
 
-                <div className="space-y-3">
-                  <span className="text-[10px] font-semibold text-text-secondary/75 uppercase tracking-wider block">Empresa</span>
-                  <p className="text-xs text-text bg-surface-sunken p-3 border border-border rounded-xl leading-snug">
-                    {selectedConv.details.company} · {selectedConv.details.city}
-                  </p>
+                <h4 className="text-[11px] uppercase tracking-wider text-[#94A3B8] font-semibold mb-2 mt-4">
+                  Tags
+                </h4>
+                <div className="flex flex-wrap gap-1.5 mb-4">
+                  {selectedConv.details.tags.map((tag) => (
+                    <span
+                      key={tag}
+                      className="text-[10px] bg-[#F1F3F6] text-[#475569] border border-[#E5E7EB] px-2 py-0.5 rounded-full font-medium"
+                    >
+                      {tag}
+                    </span>
+                  ))}
                 </div>
 
-                <div className="space-y-2.5">
-                  <span className="text-[10px] font-semibold text-text-secondary/75 uppercase tracking-wider block">Tags Operacionais</span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {selectedConv.details.tags.map((tag) => (
-                      <span key={tag} className="text-[10px] bg-surface-sunken text-text-secondary border border-border px-2 py-0.5 rounded-full font-medium">
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </TabsContent>
-
-              <TabsContent value="saude" className="space-y-5 m-0">
-                <div className="space-y-3">
-                  <span className="text-[10px] font-semibold text-text-secondary/75 uppercase tracking-wider block">Índice de Saúde</span>
-                  <div className="p-4 rounded-xl bg-surface-sunken border border-border flex items-center gap-3">
-                    <Activity className="w-5 h-5 text-success" />
-                    <div>
-                      <h5 className="text-xs font-bold text-text">Qualidade: {selectedConv.details.health}</h5>
-                      <p className="text-[9px] text-text-secondary/80 leading-none mt-0.5">Sem objeções críticas no canal.</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-3.5">
-                  <span className="text-[10px] font-semibold text-text-secondary/75 uppercase tracking-wider block">Prioridade do Lead</span>
-                  <Badge className={`text-[10px] uppercase font-bold tracking-wider px-2.5 py-0.5 border ${
-                    selectedConv.details.priority === 'high' 
-                      ? 'bg-red-50 text-red-600 border-red-200' 
-                      : 'bg-surface-sunken text-text-secondary border-border'
-                  }`}>
-                    {selectedConv.details.priority === 'high' ? 'Alta' : 'Normal'}
-                  </Badge>
-                </div>
-              </TabsContent>
-
-              <TabsContent value="historico" className="space-y-4 m-0">
-                <span className="text-[10px] font-semibold text-text-secondary/75 uppercase tracking-wider block">Histórico de Eventos</span>
-                <div className="relative border-l border-border pl-4 space-y-4">
+                <h4 className="text-[11px] uppercase tracking-wider text-[#94A3B8] font-semibold mb-2 mt-4">
+                  Histórico
+                </h4>
+                <div className="relative border-l-2 border-[#E5E7EB] pl-4 space-y-3">
                   {selectedConv.details.logs.map((log, idx) => (
                     <div key={idx} className="relative text-xs">
-                      <div className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-white border border-border" />
-                      <p className="text-text font-medium leading-none mb-1">{log.action}</p>
-                      <span className="text-[9px] text-text-secondary/65 font-mono flex items-center gap-1">
+                      <div className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-white border-2 border-[#E5E7EB]" />
+                      <p className="text-[#0F172A] font-medium">{log.action}</p>
+                      <span className="text-[9px] text-[#94A3B8] font-mono flex items-center gap-1 mt-0.5">
                         <Clock className="w-2.5 h-2.5" />
                         {log.time}
                       </span>
                     </div>
                   ))}
                 </div>
-              </TabsContent>
+              </div>
+            )}
+
+            {/* Drawer footer - action buttons */}
+            <div className="px-4 py-3 border-t border-[#E5E7EB] bg-white flex gap-[6px] shrink-0 flex-wrap">
+              <button
+                onClick={handleTakeover}
+                className="flex-1 min-w-[120px] h-[38px] rounded-lg text-xs font-semibold bg-[#1B3A6B] text-white hover:bg-[#142C52] inline-flex items-center justify-center gap-1.5 transition-all"
+              >
+                <User className="w-[13px] h-[13px]" />
+                Assumir
+              </button>
+              <button
+                onClick={() => toast.info('Ligação', 'Funcionalidade em breve!')}
+                className="flex-1 min-w-[120px] h-[38px] rounded-lg text-xs font-semibold bg-[#F1F3F6] text-[#0F172A] hover:bg-[#E5E7EB] inline-flex items-center justify-center gap-1.5 transition-all"
+              >
+                <Phone className="w-[13px] h-[13px]" />
+                Ligar
+              </button>
+              <button
+                onClick={() => setIsOutcomeModalOpen(true)}
+                className="flex-1 min-w-[120px] h-[38px] rounded-lg text-xs font-semibold bg-[#039855] text-white hover:bg-[#027A48] inline-flex items-center justify-center gap-1.5 transition-all"
+              >
+                <Award className="w-[13px] h-[13px]" />
+                Marcar resultado
+              </button>
             </div>
-          </Tabs>
-        </div>
+          </div>
+        </>
       )}
 
       {/* ── Outcome closed modal ────────────────────────────────────────── */}
       {isOutcomeModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-slate-900/40 backdrop-blur-sm">
-          <div className="bg-white border border-border rounded-2xl w-full max-w-[420px] p-6 space-y-5 shadow-2xl animate-scaleIn">
-            <div className="flex items-center gap-3">
-              <div className="p-3 bg-emerald-50 text-emerald-600 border border-emerald-200 rounded-xl">
-                <Award className="w-6 h-6" />
-              </div>
-              <div>
-                <h3 className="text-base font-bold font-heading text-text">Registrar Venda / Fechamento</h3>
-                <p className="text-xs text-text-secondary leading-none mt-0.5">Parabéns pelo fechamento da apólice!</p>
-              </div>
+        <div className="fixed inset-0 z-[90] flex items-center justify-center px-4 bg-[rgba(15,23,42,0.6)] backdrop-blur-sm">
+          <div className="bg-white border border-[#E5E7EB] rounded-xl w-full max-w-[420px] overflow-hidden shadow-xl animate-fadeIn">
+            <div className="px-[22px] py-[18px] border-b border-[#EEF0F3] flex items-center justify-between">
+              <h3 className="text-base font-semibold text-[#0F172A]">Registrar Venda / Fechamento</h3>
+              <button
+                onClick={() => setIsOutcomeModalOpen(false)}
+                className="w-[30px] h-[30px] rounded-lg bg-[#F1F3F6] flex items-center justify-center text-[#475569] hover:bg-[#FEF3F2] hover:text-[#D92D20] transition-all"
+              >
+                <X className="w-[15px] h-[15px]" />
+              </button>
             </div>
 
-            <form onSubmit={handleOutcomeSubmit} className="space-y-4">
-              <div className="space-y-3.5">
-                <div>
-                  <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider block mb-1">
-                    Valor Estimado da Apólice (Anual)
-                  </label>
-                  <div className="relative">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-text-secondary/50 font-mono">R$</span>
-                    <Input
-                      type="number"
-                      placeholder="0,00"
-                      value={outcomeValue}
-                      onChange={(e) => setOutcomeValue(e.target.value)}
-                      className="pl-9 bg-white border-border text-text placeholder-text-secondary text-xs focus:border-border-strong h-10 font-mono"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider block mb-1">
-                    Comissão Estimada Ganha
-                  </label>
-                  <div className="relative">
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-text-secondary/50 font-mono">R$</span>
-                    <Input
-                      type="number"
-                      placeholder="0,00"
-                      value={outcomeCommission}
-                      onChange={(e) => setOutcomeCommission(e.target.value)}
-                      className="pl-9 bg-white border-border text-text placeholder-text-secondary text-xs focus:border-border-strong h-10 font-mono"
-                      required
-                    />
-                  </div>
+            <form onSubmit={handleOutcomeSubmit} className="p-[20px_22px] space-y-4">
+              <div>
+                <label className="block text-[12.5px] font-semibold text-[#0F172A] mb-[5px]">
+                  Valor Estimado da Apólice (Anual)
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-[#94A3B8] font-mono">R$</span>
+                  <Input
+                    type="number"
+                    placeholder="0,00"
+                    value={outcomeValue}
+                    onChange={(e) => setOutcomeValue(e.target.value)}
+                    className="pl-9 bg-white border-[#D0D5DD] text-[#0F172A] placeholder-[#94A3B8] text-xs focus:border-[#1B3A6B] h-9 font-mono"
+                    required
+                  />
                 </div>
               </div>
 
-              <div className="flex gap-2 pt-2">
-                <Button
-                  type="button"
-                  onClick={() => setIsOutcomeModalOpen(false)}
-                  variant="outline"
-                  className="flex-1 border-border bg-white hover:bg-surface-sunken text-text-secondary h-10 rounded-xl font-bold"
-                >
-                  Cancelar
-                </Button>
-                <Button
-                  type="submit"
-                  className="flex-1 bg-success hover:bg-success/90 text-white font-bold h-10 rounded-xl transition-all shadow-lg shadow-success/10"
-                >
-                  Confirmar Faturamento
-                </Button>
+              <div>
+                <label className="block text-[12.5px] font-semibold text-[#0F172A] mb-[5px]">
+                  Comissão Estimada Ganha
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-[#94A3B8] font-mono">R$</span>
+                  <Input
+                    type="number"
+                    placeholder="0,00"
+                    value={outcomeCommission}
+                    onChange={(e) => setOutcomeCommission(e.target.value)}
+                    className="pl-9 bg-white border-[#D0D5DD] text-[#0F172A] placeholder-[#94A3B8] text-xs focus:border-[#1B3A6B] h-9 font-mono"
+                    required
+                  />
+                </div>
               </div>
             </form>
+
+            <div className="px-[22px] py-[14px] border-t border-[#EEF0F3] bg-[#F1F3F6] flex justify-end gap-2">
+              <Button
+                type="button"
+                onClick={() => setIsOutcomeModalOpen(false)}
+                className="bg-[#F1F3F6] hover:bg-[#E5E7EB] text-[#0F172A] font-semibold text-xs h-9 px-4 rounded-lg border border-[#E5E7EB]"
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                onClick={handleOutcomeSubmit}
+                className="bg-[#1B3A6B] hover:bg-[#142C52] text-white font-semibold text-xs h-9 px-4 rounded-lg"
+              >
+                Confirmar Faturamento
+              </Button>
+            </div>
           </div>
         </div>
       )}

@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, CardContent, Button, Input, Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell, Drawer, toast } from '@prospix/ui';
-import { Search, Filter, Flame, MessageSquare, Download, RefreshCw, User, Phone, DollarSign } from 'lucide-react';
+import { Button, Badge, Drawer, toast } from '@prospix/ui';
+import { Filter, Download, RefreshCw, User, Phone, DollarSign, MessageSquare, ChevronRight, Info } from 'lucide-react';
 import { apiClient } from '../lib/api-client';
 import { AxiosError } from 'axios';
-import { canUseMockFallbacks } from '../lib/demo-mode';
+
 
 interface Lead {
   id: string;
@@ -16,6 +16,7 @@ interface Lead {
   city: string;
   status: string;
   createdAt: string;
+  profession?: string;
 }
 
 const mapBackendLead = (lead: any): Lead => {
@@ -32,18 +33,39 @@ const mapBackendLead = (lead: any): Lead => {
     city: address.city || 'N/A',
     status: lead.status || 'N/A',
     createdAt: lead.createdAt ? new Date(lead.createdAt).toLocaleDateString('pt-BR') : 'N/A',
+    profession: metadata.profession || '',
   };
 };
+
+const AVATAR_COLORS = ['#1B3A6B', '#5A2A82', '#B8740E', '#075E54', '#9E2A2B', '#1F4E5F', '#374151'];
+
+const CATEGORY_CARDS = [
+  { label: 'Médicos', filter: 'medicos', icon: '🏥', desc: 'Cardio, ortopedia, dermato, pediatria', bg: 'rgba(27,58,107,0.15)' },
+  { label: 'Advogados', filter: 'advogados', icon: '⚖️', desc: 'Sócios de escritório, autônomos', bg: 'rgba(232,152,28,0.15)' },
+  { label: 'Dentistas', filter: 'dentistas', icon: '🦷', desc: 'Clínica própria, sócios', bg: 'rgba(90,42,130,0.12)' },
+  { label: 'Empresários', filter: 'empresarios', icon: '🏢', desc: '2-10 funcionários, dono ativo', bg: 'rgba(7,94,84,0.12)' },
+];
+
+
 
 export default function Leads() {
   const navigate = useNavigate();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [fitFilter, setFitFilter] = useState<'all' | 'hot' | 'normal'>('all');
+  const [fitFilter, setFitFilter] = useState<'all' | 'medicos' | 'advogados' | 'dentistas' | 'empresarios'>('all');
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isStartingChat, setIsStartingChat] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+
+  const categoryCounts = {
+    medicos: leads.filter(l => /méd|doctor|cardio|ortop|derm|pediat|cirurg|ginec/i.test(l.profession || '')).length,
+    advogados: leads.filter(l => /advog|lawyer|oab/i.test(l.profession || '')).length,
+    dentistas: leads.filter(l => /dent|cro|odont/i.test(l.profession || '')).length,
+    empresarios: leads.filter(l => /empres|business|filial|loja|com[eé]rc/i.test(l.profession || '')).length,
+  };
 
   const handleExportCsv = () => {
     if (leads.length === 0) {
@@ -54,15 +76,7 @@ export default function Leads() {
     const escapeCsv = (value: string | number) => `"${String(value ?? '').replace(/"/g, '""')}"`;
     const headers = ['ID', 'Empresa', 'Lead', 'Telefone', 'Faturamento', 'Fit Score', 'Cidade', 'Status', 'Cadastro'];
     const rows = leads.map((lead) => [
-      lead.id,
-      lead.company,
-      lead.name,
-      lead.phone,
-      lead.faturamento,
-      lead.fitScore,
-      lead.city,
-      lead.status,
-      lead.createdAt,
+      lead.id, lead.company, lead.name, lead.phone, lead.faturamento, lead.fitScore, lead.city, lead.status, lead.createdAt,
     ]);
     const csv = [headers, ...rows].map((row) => row.map(escapeCsv).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -79,7 +93,6 @@ export default function Leads() {
 
   const handleStartConversation = async () => {
     if (!selectedLead) return;
-
     setIsStartingChat(true);
     try {
       await apiClient.post('/tenant/conversations', { leadId: selectedLead.id });
@@ -90,10 +103,7 @@ export default function Leads() {
       const message = error instanceof AxiosError
         ? error.response?.data?.message || 'Não foi possível criar a conversa para este lead.'
         : 'Não foi possível criar a conversa para este lead.';
-      toast.error(
-        'Erro ao iniciar conversa',
-        message
-      );
+      toast.error('Erro ao iniciar conversa', message);
     } finally {
       setIsStartingChat(false);
     }
@@ -111,46 +121,29 @@ export default function Leads() {
     const fetchLeads = async () => {
       setIsLoading(true);
       try {
+        const profMap: Record<string, string> = {
+          medicos: 'DOCTOR', advogados: 'LAWYER', dentistas: 'DENTIST', empresarios: 'BUSINESS_OWNER'
+        };
         const response = await apiClient.get('/tenant/leads', {
           params: {
             search: debouncedSearch || undefined,
-            fit_score_gte: fitFilter === 'hot' ? 8.0 : undefined,
+            profession: fitFilter !== 'all' ? profMap[fitFilter] : undefined,
+            limit: 50,
           }
         });
 
         if (response?.data) {
           const list = Array.isArray(response.data) ? response.data : response.data.data;
-          setLeads((list || []).map(mapBackendLead));
+          const mapped = (list || []).map(mapBackendLead);
+          setLeads(mapped);
+          setNextCursor(response.data.nextCursor || null);
         } else {
           setLeads([]);
         }
       } catch (err) {
         console.error(err);
-        if (canUseMockFallbacks) {
-          const allMock: Lead[] = [
-            { id: '1', name: 'Marcos de Oliveira', phone: '+55 11 98888-7777', company: 'Oliveira Consultoria', faturamento: 'R$ 150k/mês', fitScore: 9.4, city: 'São Paulo - SP', status: 'Qualificado', createdAt: '21/05/2026' },
-            { id: '2', name: 'Ana Beatriz Reis', phone: '+55 21 97777-6666', company: 'Reis Arquitetura', faturamento: 'R$ 80k/mês', fitScore: 8.8, city: 'Rio de Janeiro - RJ', status: 'Contatado', createdAt: '20/05/2026' },
-            { id: '3', name: 'Metalúrgica Alfa', phone: '+55 19 96666-5555', company: 'Alfa Ltda', faturamento: 'R$ 450k/mês', fitScore: 8.5, city: 'Campinas - SP', status: 'Capturado', createdAt: '21/05/2026' },
-            { id: '4', name: 'Dra. Julia Silveira', phone: '+55 31 95555-4444', company: 'Clinica Silveira', faturamento: 'R$ 60k/mês', fitScore: 7.2, city: 'Belo Horizonte - MG', status: 'Agendado', createdAt: '19/05/2026' },
-            { id: '5', name: 'Supermercado Central', phone: '+55 11 94444-3333', company: 'Central Alimentos', faturamento: 'R$ 1.2M/mês', fitScore: 9.9, city: 'São Paulo - SP', status: 'Negociacao', createdAt: '18/05/2026' },
-            { id: '6', name: 'Consultório Odonto Pedro', phone: '+55 11 93333-2222', company: 'Odonto Pedro', faturamento: 'R$ 40k/mês', fitScore: 6.8, city: 'Guarulhos - SP', status: 'Fechado', createdAt: '15/05/2026' },
-          ];
-          
-          let filtered = allMock;
-          if (debouncedSearch) {
-            filtered = filtered.filter(l => l.name.toLowerCase().includes(debouncedSearch.toLowerCase()) || l.company.toLowerCase().includes(debouncedSearch.toLowerCase()));
-          }
-          if (fitFilter === 'hot') {
-            filtered = filtered.filter(l => l.fitScore >= 8.0);
-          } else if (fitFilter === 'normal') {
-            filtered = filtered.filter(l => l.fitScore < 8.0);
-          }
-
-          setLeads(filtered);
-        } else {
-          setLeads([]);
-          toast.error('Erro de Conexão', 'Não foi possível carregar leads reais da API.');
-        }
+        setLeads([]);
+        toast.error('Erro de Conexão', 'Não foi possível carregar os leads.');
       } finally {
         setIsLoading(false);
       }
@@ -159,142 +152,134 @@ export default function Leads() {
     fetchLeads();
   }, [debouncedSearch, fitFilter]);
 
+  const loadMore = async () => {
+    if (!nextCursor || isLoadingMore) return;
+    setIsLoadingMore(true);
+    try {
+      const profMap: Record<string, string> = {
+        medicos: 'DOCTOR', advogados: 'LAWYER', dentistas: 'DENTIST', empresarios: 'BUSINESS_OWNER'
+      };
+      const response = await apiClient.get('/tenant/leads', {
+        params: {
+          search: debouncedSearch || undefined,
+          profession: fitFilter !== 'all' ? profMap[fitFilter] : undefined,
+          limit: 50,
+          cursor: nextCursor,
+        }
+      });
+      const list = Array.isArray(response.data) ? response.data : response.data?.data;
+      const mapped = (list || []).map(mapBackendLead);
+      setLeads(prev => [...prev, ...mapped]);
+      setNextCursor(response.data.nextCursor || null);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
+
+  const getInitials = (name: string) => name.split(' ').map(n => n[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
+
   return (
-    <div className="space-y-6 flex flex-col h-full animate-fadeIn">
-      {/* Header Leads */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 shrink-0">
-        <div>
-          <h2 className="text-3xl font-bold font-heading text-text tracking-tight">Base de Leads</h2>
-          <p className="text-text-secondary text-sm mt-1">
-            Gestão inteligente de contatos enriquecidos com algoritmos matemáticos de Fit Score.
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Button
-            onClick={handleExportCsv}
-            disabled={isLoading || leads.length === 0}
-            className="bg-white border border-border text-text-secondary hover:text-text text-xs font-semibold px-4 h-10 rounded-xl flex items-center gap-2 hover:bg-surface-sunken disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Download className="w-4 h-4" />
-            <span>Exportar CSV</span>
-          </Button>
-        </div>
+    <div className="space-y-5 animate-fadeIn">
+      {/* Info banner */}
+      <div className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-[rgba(27,58,107,0.04)] to-[rgba(232,152,28,0.06)] border border-[rgba(27,58,107,0.08)] rounded-xl text-[12.5px] text-[#0F172A]">
+        <Info className="w-4 h-4 text-[#1B3A6B] shrink-0" />
+        <div><strong>{leads.length} leads capturados pela IA</strong>, organizados por especialidade. Cada um tem WhatsApp validado, fit score e está em alguma etapa do funil.</div>
       </div>
 
-      {/* Filter and Search Bar */}
-      <Card className="bg-white border-border shrink-0">
-        <CardContent className="py-4 px-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="relative flex-1 max-w-md">
-            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-text-secondary" />
-            <Input
-              placeholder="Buscar por nome, empresa ou telefone..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-10 bg-white border-border text-text placeholder-text-secondary text-xs focus:border-border-strong h-10"
-            />
-          </div>
+      {/* Toolbar */}
+      <div className="bg-white border border-[#E5E7EB] rounded-lg p-2.5 flex items-center gap-2 flex-wrap shadow-sm">
+        <button onClick={() => setFitFilter('all')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${fitFilter === 'all' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Todos · {leads.length}</button>
+        <button onClick={() => setFitFilter('medicos')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${fitFilter === 'medicos' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Médicos · {categoryCounts.medicos}</button>
+        <button onClick={() => setFitFilter('advogados')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${fitFilter === 'advogados' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Advogados · {categoryCounts.advogados}</button>
+        <button onClick={() => setFitFilter('dentistas')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${fitFilter === 'dentistas' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Dentistas · {categoryCounts.dentistas}</button>
+        <button onClick={() => setFitFilter('empresarios')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${fitFilter === 'empresarios' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Empresários · {categoryCounts.empresarios}</button>
+        <div className="w-px h-6 bg-[#E5E7EB] mx-1" />
+        <button className="h-8 px-3 rounded-md text-[12px] font-medium text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6] flex items-center gap-1.5">
+          <Filter className="w-3 h-3" /> Filtros (3)
+        </button>
+        <button onClick={handleExportCsv} className="h-8 px-3 rounded-md text-[12px] font-medium text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6] flex items-center gap-1.5">
+          <Download className="w-3 h-3" /> Exportar CSV
+        </button>
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar lead..." className="ml-auto h-8 px-3 rounded-md text-[12px] border border-[#E5E7EB] bg-white text-[#0F172A] placeholder-[#94A3B8] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none w-48" />
+      </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-text-secondary flex items-center gap-1.5 shrink-0">
-              <Filter className="w-3.5 h-3.5" />
-              Filtrar Fit:
-            </span>
-            <div className="flex bg-surface-sunken border border-border rounded-xl p-0.5">
-              <button
-                onClick={() => setFitFilter('all')}
-                className={`text-xs px-3 py-1.5 rounded-lg font-semibold transition-all ${
-                  fitFilter === 'all' ? 'bg-white text-text shadow-sm' : 'text-text-secondary hover:text-text'
-                }`}
-              >
-                Todos
-              </button>
-              <button
-                onClick={() => setFitFilter('hot')}
-                className={`text-xs px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-1 ${
-                  fitFilter === 'hot' ? 'bg-success-soft text-success-text shadow-sm' : 'text-text-secondary hover:text-text'
-                }`}
-              >
-                <Flame className="w-3 h-3 fill-current" />
-                Quentes (&ge; 8.0)
-              </button>
-            </div>
+      {/* Category cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {CATEGORY_CARDS.map((cat, i) => (
+          <div key={i} onClick={() => setFitFilter(cat.filter as any)} className={`bg-white border rounded-xl p-4 cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-md shadow-sm ${fitFilter === cat.filter ? 'border-[#1B3A6B] ring-1 ring-[#1B3A6B]' : 'border-[#E5E7EB] hover:border-[#1B3A6B]'}`}>
+            <div className="w-10 h-10 rounded-lg flex items-center justify-center mb-3 text-lg" style={{ background: cat.bg }}>{cat.icon}</div>
+            <div className="text-[28px] font-bold text-[#0F172A] font-mono leading-none tracking-tight">{(categoryCounts as any)[cat.filter] || 0}</div>
+            <div className="text-[13.5px] font-semibold text-[#0F172A] mt-1.5">{cat.label}</div>
+            <div className="text-[12px] text-[#475569] mt-1">{cat.desc}</div>
           </div>
-        </CardContent>
-      </Card>
+        ))}
+      </div>
 
-      {/* Table Container */}
-      <Card className="bg-white border-border flex-1 overflow-hidden flex flex-col shadow-sm">
-        <div className="flex-1 overflow-y-auto">
-          <Table className="text-sm">
-            <TableHeader className="bg-surface sticky top-0 z-10 border-b border-border">
-              <TableRow className="border-b border-border text-[10px] text-text-secondary uppercase font-bold tracking-wider hover:bg-transparent">
-                <TableHead className="py-3 px-6 text-left">Empresa / Lead</TableHead>
-                <TableHead className="py-3 px-6 text-left">Cidade</TableHead>
-                <TableHead className="py-3 px-6 text-left">Telefone</TableHead>
-                <TableHead className="py-3 px-6 text-left">Estágio</TableHead>
-                <TableHead className="py-3 px-6 text-center">Fit Score</TableHead>
-                <TableHead className="py-3 px-6 text-right">Data de Cadastro</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody className="divide-y divide-border/60">
-              {isLoading ? (
-                [1, 2, 3].map((i) => (
-                  <TableRow key={i} className="hover:bg-transparent">
-                    <TableCell colSpan={6} className="py-8 text-center">
-                      <div className="flex items-center justify-center gap-2 text-xs text-text-secondary animate-pulse">
-                        <RefreshCw className="w-4 h-4 animate-spin" />
-                        <span>Carregando dados estruturados...</span>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))
-              ) : leads.length > 0 ? (
-                leads.map((lead) => (
-                  <TableRow
-                    key={lead.id}
-                    onClick={() => setSelectedLead(lead)}
-                    className="hover:bg-surface-sunken cursor-pointer group transition-all"
-                  >
-                    <TableCell className="py-3.5 px-6 font-medium text-text">
-                      <div>
-                        <div className="text-xs font-bold text-text">{lead.company}</div>
-                        <div className="text-[10px] text-text-secondary font-medium mt-0.5">{lead.name}</div>
-                      </div>
-                    </TableCell>
-                    <TableCell className="py-3.5 px-6 text-text-secondary text-xs">{lead.city}</TableCell>
-                    <TableCell className="py-3.5 px-6 text-text-secondary text-xs font-mono">{lead.phone}</TableCell>
-                    <TableCell className="py-3.5 px-6">
-                      <Badge className="bg-surface-sunken border-border text-text-secondary text-[10px]">
-                        {lead.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="py-3.5 px-6 text-center">
-                      <span className={`text-xs font-mono font-bold px-2.5 py-1 border rounded-full ${
-                        lead.fitScore >= 8.0 
-                          ? 'bg-success-soft text-success-text border-success/20' 
-                          : 'bg-surface-sunken text-text-secondary border-border/80'
-                      }`}>
-                        {lead.fitScore}
-                      </span>
-                    </TableCell>
-                    <TableCell className="py-3.5 px-6 text-right text-text-secondary text-xs font-mono">
-                      {lead.createdAt}
-                    </TableCell>
-                  </TableRow>
-                ))
-              ) : (
-                <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={6} className="py-12 text-center text-xs text-text-secondary">
-                    Nenhum lead encontrado com os filtros selecionados.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
+      {/* Leads list panel */}
+      <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
+        <div className="px-5 py-3.5 border-b border-[#EEF0F3] flex items-center justify-between">
+          <div>
+            <div className="text-[14px] font-semibold text-[#0F172A]">Leads capturados hoje</div>
+            <div className="text-[11px] text-[#94A3B8] mt-0.5">{leads.length} leads carregados{nextCursor ? ' · mais disponíveis' : ''}</div>
+          </div>
+          <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-[#ECFDF3] text-[#027A48] flex items-center gap-1.5">
+            <span className="w-[5px] h-[5px] rounded-full bg-[#039855] animate-pulse" />
+            Capturando
+          </span>
         </div>
-      </Card>
 
-      {/* Leads Drawer Details */}
+        {isLoading ? (
+          <div className="p-12 text-center">
+            <RefreshCw className="w-5 h-5 animate-spin text-[#94A3B8] mx-auto mb-2" />
+            <div className="text-[12px] text-[#94A3B8]">Carregando leads...</div>
+          </div>
+        ) : leads.length > 0 ? (
+          leads.map((lead, i) => (
+            <div
+              key={lead.id}
+              className="px-5 py-3.5 border-b border-[#EEF0F3] flex items-center gap-3 cursor-pointer transition-all hover:bg-[rgba(27,58,107,0.04)] border-l-[3px] border-l-transparent hover:border-l-[#1B3A6B]"
+              onClick={() => setSelectedLead(lead)}
+            >
+              <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-[12px] font-bold shrink-0" style={{ background: AVATAR_COLORS[i % AVATAR_COLORS.length] }}>
+                {getInitials(lead.name)}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-[13.5px] font-semibold text-[#0F172A] flex items-center gap-2 flex-wrap">
+                  {lead.name}
+                  <span className="text-[10.5px] font-semibold px-1.5 py-0.5 rounded-full bg-[rgba(27,58,107,0.08)] text-[#1B3A6B]">{lead.status}</span>
+                </div>
+                <div className="text-[11.5px] text-[#475569]">{lead.profession || lead.company} · {lead.city}</div>
+              </div>
+              <div className="text-right shrink-0 min-w-[70px]">
+                <div className="text-[11.5px] font-semibold text-[#0F172A]">{lead.createdAt}</div>
+                <div className="text-[11px] text-[#94A3B8] mt-0.5">Fit {lead.fitScore}</div>
+              </div>
+              <div className="w-8 h-8 flex items-center justify-center rounded-lg bg-[#F1F3F6] text-[#94A3B8] shrink-0 hover:bg-[#1B3A6B] hover:text-white transition-all">
+                <ChevronRight className="w-3.5 h-3.5" />
+              </div>
+            </div>
+          ))
+        ) : (
+          <div className="p-12 text-center text-[12.5px] text-[#94A3B8]">Nenhum lead encontrado com os filtros selecionados.</div>
+        )}
+
+        {leads.length > 0 && (
+          <div className="px-5 py-3 bg-[#F1F3F6] border-t border-[#EEF0F3] flex items-center justify-between">
+            <span className="text-[12px] text-[#475569]">
+              Mostrando {leads.length} leads
+            </span>
+            {nextCursor && (
+              <button onClick={loadMore} disabled={isLoadingMore} className="text-[12px] font-semibold text-[#1B3A6B] hover:underline disabled:opacity-50">
+                {isLoadingMore ? 'Carregando...' : 'Carregar mais →'}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Lead Drawer */}
       {selectedLead && (
         <Drawer
           isOpen={!!selectedLead}
@@ -302,10 +287,9 @@ export default function Leads() {
           title="Ficha Cadastral da Lead"
         >
           <div className="space-y-6">
-            {/* Header Drawer */}
             <div className="space-y-2">
               <div className="flex items-center gap-2">
-                <h3 className="text-base font-bold text-text">{selectedLead.company}</h3>
+                <h3 className="text-base font-bold text-text">{selectedLead.name}</h3>
                 <span className={`text-[10px] font-mono font-bold px-2 py-0.5 border rounded-full ${
                   selectedLead.fitScore >= 8.0 
                     ? 'bg-success-soft text-success-text border-success/20' 
@@ -314,59 +298,27 @@ export default function Leads() {
                   {selectedLead.fitScore} Fit Score
                 </span>
               </div>
-              <p className="text-xs text-text-secondary font-mono">ID: {selectedLead.id}</p>
             </div>
-
-            {/* Core Specs */}
             <div className="bg-surface-sunken p-4 border border-border rounded-xl space-y-3.5">
               <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">Dados de Contato</span>
               <div className="space-y-3 text-xs">
-                <div className="flex items-center gap-3">
-                  <User className="w-4 h-4 text-text-secondary shrink-0" />
-                  <div>
-                    <p className="text-[10px] text-text-secondary leading-none mb-0.5">Representante</p>
-                    <p className="text-text font-medium">{selectedLead.name}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <Phone className="w-4 h-4 text-text-secondary shrink-0" />
-                  <div>
-                    <p className="text-[10px] text-text-secondary leading-none mb-0.5">WhatsApp / Celular</p>
-                    <p className="text-text font-mono font-medium">{selectedLead.phone}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <DollarSign className="w-4 h-4 text-text-secondary shrink-0" />
-                  <div>
-                    <p className="text-[10px] text-text-secondary leading-none mb-0.5">Faturamento Enriquecido</p>
-                    <p className="text-text font-medium">{selectedLead.faturamento}</p>
-                  </div>
-                </div>
+                <div className="flex items-center gap-3"><User className="w-4 h-4 text-text-secondary shrink-0" /><div><p className="text-[10px] text-text-secondary mb-0.5">Representante</p><p className="text-text font-medium">{selectedLead.name}</p></div></div>
+                <div className="flex items-center gap-3"><Phone className="w-4 h-4 text-text-secondary shrink-0" /><div><p className="text-[10px] text-text-secondary mb-0.5">WhatsApp</p><p className="text-text font-mono font-medium">{selectedLead.phone}</p></div></div>
+                <div className="flex items-center gap-3"><DollarSign className="w-4 h-4 text-text-secondary shrink-0" /><div><p className="text-[10px] text-text-secondary mb-0.5">Faturamento</p><p className="text-text font-medium">{selectedLead.faturamento}</p></div></div>
               </div>
             </div>
-
-            {/* Health & Status */}
             <div className="grid grid-cols-2 gap-4">
-              <div className="bg-surface-sunken p-3.5 border border-border rounded-xl space-y-1">
+              <div className="bg-surface-sunken p-3.5 border border-border rounded-xl">
                 <span className="text-[9px] font-semibold text-text-secondary uppercase tracking-wider block">Estágio</span>
-                <Badge className="bg-white border border-border text-text-secondary text-[10px] px-2 py-0.5">
-                  {selectedLead.status}
-                </Badge>
+                <Badge className="bg-white border border-border text-text-secondary text-[10px] px-2 py-0.5 mt-1">{selectedLead.status}</Badge>
               </div>
-
-              <div className="bg-surface-sunken p-3.5 border border-border rounded-xl space-y-1">
-                <span className="text-[9px] font-semibold text-text-secondary uppercase tracking-wider block">Localidade</span>
-                <p className="text-xs text-text font-medium">{selectedLead.city}</p>
+              <div className="bg-surface-sunken p-3.5 border border-border rounded-xl">
+                <span className="text-[9px] font-semibold text-text-secondary uppercase tracking-wider block">Cidade</span>
+                <p className="text-xs text-text font-medium mt-1">{selectedLead.city}</p>
               </div>
             </div>
-
-            {/* Actions */}
             <div className="pt-4 border-t border-border/60">
-              <Button
-                className="w-full bg-primary hover:bg-primary-hover text-white font-semibold h-11 rounded-xl transition-all shadow-lg shadow-primary/10 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                disabled={isStartingChat}
-                onClick={handleStartConversation}
-              >
+              <Button className="w-full bg-primary hover:bg-primary-hover text-white font-semibold h-11 rounded-xl transition-all shadow-lg shadow-primary/10 flex items-center justify-center gap-2 disabled:opacity-50" disabled={isStartingChat} onClick={handleStartConversation}>
                 <MessageSquare className="w-4 h-4" />
                 <span>{isStartingChat ? 'Abrindo conversa...' : 'Iniciar Chat de Prospecção'}</span>
               </Button>

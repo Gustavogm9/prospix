@@ -161,13 +161,27 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   // GET /v1/tenant/dashboard/funnel - CRM funnel counts and conversion rates
   app.get('/funnel', async (req: FastifyRequest, reply: FastifyReply) => {
     const tenantId = req.tenantId!;
-    const cacheKey = `swr:tenant:${tenantId}:dashboard:funnel`;
+    const { period } = req.query as { period?: string };
+    const cacheKey = `swr:tenant:${tenantId}:dashboard:funnel:${period || 'all'}`;
 
     const data = await withSWR(cacheKey, 60, async () => {
+      // Calculate date range based on period
+      let dateFilter: { gte?: Date } | undefined;
+      if (period === 'week') {
+        const d = new Date(); d.setDate(d.getDate() - 7); d.setHours(0, 0, 0, 0);
+        dateFilter = { gte: d };
+      } else if (period === 'month') {
+        const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0);
+        dateFilter = { gte: d };
+      } else if (period === '90d') {
+        const d = new Date(); d.setDate(d.getDate() - 90); d.setHours(0, 0, 0, 0);
+        dateFilter = { gte: d };
+      }
+
       // Count leads in each status
       const leadCounts = await prisma.lead.groupBy({
         by: ['status'],
-        where: { tenantId },
+        where: { tenantId, ...(dateFilter && { createdAt: dateFilter }) },
         _count: { id: true },
       });
 
@@ -209,14 +223,29 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   // GET /v1/tenant/dashboard/performance - Revenue, commission and financial outcomes
   app.get('/performance', async (req: FastifyRequest, reply: FastifyReply) => {
     const tenantId = req.tenantId!;
-    const cacheKey = `swr:tenant:${tenantId}:dashboard:performance`;
+    const { period } = req.query as { period?: string };
+    const cacheKey = `swr:tenant:${tenantId}:dashboard:performance:${period || 'all'}`;
 
     const data = await withSWR(cacheKey, 60, async () => {
+      // Calculate date range based on period
+      let dateFilter: { gte?: Date } = {};
+      if (period === 'week') {
+        const d = new Date(); d.setDate(d.getDate() - 7); d.setHours(0, 0, 0, 0);
+        dateFilter = { gte: d };
+      } else if (period === 'month') {
+        const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0);
+        dateFilter = { gte: d };
+      } else if (period === '90d') {
+        const d = new Date(); d.setDate(d.getDate() - 90); d.setHours(0, 0, 0, 0);
+        dateFilter = { gte: d };
+      }
+
       // Sum of closed meeting policy values and commissions
       const financialAggregate = await prisma.meeting.aggregate({
         where: {
           tenantId,
           outcome: MeetingOutcome.CLOSED,
+          ...(dateFilter.gte && { outcomeMarkedAt: { gte: dateFilter.gte } }),
         },
         _sum: {
           policyValueCents: true,
