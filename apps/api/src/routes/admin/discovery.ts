@@ -19,6 +19,7 @@ import { DiscoveryStatus, Profession, ScriptCategory, ScriptStatus } from '@pris
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../lib/logger.js';
 import { isR2Configured, presignUpload, regenerateR2PresignedUrl, deleteR2Object } from '../../lib/r2-storage.js';
+import { uploadFile, deleteFile, getPublicUrl, getFilePath } from '../../lib/local-storage.js';
 
 interface DiscoveryQualityReport {
   voiceProfile: {
@@ -220,9 +221,6 @@ export function registerAdminDiscoveryRoutes(app: FastifyInstance): void {
   };
 
   app.post('/tenants/:id/discovery/materials/presign', async (req: FastifyRequest, reply: FastifyReply) => {
-    if (!isR2Configured()) {
-      return reply.status(503).send({ message: 'R2 storage não configurado. Defina R2_ACCOUNT_ID/R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY.' });
-    }
     const paramsParsed = paramsSchema.safeParse(req.params);
     if (!paramsParsed.success) return reply.status(400).send({ message: 'Tenant id inválido.' });
     const bodyParsed = presignBodySchema.safeParse(req.body ?? {});
@@ -235,13 +233,50 @@ export function registerAdminDiscoveryRoutes(app: FastifyInstance): void {
 
       const safeName = (filename ?? `${kind}-${Date.now()}`).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
       const key = `tenant_${tenantId}/discovery/${kind}/${Date.now()}-${safeName}`;
-      const { uploadUrl, expiresAt } = await presignUpload({ key, contentType });
-      return reply.send({
-        data: { key, uploadUrl, expiresAt: expiresAt.toISOString() },
-      });
+
+      // Try R2 first, fall back to local filesystem
+      if (isR2Configured()) {
+        const { uploadUrl, expiresAt } = await presignUpload({ key, contentType });
+        return reply.send({ data: { key, uploadUrl, expiresAt: expiresAt.toISOString() } });
+      }
+
+      // Local filesystem: return upload endpoint URL on this API
+      const apiUrl = process.env.API_URL || 'http://localhost:3000';
+      const uploadUrl = `${apiUrl}/v1/admin/tenants/${tenantId}/discovery/materials/upload`;
+      const expiresAt = new Date(Date.now() + 900_000); // 15min
+      return reply.send({ data: { key, uploadUrl, expiresAt: expiresAt.toISOString(), local: true } });
     } catch (err) {
       logger.error({ err, tenantId, kind }, 'admin/discovery/materials · presign failed');
       return reply.status(500).send({ message: 'Falha ao gerar URL de upload.' });
+    }
+  });
+
+  // Direct file upload endpoint (used when R2 is not configured)
+  app.post('/tenants/:id/discovery/materials/upload', async (req: FastifyRequest, reply: FastifyReply) => {
+    const paramsParsed = paramsSchema.safeParse(req.params);
+    if (!paramsParsed.success) return reply.status(400).send({ message: 'Tenant id inválido.' });
+    const tenantId = paramsParsed.data.id;
+    try {
+      const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { id: true } });
+      if (!tenant) return reply.status(404).send({ message: 'Tenant não encontrado.' });
+
+      // Accept raw body (PUT-style from frontend presigned URL flow)
+      const body = await req.rawBody;
+      if (!body || body.length === 0) {
+        return reply.status(400).send({ message: 'Request body vazio.' });
+      }
+
+      const contentType = req.headers['content-type'] || 'application/octet-stream';
+      const kindMatch = contentType.match(/^(audio|video|image|application)/)?.[0] ?? 'file';
+      const ext = contentType.split('/')[1]?.split(';')[0] ?? 'bin';
+      const key = `tenant_${tenantId}/discovery/${kindMatch}/${Date.now()}-upload.${ext}`;
+
+      await uploadFile({ key, body: Buffer.from(body), contentType });
+
+      return reply.send({ data: { key, size_bytes: body.length } });
+    } catch (err) {
+      logger.error({ err, tenantId }, 'admin/discovery/materials · upload failed');
+      return reply.status(500).send({ message: 'Falha no upload do material.' });
     }
   });
 
@@ -277,10 +312,13 @@ export function registerAdminDiscoveryRoutes(app: FastifyInstance): void {
     try {
       const discovery = await prisma.tenantDiscovery.findUnique({ where: { tenantId }, select: { [column]: true } as never });
       const currentKey = (discovery as Record<string, string | null> | null)?.[column];
-      if (currentKey && isR2Configured()) {
-        await deleteR2Object(currentKey).catch((err) => {
-          logger.warn({ err, key: currentKey }, 'admin/discovery/materials · R2 delete failed (non-fatal · DB will clear ref)');
-        });
+      if (currentKey) {
+        if (isR2Configured()) {
+          await deleteR2Object(currentKey).catch((err) => {
+            logger.warn({ err, key: currentKey }, 'admin/discovery/materials · R2 delete failed (non-fatal)');
+          });
+        }
+        await deleteFile(currentKey).catch(() => {});
       }
       const updated = await prisma.tenantDiscovery.update({
         where: { tenantId },
@@ -576,9 +614,6 @@ export function registerAdminDiscoveryRoutes(app: FastifyInstance): void {
   });
 
   app.get('/tenants/:id/discovery/materials/:kind/download', async (req: FastifyRequest, reply: FastifyReply) => {
-    if (!isR2Configured()) {
-      return reply.status(503).send({ message: 'R2 storage não configurado.' });
-    }
     const paramsParsed = z
       .object({ id: z.string().uuid(), kind: materialKindSchema })
       .safeParse(req.params);
@@ -590,8 +625,25 @@ export function registerAdminDiscoveryRoutes(app: FastifyInstance): void {
       const discovery = await prisma.tenantDiscovery.findUnique({ where: { tenantId }, select: { [column]: true } as never });
       const currentKey = (discovery as Record<string, string | null> | null)?.[column];
       if (!currentKey) return reply.status(404).send({ message: 'Material não encontrado.' });
-      const { presignedUrl, expiresAt } = await regenerateR2PresignedUrl(currentKey);
-      return reply.send({ data: { key: currentKey, downloadUrl: presignedUrl, expiresAt: expiresAt.toISOString() } });
+
+      // Try R2 first
+      if (isR2Configured()) {
+        const { presignedUrl, expiresAt } = await regenerateR2PresignedUrl(currentKey);
+        return reply.send({ data: { key: currentKey, downloadUrl: presignedUrl, expiresAt: expiresAt.toISOString() } });
+      }
+
+      // Local filesystem: serve file directly or return public URL
+      const filePath = getFilePath(currentKey);
+      try {
+        const fileBuffer = await import('fs/promises').then(fs => fs.readFile(filePath));
+        const ext = currentKey.split('.').pop() ?? 'bin';
+        const mimeMap: Record<string, string> = { mp3: 'audio/mpeg', mp4: 'video/mp4', wav: 'audio/wav', pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webm: 'video/webm', txt: 'text/plain' };
+        reply.header('Content-Type', mimeMap[ext] ?? 'application/octet-stream');
+        reply.header('Content-Disposition', `inline; filename="${currentKey.split('/').pop()}"`);
+        return reply.send(fileBuffer);
+      } catch {
+        return reply.status(404).send({ message: 'Arquivo não encontrado no filesystem.' });
+      }
     } catch (err) {
       logger.error({ err, tenantId, kind }, 'admin/discovery/materials · download failed');
       return reply.status(500).send({ message: 'Falha ao gerar URL de download.' });
