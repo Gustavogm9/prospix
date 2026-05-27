@@ -26,26 +26,35 @@ export default function Referrals() {
   const { tenantId, user } = useAuthStore();
   const refCode = tenantId ? tenantId.substring(0, 8) : (user?.id?.substring(0, 8) || 'default');
   const referralLink = `https://app.prospix.com.br/ref/${refCode}`;
+  const [stats, setStats] = useState<{ totalClicks: number; totalSignups: number; conversionRate: number }>({ totalClicks: 0, totalSignups: 0, conversionRate: 0 });
+  const [rewardTier, setRewardTier] = useState<string>('bronze');
 
   useEffect(() => {
     const fetchReferrals = async () => {
       try {
-        // For now, we derive "referrals" from leads with source REFERRAL
-        const response = await apiClient.get('/tenant/leads', { params: { limit: 50 } });
-        const leads = Array.isArray(response.data) ? response.data : response.data?.data ?? [];
+        // Register our refCode mapping first
+        await apiClient.post('/tenant/referrals/register-code').catch(() => {});
+
+        // Fetch real referral stats
+        const response = await apiClient.get('/tenant/referrals');
+        const data = response.data?.data;
         
-        // Filter leads that came from referral source
-        const referralLeads = leads
-          .filter((l: any) => l.source === 'REFERRAL' || l.metadata?.source === 'referral')
-          .map((l: any) => ({
-            id: l.id,
-            name: l.name || 'Lead indicado',
-            status: l.status || 'NEW',
-            phone: l.whatsapp || l.phone || '',
-            createdAt: l.createdAt ? new Date(l.createdAt).toLocaleDateString('pt-BR') : '-',
-          }));
-        
-        setReferrals(referralLeads);
+        if (data) {
+          setStats(data.stats || { totalClicks: 0, totalSignups: 0, conversionRate: 0 });
+          setRewardTier(data.rewards?.currentTier || 'bronze');
+
+          // Map recent activity as referrals list
+          const activity = (data.recentActivity || [])
+            .filter((a: any) => a.type === 'signup')
+            .map((a: any, i: number) => ({
+              id: `ref-${i}`,
+              name: `Corretor indicado #${i + 1}`,
+              status: 'QUALIFIED',
+              phone: '',
+              createdAt: a.timestamp ? new Date(a.timestamp).toLocaleDateString('pt-BR') : '-',
+            }));
+          setReferrals(activity);
+        }
       } catch (err) {
         console.error('Failed to fetch referrals', err);
         setReferrals([]);
@@ -95,6 +104,26 @@ export default function Referrals() {
             <div className="text-[11px] text-[#94A3B8] mt-0.5">{s.desc}</div>
           </div>
         ))}
+      </div>
+
+      {/* Stats cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="bg-white border border-[#E5E7EB] rounded-xl p-4 shadow-sm">
+          <div className="text-[11px] text-[#94A3B8] font-medium">Cliques no link</div>
+          <div className="text-[22px] font-bold text-[#0F172A] mt-1">{stats.totalClicks}</div>
+        </div>
+        <div className="bg-white border border-[#E5E7EB] rounded-xl p-4 shadow-sm">
+          <div className="text-[11px] text-[#94A3B8] font-medium">Cadastros</div>
+          <div className="text-[22px] font-bold text-[#027A48] mt-1">{stats.totalSignups}</div>
+        </div>
+        <div className="bg-white border border-[#E5E7EB] rounded-xl p-4 shadow-sm">
+          <div className="text-[11px] text-[#94A3B8] font-medium">Conversão</div>
+          <div className="text-[22px] font-bold text-[#1B3A6B] mt-1">{stats.conversionRate}%</div>
+        </div>
+        <div className="bg-white border border-[#E5E7EB] rounded-xl p-4 shadow-sm">
+          <div className="text-[11px] text-[#94A3B8] font-medium">Seu tier</div>
+          <div className={`text-[22px] font-bold mt-1 capitalize ${rewardTier === 'gold' ? 'text-[#E8981C]' : rewardTier === 'silver' ? 'text-[#475569]' : 'text-[#B8740E]'}`}>{rewardTier}</div>
+        </div>
       </div>
 
       {/* Referral link */}

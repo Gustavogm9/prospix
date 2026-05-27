@@ -8,6 +8,7 @@ import { notificationsRoutes } from './notifications.js';
 import { lgpdRoutes } from './lgpd.js';
 import { billingRoutes } from './billing.js';
 import { scriptRoutes } from './scripts.js';
+import { referralRoutes } from './referrals.js';
 import { tenantRoutes as tenantContractRoutes } from '../tenant.js';
 
 export const tenantRoutes: FastifyPluginAsync = async (app) => {
@@ -21,6 +22,7 @@ export const tenantRoutes: FastifyPluginAsync = async (app) => {
   await app.register(lgpdRoutes, { prefix: '/lgpd' });
   await app.register(billingRoutes, { prefix: '/billing' });
   await app.register(scriptRoutes, { prefix: '/scripts' });
+  await app.register(referralRoutes, { prefix: '/referrals' });
 };
 
 export default tenantRoutes;
