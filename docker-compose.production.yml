@@ -1,0 +1,198 @@
+## docker-compose.production.yml
+## Extensão para produção — rodar com:
+##   docker compose -f docker-compose.yml -f docker-compose.production.yml up -d
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: prospix-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-prospix}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-prospix}
+      POSTGRES_MAX_CONNECTIONS: "200"
+      POSTGRES_SHARED_BUFFERS: "256MB"
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - pg_backups:/backups
+    command: >
+      postgres
+        -c max_connections=200
+        -c shared_buffers=256MB
+        -c effective_cache_size=512MB
+        -c work_mem=4MB
+        -c maintenance_work_mem=64MB
+        -c checkpoint_completion_target=0.9
+        -c wal_buffers=16MB
+        -c random_page_cost=1.1
+        -c log_min_duration_statement=1000
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-prospix} -d ${POSTGRES_DB:-prospix}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+    restart: unless-stopped
+
+  ## PgBouncer — connection pooler entre API e PostgreSQL
+  ## Permite 500 clientes com apenas 50 conexões reais ao banco
+  pgbouncer:
+    image: bitnami/pgbouncer:1
+    container_name: prospix-pgbouncer
+    environment:
+      PGBOUNCER_DATABASE: ${POSTGRES_DB:-prospix}
+      POSTGRESQL_HOST: postgres
+      POSTGRESQL_PORT: 5432
+      POSTGRESQL_USERNAME: ${POSTGRES_USER:-prospix}
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      PGBOUNCER_POOL_MODE: transaction
+      PGBOUNCER_DEFAULT_POOL_SIZE: 50
+      PGBOUNCER_MAX_CLIENT_CONN: 500
+      PGBOUNCER_MIN_POOL_SIZE: 10
+      PGBOUNCER_RESERVE_POOL_SIZE: 10
+      PGBOUNCER_RESERVE_POOL_TIMEOUT: 3
+      PGBOUNCER_SERVER_IDLE_TIMEOUT: 300
+      PGBOUNCER_STATS_PERIOD: 60
+    ports:
+      - "6432:6432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: prospix-redis
+    ports:
+      - "6379:6379"
+    command: >
+      redis-server
+        --maxmemory 1gb
+        --maxmemory-policy noeviction
+        --appendonly yes
+        --appendfsync everysec
+        --save 900 1
+        --save 300 10
+        --save 60 10000
+        --tcp-keepalive 60
+        --timeout 300
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1.5G
+        reservations:
+          memory: 512M
+    restart: unless-stopped
+
+  ## API principal — recebe requests HTTP
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: prospix-api
+    env_file: .env.production
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      # Aponta para PgBouncer em vez do PostgreSQL direto
+      DATABASE_URL: postgresql://${POSTGRES_USER:-prospix}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB:-prospix}?pgbouncer=true&connection_limit=10
+      REDIS_URL: redis://redis:6379
+      WORKERS_ENABLED: "false"
+    ports:
+      - "3000:3000"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    restart: unless-stopped
+
+  ## Workers — processos separados para background jobs
+  workers:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: prospix-workers
+    env_file: .env.production
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-prospix}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB:-prospix}?pgbouncer=true&connection_limit=10
+      REDIS_URL: redis://redis:6379
+      WORKERS_ENABLED: "true"
+    command: ["node", "dist/workers/index.js"]
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    restart: unless-stopped
+
+  ## Backup automático — pg_dump a cada 6 horas
+  pg-backup:
+    image: postgres:16-alpine
+    container_name: prospix-pg-backup
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-prospix}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-prospix}
+    volumes:
+      - pg_backups:/backups
+    entrypoint: /bin/sh
+    command: >
+      -c 'while true; do
+        FILENAME="/backups/prospix_$(date +%Y%m%d_%H%M%S).sql.gz";
+        echo "[$(date)] Starting backup...";
+        pg_dump -Fc --compress=9 -f "$$FILENAME";
+        echo "[$(date)] Backup saved: $$FILENAME ($(du -h $$FILENAME | cut -f1))";
+        # Keep only last 14 backups (3.5 days at 6h intervals)
+        ls -t /backups/prospix_*.sql.gz 2>/dev/null | tail -n +15 | xargs -r rm;
+        echo "[$(date)] Next backup in 6 hours...";
+        sleep 21600;
+      done'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pg_data:
+  pg_backups:
+  redis_data:
