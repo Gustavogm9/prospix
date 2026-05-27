@@ -1,7 +1,5 @@
 import fs from 'fs/promises';
 import path from 'path';
-import crypto from 'crypto';
-import { env } from '../config/env.js';
 import { logger } from './logger.js';
 
 const UPLOAD_BASE = process.env.UPLOAD_DIR || '/data/uploads';

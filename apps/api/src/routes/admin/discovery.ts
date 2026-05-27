@@ -19,7 +19,7 @@ import { DiscoveryStatus, Profession, ScriptCategory, ScriptStatus } from '@pris
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../lib/logger.js';
 import { isR2Configured, presignUpload, regenerateR2PresignedUrl, deleteR2Object } from '../../lib/r2-storage.js';
-import { uploadFile, deleteFile, getPublicUrl, getFilePath } from '../../lib/local-storage.js';
+import { uploadFile, deleteFile, getFilePath } from '../../lib/local-storage.js';
 
 interface DiscoveryQualityReport {
   voiceProfile: {
@@ -260,9 +260,13 @@ export function registerAdminDiscoveryRoutes(app: FastifyInstance): void {
       const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { id: true } });
       if (!tenant) return reply.status(404).send({ message: 'Tenant não encontrado.' });
 
-      // Accept raw body (PUT-style from frontend presigned URL flow)
-      const body = await req.rawBody;
-      if (!body || body.length === 0) {
+      // Collect body buffer from request
+      const chunks: Buffer[] = [];
+      for await (const chunk of req.raw) {
+        chunks.push(Buffer.from(chunk));
+      }
+      const body = Buffer.concat(chunks);
+      if (body.length === 0) {
         return reply.status(400).send({ message: 'Request body vazio.' });
       }
 
@@ -271,7 +275,7 @@ export function registerAdminDiscoveryRoutes(app: FastifyInstance): void {
       const ext = contentType.split('/')[1]?.split(';')[0] ?? 'bin';
       const key = `tenant_${tenantId}/discovery/${kindMatch}/${Date.now()}-upload.${ext}`;
 
-      await uploadFile({ key, body: Buffer.from(body), contentType });
+      await uploadFile({ key, body, contentType });
 
       return reply.send({ data: { key, size_bytes: body.length } });
     } catch (err) {
