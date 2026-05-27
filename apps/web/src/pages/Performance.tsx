@@ -1,6 +1,7 @@
 import { Info, ArrowUp, Download, Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { apiClient } from '../lib/api-client';
+import { toast } from '@prospix/ui';
 
 interface PerformanceData {
   total_policy_cents: number;
@@ -35,6 +36,7 @@ export default function Performance() {
         setFunnelData(funnelRes.data?.data ?? funnelRes.data);
       } catch (err) {
         console.error('Failed to fetch performance data', err);
+        toast.error('Erro ao carregar', 'Não foi possível carregar métricas de performance.');
       } finally {
         setLoading(false);
       }
@@ -112,7 +114,27 @@ export default function Performance() {
         <button onClick={() => setPeriod('month')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${period === 'month' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Este mês</button>
         <button onClick={() => setPeriod('90d')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${period === '90d' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Últimos 90 dias</button>
         <div className="w-px h-6 bg-[#E5E7EB] mx-1" />
-        <button className="h-8 px-3 rounded-md text-[12px] font-medium text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6] ml-auto flex items-center gap-1.5">
+        <button onClick={() => {
+          if (!perfData && !funnelData) { toast.error('Sem dados', 'Carregue os dados antes de exportar.'); return; }
+          const fStages = funnelData?.stages || {};
+          const lines = [
+            ['Métrica', 'Valor'],
+            ['Receita em apólices (R$)', String((perfData?.total_policy_cents ?? 0) / 100)],
+            ['Comissão acumulada (R$)', String((perfData?.total_commission_cents ?? 0) / 100)],
+            ['Vendas fechadas', String(perfData?.sales_count ?? 0)],
+            ['Taxa de conversão (%)', String(funnelData?.metrics?.win_rate_percent ?? 0)],
+            ['---', '---'],
+            ['Etapa do Funil', 'Leads'],
+            ...Object.entries(fStages).map(([k, v]) => [k, String(v)]),
+          ];
+          const csv = lines.map(r => r.join(';')).join('\n');
+          const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url; a.download = `relatorio-performance-${period}.csv`; a.click();
+          URL.revokeObjectURL(url);
+          toast.success('Relatório exportado', 'O CSV foi baixado com sucesso.');
+        }} className="h-8 px-3 rounded-md text-[12px] font-medium text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6] ml-auto flex items-center gap-1.5">
           <Download className="w-3 h-3" />
           Exportar relatório
         </button>

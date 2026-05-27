@@ -1,4 +1,4 @@
-import { Target, Plus, Pause, Edit2, Copy, Play, Loader2, Info, X } from 'lucide-react';
+import { Target, Plus, Pause, Edit2, Copy, Play, Loader2, Info, X, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { apiClient } from '../lib/api-client';
 import { toast } from '@prospix/ui';
@@ -31,6 +31,7 @@ export default function Campaigns() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null);
   const [newCamp, setNewCamp] = useState({
     name: '', profession: 'DOCTOR', cities: '', dailyLimit: '20', hourStart: '8', hourEnd: '18',
   });
@@ -42,6 +43,7 @@ export default function Campaigns() {
       setCampaigns(data);
     } catch (err) {
       console.error('Failed to fetch campaigns', err);
+      toast.error('Erro ao carregar', 'Não foi possível carregar as campanhas.');
       setCampaigns([]);
     } finally {
       setLoading(false);
@@ -54,8 +56,9 @@ export default function Campaigns() {
     setActionLoading(id);
     try {
       await apiClient.post(`/tenant/campaigns/${id}/pause`);
+      toast.success('Campanha pausada');
       await fetchCampaigns();
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error(err); toast.error('Erro', 'Não foi possível pausar a campanha.'); }
     setActionLoading(null);
   };
 
@@ -63,8 +66,9 @@ export default function Campaigns() {
     setActionLoading(id);
     try {
       await apiClient.post(`/tenant/campaigns/${id}/resume`);
+      toast.success('Campanha ativada');
       await fetchCampaigns();
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error(err); toast.error('Erro', 'Não foi possível ativar a campanha.'); }
     setActionLoading(null);
   };
 
@@ -80,31 +84,63 @@ export default function Campaigns() {
         hourWindowStart: camp.hourWindowStart,
         hourWindowEnd: camp.hourWindowEnd,
       });
+      toast.success('Campanha duplicada');
       await fetchCampaigns();
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error(err); toast.error('Erro', 'Não foi possível duplicar a campanha.'); }
     setActionLoading(null);
   };
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const handleEdit = (camp: Campaign) => {
+    setEditingCampaign(camp);
+    setNewCamp({
+      name: camp.name,
+      profession: camp.profession,
+      cities: camp.cities?.join(', ') || '',
+      dailyLimit: String(camp.dailyLimit),
+      hourStart: String(camp.hourWindowStart),
+      hourEnd: String(camp.hourWindowEnd),
+    });
+    setIsCreateOpen(true);
+  };
+
+  const handleDelete = async (camp: Campaign) => {
+    if (!window.confirm(`Tem certeza que deseja excluir a campanha "${camp.name}"? Esta ação não pode ser desfeita.`)) return;
+    setActionLoading(camp.id);
+    try {
+      await apiClient.patch(`/tenant/campaigns/${camp.id}`, { status: 'ARCHIVED' });
+      toast.success('Campanha excluída');
+      await fetchCampaigns();
+    } catch (err) { console.error(err); toast.error('Erro', 'Não foi possível excluir a campanha.'); }
+    setActionLoading(null);
+  };
+
+  const handleCreateOrEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCamp.name.trim()) { toast.error('Nome obrigatório', 'Dê um nome à campanha.'); return; }
     setIsCreating(true);
+    const payload = {
+      name: newCamp.name.trim(),
+      profession: newCamp.profession,
+      cities: newCamp.cities.split(',').map(c => c.trim()).filter(Boolean),
+      dailyLimit: Number(newCamp.dailyLimit) || 20,
+      hourWindowStart: Number(newCamp.hourStart) || 8,
+      hourWindowEnd: Number(newCamp.hourEnd) || 18,
+    };
     try {
-      await apiClient.post('/tenant/campaigns', {
-        name: newCamp.name.trim(),
-        profession: newCamp.profession,
-        cities: newCamp.cities.split(',').map(c => c.trim()).filter(Boolean),
-        dailyLimit: Number(newCamp.dailyLimit) || 20,
-        hourWindowStart: Number(newCamp.hourStart) || 8,
-        hourWindowEnd: Number(newCamp.hourEnd) || 18,
-      });
-      toast.success('Campanha criada!', 'Ela começará a capturar leads automaticamente.');
+      if (editingCampaign) {
+        await apiClient.patch(`/tenant/campaigns/${editingCampaign.id}`, payload);
+        toast.success('Campanha atualizada!', 'As alterações foram salvas.');
+      } else {
+        await apiClient.post('/tenant/campaigns', payload);
+        toast.success('Campanha criada!', 'Ela começará a capturar leads automaticamente.');
+      }
       setIsCreateOpen(false);
+      setEditingCampaign(null);
       setNewCamp({ name: '', profession: 'DOCTOR', cities: '', dailyLimit: '20', hourStart: '8', hourEnd: '18' });
       await fetchCampaigns();
     } catch (err) {
       console.error(err);
-      toast.error('Erro', 'Não foi possível criar a campanha.');
+      toast.error('Erro', editingCampaign ? 'Não foi possível atualizar a campanha.' : 'Não foi possível criar a campanha.');
     } finally {
       setIsCreating(false);
     }
@@ -236,9 +272,20 @@ export default function Campaigns() {
                     <Copy className="w-3.5 h-3.5" />
                     Duplicar
                   </button>
-                  <button className="flex-1 h-8 rounded-lg text-[12px] font-semibold bg-[#1B3A6B] text-white flex items-center justify-center gap-1.5 hover:bg-[#142C52] transition-all">
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); handleEdit(camp); }}
+                    className="flex-1 h-8 rounded-lg text-[12px] font-semibold bg-[#1B3A6B] text-white flex items-center justify-center gap-1.5 hover:bg-[#142C52] transition-all"
+                  >
                     <Edit2 className="w-3.5 h-3.5" />
                     Editar
+                  </button>
+                  <button 
+                    onClick={(e) => { e.stopPropagation(); handleDelete(camp); }}
+                    disabled={actionLoading === camp.id}
+                    className="h-8 w-8 rounded-lg text-[12px] font-semibold bg-[#FEF3F2] text-[#D92D20] flex items-center justify-center hover:bg-[#FEE4E2] transition-all disabled:opacity-50 shrink-0"
+                    title="Excluir campanha"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
               </div>
@@ -262,11 +309,11 @@ export default function Campaigns() {
       )}
       {/* Create Campaign Modal */}
       {isCreateOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setIsCreateOpen(false)}>
-          <form onSubmit={handleCreate} onClick={e => e.stopPropagation()} className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4 animate-fadeIn">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => { setIsCreateOpen(false); setEditingCampaign(null); }}>
+          <form onSubmit={handleCreateOrEdit} onClick={e => e.stopPropagation()} className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4 animate-fadeIn">
             <div className="flex items-center justify-between mb-2">
-              <h3 className="text-[16px] font-bold text-[#0F172A]">Nova Campanha</h3>
-              <button type="button" onClick={() => setIsCreateOpen(false)} className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-[#F1F3F6] text-[#94A3B8]"><X className="w-4 h-4" /></button>
+              <h3 className="text-[16px] font-bold text-[#0F172A]">{editingCampaign ? 'Editar Campanha' : 'Nova Campanha'}</h3>
+              <button type="button" onClick={() => { setIsCreateOpen(false); setEditingCampaign(null); }} className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-[#F1F3F6] text-[#94A3B8]"><X className="w-4 h-4" /></button>
             </div>
             <div>
               <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">Nome da campanha</label>
@@ -301,8 +348,8 @@ export default function Campaigns() {
               </div>
             </div>
             <button type="submit" disabled={isCreating} className="w-full h-10 rounded-lg text-[13px] font-semibold bg-[#1B3A6B] text-white hover:bg-[#142C52] transition-all disabled:opacity-50 flex items-center justify-center gap-2">
-              {isCreating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-              {isCreating ? 'Criando...' : 'Criar Campanha'}
+              {isCreating ? <Loader2 className="w-4 h-4 animate-spin" /> : editingCampaign ? <Edit2 className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+              {isCreating ? (editingCampaign ? 'Salvando...' : 'Criando...') : (editingCampaign ? 'Salvar Alterações' : 'Criar Campanha')}
             </button>
           </form>
         </div>

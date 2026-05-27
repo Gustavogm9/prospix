@@ -1,6 +1,7 @@
 import { AlertTriangle, Cpu, Info } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { apiClient } from '../lib/api-client';
+import { toast } from '@prospix/ui';
 
 interface AIUsageData {
   llm_cost_cents: number;
@@ -20,11 +21,14 @@ export default function AIConsumption() {
   useEffect(() => {
     apiClient.get('/tenant/dashboard/ai-usage')
       .then(res => setData(res.data?.data ?? res.data))
-      .catch(() => setData({
-        llm_cost_cents: 0, whatsapp_cost_cents: 0, maps_cost_cents: 0,
-        total_costs_cents: 0,
-        limit: { max_limit_cents: 50000, used_percent: 0, remaining_cents: 50000 }
-      }));
+      .catch(() => {
+        toast.error('Erro ao carregar', 'Não foi possível carregar dados de consumo.');
+        setData({
+          llm_cost_cents: 0, whatsapp_cost_cents: 0, maps_cost_cents: 0,
+          total_costs_cents: 0,
+          limit: { max_limit_cents: 50000, used_percent: 0, remaining_cents: 50000 }
+        });
+      });
   }, []);
 
   const fmt = (cents: number) => `R$ ${(cents / 100).toFixed(2)}`;
@@ -46,8 +50,10 @@ export default function AIConsumption() {
       <div className="bg-white border border-[#E5E7EB] rounded-xl p-5 shadow-sm">
         <div className="flex items-center justify-between mb-3">
           <div>
-            <div className="text-[14px] font-semibold text-[#0F172A]">Consumo do mês</div>
-            <div className="text-[11px] text-[#94A3B8] mt-0.5">Período atual · plano inclui {fmt(data?.limit?.max_limit_cents ?? 50000)}</div>
+          <div className="text-[14px] font-semibold text-[#0F172A]">Consumo do mês</div>
+            <div className="text-[11px] text-[#94A3B8] mt-0.5">
+              {new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })} · plano inclui {fmt(data?.limit?.max_limit_cents ?? 50000)}
+            </div>
           </div>
           <div className="text-right">
             <div className="text-[22px] font-bold text-[#0F172A] font-mono">{fmt(data?.total_costs_cents ?? 0)}</div>
@@ -88,41 +94,33 @@ export default function AIConsumption() {
         ))}
       </div>
 
-      {/* Daily usage */}
+      {/* Distribution chart */}
       <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
         <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
-          <div className="text-[14px] font-semibold text-[#0F172A]">Consumo diário</div>
-          <div className="text-[11px] text-[#94A3B8] mt-0.5">Últimos 7 dias (estimativa baseada no consumo mensal)</div>
+          <div className="text-[14px] font-semibold text-[#0F172A]">Distribuição de custos</div>
+          <div className="text-[11px] text-[#94A3B8] mt-0.5">Proporção de gastos por categoria neste mês</div>
         </div>
         <div className="p-5">
-          <div className="flex items-end gap-2 h-24">
-            {(() => {
-              const total = data?.total_costs_cents ?? 0;
-              const today = new Date();
-              const dayOfMonth = today.getDate();
-              const dailyAvg = dayOfMonth > 0 ? total / dayOfMonth : 0;
-              const dayNames = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
-              const last7 = Array.from({ length: 7 }, (_, i) => {
-                const d = new Date(today);
-                d.setDate(d.getDate() - (6 - i));
-                const dayName = dayNames[d.getDay()];
-                // Vary each day ±40% around the average for visual interest
-                const seed = (d.getDate() * 7 + d.getMonth() * 13) % 100;
-                const factor = 0.6 + (seed / 100) * 0.8;
-                const value = dailyAvg * factor;
-                return { dayName, value };
-              });
-              const maxVal = Math.max(...last7.map(d => d.value), 1);
-              return last7.map((day, i) => {
-                const pct = Math.max(5, (day.value / maxVal) * 100);
-                return (
-                  <div key={i} className="flex-1 flex flex-col items-center gap-1" title={`${fmt(Math.round(day.value))}`}>
-                    <div className="w-full bg-gradient-to-t from-[#1B3A6B] to-[#1B3A6B]/60 rounded-t-sm transition-all hover:from-[#E8981C] hover:to-[#E8981C]/60" style={{ height: `${pct}%` }} />
-                    <span className="text-[9px] text-[#94A3B8] font-medium">{day.dayName}</span>
+          <div className="space-y-3">
+            {costs.map((c, i) => {
+              const total = data?.total_costs_cents || 1;
+              const pct = (c.value / total) * 100;
+              return (
+                <div key={i}>
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2.5 h-2.5 rounded-full" style={{ background: c.color }} />
+                      <span className="text-[12px] font-medium text-[#0F172A]">{c.label}</span>
+                    </div>
+                    <span className="text-[12px] font-mono font-semibold text-[#0F172A]">{fmt(c.value)}</span>
                   </div>
-                );
-              });
-            })()}
+                  <div className="h-2 bg-[#F1F3F6] rounded-full overflow-hidden">
+                    <div className="h-full rounded-full transition-all" style={{ width: `${Math.max(pct, 1)}%`, background: c.color }} />
+                  </div>
+                  <div className="text-[10px] text-[#94A3B8] mt-0.5 text-right font-mono">{pct.toFixed(1)}%</div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>

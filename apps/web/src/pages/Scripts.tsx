@@ -46,6 +46,7 @@ const mapScriptVariations = (script: any): ScriptVariation[] => {
 export default function Scripts() {
   const [activeSection, setActiveSection] = useState<'roteiro' | 'variantes' | 'simulacao'>('roteiro');
   const [currentScriptId, setCurrentScriptId] = useState<string | null>(null);
+  const [allScripts, setAllScripts] = useState<Array<{ id: string; name?: string; status?: string }>>([]); 
   const [baseMessage, setBaseMessage] = useState('');
   const [variations, setVariations] = useState<ScriptVariation[]>([]);
   const [isLoadingScripts, setIsLoadingScripts] = useState(true);
@@ -106,6 +107,7 @@ export default function Scripts() {
       try {
         const response = await apiClient.get('/tenant/scripts');
         const list = Array.isArray(response.data) ? response.data : response.data?.data;
+        setAllScripts(list || []);
         const activeScript = (list || []).find((script: any) => script.status === 'ACTIVE') || list?.[0];
 
         if (activeScript) {
@@ -130,6 +132,40 @@ export default function Scripts() {
 
     fetchScripts();
   }, []);
+
+  const handleSwitchScript = (scriptId: string) => {
+    const script = allScripts.find((s: any) => s.id === scriptId) as any;
+    if (script) {
+      setCurrentScriptId(script.id);
+      setBaseMessage(script.baseMessage || '');
+      setVariations(mapScriptVariations(script));
+    }
+  };
+
+  const handleDeleteScript = async () => {
+    if (!currentScriptId) return;
+    if (!window.confirm('Tem certeza que deseja excluir este roteiro? Esta ação não pode ser desfeita.')) return;
+    try {
+      await apiClient.delete(`/tenant/scripts/${currentScriptId}`);
+      toast.success('Roteiro excluído');
+      setCurrentScriptId(null);
+      setBaseMessage('');
+      setVariations([]);
+      // Re-fetch
+      const response = await apiClient.get('/tenant/scripts');
+      const list = Array.isArray(response.data) ? response.data : response.data?.data;
+      setAllScripts(list || []);
+      const next = (list || [])[0] as any;
+      if (next) {
+        setCurrentScriptId(next.id);
+        setBaseMessage(next.baseMessage || '');
+        setVariations(mapScriptVariations(next));
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('Erro', 'Não foi possível excluir o roteiro.');
+    }
+  };
 
   const handleAddVariation = () => {
     if (variations.length >= 3) {
@@ -265,6 +301,25 @@ export default function Scripts() {
           Simulação
         </button>
         <div className="ml-auto flex items-center gap-2">
+          {allScripts.length > 1 && (
+            <select
+              value={currentScriptId || ''}
+              onChange={(e) => handleSwitchScript(e.target.value)}
+              className="h-8 px-2 rounded-lg bg-[#F9FAFB] border border-[#E5E7EB] text-[12px] text-[#0F172A] focus:border-[#1B3A6B] outline-none"
+            >
+              {allScripts.map((s: any) => (
+                <option key={s.id} value={s.id}>{s.name || `Roteiro ${s.id.substring(0,6)}`}</option>
+              ))}
+            </select>
+          )}
+          {currentScriptId && (
+            <Button
+              onClick={handleDeleteScript}
+              className="bg-[#FEF3F2] hover:bg-[#FEE4E2] text-[#D92D20] border border-[rgba(217,45,32,0.2)] font-semibold px-2 h-8 rounded-lg flex items-center gap-1 text-[12px]"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </Button>
+          )}
           <Button
             onClick={() => setIsGenerateModalOpen(true)}
             className="bg-[#F1F3F6] hover:bg-[#E5E7EB] text-[#0F172A] border border-[#E5E7EB] font-semibold px-3 h-8 rounded-lg flex items-center gap-1.5 text-[12px]"

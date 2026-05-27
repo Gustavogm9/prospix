@@ -1,6 +1,7 @@
 import { Info, MapPin, Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { apiClient } from '../lib/api-client';
+import { toast } from '@prospix/ui';
 
 interface LeadSource {
   id: string;
@@ -27,15 +28,8 @@ export default function LeadSources() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [campaignsRes, leadsRes] = await Promise.allSettled([
-          apiClient.get('/tenant/campaigns'),
-          apiClient.get('/tenant/leads', { params: { limit: 100 } }),
-        ]);
-
-        // Map campaigns to "sources" — each campaign IS a lead source
-        const camps = campaignsRes.status === 'fulfilled' 
-          ? (Array.isArray(campaignsRes.value.data) ? campaignsRes.value.data : campaignsRes.value.data?.data ?? [])
-          : [];
+        const campaignsRes = await apiClient.get('/tenant/campaigns');
+        const camps = Array.isArray(campaignsRes.data) ? campaignsRes.data : campaignsRes.data?.data ?? [];
         
         setSources(camps.map((c: any) => ({
           id: c.id,
@@ -48,22 +42,19 @@ export default function LeadSources() {
           icon: PROF_ICONS[c.profession] || '📋',
         })));
 
-        // Get total leads count and group by campaignId
-        if (leadsRes.status === 'fulfilled') {
-          const ld = leadsRes.value.data;
-          const list = Array.isArray(ld) ? ld : ld?.data || [];
-          setLeadsCount(list.length);
-          // Count leads per campaign
-          const counts: Record<string, number> = {};
-          list.forEach((lead: any) => {
-            if (lead.campaignId) {
-              counts[lead.campaignId] = (counts[lead.campaignId] || 0) + 1;
-            }
-          });
-          setLeadsByCampaign(counts);
-        }
+        // Use _count from campaign response or totalCaptured field
+        const counts: Record<string, number> = {};
+        let total = 0;
+        camps.forEach((c: any) => {
+          const cnt = c._count?.leads ?? c.totalCaptured ?? c.leadsCount ?? 0;
+          counts[c.id] = cnt;
+          total += cnt;
+        });
+        setLeadsByCampaign(counts);
+        setLeadsCount(total);
       } catch (err) {
         console.error('Failed to fetch lead sources', err);
+        toast.error('Erro ao carregar', 'Não foi possível carregar as fontes de leads.');
       } finally {
         setLoading(false);
       }

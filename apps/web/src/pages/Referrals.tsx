@@ -25,7 +25,7 @@ export default function Referrals() {
   const [loading, setLoading] = useState(true);
   const { tenantId, user } = useAuthStore();
   const refCode = tenantId ? tenantId.substring(0, 8) : (user?.id?.substring(0, 8) || 'default');
-  const referralLink = `https://app.prospix.com.br/ref/${refCode}`;
+  const referralLink = `${window.location.origin}/ref/${refCode}`;
   const [stats, setStats] = useState<{ totalClicks: number; totalSignups: number; conversionRate: number }>({ totalClicks: 0, totalSignups: 0, conversionRate: 0 });
   const [rewardTier, setRewardTier] = useState<string>('bronze');
 
@@ -57,6 +57,7 @@ export default function Referrals() {
         }
       } catch (err) {
         console.error('Failed to fetch referrals', err);
+        toast.error('Erro ao carregar', 'Não foi possível carregar indicações.');
         setReferrals([]);
       } finally {
         setLoading(false);
