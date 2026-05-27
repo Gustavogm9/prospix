@@ -19,6 +19,7 @@ import { adminRoutes } from './routes/admin/index.js';
 import { tenantRoutes } from './routes/tenant/index.js';
 import { webhookRoutes } from './routes/webhooks/index.js';
 import { evolutionWebhookRoutes } from './routes/webhooks/evolution.js';
+import { sseRoutes } from './routes/sse.js';
 
 const isProduction = env.NODE_ENV === 'production' || process.env.NODE_ENV === 'production';
 
@@ -192,6 +193,7 @@ async function bootstrap() {
   await app.register(webhookRoutes, { prefix: '/v1/webhooks' });
   await app.register(evolutionWebhookRoutes, { prefix: '/v1/webhooks/evolution' });
   await app.register(evolutionWebhookRoutes, { prefix: '/webhooks/evolution' });
+  await app.register(sseRoutes, { prefix: '/v1/sse' });
 
   // 7. Start Server
   if (process.env.NODE_ENV !== 'test') {

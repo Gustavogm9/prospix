@@ -4,7 +4,7 @@ import { MessageSquare, Send, Bot, User, Phone, DollarSign, Award, Activity, Clo
 import { apiClient } from '../lib/api-client';
 import { AxiosError } from 'axios';
 import { canUseMockFallbacks } from '../lib/demo-mode';
-import { supabase } from '../lib/supabase';
+import { useRealtimeEvents } from '../hooks/useRealtimeEvents';
 import { useAuthStore } from '../store/auth-store';
 
 interface Message {
@@ -231,73 +231,57 @@ export default function Conversations() {
     fetchMessages();
   }, [selectedConv]);
 
-  // 3. Supabase Realtime Synchronization
-  useEffect(() => {
-    if (!tenantId) return;
+   // 3. SSE Real-time Synchronization (replaces Supabase Realtime)
+  useRealtimeEvents(tenantId, {
+    onMessageCreated: (payload: Record<string, unknown>) => {
+      const newMsg = payload;
+      if (selectedConv && newMsg.conversation_id === selectedConv.id) {
+        setMessages(prev => {
+          if (prev.some(m => m.id === (newMsg.id as string))) return prev;
+          return [...prev, mapBackendMessage({
+            id: newMsg.id,
+            sender: newMsg.sender,
+            content: newMsg.content,
+            createdAt: newMsg.created_at,
+          })];
+        });
+      }
 
-    const channel = supabase.channel(`tenant-${tenantId}-sync`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'messages', filter: `tenant_id=eq.${tenantId}` },
-        (payload) => {
-          const newMsg = payload.new;
-          if (selectedConv && newMsg.conversation_id === selectedConv.id) {
-            setMessages(prev => {
-              if (prev.some(m => m.id === newMsg.id)) return prev;
-              return [...prev, mapBackendMessage(newMsg)];
-            });
+      setConversations(prev =>
+        prev.map(c => {
+          if (c.id === (newMsg.conversation_id as string)) {
+            return {
+              ...c,
+              lastMessage: newMsg.content as string,
+              timestamp: new Date(newMsg.created_at as string).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+              unread: selectedConv?.id !== c.id,
+            };
           }
-
-          setConversations(prev =>
-            prev.map(c => {
-              if (c.id === newMsg.conversation_id) {
-                return {
-                  ...c,
-                  lastMessage: newMsg.content,
-                  timestamp: new Date(newMsg.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
-                  unread: selectedConv?.id !== c.id,
-                };
-              }
-              return c;
-            })
-          );
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'conversations', filter: `tenant_id=eq.${tenantId}` },
-        () => {
-          fetchConversations(true);
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'conversations', filter: `tenant_id=eq.${tenantId}` },
-        (payload) => {
-          const updated = payload.new;
-          setConversations(prev =>
-            prev.map(c => {
-              if (c.id === updated.id) {
-                return {
-                  ...c,
-                  aiHandling: updated.ai_handling,
-                };
-              }
-              return c;
-            })
-          );
-          if (selectedConv && selectedConv.id === updated.id) {
-            setSelectedConv(prev => prev ? { ...prev, aiHandling: updated.ai_handling } : null);
+          return c;
+        })
+      );
+    },
+    onConversationCreated: () => {
+      fetchConversations(true);
+    },
+    onConversationUpdated: (payload: Record<string, unknown>) => {
+      const updated = payload;
+      setConversations(prev =>
+        prev.map(c => {
+          if (c.id === (updated.id as string)) {
+            return {
+              ...c,
+              aiHandling: updated.ai_handling as boolean,
+            };
           }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId, selectedConv?.id]);
+          return c;
+        })
+      );
+      if (selectedConv && selectedConv.id === (updated.id as string)) {
+        setSelectedConv(prev => prev ? { ...prev, aiHandling: updated.ai_handling as boolean } : null);
+      }
+    },
+  });
 
   // Scroll to bottom of chat
   useEffect(() => {

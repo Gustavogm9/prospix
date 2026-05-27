@@ -12,6 +12,7 @@ import { createTenantQueue } from '../lib/queue.js';
 import { createSendWhatsappJobId } from './send-whatsapp-job.js';
 import { LeadStatus, ConversationStatus, MessageDirection, MessageSender, MessageDeliveryStatus } from '@prisma/client';
 import { randomUUID } from 'crypto';
+import { publishRealtimeEvent } from '../lib/realtime.js';
 
 export interface ProcessInboundPayload extends BaseJobPayload {
   conversation_id: string;
@@ -136,6 +137,21 @@ export class ProcessInboundWorker extends BaseWorker<ProcessInboundPayload, Proc
               },
             });
           });
+
+            // Publish realtime event for inbound message
+            await publishRealtimeEvent({
+              type: 'message:created',
+              tenantId: tenant_id,
+              payload: {
+                id: 'inbound-' + Date.now(),
+                conversation_id,
+                direction: 'INBOUND',
+                sender: 'LEAD',
+                content: message_content,
+                whatsapp_message_id: whatsapp_message_id,
+                created_at: new Date().toISOString(),
+              },
+            });
           return null;
         } catch (err) {
           if (!whatsapp_message_id || !isWhatsappMessageUniqueViolation(err)) {
@@ -354,6 +370,20 @@ export class ProcessInboundWorker extends BaseWorker<ProcessInboundPayload, Proc
           scriptId: conversation.scriptId,
           scriptVariationId: scriptResult.variationId,
           scriptNodeId: conversation.currentNodeId,
+        },
+      });
+
+      // Publish realtime event for outbound AI reply
+      await publishRealtimeEvent({
+        type: 'message:created',
+        tenantId: tenant_id,
+        payload: {
+          id: newMsg.id,
+          conversation_id,
+          direction: 'OUTBOUND',
+          sender: 'AI',
+          content: aiReplyResult.message_to_send,
+          created_at: new Date().toISOString(),
         },
       });
 
