@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ToastContainer } from '@prospix/ui';
@@ -20,26 +20,38 @@ import Alerts from './pages/Alerts';
 import './index.css';
 
 // Protected Admin Route checking adminToken and session
+// Zustand persist hydrates async – wait before evaluating auth state.
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { adminToken, adminUser, clearAdminSession } = useAdminAuthStore();
+  const [hasHydrated, setHasHydrated] = React.useState(false);
+
+  React.useEffect(() => {
+    const unsub = useAdminAuthStore.persist.onFinishHydration(() => {
+      setHasHydrated(true);
+    });
+    if ((useAdminAuthStore.persist as any).hasHydrated?.()) {
+      setHasHydrated(true);
+    }
+    return unsub;
+  }, []);
+
+  if (!hasHydrated) {
+    return null;
+  }
+
   const isAuthorized =
     !!adminToken &&
     !!adminUser &&
     ['SUPER_ADMIN', 'ADMIN', 'GUILDS_ADMIN'].includes(adminUser.role);
 
-  useEffect(() => {
-    if (!isAuthorized) {
-      clearAdminSession();
-    }
-  }, [clearAdminSession, isAuthorized]);
-
   if (!isAuthorized) {
-    // Proactively clear corrupted or incomplete localStorage credentials
+    clearAdminSession();
     return <Navigate to="/login" replace />;
   }
   
   return <>{children}</>;
 }
+
 
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
