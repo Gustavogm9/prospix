@@ -558,7 +558,7 @@ export default function Conversations() {
                   <div className="text-[11.5px] text-[#475569]">
                     {conv.profession || conv.details.company}
                   </div>
-                  <div className="text-xs text-[#475569] mt-[2px] whitespace-nowrap overflow-hidden text-ellipsis max-w-[380px] italic">
+                  <div className="text-xs text-[#475569] mt-[2px] whitespace-nowrap overflow-hidden text-ellipsis max-w-[60vw] sm:max-w-[380px] italic">
                     {conv.lastMessage}
                   </div>
                 </div>
@@ -574,7 +574,7 @@ export default function Conversations() {
                 </div>
 
                 {/* Chevron action */}
-                <div className={`shrink-0 w-8 h-8 flex items-center justify-center rounded-lg transition-all ${
+                <div className={`shrink-0 w-10 h-10 flex items-center justify-center rounded-lg transition-all ${
                   selectedConv?.id === conv.id 
                     ? 'bg-[#1B3A6B] text-white' 
                     : 'bg-[#F1F3F6] text-[#94A3B8]'
@@ -596,7 +596,7 @@ export default function Conversations() {
             onClick={() => setSelectedConv(null)}
           />
           {/* Drawer */}
-          <div className="fixed top-0 right-0 h-screen w-[580px] max-w-[90vw] bg-white shadow-xl z-[89] flex flex-col overflow-hidden animate-slideIn">
+          <div className="fixed top-0 right-0 h-screen w-full sm:w-[580px] sm:max-w-[90vw] bg-white shadow-xl z-[89] flex flex-col overflow-hidden animate-slideIn">
             {/* Drawer header */}
             <div className="px-5 py-4 border-b border-[#E5E7EB] flex items-center gap-[13px] shrink-0">
               <div
@@ -706,7 +706,7 @@ export default function Conversations() {
                     />
                     <Button
                       type="submit"
-                      className="bg-[#1B3A6B] hover:bg-[#142C52] text-white p-2.5 rounded-lg shadow-md w-[38px] h-[38px] flex items-center justify-center shrink-0"
+                      className="bg-[#1B3A6B] hover:bg-[#142C52] text-white p-2.5 rounded-lg shadow-md w-11 h-11 flex items-center justify-center shrink-0"
                     >
                       <Send className="w-4 h-4" />
                     </Button>
@@ -719,7 +719,7 @@ export default function Conversations() {
                 <h4 className="text-[11px] uppercase tracking-wider text-[#94A3B8] font-semibold mb-2">
                   Dados do Lead
                 </h4>
-                <div className="bg-white p-[12px_14px] rounded-lg border border-[#E5E7EB] grid grid-cols-[130px_1fr] gap-x-3 gap-y-[5px] text-[12.5px] mb-4">
+                <div className="bg-white p-[12px_14px] rounded-lg border border-[#E5E7EB] grid grid-cols-1 sm:grid-cols-[130px_1fr] gap-x-3 gap-y-[5px] text-[12.5px] mb-4">
                   <dt className="text-[#94A3B8]">Nome</dt>
                   <dd className="text-[#0F172A] font-medium">{selectedConv.leadName}</dd>
                   <dt className="text-[#94A3B8]">Telefone</dt>

@@ -406,7 +406,7 @@ export default function Scripts() {
                     </div>
                     <button
                       onClick={() => handleRemoveVariation(v.id)}
-                      className="p-1.5 rounded-lg hover:bg-[#FEF2F2] text-[#94A3B8] hover:text-[#D92D20] opacity-0 group-hover:opacity-100 transition-all"
+                      className="p-1.5 rounded-lg hover:bg-[#FEF2F2] text-[#94A3B8] hover:text-[#D92D20] sm:opacity-0 sm:group-hover:opacity-100 transition-all"
                       aria-label="Remover variação"
                     >
                       <Trash2 className="w-3.5 h-3.5" />

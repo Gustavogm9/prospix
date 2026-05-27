@@ -129,7 +129,7 @@ export default function Referrals() {
       {/* Referral link */}
       <div className="bg-white border border-[#E5E7EB] rounded-xl p-4 shadow-sm">
         <div className="text-[13px] font-semibold text-[#0F172A] mb-2">Seu link de indicação</div>
-        <div className="flex gap-2">
+        <div className="flex flex-col sm:flex-row gap-2">
           <input readOnly value={referralLink} className="flex-1 h-9 px-3 rounded-lg bg-[#F9FAFB] border border-[#E5E7EB] text-[12px] text-[#475569] font-mono" />
           <button onClick={handleCopyLink} className="h-9 px-3 rounded-lg text-[12px] font-medium bg-[#F1F3F6] text-[#0F172A] hover:bg-[#E5E7EB] flex items-center gap-1.5 transition-all">
             <Copy className="w-3.5 h-3.5" />

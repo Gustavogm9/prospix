@@ -461,13 +461,13 @@ export default function Settings() {
       {/* 2-column layout: sidebar pills + content */}
       <div className="flex-1 flex flex-col lg:flex-row gap-6 items-start">
         {/* Left sidebar pills */}
-        <div className="w-full lg:w-48 shrink-0 space-y-0.5">
+        <div className="w-full lg:w-48 shrink-0 flex lg:flex-col overflow-x-auto lg:overflow-visible gap-1">
           {tabConfig.map(({ key, label, icon: Icon }) => (
               <button
                 key={key}
                 onClick={() => setActiveTab(key)}
                 data-testid={key === 'privacidade' ? 'settings-privacy-tab' : undefined}
-                className={`w-full text-left flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-[13px] font-medium transition-all ${
+                className={`w-full shrink-0 text-left flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-[13px] font-medium transition-all ${
                   activeTab === key
                     ? 'bg-[#1B3A6B] text-white shadow-sm'
                     : 'text-[#475569] hover:bg-[#F1F3F6]'
@@ -1078,7 +1078,7 @@ export default function Settings() {
                         {(billingData.usage.llmTokensInput + billingData.usage.llmTokensOutput).toLocaleString('pt-BR')} tokens
                       </span>
                     </div>
-                    <div className="grid grid-cols-3 gap-2 pt-1">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
                       <div>
                         <p className="text-[9px] text-[#94A3B8] uppercase font-bold">IA</p>
                         <p className="text-[12px] text-[#0F172A] font-mono">{formatBRL(billingData.usage.llmCostCents)}</p>

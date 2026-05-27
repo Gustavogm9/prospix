@@ -146,7 +146,7 @@ export default function Pipeline() {
   const getInitials = (name: string) => name.split(' ').map(n => n[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
 
   return (
-    <div className="space-y-4 h-[calc(100vh-120px)] flex flex-col animate-fadeIn">
+    <div className="space-y-4 h-[calc(100dvh-120px)] flex flex-col animate-fadeIn">
       {/* Info banner */}
       <div className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-[rgba(27,58,107,0.04)] to-[rgba(232,152,28,0.06)] border border-[rgba(27,58,107,0.08)] rounded-xl text-[12.5px] text-[#0F172A] shrink-0">
         <Info className="w-4 h-4 text-[#1B3A6B] shrink-0" />
@@ -156,7 +156,7 @@ export default function Pipeline() {
       {/* Toolbar */}
       <div className="bg-white border border-[#E5E7EB] rounded-lg p-2.5 flex items-center gap-2 flex-wrap shadow-sm shrink-0">
         {['all', 'semana', 'medicos', 'advogados', 'empresarios'].map(f => (
-          <button key={f} onClick={() => setFilter(f)} className={`h-8 px-3 rounded-md text-[12px] font-medium ${filter === f ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>
+          <button key={f} onClick={() => setFilter(f)} className={`h-8 min-h-[44px] sm:min-h-0 px-3 rounded-md text-[12px] font-medium ${filter === f ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>
             {f === 'all' ? 'Todos os leads' : f === 'semana' ? 'Esta semana' : f === 'medicos' ? 'Médicos' : f === 'advogados' ? 'Advogados' : 'Empresários'}
           </button>
         ))}
@@ -171,7 +171,7 @@ export default function Pipeline() {
       </div>
 
       {/* Kanban board */}
-      <div className="flex-1 flex gap-3 overflow-x-auto pb-4 items-stretch select-none">
+      <div className="flex-1 flex gap-3 overflow-x-auto pb-4 items-stretch select-none snap-x snap-mandatory scroll-pl-2.5">
         {COLUMNS.map((column) => {
           const columnLeads = leads.filter(l => l.stage === column.id);
           const count = columnLeads.length || column.count;
@@ -183,7 +183,7 @@ export default function Pipeline() {
               onDragOver={(e) => handleDragOver(e, column.id)}
               onDragLeave={() => setIsDraggingOver(null)}
               onDrop={(e) => handleDrop(e, column.id as LeadCard['stage'])}
-              className={`w-[250px] min-w-[250px] rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] flex flex-col shrink-0 transition-all ${
+              className={`w-[250px] min-w-[250px] snap-start rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] flex flex-col shrink-0 transition-all ${
                 isDraggingOver === column.id ? 'ring-2 ring-[#1B3A6B]/40 border-[#1B3A6B]/30' : ''
               }`}
             >
@@ -196,7 +196,7 @@ export default function Pipeline() {
                 <div className="flex items-center gap-1.5">
                   <span className="text-[11px] font-mono font-bold bg-white border border-[#E5E7EB] text-[#475569] px-2 py-0.5 rounded-full">{count}</span>
                   {column.id === 'capturado' && (
-                    <button onClick={() => setIsCreateLeadOpen(true)} className="w-5 h-5 rounded-md bg-[#F1F3F6] hover:bg-[#1B3A6B] hover:text-white text-[#94A3B8] flex items-center justify-center text-[12px] font-bold transition-all" title="Adicionar lead">+</button>
+                    <button onClick={() => setIsCreateLeadOpen(true)} className="w-8 h-8 sm:w-5 sm:h-5 min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 rounded-md bg-[#F1F3F6] hover:bg-[#1B3A6B] hover:text-white text-[#94A3B8] flex items-center justify-center text-[12px] font-bold transition-all" title="Adicionar lead">+</button>
                   )}
                 </div>
               </div>
