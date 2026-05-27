@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ToastContainer } from '@prospix/ui';
@@ -20,22 +20,38 @@ import Settings from './pages/Settings';
 import './index.css';
 
 // Protected Route Component injecting RLS authentication state
+// Zustand persist hydrates async from localStorage – we must wait before
+// deciding to redirect, otherwise a brief null-state frame triggers clearSession().
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { accessToken, tenantId, user, clearSession } = useAuthStore();
+  const [hasHydrated, setHasHydrated] = React.useState(false);
+
+  React.useEffect(() => {
+    // Zustand persist calls onRehydrateStorage synchronously during module load
+    // but the actual hydration happens async. Use a micro-tick to let it settle.
+    const unsub = useAuthStore.persist.onFinishHydration(() => {
+      setHasHydrated(true);
+    });
+    // If hydration already happened before this effect ran
+    if ((useAuthStore.persist as any).hasHydrated?.()) {
+      setHasHydrated(true);
+    }
+    return unsub;
+  }, []);
+
+  // Show nothing while waiting for the store to hydrate from localStorage
+  if (!hasHydrated) {
+    return null;
+  }
+
   const isAuthorized =
     !!accessToken &&
     !!tenantId &&
     !!user &&
     ['OWNER', 'ASSISTANT', 'ADMIN'].includes(user.role);
 
-  useEffect(() => {
-    if (!isAuthorized) {
-      clearSession();
-    }
-  }, [clearSession, isAuthorized]);
-
   if (!isAuthorized) {
-    // Proactively clear corrupted or incomplete localStorage credentials
+    clearSession();
     return <Navigate to="/login" replace />;
   }
   
