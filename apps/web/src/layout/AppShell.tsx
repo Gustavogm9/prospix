@@ -58,6 +58,8 @@ export default function AppShell() {
   const [counters, setCounters] = useState<AppShellCounters | null>(null);
   const [globalSearch, setGlobalSearch] = useState('');
   const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const [notifications, setNotifications] = useState<Array<{id: string; title: string; body: string; readAt: string | null; createdAt: string; link?: string}>>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   const searchResults = globalSearch.trim().length > 1 ? [
     { type: 'lead', label: `Buscar "${globalSearch}" em Leads`, path: `/leads?search=${encodeURIComponent(globalSearch)}` },
@@ -94,6 +96,20 @@ export default function AppShell() {
     return () => {
       isMounted = false;
     };
+  }, []);
+
+  const fetchNotifications = async () => {
+    try {
+      const res = await apiClient.get('/tenant/notifications');
+      setNotifications(res.data?.data || []);
+      setUnreadCount(res.data?.unreadCount || 0);
+    } catch {}
+  };
+
+  useEffect(() => {
+    fetchNotifications();
+    const interval = setInterval(fetchNotifications, 30_000);
+    return () => clearInterval(interval);
   }, []);
 
   const menuSections: MenuSection[] = [
@@ -367,19 +383,54 @@ export default function AppShell() {
                 className="p-2 rounded-lg hover:bg-surface-sunken text-text-secondary hover:text-text transition-all relative"
               >
                 <Bell className="w-[17px] h-[17px]" />
-                <span className="absolute top-[5px] right-[6px] w-[7px] h-[7px] rounded-full bg-[#D92D20] border-2 border-white" />
+                {unreadCount > 0 && <span className="absolute top-[5px] right-[6px] w-[7px] h-[7px] rounded-full bg-[#D92D20] border-2 border-white" />}
               </button>
 
               {isNotificationsOpen && (
                 <>
                   <div className="fixed inset-0 z-10" onClick={() => setIsNotificationsOpen(false)} />
                   <div className="absolute right-0 mt-2 w-80 bg-surface border border-border rounded-xl shadow-lg p-4 z-20 space-y-3 animate-fadeIn">
-                    <h4 className="text-xs font-semibold text-text uppercase tracking-wider">Notificações</h4>
-                    <div className="divide-y divide-border max-h-64 overflow-y-auto">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-semibold text-text uppercase tracking-wider">Notificações</h4>
+                      {unreadCount > 0 && (
+                        <button
+                          onClick={async () => {
+                            try { await apiClient.patch('/tenant/notifications/read-all'); fetchNotifications(); } catch {}
+                          }}
+                          className="text-[11px] font-semibold text-primary hover:underline"
+                        >
+                          Marcar todas como lidas
+                        </button>
+                      )}
+                    </div>
+                    {notifications.length > 0 ? (
+                      <div className="divide-y divide-border max-h-64 overflow-y-auto">
+                        {notifications.slice(0, 8).map(n => (
+                          <div key={n.id} className={`py-2.5 px-1 cursor-pointer hover:bg-[#F9FAFB] rounded-lg transition-colors ${!n.readAt ? 'bg-[rgba(27,58,107,0.03)]' : ''}`}
+                            onClick={async () => {
+                              if (!n.readAt) {
+                                try { await apiClient.patch(`/tenant/notifications/${n.id}/read`); fetchNotifications(); } catch {}
+                              }
+                              if (n.link) navigate(n.link);
+                              setIsNotificationsOpen(false);
+                            }}
+                          >
+                            <div className="flex items-start gap-2">
+                              {!n.readAt && <span className="w-2 h-2 rounded-full bg-[#1B3A6B] mt-1 shrink-0" />}
+                              <div className="min-w-0">
+                                <p className="text-xs font-semibold text-[#0F172A] truncate">{n.title}</p>
+                                <p className="text-[11px] text-[#475569] line-clamp-2">{n.body}</p>
+                                <p className="text-[10px] text-[#94A3B8] mt-0.5">{new Date(n.createdAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</p>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
                       <div className="py-4 text-xs">
                         <p className="text-text-secondary leading-tight">Nenhuma notificação no momento.</p>
                       </div>
-                    </div>
+                    )}
                   </div>
                 </>
               )}

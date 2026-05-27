@@ -54,3 +54,64 @@ self.addEventListener('fetch', (event) => {
     })
   );
 });
+
+// ── Push Notifications ──────────────────────────────────────────────────────
+self.addEventListener('push', (event) => {
+  let data = { title: 'Prospix', body: 'Nova notificação', url: '/' };
+  
+  try {
+    if (event.data) {
+      const payload = event.data.json();
+      data = {
+        title: payload.title || 'Prospix',
+        body: payload.body || 'Você tem uma nova notificação',
+        url: payload.url || payload.link || '/',
+      };
+    }
+  } catch (e) {
+    if (event.data) {
+      data.body = event.data.text();
+    }
+  }
+
+  const options = {
+    body: data.body,
+    icon: '/pwa-192.png',
+    badge: '/favicon.png',
+    vibrate: [100, 50, 100],
+    data: { url: data.url },
+    actions: [
+      { action: 'open', title: 'Abrir' },
+      { action: 'close', title: 'Fechar' },
+    ],
+    tag: 'prospix-notification',
+    renotify: true,
+  };
+
+  event.waitUntil(
+    self.registration.showNotification(data.title, options)
+  );
+});
+
+// Handle notification click
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+
+  if (event.action === 'close') return;
+
+  const url = event.notification.data?.url || '/';
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      // Focus existing window if available
+      for (const client of clients) {
+        if (client.url.includes('app.prospix.com.br') && 'focus' in client) {
+          client.navigate(url);
+          return client.focus();
+        }
+      }
+      // Open new window
+      return self.clients.openWindow(url);
+    })
+  );
+});
