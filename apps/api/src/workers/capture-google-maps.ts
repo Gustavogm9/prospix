@@ -5,6 +5,7 @@ import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { searchPlaces } from '../integrations/google-maps.js';
 import { getDecryptedSecrets } from '../tenant/secrets-vault.js';
+import { env } from '../config/env.js';
 import { BaseJobPayload } from '@prospix/shared-types';
 import { LeadSource, LeadStatus } from '@prisma/client';
 import dayjs from 'dayjs';
@@ -100,12 +101,12 @@ export class CaptureGoogleMapsWorker extends BaseWorker<CaptureJobPayload, Captu
         return { captured: 0, skipped: 0, queriesRun: 0, status: 'skipped', reason: 'daily_limit_reached' };
       }
 
-      // 4. Fetch Google Maps API Key
+      // 4. Fetch Google Maps API Key (tenant-own → shared platform key)
       const decryptedSecrets = await getDecryptedSecrets(tenantId);
-      const apiKey = decryptedSecrets?.googleMapsApiKey;
+      const apiKey = decryptedSecrets?.googleMapsApiKey || env.GOOGLE_MAPS_GUILDS_API_KEY;
 
       if (!apiKey) {
-        logger.error({ tenantId }, 'Google Maps API Key not configured for tenant');
+        logger.error({ tenantId }, 'Google Maps API Key not configured (neither tenant nor platform shared key)');
         return { captured: 0, skipped: 0, queriesRun: 0, status: 'failed', reason: 'api_key_missing' };
       }
 

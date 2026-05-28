@@ -44,18 +44,15 @@ export default function Home() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const [credentialsConfigured, setCredentialsConfigured] = useState<boolean | undefined>(undefined);
-
   const onboardingSignals = useMemo(() => {
     if (!stats) return undefined;
     const hasConversations = (stats.pendingConversations || 0) + (stats.pendingManualConversations || 0) > 0;
     const hasLeads = (stats.newLeadsToday || 0) > 0 || (stats.hotLeads?.length || 0) > 0;
     return {
-      apiKeys: credentialsConfigured,
       whatsapp: hasConversations,
       firstLead: hasLeads,
     };
-  }, [stats, credentialsConfigured]);
+  }, [stats]);
 
   useEffect(() => {
     const fetchDashboardData = async () => {
@@ -136,18 +133,7 @@ export default function Home() {
       }
     };
 
-    const fetchCredentials = async () => {
-      try {
-        const res = await apiClient.get('/tenant/integrations/credentials');
-        const keys = res.data?.data?.keys;
-        setCredentialsConfigured(!!keys?.googleMaps?.configured);
-      } catch {
-        // Silently fail — onboarding will show step as pending
-      }
-    };
-
     fetchDashboardData();
-    fetchCredentials();
   }, []);
 
   if (isLoading || !stats) {

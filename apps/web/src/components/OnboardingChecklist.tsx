@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button } from '@prospix/ui';
-import { CheckCircle2, Circle, X, ArrowRight, MessageSquare, UserPlus, FileText, Key } from 'lucide-react';
+import { CheckCircle2, Circle, X, ArrowRight, MessageSquare, UserPlus, FileText } from 'lucide-react';
 
 const STORAGE_KEY = 'prospix-onboarding-state-v1';
 
-type StepId = 'apiKeys' | 'whatsapp' | 'firstLead' | 'firstScript';
+type StepId = 'whatsapp' | 'firstLead' | 'firstScript';
 
 interface OnboardingState {
   dismissed: boolean;
@@ -14,7 +14,7 @@ interface OnboardingState {
 
 const DEFAULT_STATE: OnboardingState = {
   dismissed: false,
-  completed: { apiKeys: false, whatsapp: false, firstLead: false, firstScript: false },
+  completed: { whatsapp: false, firstLead: false, firstScript: false },
 };
 
 function loadState(): OnboardingState {
@@ -25,7 +25,6 @@ function loadState(): OnboardingState {
     return {
       dismissed: !!parsed.dismissed,
       completed: {
-        apiKeys: !!parsed.completed?.apiKeys,
         whatsapp: !!parsed.completed?.whatsapp,
         firstLead: !!parsed.completed?.firstLead,
         firstScript: !!parsed.completed?.firstScript,
@@ -55,14 +54,6 @@ interface StepDef {
 
 const STEPS: StepDef[] = [
   {
-    id: 'apiKeys',
-    title: 'Configure a chave do Google Maps',
-    description: 'Necessária para a prospecção automática funcionar. Sem ela, as campanhas não captam leads. Vá em Configurações → Integrações e cadastre sua Google Maps API Key.',
-    icon: Key,
-    ctaLabel: 'Configurar chaves',
-    ctaPath: '/configuracoes?tab=integracoes',
-  },
-  {
     id: 'whatsapp',
     title: 'Conecte seu WhatsApp',
     description: 'Habilite o canal Evolution para receber e responder leads no mesmo número que seus clientes já usam.',
@@ -72,18 +63,18 @@ const STEPS: StepDef[] = [
   },
   {
     id: 'firstLead',
-    title: 'Cadastre o primeiro lead',
-    description: 'Use a busca por Google Maps ou cadastre manualmente. Enriquecimento automático calcula o Fit Score.',
+    title: 'Aguarde seus primeiros leads',
+    description: 'A prospecção automática já está ativa! Leads serão capturados via Google Maps e aparecerão aqui.',
     icon: UserPlus,
-    ctaLabel: 'Ir para Leads',
+    ctaLabel: 'Ver Leads',
     ctaPath: '/leads',
   },
   {
     id: 'firstScript',
-    title: 'Crie seu primeiro roteiro',
-    description: 'Defina abordagem comercial para que a IA siga seu tom de voz nas conversas.',
+    title: 'Personalize seu roteiro',
+    description: 'Já criamos roteiros para você, mas você pode ajustar a abordagem para ficar com o seu tom de voz.',
     icon: FileText,
-    ctaLabel: 'Criar roteiro',
+    ctaLabel: 'Ver roteiros',
     ctaPath: '/roteiros',
   },
 ];
@@ -103,7 +94,6 @@ export const OnboardingChecklist = ({ signals }: OnboardingChecklistProps) => {
       const next: OnboardingState = {
         ...prev,
         completed: {
-          apiKeys: signals.apiKeys ?? prev.completed.apiKeys,
           whatsapp: signals.whatsapp ?? prev.completed.whatsapp,
           firstLead: signals.firstLead ?? prev.completed.firstLead,
           firstScript: signals.firstScript ?? prev.completed.firstScript,

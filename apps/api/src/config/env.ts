@@ -37,6 +37,9 @@ const envSchema = z.object({
   EVOLUTION_GUILDS_INSTANCE: z.string().default('guilds_master'),
   EVOLUTION_GUILDS_API_KEY: z.string().default(''),
 
+  // Google Maps shared key (platform-level, used by all tenants unless they have their own)
+  GOOGLE_MAPS_GUILDS_API_KEY: z.string().default(''),
+
   INVITATION_CODE_TTL_DAYS: z.coerce.number().default(14),
   INVITATION_CODE_PREFIX: z.string().default('PRSPX'),
 
