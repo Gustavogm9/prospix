@@ -17,6 +17,12 @@ import AuditLog from './pages/AuditLog';
 import Compliance from './pages/Compliance';
 import FeatureFlags from './pages/FeatureFlags';
 import Alerts from './pages/Alerts';
+import Activity from './pages/Activity';
+import UserManagement from './pages/UserManagement';
+import Conversations from './pages/Conversations';
+import LeadManagement from './pages/LeadManagement';
+import Impersonation from './pages/Impersonation';
+import Settings from './pages/Settings';
 import './index.css';
 
 // Protected Admin Route checking adminToken and session
@@ -82,6 +88,12 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="compliance" element={<Compliance />} />
           <Route path="flags" element={<FeatureFlags />} />
           <Route path="alertas" element={<Alerts />} />
+          <Route path="atividade" element={<Activity />} />
+          <Route path="usuarios" element={<UserManagement />} />
+          <Route path="conversas" element={<Conversations />} />
+          <Route path="leads" element={<LeadManagement />} />
+          <Route path="impersonacao" element={<Impersonation />} />
+          <Route path="configuracoes" element={<Settings />} />
         </Route>
 
         {/* Catch-all Fallback */}

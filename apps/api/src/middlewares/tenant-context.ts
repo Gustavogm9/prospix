@@ -9,6 +9,11 @@ declare module 'fastify' {
     tenantId: string | null;
     userId: string | null;
     role: string | null;
+    impersonation?: {
+      adminId: string;
+      sessionId: string;
+      mode: 'READ_ONLY' | 'FULL_ACCESS';
+    };
   }
 }
 
@@ -63,6 +68,24 @@ export async function tenantContext(req: FastifyRequest, reply: FastifyReply): P
     }
   }
 
+  // 4b. Handle impersonation tokens
+  if (decoded.imp === true) {
+    // Enforce READ_ONLY mode: block mutating methods
+    if (decoded.imp_mode === 'READ_ONLY' && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+      logger.warn({ url, method: req.method, imp_session_id: decoded.imp_session_id }, '🎭 Impersonation: blocked mutating request in READ_ONLY mode');
+      return reply.code(403).send({ error: 'Forbidden', message: 'Modo somente leitura. Ações de escrita não são permitidas durante impersonificação read-only.' });
+    }
+
+    // Set impersonation metadata
+    req.impersonation = {
+      adminId: decoded.imp_admin_id,
+      sessionId: decoded.imp_session_id,
+      mode: decoded.imp_mode,
+    };
+
+    logger.info({ url, imp_admin_id: decoded.imp_admin_id, imp_mode: decoded.imp_mode }, '🎭 Impersonation request');
+  }
+
   // 5. Check and sanitize X-Tenant-Id header format (Prevent injection / validate format)
   const headerTenantId = req.headers['x-tenant-id'] as string | undefined;
   
@@ -71,8 +94,8 @@ export async function tenantContext(req: FastifyRequest, reply: FastifyReply): P
     return reply.code(400).send({ error: 'Bad Request', message: 'Invalid Tenant ID format' });
   }
 
-  // Mismatch check (if user is not super-admin, tenant mismatch results in 403 Forbidden)
-  if (decoded.role !== 'GUILDS_ADMIN') {
+  // Mismatch check (if user is not super-admin and not impersonating, tenant mismatch results in 403 Forbidden)
+  if (decoded.role !== 'GUILDS_ADMIN' && !decoded.imp) {
     if (headerTenantId && headerTenantId !== decoded.tenant_id) {
       logger.warn(
         { headerTenantId, jwtTenantId: decoded.tenant_id },

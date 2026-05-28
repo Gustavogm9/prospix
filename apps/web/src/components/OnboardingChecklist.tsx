@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button } from '@prospix/ui';
-import { CheckCircle2, Circle, X, ArrowRight, MessageSquare, UserPlus, FileText } from 'lucide-react';
+import { CheckCircle2, Circle, X, ArrowRight, MessageSquare, UserPlus, FileText, Key } from 'lucide-react';
 
 const STORAGE_KEY = 'prospix-onboarding-state-v1';
 
-type StepId = 'whatsapp' | 'firstLead' | 'firstScript';
+type StepId = 'apiKeys' | 'whatsapp' | 'firstLead' | 'firstScript';
 
 interface OnboardingState {
   dismissed: boolean;
@@ -14,7 +14,7 @@ interface OnboardingState {
 
 const DEFAULT_STATE: OnboardingState = {
   dismissed: false,
-  completed: { whatsapp: false, firstLead: false, firstScript: false },
+  completed: { apiKeys: false, whatsapp: false, firstLead: false, firstScript: false },
 };
 
 function loadState(): OnboardingState {
@@ -25,6 +25,7 @@ function loadState(): OnboardingState {
     return {
       dismissed: !!parsed.dismissed,
       completed: {
+        apiKeys: !!parsed.completed?.apiKeys,
         whatsapp: !!parsed.completed?.whatsapp,
         firstLead: !!parsed.completed?.firstLead,
         firstScript: !!parsed.completed?.firstScript,
@@ -53,6 +54,14 @@ interface StepDef {
 }
 
 const STEPS: StepDef[] = [
+  {
+    id: 'apiKeys',
+    title: 'Configure a chave do Google Maps',
+    description: 'Necessária para a prospecção automática funcionar. Sem ela, as campanhas não captam leads. Vá em Configurações → Integrações e cadastre sua Google Maps API Key.',
+    icon: Key,
+    ctaLabel: 'Configurar chaves',
+    ctaPath: '/configuracoes?tab=integracoes',
+  },
   {
     id: 'whatsapp',
     title: 'Conecte seu WhatsApp',
@@ -94,6 +103,7 @@ export const OnboardingChecklist = ({ signals }: OnboardingChecklistProps) => {
       const next: OnboardingState = {
         ...prev,
         completed: {
+          apiKeys: signals.apiKeys ?? prev.completed.apiKeys,
           whatsapp: signals.whatsapp ?? prev.completed.whatsapp,
           firstLead: signals.firstLead ?? prev.completed.firstLead,
           firstScript: signals.firstScript ?? prev.completed.firstScript,

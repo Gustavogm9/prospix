@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badge, toast } from '@prospix/ui';
-import { ShieldAlert, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, Clock } from 'lucide-react';
+import { ShieldAlert, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, Clock, Play, CheckCircle2, XCircle, X } from 'lucide-react';
 import { adminApiClient } from '../lib/api-client';
 import { AxiosError } from 'axios';
 
@@ -62,6 +62,13 @@ function slaState(req: LgpdRequest): { label: string; ok: boolean; warn: boolean
   return { label: `${SLA_DAYS - days}d restantes`, ok: true, warn: false, expired: false };
 }
 
+function getApiErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof AxiosError) {
+    return err.response?.data?.message || fallback;
+  }
+  return fallback;
+}
+
 export default function Compliance() {
   const [items, setItems] = useState<LgpdRequest[]>([]);
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
@@ -70,6 +77,12 @@ export default function Compliance() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<'all' | LgpdStatus>('all');
   const [filterType, setFilterType] = useState<'all' | LgpdType>('all');
+
+  // Action states
+  const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+  const [rejectModalId, setRejectModalId] = useState<string | null>(null);
+  const [rejectionReason, setRejectionReason] = useState('');
+  const [isRejecting, setIsRejecting] = useState(false);
 
   const fetchRequests = async (newOffset = 0) => {
     setIsLoading(true);
@@ -87,9 +100,7 @@ export default function Compliance() {
       setPagination(payload?.pagination ?? { total: 0, limit: PAGE_SIZE, offset: 0, hasMore: false });
       setStatusCounts(payload?.statusCounts ?? {});
     } catch (err: unknown) {
-      const message = err instanceof AxiosError
-        ? err.response?.data?.message || 'Falha ao carregar LGPD.'
-        : 'Falha ao carregar LGPD.';
+      const message = getApiErrorMessage(err, 'Falha ao carregar LGPD.');
       setLoadError(message);
       toast.error('Erro', message);
     } finally {
@@ -101,6 +112,64 @@ export default function Compliance() {
     fetchRequests(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterStatus, filterType]);
+
+  const handleProcess = async (id: string) => {
+    setActionLoadingId(id);
+    try {
+      await adminApiClient.patch(`/admin/lgpd-requests/${id}/process`);
+      toast.success('Processamento iniciado', 'Requisição LGPD movida para PROCESSING.');
+      await fetchRequests(pagination.offset);
+    } catch (err: unknown) {
+      toast.error('Erro', getApiErrorMessage(err, 'Falha ao iniciar processamento.'));
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const handleComplete = async (id: string) => {
+    setActionLoadingId(id);
+    try {
+      await adminApiClient.patch(`/admin/lgpd-requests/${id}/complete`, {});
+      toast.success('Requisição concluída', 'Requisição LGPD marcada como COMPLETED.');
+      await fetchRequests(pagination.offset);
+    } catch (err: unknown) {
+      toast.error('Erro', getApiErrorMessage(err, 'Falha ao concluir requisição.'));
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const openRejectModal = (id: string) => {
+    setRejectModalId(id);
+    setRejectionReason('');
+  };
+
+  const closeRejectModal = () => {
+    setRejectModalId(null);
+    setRejectionReason('');
+    setIsRejecting(false);
+  };
+
+  const handleReject = async () => {
+    if (!rejectModalId) return;
+    if (rejectionReason.trim().length < 5) {
+      toast.error('Motivo obrigatório', 'Informe o motivo da rejeição (mínimo 5 caracteres).');
+      return;
+    }
+    setIsRejecting(true);
+    try {
+      await adminApiClient.patch(`/admin/lgpd-requests/${rejectModalId}/reject`, {
+        rejectionReason: rejectionReason.trim(),
+      });
+      toast.success('Requisição rejeitada', 'Requisição LGPD marcada como REJECTED.');
+      closeRejectModal();
+      await fetchRequests(pagination.offset);
+    } catch (err: unknown) {
+      toast.error('Erro', getApiErrorMessage(err, 'Falha ao rejeitar requisição.'));
+    } finally {
+      setIsRejecting(false);
+    }
+  };
 
   const expiredCount = items.filter((r) => slaState(r).expired).length;
 
@@ -211,11 +280,13 @@ export default function Compliance() {
                     <th className="text-left py-2 px-2">SLA</th>
                     <th className="text-left py-2 px-2">Solicitante</th>
                     <th className="text-left py-2 px-2">Processado por</th>
+                    <th className="text-left py-2 px-2">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/60">
                   {items.map((r) => {
                     const sla = slaState(r);
+                    const isActionLoading = actionLoadingId === r.id;
                     return (
                       <tr key={r.id} className="hover:bg-surface-sunken/40">
                         <td className="py-2 px-2 font-mono text-text-secondary whitespace-nowrap">
@@ -269,6 +340,66 @@ export default function Compliance() {
                           ) : (
                             <span className="text-text-secondary italic">não processado</span>
                           )}
+                          {r.status === 'REJECTED' && r.rejectionReason && (
+                            <div className="text-[9px] text-red-600 mt-0.5 max-w-[160px] truncate" title={r.rejectionReason}>
+                              Motivo: {r.rejectionReason}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-2 px-2">
+                          <div className="flex items-center gap-1">
+                            {r.status === 'PENDING' && (
+                              <Button
+                                onClick={() => handleProcess(r.id)}
+                                disabled={isActionLoading}
+                                className="bg-primary hover:bg-primary-hover text-white text-[9px] px-2 h-6 rounded flex items-center gap-1"
+                              >
+                                {isActionLoading ? (
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                ) : (
+                                  <Play className="w-3 h-3" />
+                                )}
+                                Iniciar
+                              </Button>
+                            )}
+                            {r.status === 'PROCESSING' && (
+                              <>
+                                <Button
+                                  onClick={() => handleComplete(r.id)}
+                                  disabled={isActionLoading}
+                                  className="bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] px-2 h-6 rounded flex items-center gap-1"
+                                >
+                                  {isActionLoading ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    <CheckCircle2 className="w-3 h-3" />
+                                  )}
+                                  Concluir
+                                </Button>
+                                <Button
+                                  onClick={() => openRejectModal(r.id)}
+                                  disabled={isActionLoading}
+                                  className="bg-white hover:bg-red-50 text-red-600 border border-red-200 text-[9px] px-2 h-6 rounded flex items-center gap-1"
+                                >
+                                  <XCircle className="w-3 h-3" />
+                                  Rejeitar
+                                </Button>
+                              </>
+                            )}
+                            {r.status === 'PENDING' && (
+                              <Button
+                                onClick={() => openRejectModal(r.id)}
+                                disabled={isActionLoading}
+                                className="bg-white hover:bg-red-50 text-red-600 border border-red-200 text-[9px] px-2 h-6 rounded flex items-center gap-1"
+                              >
+                                <XCircle className="w-3 h-3" />
+                                Rejeitar
+                              </Button>
+                            )}
+                            {(r.status === 'COMPLETED' || r.status === 'REJECTED' || r.status === 'CANCELED') && (
+                              <span className="text-[9px] text-text-secondary italic">—</span>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -279,6 +410,67 @@ export default function Compliance() {
           )}
         </CardContent>
       </Card>
+
+      {/* Rejection Modal */}
+      {rejectModalId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={closeRejectModal} />
+          <div className="relative bg-white rounded-xl shadow-xl border border-border w-full max-w-md mx-4 animate-fadeIn">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+              <h3 className="text-sm font-bold font-heading text-text flex items-center gap-2">
+                <XCircle className="w-4 h-4 text-red-500" aria-hidden />
+                Rejeitar requisição LGPD
+              </h3>
+              <button
+                onClick={closeRejectModal}
+                className="text-text-secondary hover:text-text p-1 rounded-lg hover:bg-surface-sunken transition-colors"
+                aria-label="Fechar"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              <div>
+                <label htmlFor="rejection-reason" className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block mb-1">
+                  Motivo da rejeição *
+                </label>
+                <textarea
+                  id="rejection-reason"
+                  rows={4}
+                  value={rejectionReason}
+                  onChange={(e) => setRejectionReason(e.target.value)}
+                  placeholder="Descreva o motivo da rejeição (mín. 5 caracteres)..."
+                  className="w-full bg-white border border-border rounded-lg px-3 py-2 text-xs text-text placeholder:text-text-secondary/60 focus:border-border-strong focus:outline-none resize-none"
+                />
+                <p className="text-[9px] text-text-secondary mt-1">
+                  O motivo ficará registrado no audit log e será exibido ao solicitante.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-border">
+              <Button
+                onClick={closeRejectModal}
+                disabled={isRejecting}
+                className="bg-white hover:bg-surface-sunken text-text border border-border text-xs px-4 h-8 rounded-lg"
+              >
+                Cancelar
+              </Button>
+              <Button
+                onClick={handleReject}
+                disabled={isRejecting || rejectionReason.trim().length < 5}
+                className="bg-red-600 hover:bg-red-700 text-white text-xs px-4 h-8 rounded-lg flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {isRejecting ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <XCircle className="w-3.5 h-3.5" />
+                )}
+                Confirmar rejeição
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

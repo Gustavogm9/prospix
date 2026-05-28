@@ -4,12 +4,26 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badg
 import {
   ArrowLeft, Building, Users, Settings as SettingsIcon, Ban, Play, AlertOctagon,
   CheckCircle2, AlertCircle, Loader2, RefreshCw, MessageSquare, Calendar,
-  FileText, ShieldAlert, DollarSign, Activity, Zap,
+  FileText, ShieldAlert, DollarSign, Activity, Zap, Mail, Copy, XCircle, Plus,
 } from 'lucide-react';
 import { adminApiClient } from '../lib/api-client';
 import { AxiosError } from 'axios';
 
 interface TenantUser { id: string; name: string; email: string; role: string; }
+
+interface TenantInvitation {
+  id: string;
+  code: string;
+  tenantId: string;
+  role: string;
+  createdById: string;
+  expiresAt: string;
+  usedAt: string | null;
+  usedByUserId: string | null;
+  revokedAt: string | null;
+  notes: string | null;
+  createdAt: string;
+}
 
 interface CredentialState {
   exists: boolean;
@@ -90,7 +104,10 @@ export default function TenantDetail() {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState<'suspend' | 'resume' | 'churn' | null>(null);
-  const [activeTab, setActiveTab] = useState<'visao-geral' | 'integracoes' | 'usuarios' | 'faturamento'>('visao-geral');
+  const [activeTab, setActiveTab] = useState<'visao-geral' | 'integracoes' | 'usuarios' | 'convites' | 'faturamento'>('visao-geral');
+  const [invitations, setInvitations] = useState<TenantInvitation[]>([]);
+  const [invitationsLoading, setInvitationsLoading] = useState(false);
+  const [invitationBusy, setInvitationBusy] = useState<string | null>(null);
 
   const fetchAll = async () => {
     if (!id) return;
@@ -113,10 +130,84 @@ export default function TenantDetail() {
     }
   };
 
+  const fetchInvitations = async () => {
+    if (!id) return;
+    setInvitationsLoading(true);
+    try {
+      const res = await adminApiClient.get(`/admin/tenants/${id}/invitations`);
+      setInvitations(res.data?.data ?? []);
+    } catch {
+      // silently fail, invitations are secondary data
+    } finally {
+      setInvitationsLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchAll();
+    fetchInvitations();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  const getInvitationStatus = (inv: TenantInvitation): 'active' | 'used' | 'expired' | 'revoked' => {
+    if (inv.revokedAt) return 'revoked';
+    if (inv.usedAt) return 'used';
+    if (new Date(inv.expiresAt) < new Date()) return 'expired';
+    return 'active';
+  };
+
+  const INVITATION_STATUS_STYLE: Record<string, string> = {
+    active: 'bg-success-soft text-success-text border-success/30',
+    used: 'bg-blue-50 text-blue-700 border-blue-200',
+    expired: 'bg-red-50 text-red-700 border-red-200',
+    revoked: 'bg-surface-sunken text-text-secondary border-border',
+  };
+
+  const INVITATION_STATUS_LABEL: Record<string, string> = {
+    active: 'Ativo',
+    used: 'Usado',
+    expired: 'Expirado',
+    revoked: 'Revogado',
+  };
+
+  const handleRevokeInvitation = async (invitationId: string) => {
+    if (!tenant) return;
+    if (!confirm('Deseja revogar este convite? Ele não poderá mais ser utilizado.')) return;
+    setInvitationBusy(invitationId);
+    try {
+      await adminApiClient.delete(`/admin/tenants/${tenant.id}/invitations/${invitationId}`);
+      toast.success('Convite revogado com sucesso.');
+      await fetchInvitations();
+    } catch (err: unknown) {
+      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha ao revogar convite.' : 'Falha ao revogar convite.';
+      toast.error('Erro', message);
+    } finally {
+      setInvitationBusy(null);
+    }
+  };
+
+  const handleCreateInvitation = async () => {
+    if (!tenant) return;
+    const notes = prompt('Notas internas (opcional):') ?? undefined;
+    setInvitationBusy('create');
+    try {
+      await adminApiClient.post(`/admin/tenants/${tenant.id}/invitations`, { notes });
+      toast.success('Convite gerado com sucesso.');
+      await fetchInvitations();
+    } catch (err: unknown) {
+      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha ao gerar convite.' : 'Falha ao gerar convite.';
+      toast.error('Erro', message);
+    } finally {
+      setInvitationBusy(null);
+    }
+  };
+
+  const handleCopyCode = (code: string) => {
+    navigator.clipboard.writeText(code).then(
+      () => toast.success('Código copiado!'),
+      () => toast.error('Erro', 'Falha ao copiar código.'),
+    );
+  };
 
   const handleSuspend = async () => {
     if (!tenant) return;
@@ -294,6 +385,7 @@ export default function TenantDetail() {
           <TabsTrigger value="visao-geral">Visão geral</TabsTrigger>
           <TabsTrigger value="integracoes">Integrações</TabsTrigger>
           <TabsTrigger value="usuarios">Usuários ({tenant.users.length})</TabsTrigger>
+          <TabsTrigger value="convites">Convites ({invitations.length})</TabsTrigger>
           <TabsTrigger value="faturamento">Faturamento</TabsTrigger>
         </TabsList>
 
@@ -421,6 +513,102 @@ export default function TenantDetail() {
                           </td>
                         </tr>
                       ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="convites" className="mt-4">
+          <Card className="bg-white border-border shadow-sm">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-base font-bold font-heading text-text flex items-center gap-2">
+                    <Mail className="w-4 h-4 text-text-secondary" aria-hidden />
+                    Convites de acesso
+                  </CardTitle>
+                  <CardDescription className="text-text-secondary text-xs">
+                    Códigos de convite para registro de usuários neste tenant.
+                  </CardDescription>
+                </div>
+                <Button
+                  onClick={handleCreateInvitation}
+                  disabled={invitationBusy !== null}
+                  className="bg-primary hover:bg-primary-hover text-white text-xs px-3 h-9 rounded-lg flex items-center gap-1.5"
+                >
+                  {invitationBusy === 'create' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                  Gerar Novo Convite
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {invitationsLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="w-5 h-5 animate-spin text-text-secondary" />
+                </div>
+              ) : invitations.length === 0 ? (
+                <div className="text-xs text-text-secondary py-4 text-center">Nenhum convite gerado.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-border text-[10px] text-text-secondary uppercase tracking-wider">
+                        <th className="text-left py-2 px-2">Código</th>
+                        <th className="text-left py-2 px-2">Role</th>
+                        <th className="text-left py-2 px-2">Status</th>
+                        <th className="text-left py-2 px-2">Criado em</th>
+                        <th className="text-left py-2 px-2">Expira em</th>
+                        <th className="text-left py-2 px-2">Notas</th>
+                        <th className="text-right py-2 px-2">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/60">
+                      {invitations.map((inv) => {
+                        const status = getInvitationStatus(inv);
+                        return (
+                          <tr key={inv.id} className="hover:bg-surface-sunken/40">
+                            <td className="py-2 px-2">
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-mono font-semibold text-text">{inv.code}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyCode(inv.code)}
+                                  className="text-text-secondary hover:text-text p-0.5 rounded"
+                                  title="Copiar código"
+                                >
+                                  <Copy className="w-3 h-3" aria-hidden />
+                                </button>
+                              </div>
+                            </td>
+                            <td className="py-2 px-2">
+                              <Badge className="bg-surface-sunken text-text-secondary border border-border/60 text-[9px] px-1.5 py-0">{inv.role}</Badge>
+                            </td>
+                            <td className="py-2 px-2">
+                              <Badge className={`text-[9px] px-1.5 py-0 border ${INVITATION_STATUS_STYLE[status]}`}>
+                                {INVITATION_STATUS_LABEL[status]}
+                              </Badge>
+                            </td>
+                            <td className="py-2 px-2 text-text-secondary">{new Date(inv.createdAt).toLocaleDateString('pt-BR')}</td>
+                            <td className="py-2 px-2 text-text-secondary">{new Date(inv.expiresAt).toLocaleDateString('pt-BR')}</td>
+                            <td className="py-2 px-2 text-text-secondary truncate max-w-[150px]" title={inv.notes ?? ''}>{inv.notes || '—'}</td>
+                            <td className="py-2 px-2 text-right">
+                              {status === 'active' && (
+                                <Button
+                                  onClick={() => handleRevokeInvitation(inv.id)}
+                                  disabled={invitationBusy !== null}
+                                  className="bg-white hover:bg-red-50 text-red-600 border border-red-200 text-[10px] px-2 h-7 rounded-md flex items-center gap-1 ml-auto"
+                                >
+                                  {invitationBusy === inv.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <XCircle className="w-3 h-3" />}
+                                  Revogar
+                                </Button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

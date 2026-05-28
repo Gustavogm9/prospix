@@ -10,7 +10,7 @@ import {
 } from '../../services/auth-service.js';
 import { prisma } from '../../lib/prisma.js';
 import { verifyInvitation, redeemInvitation } from '../../services/invitation-service.js';
-import { verifyPassword } from '../../lib/crypto.js';
+import { verifyPassword, hashPassword } from '../../lib/crypto.js';
 
 export const authRoutes: FastifyPluginAsync = async (app) => {
   
@@ -374,6 +374,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     return reply.code(200).send({
       access_token: accessToken,
       refresh_token: session.refreshToken,
+      must_change_password: !!(user.preferences as any)?.mustChangePassword,
       user: {
         id: user.id,
         tenant_id: user.tenantId,
@@ -455,6 +456,71 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         email: user.email,
         role: user.role,
       },
+    });
+  });
+
+  // ── 9. PATCH /auth/change-password ────────────────────────────────────────
+  const changePasswordSchema = z.object({
+    current_password: z.string().min(1, 'Current password is required'),
+    new_password: z.string().min(6, 'New password must be at least 6 characters'),
+    confirm_password: z.string().min(1, 'Password confirmation is required'),
+  }).refine((data) => data.new_password === data.confirm_password, {
+    message: 'Passwords do not match',
+    path: ['confirm_password'],
+  });
+
+  app.patch('/change-password', async (req: FastifyRequest, reply: FastifyReply) => {
+    // Require valid JWT
+    try {
+      await (req as any).jwtVerify();
+    } catch (_) {
+      return reply.code(401).send({ error: 'UNAUTHORIZED', message: 'Token inválido ou expirado.' });
+    }
+
+    const userId = (req as any).user?.sub;
+    if (!userId) {
+      return reply.code(401).send({ error: 'UNAUTHORIZED', message: 'Usuário não identificado.' });
+    }
+
+    const parseResult = changePasswordSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return reply.code(400).send({
+        error: 'Validation Error',
+        message: parseResult.error.errors[0]?.message,
+      });
+    }
+
+    const { current_password, new_password } = parseResult.data;
+
+    const user = await withAuthRlsBypass((tx) => tx.user.findUnique({
+      where: { id: userId },
+      select: { id: true, passwordHash: true, preferences: true },
+    }));
+
+    if (!user) {
+      return reply.code(404).send({ error: 'RESOURCE_NOT_FOUND', message: 'Usuário não encontrado.' });
+    }
+
+    if (!user.passwordHash || !verifyPassword(current_password, user.passwordHash)) {
+      return reply.code(401).send({ error: 'UNAUTHORIZED', message: 'Senha atual incorreta.' });
+    }
+
+    // Hash new password and update
+    const newHash = hashPassword(new_password);
+    const prefs = (user.preferences as Record<string, any>) || {};
+    delete prefs.mustChangePassword;
+
+    await withAuthRlsBypass((tx) => tx.user.update({
+      where: { id: userId },
+      data: {
+        passwordHash: newHash,
+        preferences: prefs,
+      },
+    }));
+
+    return reply.code(200).send({
+      success: true,
+      message: 'Senha alterada com sucesso.',
     });
   });
 };

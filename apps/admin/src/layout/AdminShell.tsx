@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAdminAuthStore } from '../store/admin-auth-store';
 import {
@@ -16,10 +16,17 @@ import {
   History,
   ShieldAlert,
   ToggleRight,
-  Bell
+  Bell,
+  Users,
+  UserCog,
+  MessageSquare,
+  Contact,
+  Shield,
+  Settings
 } from 'lucide-react';
 import { Avatar, Dropdown, DropdownItem } from '@prospix/ui';
 import { GlobalSearch } from './GlobalSearch';
+import { hasPermission, type AdminPermission } from '../lib/permissions';
 
 export default function AdminShell() {
   const { adminUser, clearAdminSession } = useAdminAuthStore();
@@ -27,19 +34,30 @@ export default function AdminShell() {
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  const menuItems = [
+  const menuItems: { name: string; path: string; icon: typeof BarChart3; permission?: AdminPermission }[] = [
     { name: 'Custos & Margens', path: '/', icon: BarChart3 },
-    { name: 'Gerenciar Tenants', path: '/tenants', icon: Building },
-    { name: 'Cadastrar Tenant', path: '/tenants/novo', icon: PlusCircle },
+    { name: 'Gerenciar Tenants', path: '/tenants', icon: Building, permission: 'tenants.manage' },
+    { name: 'Cadastrar Tenant', path: '/tenants/novo', icon: PlusCircle, permission: 'tenants.manage' },
     { name: 'Templates Master', path: '/templates', icon: FileText },
-    { name: 'Faturamento', path: '/faturamento', icon: CreditCard },
-    { name: 'Discovery', path: '/discovery', icon: Compass },
-    { name: 'Observabilidade', path: '/observabilidade', icon: Activity },
-    { name: 'Audit Log', path: '/audit', icon: History },
-    { name: 'Compliance LGPD', path: '/compliance', icon: ShieldAlert },
-    { name: 'Feature Flags', path: '/flags', icon: ToggleRight },
-    { name: 'Alertas', path: '/alertas', icon: Bell },
+    { name: 'Faturamento', path: '/faturamento', icon: CreditCard, permission: 'billing.manage' },
+    { name: 'Discovery', path: '/discovery', icon: Compass, permission: 'discovery.promote' },
+    { name: 'Observabilidade', path: '/observabilidade', icon: Activity, permission: 'dlq.manage' },
+    { name: 'Audit Log', path: '/audit', icon: History, permission: 'audit.view' },
+    { name: 'Compliance LGPD', path: '/compliance', icon: ShieldAlert, permission: 'settings.manage' },
+    { name: 'Feature Flags', path: '/flags', icon: ToggleRight, permission: 'flags.manage' },
+    { name: 'Alertas', path: '/alertas', icon: Bell, permission: 'alerts.manage' },
+    { name: 'Atividade', path: '/atividade', icon: Users },
+    { name: 'Usuários', path: '/usuarios', icon: UserCog, permission: 'users.manage' },
+    { name: 'Conversas IA', path: '/conversas', icon: MessageSquare },
+    { name: 'Leads', path: '/leads', icon: Contact },
+    { name: 'Impersonificação', path: '/impersonacao', icon: Shield, permission: 'impersonation' },
+    { name: 'Configurações', path: '/configuracoes', icon: Settings, permission: 'settings.manage' },
   ];
+
+  const visibleMenuItems = useMemo(
+    () => menuItems.filter((item) => !item.permission || hasPermission(adminUser?.role, item.permission)),
+    [adminUser?.role]
+  );
 
   const handleLogout = () => {
     clearAdminSession();
@@ -61,7 +79,7 @@ export default function AdminShell() {
         </div>
 
         <nav className="flex-1 py-6 px-4 space-y-1.5 overflow-y-auto">
-          {menuItems.map((item) => {
+          {visibleMenuItems.map((item) => {
             const Icon = item.icon;
             const isActive = location.pathname === item.path;
             return (
@@ -92,7 +110,7 @@ export default function AdminShell() {
             />
             <div className="min-w-0 flex-1">
               <p className="text-xs font-semibold text-text truncate leading-none mb-1">{adminUser?.name || 'Admin Guilds'}</p>
-              <p className="text-[10px] text-amber-800 truncate leading-none font-mono">GUILDS_OWNER</p>
+              <p className="text-[10px] text-amber-800 truncate leading-none font-mono">{adminUser?.role || 'ADMIN'}</p>
             </div>
           </div>
           <button
@@ -121,7 +139,7 @@ export default function AdminShell() {
             </div>
             
             <nav className="flex-1 space-y-1.5 overflow-y-auto">
-              {menuItems.map((item) => {
+              {visibleMenuItems.map((item) => {
                 const Icon = item.icon;
                 return (
                   <NavLink

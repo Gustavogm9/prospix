@@ -11,6 +11,11 @@ import { registerAdminObservabilityRoutes } from './observability.js';
 import { registerAdminDiscoveryRoutes } from './discovery.js';
 import { registerAdminFeatureFlagsRoutes } from './feature-flags.js';
 import { registerAdminAlertsRoutes } from './alerts.js';
+import { registerAdminActivityRoutes } from './activity.js';
+import { registerAdminUserRoutes } from './users.js';
+import { registerAdminImpersonationRoutes } from './impersonation.js';
+import { registerAdminConversationsRoutes } from './conversations.js';
+import { registerAdminLeadsRoutes } from './leads.js';
 
 type AdminTransaction = Prisma.TransactionClient;
 
@@ -167,6 +172,11 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
   registerAdminDiscoveryRoutes(app);
   registerAdminFeatureFlagsRoutes(app);
   registerAdminAlertsRoutes(app);
+  registerAdminActivityRoutes(app);
+  registerAdminUserRoutes(app);
+  registerAdminImpersonationRoutes(app);
+  registerAdminConversationsRoutes(app);
+  registerAdminLeadsRoutes(app);
 
   // =============================================================================
   // D8: CRUD /v1/admin/tenants
@@ -1291,6 +1301,166 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     }
 
     return reply.send({ success: true, message: 'Template deactivated successfully' });
+  });
+
+  // =============================================================================
+  // GAP 9: LGPD REQUEST PROCESSING
+  // =============================================================================
+
+  // PATCH /lgpd-requests/:id/process · Iniciar processamento (PENDING → PROCESSING)
+  app.patch('/lgpd-requests/:id/process', async (req: FastifyRequest, reply: FastifyReply) => {
+    const { id } = req.params as { id: string };
+
+    const result = await withAdminRole(async (tx) => {
+      const request = await tx.lgpdRequest.findUnique({ where: { id } });
+      if (!request) {
+        return { ok: false as const, status: 404, code: 'RESOURCE_NOT_FOUND', message: 'Requisição LGPD não encontrada.' };
+      }
+      if (request.status !== 'PENDING') {
+        return { ok: false as const, status: 400, code: 'VALIDATION_ERROR', message: `Requisição não está PENDING (atual: ${request.status}).` };
+      }
+
+      const updated = await tx.lgpdRequest.update({
+        where: { id },
+        data: { status: 'PROCESSING' },
+        include: {
+          tenant: { select: { id: true, name: true, slug: true } },
+          requestedByUser: { select: { id: true, name: true, email: true } },
+          processedBy: { select: { id: true, name: true, email: true } },
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          userId: req.userId,
+          action: 'lgpd_request.process',
+          targetType: 'lgpd_request',
+          targetId: id,
+          payload: { previousStatus: 'PENDING', newStatus: 'PROCESSING', tenantId: request.tenantId },
+        },
+      });
+
+      return { ok: true as const, value: updated };
+    });
+
+    if (!result.ok) {
+      return reply.code(result.status).send({ error: result.code, message: result.message });
+    }
+
+    return reply.send({ data: result.value });
+  });
+
+  // PATCH /lgpd-requests/:id/complete · Concluir processamento (PROCESSING → COMPLETED)
+  const lgpdCompleteSchema = z.object({
+    notes: z.string().max(2000).optional(),
+  });
+
+  app.patch('/lgpd-requests/:id/complete', async (req: FastifyRequest, reply: FastifyReply) => {
+    const { id } = req.params as { id: string };
+    const parseRes = lgpdCompleteSchema.safeParse(req.body || {});
+    if (!parseRes.success) {
+      return reply.code(400).send({ error: 'VALIDATION_ERROR', message: parseRes.error.errors[0]?.message });
+    }
+
+    const result = await withAdminRole(async (tx) => {
+      const request = await tx.lgpdRequest.findUnique({ where: { id } });
+      if (!request) {
+        return { ok: false as const, status: 404, code: 'RESOURCE_NOT_FOUND', message: 'Requisição LGPD não encontrada.' };
+      }
+      if (request.status !== 'PROCESSING') {
+        return { ok: false as const, status: 400, code: 'VALIDATION_ERROR', message: `Requisição não está PROCESSING (atual: ${request.status}).` };
+      }
+
+      const updated = await tx.lgpdRequest.update({
+        where: { id },
+        data: {
+          status: 'COMPLETED',
+          processedAt: new Date(),
+          processedById: req.userId,
+        },
+        include: {
+          tenant: { select: { id: true, name: true, slug: true } },
+          requestedByUser: { select: { id: true, name: true, email: true } },
+          processedBy: { select: { id: true, name: true, email: true } },
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          userId: req.userId,
+          action: 'lgpd_request.complete',
+          targetType: 'lgpd_request',
+          targetId: id,
+          payload: { previousStatus: 'PROCESSING', newStatus: 'COMPLETED', tenantId: request.tenantId, notes: parseRes.data.notes ?? null },
+        },
+      });
+
+      return { ok: true as const, value: updated };
+    });
+
+    if (!result.ok) {
+      return reply.code(result.status).send({ error: result.code, message: result.message });
+    }
+
+    return reply.send({ data: result.value });
+  });
+
+  // PATCH /lgpd-requests/:id/reject · Rejeitar requisição (qualquer status ativo → REJECTED)
+  const lgpdRejectSchema = z.object({
+    rejectionReason: z.string().min(5, 'Motivo da rejeição é obrigatório (mín. 5 caracteres).').max(2000),
+  });
+
+  app.patch('/lgpd-requests/:id/reject', async (req: FastifyRequest, reply: FastifyReply) => {
+    const { id } = req.params as { id: string };
+    const parseRes = lgpdRejectSchema.safeParse(req.body);
+    if (!parseRes.success) {
+      return reply.code(400).send({ error: 'VALIDATION_ERROR', message: parseRes.error.errors[0]?.message });
+    }
+
+    const { rejectionReason } = parseRes.data;
+
+    const result = await withAdminRole(async (tx) => {
+      const request = await tx.lgpdRequest.findUnique({ where: { id } });
+      if (!request) {
+        return { ok: false as const, status: 404, code: 'RESOURCE_NOT_FOUND', message: 'Requisição LGPD não encontrada.' };
+      }
+      if (request.status !== 'PENDING' && request.status !== 'PROCESSING') {
+        return { ok: false as const, status: 400, code: 'VALIDATION_ERROR', message: `Requisição não pode ser rejeitada (status: ${request.status}).` };
+      }
+
+      const updated = await tx.lgpdRequest.update({
+        where: { id },
+        data: {
+          status: 'REJECTED',
+          rejectionReason,
+          processedAt: new Date(),
+          processedById: req.userId,
+        },
+        include: {
+          tenant: { select: { id: true, name: true, slug: true } },
+          requestedByUser: { select: { id: true, name: true, email: true } },
+          processedBy: { select: { id: true, name: true, email: true } },
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          userId: req.userId,
+          action: 'lgpd_request.reject',
+          targetType: 'lgpd_request',
+          targetId: id,
+          payload: { previousStatus: request.status, newStatus: 'REJECTED', tenantId: request.tenantId, rejectionReason },
+        },
+      });
+
+      return { ok: true as const, value: updated };
+    });
+
+    if (!result.ok) {
+      return reply.code(result.status).send({ error: result.code, message: result.message });
+    }
+
+    return reply.send({ data: result.value });
   });
 };
 export default adminRoutes;
