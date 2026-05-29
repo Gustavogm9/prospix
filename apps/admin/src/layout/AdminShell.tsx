@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAdminAuthStore } from '../store/admin-auth-store';
 import {
   BarChart3,
@@ -41,7 +41,6 @@ interface MenuSection {
 export default function AdminShell() {
   const { adminUser, clearAdminSession } = useAdminAuthStore();
   const navigate = useNavigate();
-  const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const menuSections: MenuSection[] = [

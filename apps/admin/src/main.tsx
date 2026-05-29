@@ -23,6 +23,11 @@ import Conversations from './pages/Conversations';
 import LeadManagement from './pages/LeadManagement';
 import Impersonation from './pages/Impersonation';
 import Settings from './pages/Settings';
+import Meetings from './pages/Meetings';
+import CampaignMonitor from './pages/CampaignMonitor';
+import PipelineMonitor from './pages/PipelineMonitor';
+import ReferralMonitor from './pages/ReferralMonitor';
+import LeadSourcesMonitor from './pages/LeadSourcesMonitor';
 import './index.css';
 
 // Protected Admin Route checking adminToken and session
@@ -94,6 +99,12 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="leads" element={<LeadManagement />} />
           <Route path="impersonacao" element={<Impersonation />} />
           <Route path="configuracoes" element={<Settings />} />
+          {/* New monitoring modules */}
+          <Route path="reunioes" element={<Meetings />} />
+          <Route path="campanhas" element={<CampaignMonitor />} />
+          <Route path="pipeline" element={<PipelineMonitor />} />
+          <Route path="indicacoes" element={<ReferralMonitor />} />
+          <Route path="fontes" element={<LeadSourcesMonitor />} />
         </Route>
 
         {/* Catch-all Fallback */}
