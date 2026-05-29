@@ -7,11 +7,11 @@ import { integrationsRoutes } from './integrations.js';
 import { notificationsRoutes } from './notifications.js';
 import { lgpdRoutes } from './lgpd.js';
 import { billingRoutes } from './billing.js';
-import { scriptRoutes } from './scripts.js';
 import { referralRoutes } from './referrals.js';
 import { tenantRoutes as tenantContractRoutes } from '../tenant.js';
 
 export const tenantRoutes: FastifyPluginAsync = async (app) => {
+  // tenantContractRoutes already includes /scripts, /conversations, /pipeline, etc.
   await app.register(tenantContractRoutes);
   await app.register(leadRoutes, { prefix: '/leads' });
   await app.register(campaignRoutes, { prefix: '/campaigns' });
@@ -21,7 +21,6 @@ export const tenantRoutes: FastifyPluginAsync = async (app) => {
   await app.register(notificationsRoutes, { prefix: '/notifications' });
   await app.register(lgpdRoutes, { prefix: '/lgpd' });
   await app.register(billingRoutes, { prefix: '/billing' });
-  await app.register(scriptRoutes, { prefix: '/scripts' });
   await app.register(referralRoutes, { prefix: '/referrals' });
 };
 
