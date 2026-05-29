@@ -45,24 +45,32 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
     return unsub;
   }, []);
 
-  // Show nothing while waiting for the store to hydrate from localStorage
-  if (!hasHydrated) {
-    return null;
-  }
-
   const isAuthorized =
     !!accessToken &&
     !!tenantId &&
     !!user &&
     ['OWNER', 'ASSISTANT', 'ADMIN'].includes(user.role);
 
+  // Clean up stale session data via effect (not during render) to avoid
+  // the infinite re-render loop that caused React error #185.
+  React.useEffect(() => {
+    if (hasHydrated && !isAuthorized) {
+      clearSession();
+    }
+  }, [hasHydrated, isAuthorized, clearSession]);
+
+  // Show nothing while waiting for the store to hydrate from localStorage
+  if (!hasHydrated) {
+    return null;
+  }
+
   if (!isAuthorized) {
-    clearSession();
     return <Navigate to="/login" replace />;
   }
   
   return <>{children}</>;
 }
+
 
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
