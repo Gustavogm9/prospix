@@ -37,15 +37,15 @@ const envSchema = z.object({
   EVOLUTION_GUILDS_INSTANCE: z.string().default('guilds_master'),
   EVOLUTION_GUILDS_API_KEY: z.string().default(''),
 
-  // Google Maps shared key (platform-level, used by all tenants unless they have their own)
-  GOOGLE_MAPS_GUILDS_API_KEY: z.string().default(''),
-
   INVITATION_CODE_TTL_DAYS: z.coerce.number().default(14),
   INVITATION_CODE_PREFIX: z.string().default('PRSPX'),
 
   // Google Calendar integration
   GOOGLE_CLIENT_ID: z.string().default('mock-client-id'),
   GOOGLE_CLIENT_SECRET: z.string().default('mock-client-secret'),
+
+  // Google Maps API (shared platform key — fallback when tenant has no own key)
+  GOOGLE_MAPS_API_KEY: z.string().default(''),
 
   // Asaas integration
   ASAAS_API_KEY: z.string().default('mock-asaas-key'),

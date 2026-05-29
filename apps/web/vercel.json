@@ -7,7 +7,7 @@
       "dest": "/assets/$1"
     },
     {
-      "src": "^/((?!assets/|favicon\\.ico|favicon\\.png|apple-touch-icon\\.png|manifest\\.json|pwa-192\\.png|pwa-512\\.png).*)",
+      "src": "^/((?!assets/|favicon\\.ico|favicon\\.png|apple-touch-icon\\.png|manifest\\.json|pwa-192\\.png|pwa-512\\.png|sw\\.js).*)",
       "dest": "/index"
     }
   ]
