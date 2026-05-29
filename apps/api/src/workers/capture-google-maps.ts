@@ -23,16 +23,42 @@ export interface CaptureJobResult {
   reason?: string;
 }
 
-const PROFESSION_TRANSLATIONS: Record<string, string> = {
-  DOCTOR: 'médico',
-  LAWYER: 'advogado',
-  DENTIST: 'dentista',
-  ENTREPRENEUR: 'empresário',
-  ENGINEER: 'engenheiro',
-  ARCHITECT: 'arquiteto',
-  ACCOUNTANT: 'contador',
-  OTHER: 'profissional',
+const PROFESSION_QUERY_KEYWORDS: Record<string, string[]> = {
+  DOCTOR: [
+    'médico', 'clínica médica', 'consultório médico', 'clínica de saúde',
+    'especialista médico', 'centro médico',
+  ],
+  LAWYER: [
+    'advogado', 'escritório de advocacia', 'advocacia',
+    'advogados associados', 'consultoria jurídica',
+  ],
+  DENTIST: [
+    'dentista', 'clínica odontológica', 'consultório odontológico',
+    'ortodontista', 'odontologia',
+  ],
+  ENTREPRENEUR: [
+    'empresa', 'escritório', 'loja', 'comércio',
+    'empreendedor', 'empresário', 'estabelecimento comercial',
+  ],
+  ENGINEER: [
+    'engenheiro', 'escritório de engenharia', 'construtora',
+    'engenharia civil',
+  ],
+  ARCHITECT: [
+    'arquiteto', 'escritório de arquitetura', 'arquitetura e design',
+    'arquitetura e urbanismo',
+  ],
+  ACCOUNTANT: [
+    'contador', 'escritório de contabilidade', 'contabilidade',
+    'assessoria contábil',
+  ],
+  OTHER: [
+    'empresa', 'escritório', 'profissional',
+  ],
 };
+
+// ----------- snip: flat label for display contexts
+// (currently unused but kept for future reference in lead enrichment)
 
 function sanitizeWhatsapp(phone: string | undefined): string | null {
   if (!phone) return null;
@@ -110,17 +136,19 @@ export class CaptureGoogleMapsWorker extends BaseWorker<CaptureJobPayload, Captu
         return { captured: 0, skipped: 0, queriesRun: 0, status: 'failed', reason: 'api_key_missing' };
       }
 
-      // 5. Build queries: {profession} {city} + neighborhoods
-      const professionTranslated = PROFESSION_TRANSLATIONS[campaign.profession] || 'profissional';
+      // 5. Build queries: multiple keywords × cities × neighborhoods
+      const keywords = PROFESSION_QUERY_KEYWORDS[campaign.profession] ?? PROFESSION_QUERY_KEYWORDS['OTHER']!;
       const queries: string[] = [];
 
-      for (const city of campaign.cities) {
-        if (campaign.neighborhoods && campaign.neighborhoods.length > 0) {
-          for (const neighborhood of campaign.neighborhoods) {
-            queries.push(`${professionTranslated} ${neighborhood} ${city}`);
+      for (const keyword of keywords) {
+        for (const city of campaign.cities) {
+          if (campaign.neighborhoods && campaign.neighborhoods.length > 0) {
+            for (const neighborhood of campaign.neighborhoods) {
+              queries.push(`${keyword} ${neighborhood} ${city}`);
+            }
+          } else {
+            queries.push(`${keyword} ${city}`);
           }
-        } else {
-          queries.push(`${professionTranslated} ${city}`);
         }
       }
 
