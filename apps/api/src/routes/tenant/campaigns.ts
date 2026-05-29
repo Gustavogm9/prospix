@@ -2,6 +2,7 @@ import { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../../lib/prisma.js';
 import { CampaignStatus, Profession } from '@prisma/client';
+import { syncCampaignCaptureSchedule } from '../../lib/queue.js';
 
 export const campaignRoutes: FastifyPluginAsync = async (app) => {
   // ── 1. GET /campaigns (List non-archived campaigns) ─────────────────────────
@@ -219,6 +220,11 @@ export const campaignRoutes: FastifyPluginAsync = async (app) => {
         },
       });
 
+      // Remove capture cron for paused campaign
+      syncCampaignCaptureSchedule(tenantId, pausedCampaign.id, 'PAUSED', pausedCampaign.cities).catch(
+        (err) => req.log.error({ err, campaignId: id }, 'Failed to remove capture cron')
+      );
+
       return reply.code(200).send(pausedCampaign);
     } catch (err) {
       req.log.error({ err, id }, 'Failed to pause campaign');
@@ -263,6 +269,11 @@ export const campaignRoutes: FastifyPluginAsync = async (app) => {
         },
       });
 
+      // Schedule capture cron for active campaign
+      syncCampaignCaptureSchedule(tenantId, activeCampaign.id, 'ACTIVE', activeCampaign.cities).catch(
+        (err) => req.log.error({ err, campaignId: id }, 'Failed to schedule capture cron')
+      );
+
       return reply.code(200).send(activeCampaign);
     } catch (err) {
       req.log.error({ err, id }, 'Failed to resume campaign');
@@ -300,6 +311,11 @@ export const campaignRoutes: FastifyPluginAsync = async (app) => {
           archivedAt: new Date(),
         },
       });
+
+      // Remove capture cron for archived campaign
+      syncCampaignCaptureSchedule(tenantId, id, 'ARCHIVED', []).catch(
+        (err) => req.log.error({ err, campaignId: id }, 'Failed to remove capture cron')
+      );
 
       return reply.code(204).send();
     } catch (err) {

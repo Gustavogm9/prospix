@@ -84,6 +84,66 @@ export async function upsertTenantJobScheduler<TPayload>(
   }
 }
 
+export async function removeTenantJobScheduler(
+  tenantId: string,
+  workerName: string,
+  schedulerId: string
+): Promise<void> {
+  const queue = createTenantQueue<any>(tenantId, workerName);
+
+  try {
+    await queue.removeJobScheduler(schedulerId);
+    logger.info(
+      {
+        queue: getTenantQueueName(tenantId, workerName),
+        worker: workerName,
+        scheduler_id: schedulerId,
+      },
+      'queue:scheduler-removed'
+    );
+  } catch (err: any) {
+    // Ignore "not found" — scheduler may not exist yet
+    if (!err.message?.includes('Missing')) {
+      throw err;
+    }
+    logger.debug({ schedulerId }, 'Scheduler not found for removal (already absent)');
+  } finally {
+    await queue.close();
+  }
+}
+
+/**
+ * Syncs the capture-google-maps cron for a campaign.
+ * When the campaign is ACTIVE with cities → upsert a repeating schedule (every 6 hours BRT).
+ * Otherwise → remove the schedule.
+ */
+export async function syncCampaignCaptureSchedule(
+  tenantId: string,
+  campaignId: string,
+  status: string,
+  cities: string[]
+): Promise<void> {
+  const schedulerId = `capture-google-maps:${campaignId}`;
+  const isActive = status === 'ACTIVE' && cities.length > 0;
+
+  if (isActive) {
+    await upsertTenantJobScheduler(tenantId, {
+      workerName: 'capture-google-maps',
+      schedulerId,
+      jobName: 'capture-google-maps',
+      pattern: '0 */6 * * *', // every 6 hours: 00:00, 06:00, 12:00, 18:00
+      timezone: 'America/Sao_Paulo',
+      data: {
+        tenant_id: tenantId,
+        campaign_id: campaignId,
+        trace_id: `scheduler:capture:${campaignId}`,
+      },
+    });
+  } else {
+    await removeTenantJobScheduler(tenantId, 'capture-google-maps', schedulerId);
+  }
+}
+
 export interface QueueFailureObserver {
   close(): Promise<void>;
 }

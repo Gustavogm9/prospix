@@ -1,7 +1,7 @@
 import { createDedicatedRedisConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { prisma } from '../lib/prisma.js';
-import { createTenantQueue, getTenantQueueName, observeQueueFailures, upsertTenantJobScheduler } from '../lib/queue.js';
+import { createTenantQueue, getTenantQueueName, observeQueueFailures, upsertTenantJobScheduler, syncCampaignCaptureSchedule } from '../lib/queue.js';
 import type { QueueFailureObserver, TenantJobSchedule } from '../lib/queue.js';
 import { Worker } from 'bullmq';
 import { ProcessInboundWorker } from './process-inbound.js';
@@ -271,6 +271,18 @@ export async function startWorkers() {
 
     logger.info({ count: tenants.length }, `🏢 Enqueuing initial health checks for active tenants...`);
     await scheduleRecurringTenantJobs(tenants);
+
+    // Schedule capture crons for all existing active campaigns with cities
+    const activeCampaigns = await prisma.campaign.findMany({
+      where: { status: 'ACTIVE' },
+      select: { id: true, tenantId: true, cities: true },
+    });
+
+    const campaignsWithCities = activeCampaigns.filter(c => c.cities && c.cities.length > 0);
+    logger.info({ count: campaignsWithCities.length }, '🗺️ Scheduling capture crons for active campaigns...');
+    for (const campaign of campaignsWithCities) {
+      await syncCampaignCaptureSchedule(campaign.tenantId, campaign.id, 'ACTIVE', campaign.cities);
+    }
 
     // Global scheduler · alert-scan diário 08:15 BRT (após daily-digest 08:00 settle)
     await upsertTenantJobScheduler('global', {
