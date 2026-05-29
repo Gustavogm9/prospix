@@ -130,6 +130,7 @@ export default function Home() {
         toast.error('Erro de Conexão', 'Não foi possível carregar o dashboard.');
       } finally {
         setIsLoading(false);
+      }
     };
 
     fetchDashboardData();

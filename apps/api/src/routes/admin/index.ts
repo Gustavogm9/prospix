@@ -21,6 +21,7 @@ import { registerAdminMeetingsRoutes } from './meetings.js';
 import { registerAdminCampaignsRoutes } from './campaigns.js';
 import { registerAdminReferralsRoutes } from './referrals.js';
 import { registerAdminLeadSourcesRoutes } from './lead-sources.js';
+import { registerAdminPerformanceRoutes } from './performance.js';
 
 type AdminTransaction = Prisma.TransactionClient;
 
@@ -187,6 +188,7 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
   registerAdminCampaignsRoutes(app);
   registerAdminReferralsRoutes(app);
   registerAdminLeadSourcesRoutes(app);
+  registerAdminPerformanceRoutes(app);
 
   // =============================================================================
   // D8: CRUD /v1/admin/tenants

@@ -28,6 +28,7 @@ import CampaignMonitor from './pages/CampaignMonitor';
 import PipelineMonitor from './pages/PipelineMonitor';
 import ReferralMonitor from './pages/ReferralMonitor';
 import LeadSourcesMonitor from './pages/LeadSourcesMonitor';
+import Performance from './pages/Performance';
 import './index.css';
 
 // Protected Admin Route checking adminToken and session
@@ -105,6 +106,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="pipeline" element={<PipelineMonitor />} />
           <Route path="indicacoes" element={<ReferralMonitor />} />
           <Route path="fontes" element={<LeadSourcesMonitor />} />
+          <Route path="performance" element={<Performance />} />
         </Route>
 
         {/* Catch-all Fallback */}

@@ -28,6 +28,7 @@ import {
   GitBranch,
   Share2,
   MapPin,
+  TrendingUp,
 } from 'lucide-react';
 import { Avatar, Dropdown, DropdownItem } from '@prospix/ui';
 import { GlobalSearch } from './GlobalSearch';
@@ -72,6 +73,7 @@ export default function AdminShell() {
         { name: 'Observabilidade', path: '/observabilidade', icon: Activity, permission: 'dlq.manage' },
         { name: 'Discovery', path: '/discovery', icon: Compass, permission: 'discovery.promote' },
         { name: 'Audit Log', path: '/audit', icon: History, permission: 'audit.view' },
+        { name: 'Performance', path: '/performance', icon: TrendingUp },
       ],
     },
     {

@@ -19,7 +19,6 @@
     "@hookform/resolvers": "^3.9.1",
     "@prospix/shared-types": "workspace:*",
     "@prospix/ui": "workspace:*",
-    "@supabase/supabase-js": "^2.46.1",
     "@tanstack/react-query": "^5.62.0",
     "axios": "^1.16.1",
     "lucide-react": "^0.460.0",
