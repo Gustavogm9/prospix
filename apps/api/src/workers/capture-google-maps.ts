@@ -6,6 +6,7 @@ import { logger } from '../lib/logger.js';
 import { env } from '../config/env.js';
 import { searchPlaces } from '../integrations/google-maps.js';
 import { getDecryptedSecrets } from '../tenant/secrets-vault.js';
+import { createTenantQueue } from '../lib/queue.js';
 import { BaseJobPayload } from '@prospix/shared-types';
 import { LeadSource, LeadStatus } from '@prisma/client';
 import dayjs from 'dayjs';
@@ -301,6 +302,26 @@ export class CaptureGoogleMapsWorker extends BaseWorker<CaptureJobPayload, Captu
         { campaignId, captured: totalCaptured, skipped: totalSkipped, calls: googleMapsCalls },
         'Capture google maps finished successfully'
       );
+
+      // 9. Enqueue enrich-leads job to calculate fit scores and validate WhatsApp
+      if (totalCaptured > 0) {
+        try {
+          const enrichQueue = createTenantQueue(tenantId, 'enrich-leads');
+          await enrichQueue.add(
+            'enrich-leads',
+            {
+              tenant_id: tenantId,
+              trace_id: `capture-to-enrich:${campaignId}:${dayjs().format('YYYY-MM-DD-HH')}`,
+            },
+            { delay: 5000 } // 5s delay to let DB transaction settle
+          );
+          await enrichQueue.close();
+          logger.info({ tenantId, campaignId, captured: totalCaptured }, 'Enqueued enrich-leads job for captured leads');
+        } catch (enrichErr) {
+          logger.error({ err: enrichErr, tenantId, campaignId }, 'Failed to enqueue enrich-leads job');
+          // Don't fail the capture job because of enrich queue issue
+        }
+      }
 
       return {
         captured: totalCaptured,
