@@ -137,7 +137,8 @@ export class CaptureGoogleMapsWorker extends BaseWorker<CaptureJobPayload, Captu
       }
 
       // 5. Build queries: multiple keywords × cities × neighborhoods
-      const keywords = PROFESSION_QUERY_KEYWORDS[campaign.profession] ?? PROFESSION_QUERY_KEYWORDS['OTHER']!;
+      const DEFAULT_KEYWORDS: string[] = ['empresa', 'escritório', 'profissional'];
+      const keywords = PROFESSION_QUERY_KEYWORDS[campaign.profession] ?? DEFAULT_KEYWORDS;
       const queries: string[] = [];
 
       for (const keyword of keywords) {
