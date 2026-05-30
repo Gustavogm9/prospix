@@ -186,12 +186,15 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       });
 
       const counts = {
+        CAPTURED: 0,
+        ENRICHED: 0,
         NEW: 0,
         CONTACTED: 0,
         QUALIFIED: 0,
         NEGOTIATING: 0,
         CLOSED_WON: 0,
         CLOSED_LOST: 0,
+        ARCHIVED: 0,
       };
 
       let totalLeads = 0;
@@ -199,8 +202,8 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
         const status = group.status as keyof typeof counts;
         if (status in counts) {
           counts[status] = group._count.id;
-          totalLeads += group._count.id;
         }
+        totalLeads += group._count.id;
       });
 
       // Calculate conversion rates

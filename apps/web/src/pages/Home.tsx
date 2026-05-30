@@ -76,7 +76,7 @@ export default function Home() {
 
         // Convert funnel stages to chart format
         const funnelData: DashboardStats['funnelData'] = funnelRaw?.stages ? [
-          { stage: 'Novos', value: funnelRaw.stages.NEW || 0, color: '#1B3A6B' },
+          { stage: 'Capturados', value: (funnelRaw.stages.CAPTURED || 0) + (funnelRaw.stages.ENRICHED || 0) + (funnelRaw.stages.NEW || 0), color: '#94A3B8' },
           { stage: 'Contatados', value: funnelRaw.stages.CONTACTED || 0, color: '#3b82f6' },
           { stage: 'Qualificados', value: funnelRaw.stages.QUALIFIED || 0, color: '#6366f1' },
           { stage: 'Negociação', value: funnelRaw.stages.NEGOTIATING || 0, color: '#06b6d4' },
