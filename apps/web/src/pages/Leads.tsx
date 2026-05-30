@@ -11,7 +11,7 @@ interface Lead {
   name: string;
   phone: string;
   company: string;
-  faturamento: string;
+  googleRating: string;
   fitScore: number;
   city: string;
   status: string;
@@ -19,21 +19,28 @@ interface Lead {
   profession?: string;
 }
 
+const PROFESSION_LABELS: Record<string, string> = {
+  DOCTOR: 'Médico(a)', LAWYER: 'Advogado(a)', DENTIST: 'Dentista',
+  ENTREPRENEUR: 'Empresário(a)', ENGINEER: 'Engenheiro(a)',
+  ARCHITECT: 'Arquiteto(a)', ACCOUNTANT: 'Contador(a)', OTHER: 'Outro',
+};
+
 const mapBackendLead = (lead: any): Lead => {
-  const metadata = lead.metadata || {};
+  const metadata = (lead.metadata || {}) as Record<string, any>;
   const address = lead.address || {};
+  const rawData = (lead.sourceRawData || {}) as Record<string, any>;
 
   return {
     id: lead.id,
     name: lead.name || 'Sem nome',
     phone: lead.whatsapp || '',
-    company: metadata.company || lead.name || 'N/A',
-    faturamento: metadata.faturamento || 'N/A',
+    company: metadata.cnpj_info?.nomeFantasia || metadata.cnpj_info?.razaoSocial || rawData.name || lead.name || '',
+    googleRating: lead.googleRating ? `⭐ ${Number(lead.googleRating).toFixed(1)}` : '—',
     fitScore: Number(lead.fitScore) || 0,
-    city: address.city || 'N/A',
-    status: lead.status || 'N/A',
-    createdAt: lead.createdAt ? new Date(lead.createdAt).toLocaleDateString('pt-BR') : 'N/A',
-    profession: metadata.profession || '',
+    city: address.city || '—',
+    status: lead.status || '—',
+    createdAt: lead.createdAt ? new Date(lead.createdAt).toLocaleDateString('pt-BR') : '—',
+    profession: lead.profession ? (PROFESSION_LABELS[lead.profession] || lead.profession) : '',
   };
 };
 
@@ -74,9 +81,9 @@ export default function Leads() {
     }
 
     const escapeCsv = (value: string | number) => `"${String(value ?? '').replace(/"/g, '""')}"`;
-    const headers = ['ID', 'Empresa', 'Lead', 'Telefone', 'Faturamento', 'Fit Score', 'Cidade', 'Status', 'Cadastro'];
+    const headers = ['ID', 'Empresa', 'Lead', 'Telefone', 'Avaliação Google', 'Fit Score', 'Cidade', 'Status', 'Cadastro'];
     const rows = leads.map((lead) => [
-      lead.id, lead.company, lead.name, lead.phone, lead.faturamento, lead.fitScore, lead.city, lead.status, lead.createdAt,
+      lead.id, lead.company, lead.name, lead.phone, lead.googleRating, lead.fitScore, lead.city, lead.status, lead.createdAt,
     ]);
     const csv = [headers, ...rows].map((row) => row.map(escapeCsv).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -304,7 +311,7 @@ export default function Leads() {
               <div className="space-y-3 text-xs">
                 <div className="flex items-center gap-3"><User className="w-4 h-4 text-text-secondary shrink-0" /><div><p className="text-[10px] text-text-secondary mb-0.5">Representante</p><p className="text-text font-medium">{selectedLead.name}</p></div></div>
                 <div className="flex items-center gap-3"><Phone className="w-4 h-4 text-text-secondary shrink-0" /><div><p className="text-[10px] text-text-secondary mb-0.5">WhatsApp</p><p className="text-text font-mono font-medium">{selectedLead.phone}</p></div></div>
-                <div className="flex items-center gap-3"><DollarSign className="w-4 h-4 text-text-secondary shrink-0" /><div><p className="text-[10px] text-text-secondary mb-0.5">Faturamento</p><p className="text-text font-medium">{selectedLead.faturamento}</p></div></div>
+                <div className="flex items-center gap-3"><DollarSign className="w-4 h-4 text-text-secondary shrink-0" /><div><p className="text-[10px] text-text-secondary mb-0.5">Avaliação Google</p><p className="text-text font-medium">{selectedLead.googleRating}</p></div></div>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">

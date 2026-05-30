@@ -77,7 +77,7 @@ const mapBackendMeeting = (meeting: any): Meeting => {
     leadName: lead.name || meeting.leadName || 'Sem lead',
     phone: lead.whatsapp || meeting.phone || '',
     email: lead.email || meeting.email || '',
-    company: lead.metadata?.company || meeting.company || 'N/A',
+    company: lead.metadata?.cnpj_info?.nomeFantasia || lead.metadata?.cnpj_info?.razaoSocial || (lead.sourceRawData as any)?.name || lead.name || meeting.company || '',
     dayOfWeek,
     timeSlot,
     durationMin: meeting.durationMinutes || meeting.duration_minutes || meeting.durationMin || meeting.duration_min || 30,
@@ -151,7 +151,7 @@ export default function Schedule() {
       const options = (list || []).map((lead: any) => ({
         id: lead.id,
         name: lead.name || 'Sem nome',
-        company: lead.metadata?.company || lead.name || 'N/A',
+        company: lead.metadata?.cnpj_info?.nomeFantasia || lead.metadata?.cnpj_info?.razaoSocial || (lead.sourceRawData as any)?.name || lead.name || '',
         whatsapp: lead.whatsapp || '',
       }));
       setLeadOptions(options);

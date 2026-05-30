@@ -20,12 +20,12 @@ interface LeadCard {
 const AVATAR_COLORS = ['#1B3A6B', '#5A2A82', '#B8740E', '#075E54', '#9E2A2B', '#1F4E5F', '#374151'];
 
 const COLUMNS = [
-  { id: 'capturado', name: 'Capturado', color: '#94A3B8', count: 312 },
-  { id: 'contatado', name: '1ª mensagem enviada', color: '#0EA5E9', count: 156 },
-  { id: 'qualificado', name: 'Em conversa com IA', color: '#E8981C', count: 89 },
-  { id: 'agendado', name: 'Aguardando você', color: '#F79009', count: 3 },
-  { id: 'negociacao', name: 'Reunião agendada', color: '#039855', count: 23 },
-  { id: 'fechado', name: 'Apólice fechada · mês', color: '#1B3A6B', count: 7 },
+  { id: 'capturado', name: 'Capturado', color: '#94A3B8' },
+  { id: 'contatado', name: '1ª mensagem enviada', color: '#0EA5E9' },
+  { id: 'qualificado', name: 'Em conversa com IA', color: '#E8981C' },
+  { id: 'agendado', name: 'Aguardando você', color: '#F79009' },
+  { id: 'negociacao', name: 'Reunião agendada', color: '#039855' },
+  { id: 'fechado', name: 'Apólice fechada · mês', color: '#1B3A6B' },
 ] as const;
 
 const STAGE_TO_STATUS: Record<LeadCard['stage'], string> = {
@@ -46,15 +46,22 @@ const STATUS_TO_STAGE: Record<string, LeadCard['stage']> = {
   CLOSED_WON: 'fechado',
 };
 
+const PROFESSION_LABELS_PIPE: Record<string, string> = {
+  DOCTOR: 'Médico(a)', LAWYER: 'Advogado(a)', DENTIST: 'Dentista',
+  ENTREPRENEUR: 'Empresário(a)', ENGINEER: 'Engenheiro(a)',
+  ARCHITECT: 'Arquiteto(a)', ACCOUNTANT: 'Contador(a)', OTHER: 'Outro',
+};
+
 const mapBackendLeadToCard = (lead: any): LeadCard => {
-  const metadata = lead.metadata || {};
+  const metadata = (lead.metadata || {}) as Record<string, any>;
+  const rawData = (lead.sourceRawData || {}) as Record<string, any>;
   const stage = STATUS_TO_STAGE[lead.status] || 'capturado';
   return {
     id: lead.id,
     name: lead.name || 'Sem nome',
     phone: lead.whatsapp || '',
-    company: metadata.company || lead.name || 'N/A',
-    profession: metadata.profession || metadata.company || '',
+    company: metadata.cnpj_info?.nomeFantasia || metadata.cnpj_info?.razaoSocial || rawData.name || lead.name || '',
+    profession: lead.profession ? (PROFESSION_LABELS_PIPE[lead.profession] || lead.profession) : '',
     fitScore: Number(lead.fitScore) || 0,
     stage,
     when: lead.createdAt ? new Date(lead.createdAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '',
@@ -174,7 +181,7 @@ export default function Pipeline() {
       <div className="flex-1 flex gap-3 overflow-x-auto pb-4 items-stretch select-none snap-x snap-mandatory scroll-pl-2.5">
         {COLUMNS.map((column) => {
           const columnLeads = leads.filter(l => l.stage === column.id);
-          const count = columnLeads.length || column.count;
+          const count = columnLeads.length;
           const isWarning = column.id === 'agendado';
 
           return (
