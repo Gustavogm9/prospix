@@ -72,8 +72,8 @@ export const BarChart = ({ items, maxVal, className }: BarChartProps) => {
                 {item.value}
               </div>
               <div
-                className={cn('w-8 sm:w-12 rounded-t shadow-sm transition-all', item.color || 'bg-primary')}
-                style={{ height: heightPercent }}
+                className={cn('w-8 sm:w-12 rounded-t shadow-sm transition-all', !item.color && 'bg-primary')}
+                style={{ height: heightPercent, backgroundColor: item.color || undefined, minHeight: item.value > 0 ? '4px' : '0px' }}
               />
             </div>
             <span className="text-2xs text-text-secondary text-center truncate w-full">{item.label}</span>
