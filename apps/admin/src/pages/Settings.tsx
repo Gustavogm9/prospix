@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { useAdminAuthStore } from '../store/admin-auth-store';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:3000').replace(/\/v1\/?$/, '');
 const ENV_MODE = import.meta.env.MODE;
 
 const PLANS = [
