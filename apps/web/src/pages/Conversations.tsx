@@ -16,6 +16,7 @@ interface Message {
 
 interface Conversation {
   id: string;
+  leadId: string;
   leadName: string;
   aiHandling: boolean;
   unread: boolean;
@@ -71,6 +72,7 @@ export default function Conversations() {
   const [outcomeValue, setOutcomeValue] = useState('');
   const [outcomeCommission, setOutcomeCommission] = useState('');
   const [drawerTab, setDrawerTab] = useState<'chat' | 'info' | 'health' | 'history'>('chat');
+  const [leadEvents, setLeadEvents] = useState<Array<{ id: string; eventType: string; payload: any; createdAt: string }>>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Helper to map DB Conversation to Web Frontend UI type
@@ -82,6 +84,7 @@ export default function Conversations() {
     const idx = index ?? 0;
     return {
       id: conv.id,
+      leadId: lead.id || conv.leadId || '',
       leadName: name,
       aiHandling: conv.aiHandling,
       lastMessage: conv.lastMessage || 'Nenhuma mensagem recebida.',
@@ -105,7 +108,7 @@ export default function Conversations() {
         faturamento: metadata.faturamento || 'N/A',
         susep: lead.registrationNumber || 'N/A',
         company: metadata.company || 'N/A',
-        health: metadata.health || 'Estável',
+        health: lead.firstResponseAt ? 'Ativo' : lead.contactedAt ? 'Aguardando' : 'Novo',
         priority: lead.fitScore >= 8.5 ? 'high' : lead.fitScore >= 6.0 ? 'medium' : 'low',
         tags: lead.tags || [],
         logs: [
@@ -238,6 +241,25 @@ export default function Conversations() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // Fetch real lead events when history tab is opened
+  useEffect(() => {
+    if (!selectedConv || drawerTab !== 'history') return;
+    if (!selectedConv.leadId) return;
+
+    const fetchEvents = async () => {
+      try {
+        const response = await apiClient.get(`/tenant/leads/${selectedConv.leadId}/events`);
+        const events = response.data?.data || [];
+        setLeadEvents(events);
+      } catch (err) {
+        console.error('Error fetching lead events:', err);
+        setLeadEvents([]);
+      }
+    };
+
+    fetchEvents();
+  }, [selectedConv?.leadId, drawerTab]);
+
   const handleTakeover = async () => {
     if (!selectedConv) return;
     
@@ -343,11 +365,11 @@ export default function Conversations() {
     }
   };
 
-  // Computed counts for toolbar
-  const totalCount = conversations.length || 89;
-  const hotCount = conversations.filter(c => c.fitScore >= 9.0).length || 12;
-  const waitCount = conversations.filter(c => c.tagType === 'warning' || c.unread).length || 3;
-  const scheduledCount = conversations.filter(c => c.tagType === 'success').length || 23;
+  // Computed counts for toolbar (real data only, zero is real)
+  const totalCount = conversations.length;
+  const hotCount = conversations.filter(c => c.fitScore >= 9.0).length;
+  const waitCount = conversations.filter(c => c.tagType === 'warning' || c.unread).length;
+  const scheduledCount = conversations.filter(c => c.tagType === 'success').length;
 
   // Filtered conversations
   const filteredConversations = conversations.filter(c => {
@@ -868,47 +890,94 @@ export default function Conversations() {
                 </div>
               </div>
             ) : (
-              /* Histórico pane */
+              /* Histórico pane — real events from API */
               <div className="flex-1 overflow-y-auto p-5" style={{ background: '#F7F8FA' }}>
                 <h4 className="text-[11px] uppercase tracking-wider text-[#94A3B8] font-semibold mb-3">
                   Timeline de Eventos
                 </h4>
-                <div className="relative border-l-2 border-[#E5E7EB] pl-4 space-y-4">
-                  {selectedConv.details.logs.map((log, idx) => (
-                    <div key={idx} className="relative text-xs">
-                      <div className={`absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full border-2 border-white ${
-                        idx === 0 ? 'bg-[#1B3A6B]' : 'bg-[#E5E7EB]'
-                      }`} />
-                      <div className="bg-white p-3 rounded-lg border border-[#E5E7EB]">
-                        <p className="text-[#0F172A] font-medium">{log.action}</p>
-                        <span className="text-[9px] text-[#94A3B8] font-mono flex items-center gap-1 mt-1">
-                          <Clock className="w-2.5 h-2.5" />
-                          {log.time}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
 
-                  {/* Static entries based on conversation data */}
-                  {selectedConv.aiHandling && (
-                    <div className="relative text-xs">
-                      <div className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-[#E8981C] border-2 border-white animate-pulse" />
-                      <div className="bg-white p-3 rounded-lg border border-[#E8981C]/30">
-                        <p className="text-[#A56B0A] font-medium">IA conversando agora</p>
-                        <span className="text-[9px] text-[#94A3B8] font-mono flex items-center gap-1 mt-1">
-                          <Clock className="w-2.5 h-2.5" />
-                          em andamento
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                {(() => {
+                  // Map event types to readable labels
+                  const eventLabels: Record<string, string> = {
+                    lead_captured: 'Lead capturado pelo Google Maps',
+                    lead_enriched: 'Dados enriquecidos automaticamente',
+                    status_changed: 'Status atualizado',
+                    conversation_started: 'Conversa iniciada',
+                    message_sent: 'Mensagem enviada',
+                    message_received: 'Resposta recebida do lead',
+                    meeting_scheduled: 'Reunião agendada',
+                    meeting_completed: 'Reunião realizada',
+                    meeting_cancelled: 'Reunião cancelada',
+                    fit_score_calculated: 'Fit Score calculado',
+                    whatsapp_validated: 'WhatsApp validado',
+                    ai_takeover: 'IA assumiu a conversa',
+                    manual_takeover: 'Operador assumiu a conversa',
+                    escalated: 'Conversa escalada para humano',
+                  };
 
-                {selectedConv.details.logs.length === 0 && !selectedConv.aiHandling && (
-                  <div className="text-center py-8 text-[12px] text-[#94A3B8]">
-                    Nenhum evento registrado ainda.
-                  </div>
-                )}
+                  // Combine API events with base fallback events  
+                  const allEvents = leadEvents.length > 0
+                    ? leadEvents
+                    : selectedConv.details.logs.map((log, i) => ({
+                        id: `fallback-${i}`,
+                        eventType: i === 0 ? 'lead_captured' : 'conversation_started',
+                        payload: null,
+                        createdAt: log.time,
+                      }));
+
+                  return (
+                    <>
+                      <div className="relative border-l-2 border-[#E5E7EB] pl-4 space-y-4">
+                        {allEvents.map((evt, idx) => {
+                          const label = eventLabels[evt.eventType] || evt.eventType.replace(/_/g, ' ');
+                          const statusPayload = evt.payload as any;
+                          const detail = statusPayload?.new_status || statusPayload?.source || null;
+                          const timeStr = evt.createdAt.includes('T')
+                            ? new Date(evt.createdAt).toLocaleString('pt-BR')
+                            : evt.createdAt;
+
+                          return (
+                            <div key={evt.id} className="relative text-xs">
+                              <div className={`absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full border-2 border-white ${
+                                idx === 0 ? 'bg-[#1B3A6B]' : 'bg-[#E5E7EB]'
+                              }`} />
+                              <div className="bg-white p-3 rounded-lg border border-[#E5E7EB]">
+                                <p className="text-[#0F172A] font-medium">{label}</p>
+                                {detail && (
+                                  <p className="text-[10px] text-[#475569] mt-0.5">{detail}</p>
+                                )}
+                                <span className="text-[9px] text-[#94A3B8] font-mono flex items-center gap-1 mt-1">
+                                  <Clock className="w-2.5 h-2.5" />
+                                  {timeStr}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+
+                        {/* Live AI indicator */}
+                        {selectedConv.aiHandling && (
+                          <div className="relative text-xs">
+                            <div className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-[#E8981C] border-2 border-white animate-pulse" />
+                            <div className="bg-white p-3 rounded-lg border border-[#E8981C]/30">
+                              <p className="text-[#A56B0A] font-medium">IA conversando agora</p>
+                              <span className="text-[9px] text-[#94A3B8] font-mono flex items-center gap-1 mt-1">
+                                <Clock className="w-2.5 h-2.5" />
+                                em andamento
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {allEvents.length === 0 && !selectedConv.aiHandling && (
+                        <div className="text-center py-8 text-[12px] text-[#94A3B8]">
+                          Nenhum evento registrado ainda.
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             )}
 

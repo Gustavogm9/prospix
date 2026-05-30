@@ -792,5 +792,51 @@ Lembre-se de utilizar ganchos conversacionais de alto impacto. Retorne apenas o 
       return reply.code(500).send({ error: 'Internal Server Error', message: 'Failed to test script.' });
     }
   });
+  // ── 15. GET /v1/tenant/leads/:id/events ──────────────────────────────────────
+  app.get('/leads/:id/events', async (req: FastifyRequest, reply: FastifyReply) => {
+    const paramsParsed = idParamSchema.safeParse(req.params);
+    if (!paramsParsed.success) {
+      return reply.code(400).send({ error: 'Validation Error', message: paramsParsed.error.errors[0]?.message });
+    }
+    const { id } = paramsParsed.data;
+
+    try {
+      // Verify lead belongs to tenant
+      const lead = await prisma.lead.findFirst({
+        where: { id, tenantId: req.tenantId!, deletedAt: null },
+        select: { id: true },
+      });
+
+      if (!lead) {
+        return reply.code(404).send({ error: 'Not Found', message: 'Lead not found' });
+      }
+
+      const events = await prisma.leadEvent.findMany({
+        where: { tenantId: req.tenantId!, leadId: id },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+        select: {
+          id: true,
+          eventType: true,
+          payload: true,
+          actorId: true,
+          createdAt: true,
+        },
+      });
+
+      return reply.code(200).send({
+        data: events.map((e) => ({
+          id: String(e.id),
+          eventType: e.eventType,
+          payload: e.payload,
+          actorId: e.actorId,
+          createdAt: e.createdAt.toISOString(),
+        })),
+      });
+    } catch (err) {
+      req.log.error({ err, leadId: id }, 'Failed to list lead events');
+      return reply.code(500).send({ error: 'Internal Server Error', message: 'Failed to fetch lead events.' });
+    }
+  });
 };
 export default tenantRoutes;
