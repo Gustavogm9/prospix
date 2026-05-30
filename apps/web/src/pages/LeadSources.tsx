@@ -34,7 +34,7 @@ export default function LeadSources() {
         setSources(camps.map((c: any) => ({
           id: c.id,
           name: c.name,
-          description: `${c.cities?.join(', ') || 'N/A'} · Meta: ${c.dailyLimit}/dia`,
+          description: `${c.cities?.join(', ') || '—'} · Meta: ${c.dailyLimit}/dia`,
           profession: c.profession || 'OTHER',
           cities: c.cities || [],
           status: c.status,

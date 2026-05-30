@@ -26,7 +26,7 @@ export default function AIConsumption() {
         setData({
           llm_cost_cents: 0, whatsapp_cost_cents: 0, maps_cost_cents: 0,
           total_costs_cents: 0,
-          limit: { max_limit_cents: 50000, used_percent: 0, remaining_cents: 50000 }
+          limit: { max_limit_cents: 0, used_percent: 0, remaining_cents: 0 }
         });
       });
   }, []);
@@ -52,12 +52,12 @@ export default function AIConsumption() {
           <div>
           <div className="text-[14px] font-semibold text-[#0F172A]">Consumo do mês</div>
             <div className="text-[11px] text-[#94A3B8] mt-0.5">
-              {new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })} · plano inclui {fmt(data?.limit?.max_limit_cents ?? 50000)}
+              {new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })} · plano inclui {fmt(data?.limit?.max_limit_cents ?? 0)}
             </div>
           </div>
           <div className="text-right">
             <div className="text-[22px] font-bold text-[#0F172A] font-mono">{fmt(data?.total_costs_cents ?? 0)}</div>
-            <div className="text-[11px] text-[#94A3B8]">de {fmt(data?.limit?.max_limit_cents ?? 50000)}</div>
+            <div className="text-[11px] text-[#94A3B8]">de {fmt(data?.limit?.max_limit_cents ?? 0)}</div>
           </div>
         </div>
         <div className="h-3 bg-[#F1F3F6] rounded-full overflow-hidden">
@@ -68,7 +68,7 @@ export default function AIConsumption() {
         </div>
         <div className="flex justify-between mt-1.5 text-[10.5px] text-[#94A3B8] font-mono">
           <span>{(data?.limit?.used_percent ?? 0).toFixed(1)}% usado</span>
-          <span>Restante: {fmt(data?.limit?.remaining_cents ?? 50000)}</span>
+          <span>Restante: {fmt(data?.limit?.remaining_cents ?? 0)}</span>
         </div>
         {(data?.limit?.used_percent ?? 0) > 80 && (
           <div className="mt-2 flex items-center gap-2 px-3 py-2 bg-[#FEF3F2] border border-[rgba(217,45,32,0.2)] rounded-lg text-[11.5px] text-[#D92D20]">

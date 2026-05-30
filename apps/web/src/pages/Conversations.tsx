@@ -689,7 +689,7 @@ export default function Conversations() {
                     {selectedConv.profession && <span>{selectedConv.profession}</span>}
                     {selectedConv.details.city && selectedConv.profession && <span className="text-[#CBD5E1]">·</span>}
                     {selectedConv.details.city && <span>{selectedConv.details.city}</span>}
-                    {selectedConv.details.susep && selectedConv.details.susep !== 'N/A' && (
+                    {selectedConv.details.susep && (
                       <>
                         <span className="text-[#CBD5E1]">·</span>
                         <span className="font-mono text-[11px]">{selectedConv.details.susep}</span>

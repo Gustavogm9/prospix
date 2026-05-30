@@ -386,7 +386,7 @@ export default function Scripts() {
                     ? baseMessage
                         .replace('[Nome]', 'Dr. Ricardo')
                         .replace('[Empresa]', 'Clínica OrthoLife')
-                        .replace('[Cidade]', 'São Paulo')
+                        .replace('[Cidade]', 'sua cidade')
                     : <span className="text-[#94A3B8] italic">Escreva a mensagem base para visualizar a prévia aqui...</span>
                   }
                 </div>
