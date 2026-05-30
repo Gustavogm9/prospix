@@ -48,12 +48,12 @@ const envSchema = z.object({
   GOOGLE_MAPS_API_KEY: z.string().default(''),
 
   // Asaas integration
-  ASAAS_API_KEY: z.string().default('mock-asaas-key'),
+  ASAAS_API_KEY: z.string().default(''),
   ASAAS_BASE_URL: z.string().url().default('https://sandbox.asaas.com/v3'),
   ASAAS_WEBHOOK_SECRET: z.string().default('mock-asaas-webhook-secret'),
 
   // Resend integration
-  RESEND_API_KEY: z.string().default('mock-resend-key'),
+  RESEND_API_KEY: z.string().default(''),
 
   // Cloudflare R2 storage (AUD-P2-033 fulfillment · LGPD export uploads)
   // Aceita string vazia como undefined (env vars unset em .env podem vir como '')
