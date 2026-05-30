@@ -349,7 +349,7 @@ export default function Home() {
                   <div className="flex-1 min-w-0">
                     <div className="text-[13px] font-semibold text-[#0F172A] flex items-center gap-2 flex-wrap">
                       {lead.name}
-                      <span className={`text-[10.5px] font-semibold px-1.5 py-0.5 rounded-full ${statusInfo.cls}`}>{statusInfo.label}</span>
+                      <span className={`text-[10.5px] font-semibold px-1.5 py-0.5 rounded-full ${statusInfo?.cls ?? ''}`}>{statusInfo?.label ?? lead.status}</span>
                     </div>
                     <div className="text-[11.5px] text-[#475569] flex items-center gap-2 flex-wrap">
                       {profLabel && <span>{profLabel}</span>}
