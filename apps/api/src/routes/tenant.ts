@@ -129,7 +129,7 @@ export const tenantRoutes: FastifyPluginAsync = async (app) => {
         skip: cursor ? 1 : 0,
         cursor: cursor ? { id: cursor } : undefined,
         where: { tenantId: req.tenantId! },
-        include: { lead: true },
+        include: { lead: { include: { healthProfile: true } } },
         orderBy: { lastMessageAt: 'desc' },
       });
 

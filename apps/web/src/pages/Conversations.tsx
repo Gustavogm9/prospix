@@ -35,13 +35,24 @@ interface Conversation {
   details: {
     phone: string;
     city: string;
-    faturamento: string;
+    googleRating: number | null;
+    googleReviewsCount: number | null;
     susep: string;
     company: string;
     health: string;
     priority: 'high' | 'medium' | 'low';
     tags: string[];
     logs: Array<{ action: string; time: string }>;
+    healthProfile: {
+      smoker: boolean | null;
+      physicalActivity: string | null;
+      bmiCalculated: number | null;
+      preExistingDiseases: string | null;
+      continuousMedication: string | null;
+      riskCategory: string | null;
+      estimatedPremiumMinCents: number | null;
+      estimatedPremiumMaxCents: number | null;
+    } | null;
   };
 }
 
@@ -49,6 +60,17 @@ interface Conversation {
 const AVATAR_COLORS = [
   '#1B3A6B', '#5A2A82', '#B8740E', '#075E54', '#9E2A2B', '#1F4E5F', '#374151',
 ];
+
+const PROFESSION_LABELS: Record<string, string> = {
+  DOCTOR: 'Médico(a)',
+  LAWYER: 'Advogado(a)',
+  DENTIST: 'Dentista',
+  ENTREPRENEUR: 'Empresário(a)',
+  ENGINEER: 'Engenheiro(a)',
+  ARCHITECT: 'Arquiteto(a)',
+  ACCOUNTANT: 'Contador(a)',
+  OTHER: 'Outro',
+};
 
 function getInitials(name: string): string {
   return name.split(' ').map(n => n[0]).filter((c): c is string => Boolean(c)).slice(0, 2).join('').toUpperCase();
@@ -78,10 +100,22 @@ export default function Conversations() {
   // Helper to map DB Conversation to Web Frontend UI type
   const mapBackendConversation = (conv: any, index?: number): Conversation => {
     const lead = conv.lead || {};
-    const city = lead.address?.city || 'São Paulo - SP';
-    const metadata = lead.metadata || {};
+    const metadata = (lead.metadata || {}) as Record<string, any>;
     const name = lead.name || 'Sem nome';
     const idx = index ?? 0;
+
+    // Derive company from real data sources
+    const company = metadata.cnpj_info?.nomeFantasia
+      || metadata.cnpj_info?.razaoSocial
+      || (lead.sourceRawData as any)?.name
+      || '';
+
+    // Translate profession enum to PT-BR
+    const professionLabel = lead.profession ? (PROFESSION_LABELS[lead.profession] || lead.profession) : '';
+
+    // HealthProfile from backend include
+    const hp = lead.healthProfile || null;
+
     return {
       id: conv.id,
       leadId: lead.id || conv.leadId || '',
@@ -91,12 +125,12 @@ export default function Conversations() {
       timestamp: conv.lastMessageAt 
         ? new Date(conv.lastMessageAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) 
         : new Date(conv.startedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
-      fitScore: Number(lead.fitScore) || 5.0,
+      fitScore: Number(lead.fitScore) || 0,
       unread: conv.status === 'ACTIVE' && !conv.lastOutboundAt,
       meetingId: conv.meetings?.[0]?.id,
       initials: getInitials(name),
       avatarColor: getAvatarColor(idx),
-      profession: metadata.profession || lead.tags?.join(' · ') || '',
+      profession: professionLabel,
       tagType: conv.meetings?.[0] ? 'success' : conv.aiHandling ? 'live' : undefined,
       tagLabel: conv.meetings?.[0] ? '✓ Agendada' : conv.aiHandling ? 'IA respondendo' : undefined,
       whenLabel: conv.lastMessageAt 
@@ -104,17 +138,28 @@ export default function Conversations() {
         : new Date(conv.startedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
       details: {
         phone: lead.whatsapp || '',
-        city: city,
-        faturamento: metadata.faturamento || 'N/A',
-        susep: lead.registrationNumber || 'N/A',
-        company: metadata.company || 'N/A',
+        city: lead.address?.city || '',
+        googleRating: lead.googleRating ? Number(lead.googleRating) : null,
+        googleReviewsCount: lead.googleReviewsCount ?? null,
+        susep: lead.registrationNumber || '',
+        company,
         health: lead.firstResponseAt ? 'Ativo' : lead.contactedAt ? 'Aguardando' : 'Novo',
-        priority: lead.fitScore >= 8.5 ? 'high' : lead.fitScore >= 6.0 ? 'medium' : 'low',
+        priority: Number(lead.fitScore) >= 8.5 ? 'high' : Number(lead.fitScore) >= 6.0 ? 'medium' : 'low',
         tags: lead.tags || [],
         logs: [
           { action: 'Lead capturado', time: new Date(lead.createdAt).toLocaleString('pt-BR') },
           { action: 'Campanha iniciada', time: new Date(conv.startedAt).toLocaleString('pt-BR') }
-        ]
+        ],
+        healthProfile: hp ? {
+          smoker: hp.smoker,
+          physicalActivity: hp.physicalActivity,
+          bmiCalculated: hp.bmiCalculated ? Number(hp.bmiCalculated) : null,
+          preExistingDiseases: hp.preExistingDiseases,
+          continuousMedication: hp.continuousMedication,
+          riskCategory: hp.riskCategory,
+          estimatedPremiumMinCents: hp.estimatedPremiumMinCents,
+          estimatedPremiumMaxCents: hp.estimatedPremiumMaxCents,
+        } : null,
       }
     };
   };
@@ -789,8 +834,12 @@ export default function Conversations() {
                   <dd className={`font-bold font-mono ${
                     selectedConv.fitScore >= 8 ? 'text-[#039855]' : selectedConv.fitScore >= 5 ? 'text-[#A56B0A]' : 'text-[#94A3B8]'
                   }`}>{selectedConv.fitScore}</dd>
-                  <dt className="text-[#94A3B8]">Faturamento</dt>
-                  <dd className="text-[#0F172A] font-medium">{selectedConv.details.faturamento || '—'}</dd>
+                  <dt className="text-[#94A3B8]">Avaliação Google</dt>
+                  <dd className="text-[#0F172A] font-medium">
+                    {selectedConv.details.googleRating 
+                      ? `⭐ ${selectedConv.details.googleRating.toFixed(1)} (${selectedConv.details.googleReviewsCount || 0} avaliações)` 
+                      : '—'}
+                  </dd>
                 </div>
 
                 <h4 className="text-[11px] uppercase tracking-wider text-[#94A3B8] font-semibold mb-2 mt-4">
@@ -831,14 +880,14 @@ export default function Conversations() {
                 </div>
               </div>
             ) : drawerTab === 'health' ? (
-              /* Saúde pane */
+              /* Saúde pane — real HealthProfile data when available */
               <div className="flex-1 overflow-y-auto p-5" style={{ background: '#F7F8FA' }}>
                 <h4 className="text-[11px] uppercase tracking-wider text-[#94A3B8] font-semibold mb-3">
                   Indicadores de Engajamento
                 </h4>
                 <div className="space-y-2.5 mb-5">
                   {[
-                    { label: 'Respondeu à abordagem', value: selectedConv.details.health !== 'Inativo', positive: true },
+                    { label: 'Respondeu à abordagem', value: selectedConv.details.health === 'Ativo', positive: true },
                     { label: 'Conversa ativa', value: selectedConv.aiHandling, positive: true },
                     { label: 'Pediu ligação', value: selectedConv.tagType === 'warning', positive: null },
                     { label: 'Reunião agendada', value: selectedConv.tagType === 'success', positive: true },
@@ -846,10 +895,10 @@ export default function Conversations() {
                     <div key={idx} className="bg-white p-3 rounded-lg border border-[#E5E7EB] flex items-center gap-3">
                       <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[13px] ${
                         indicator.value 
-                          ? (indicator.positive ? 'bg-[#ECFDF3] text-[#039855]' : 'bg-[#FFFAEB] text-[#B54708]')
+                          ? (indicator.positive !== false ? 'bg-[#ECFDF3] text-[#039855]' : 'bg-[#FFFAEB] text-[#B54708]')
                           : 'bg-[#F1F3F6] text-[#94A3B8]'
                       }`}>
-                        {indicator.value ? (indicator.positive ? '✓' : '⚠') : '—'}
+                        {indicator.value ? (indicator.positive !== false ? '✓' : '⚠') : '—'}
                       </div>
                       <span className="text-[12.5px] text-[#0F172A] font-medium">{indicator.label}</span>
                       <span className={`ml-auto text-[11px] font-semibold ${
@@ -860,6 +909,56 @@ export default function Conversations() {
                     </div>
                   ))}
                 </div>
+
+                <h4 className="text-[11px] uppercase tracking-wider text-[#94A3B8] font-semibold mb-3">
+                  Pré-qualificação de Saúde
+                </h4>
+                {selectedConv.details.healthProfile ? (
+                  <div className="bg-white p-[12px_14px] rounded-lg border border-[#E5E7EB] grid grid-cols-1 sm:grid-cols-[140px_1fr] gap-x-3 gap-y-[5px] text-[12.5px] mb-4">
+                    <dt className="text-[#94A3B8]">Fumante</dt>
+                    <dd className="text-[#0F172A] font-medium">
+                      {selectedConv.details.healthProfile.smoker === true ? '🚬 Sim' : 
+                       selectedConv.details.healthProfile.smoker === false ? '✅ Não' : '—'}
+                    </dd>
+                    <dt className="text-[#94A3B8]">Atividade física</dt>
+                    <dd className="text-[#0F172A] font-medium">{selectedConv.details.healthProfile.physicalActivity || '—'}</dd>
+                    <dt className="text-[#94A3B8]">IMC</dt>
+                    <dd className="text-[#0F172A] font-medium font-mono">
+                      {selectedConv.details.healthProfile.bmiCalculated 
+                        ? selectedConv.details.healthProfile.bmiCalculated.toFixed(1) 
+                        : '—'}
+                    </dd>
+                    <dt className="text-[#94A3B8]">Doenças pré-existentes</dt>
+                    <dd className="text-[#0F172A] font-medium">{selectedConv.details.healthProfile.preExistingDiseases || '—'}</dd>
+                    <dt className="text-[#94A3B8]">Medicação contínua</dt>
+                    <dd className="text-[#0F172A] font-medium">{selectedConv.details.healthProfile.continuousMedication || '—'}</dd>
+                    <dt className="text-[#94A3B8]">Categoria de risco</dt>
+                    <dd className={`font-bold ${
+                      selectedConv.details.healthProfile.riskCategory === 'low' ? 'text-[#039855]' :
+                      selectedConv.details.healthProfile.riskCategory === 'medium' ? 'text-[#A56B0A]' :
+                      selectedConv.details.healthProfile.riskCategory === 'high' ? 'text-[#D92D20]' : 'text-[#0F172A]'
+                    }`}>{selectedConv.details.healthProfile.riskCategory || '—'}</dd>
+                    {selectedConv.details.healthProfile.estimatedPremiumMinCents && (
+                      <>
+                        <dt className="text-[#94A3B8]">Prêmio estimado</dt>
+                        <dd className="text-[#0F172A] font-medium font-mono">
+                          R$ {(selectedConv.details.healthProfile.estimatedPremiumMinCents / 100).toFixed(0)}
+                          {selectedConv.details.healthProfile.estimatedPremiumMaxCents && 
+                            ` – R$ ${(selectedConv.details.healthProfile.estimatedPremiumMaxCents / 100).toFixed(0)}`
+                          }/mês
+                        </dd>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <div className="bg-white p-4 rounded-lg border border-[#E5E7EB] text-center mb-4">
+                    <div className="text-[24px] mb-2">🏥</div>
+                    <p className="text-[12.5px] text-[#475569] font-medium">Dados de saúde ainda não coletados</p>
+                    <p className="text-[11px] text-[#94A3B8] mt-1">
+                      A pré-qualificação será preenchida durante a conversa com o lead.
+                    </p>
+                  </div>
+                )}
 
                 <h4 className="text-[11px] uppercase tracking-wider text-[#94A3B8] font-semibold mb-3">
                   Temperatura do Lead
