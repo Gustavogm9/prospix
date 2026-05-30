@@ -20,7 +20,11 @@ interface RealtimeCallbacks {
   onConversationUpdated?: (payload: Record<string, unknown>) => void;
 }
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/v1';
+
+// VITE_API_URL already includes /v1 (e.g. https://api.prospix.com.br/v1)
+// SSE endpoint is at /v1/sse/events, so we need the base without /v1
+const API_BASE = API_URL.replace(/\/v1\/?$/, '');
 
 export function useRealtimeEvents(
   tenantId: string | null | undefined,
@@ -43,7 +47,7 @@ export function useRealtimeEvents(
       if (!controller) return;
 
       try {
-        const url = `${API_URL}/v1/sse/events?tenantId=${tenantId}`;
+        const url = `${API_BASE}/v1/sse/events?tenantId=${tenantId}`;
         const response = await fetch(url, {
           signal: controller.signal,
           headers: {
