@@ -326,6 +326,104 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
 
     return reply.send({ data });
   });
+
+  // GET /v1/tenant/dashboard/weekly-captures - Lead capture counts for each of the last 7 days
+  app.get('/weekly-captures', async (req: FastifyRequest, reply: FastifyReply) => {
+    const tenantId = req.tenantId!;
+    const cacheKey = `swr:tenant:${tenantId}:dashboard:weekly-captures`;
+
+    const data = await withSWR(cacheKey, 300, async () => {
+      // Get leads grouped by day for last 7 days
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+      sevenDaysAgo.setHours(0, 0, 0, 0);
+
+      const leads = await prisma.lead.findMany({
+        where: {
+          tenantId,
+          deletedAt: null,
+          createdAt: { gte: sevenDaysAgo },
+        },
+        select: { createdAt: true },
+      });
+
+      // Build day-by-day counts
+      const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+      const days = Array.from({ length: 7 }, (_, i) => {
+        const d = new Date();
+        d.setDate(d.getDate() - (6 - i));
+        d.setHours(0, 0, 0, 0);
+        return { date: d, label: dayNames[d.getDay()], count: 0 };
+      });
+
+      leads.forEach((lead) => {
+        const created = new Date(lead.createdAt);
+        created.setHours(0, 0, 0, 0);
+        const match = days.find(d => d.date.getTime() === created.getTime());
+        if (match) match.count++;
+      });
+
+      return days.map(d => ({ label: d.label, value: d.count }));
+    });
+
+    return reply.send({ data });
+  });
+
+  // GET /v1/tenant/dashboard/hot-leads - Top 5 leads by fitScore
+  app.get('/hot-leads', async (req: FastifyRequest, reply: FastifyReply) => {
+    const tenantId = req.tenantId!;
+    const cacheKey = `swr:tenant:${tenantId}:dashboard:hot-leads`;
+
+    const data = await withSWR(cacheKey, 120, async () => {
+      const leads = await prisma.lead.findMany({
+        where: {
+          tenantId,
+          deletedAt: null,
+          status: { notIn: ['ARCHIVED', 'OPTED_OUT', 'CLOSED_LOST'] as any },
+          fitScore: { not: null },
+        },
+        orderBy: { fitScore: 'desc' },
+        take: 5,
+        select: {
+          id: true,
+          name: true,
+          profession: true,
+          whatsapp: true,
+          address: true,
+          fitScore: true,
+          status: true,
+          googleRating: true,
+          googleReviewsCount: true,
+          registrationNumber: true,
+          metadata: true,
+          tags: true,
+          createdAt: true,
+          contactedAt: true,
+          firstResponseAt: true,
+        },
+      });
+
+      return leads.map((l) => ({
+        id: l.id,
+        name: l.name || 'Lead sem nome',
+        profession: l.profession,
+        whatsapp: l.whatsapp,
+        city: (l.address as any)?.city || '',
+        fitScore: Number(l.fitScore) || 0,
+        status: l.status,
+        googleRating: l.googleRating ? Number(l.googleRating) : null,
+        googleReviewsCount: l.googleReviewsCount,
+        registrationNumber: l.registrationNumber,
+        metadata: l.metadata,
+        tags: l.tags,
+        createdAt: l.createdAt.toISOString(),
+        contactedAt: l.contactedAt?.toISOString() || null,
+        firstResponseAt: l.firstResponseAt?.toISOString() || null,
+      }));
+    });
+
+    return reply.send({ data });
+  });
 };
 
 export default dashboardRoutes;

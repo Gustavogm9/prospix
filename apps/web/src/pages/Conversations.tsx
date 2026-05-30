@@ -70,7 +70,7 @@ export default function Conversations() {
   const [isOutcomeModalOpen, setIsOutcomeModalOpen] = useState(false);
   const [outcomeValue, setOutcomeValue] = useState('');
   const [outcomeCommission, setOutcomeCommission] = useState('');
-  const [drawerTab, setDrawerTab] = useState<'chat' | 'info'>('chat');
+  const [drawerTab, setDrawerTab] = useState<'chat' | 'info' | 'health' | 'history'>('chat');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Helper to map DB Conversation to Web Frontend UI type
@@ -597,50 +597,73 @@ export default function Conversations() {
           />
           {/* Drawer */}
           <div className="fixed top-0 right-0 h-screen w-full sm:w-[580px] sm:max-w-[90vw] bg-white shadow-xl z-[89] flex flex-col overflow-hidden animate-slideIn">
-            {/* Drawer header */}
-            <div className="px-5 py-4 border-b border-[#E5E7EB] flex items-center gap-[13px] shrink-0">
-              <div
-                className="w-[42px] h-[42px] rounded-full text-white flex items-center justify-center text-sm font-bold shrink-0"
-                style={{ backgroundColor: selectedConv.avatarColor || getAvatarColor(0) }}
-              >
-                {selectedConv.initials || getInitials(selectedConv.leadName)}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-base font-bold text-[#0F172A]">{selectedConv.leadName}</div>
-                <div className="text-xs text-[#94A3B8] mt-[2px]">
-                  {selectedConv.profession || selectedConv.details.company} · Fit {selectedConv.fitScore}
+            {/* Drawer header - enriched like prototype */}
+            <div className="px-5 py-4 border-b border-[#E5E7EB] shrink-0">
+              <div className="flex items-center gap-[13px]">
+                <div
+                  className="w-[46px] h-[46px] rounded-full text-white flex items-center justify-center text-[15px] font-bold shrink-0"
+                  style={{ backgroundColor: selectedConv.avatarColor || getAvatarColor(0) }}
+                >
+                  {selectedConv.initials || getInitials(selectedConv.leadName)}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[16px] font-bold text-[#0F172A] flex items-center gap-2 flex-wrap">
+                    {selectedConv.leadName}
+                    {selectedConv.tagType && (
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
+                        selectedConv.tagType === 'success' ? 'bg-[#ECFDF3] text-[#027A48]' :
+                        selectedConv.tagType === 'live' ? 'bg-[rgba(232,152,28,0.14)] text-[#A56B0A]' :
+                        selectedConv.tagType === 'warning' ? 'bg-[#FFFAEB] text-[#B54708]' :
+                        'bg-[rgba(27,58,107,0.08)] text-[#1B3A6B]'
+                      }`}>{selectedConv.tagLabel}</span>
+                    )}
+                  </div>
+                  <div className="text-[12px] text-[#475569] mt-0.5 flex items-center gap-1.5 flex-wrap">
+                    {selectedConv.profession && <span>{selectedConv.profession}</span>}
+                    {selectedConv.details.city && selectedConv.profession && <span className="text-[#CBD5E1]">·</span>}
+                    {selectedConv.details.city && <span>{selectedConv.details.city}</span>}
+                    {selectedConv.details.susep && selectedConv.details.susep !== 'N/A' && (
+                      <>
+                        <span className="text-[#CBD5E1]">·</span>
+                        <span className="font-mono text-[11px]">{selectedConv.details.susep}</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  <div className={`text-[15px] font-bold font-mono ${
+                    selectedConv.fitScore >= 8 ? 'text-[#039855]' : selectedConv.fitScore >= 5 ? 'text-[#A56B0A]' : 'text-[#94A3B8]'
+                  }`}>Fit {selectedConv.fitScore}</div>
+                  <button
+                    onClick={() => setSelectedConv(null)}
+                    className="w-7 h-7 rounded-lg bg-[#F1F3F6] text-[#475569] flex items-center justify-center hover:bg-[#FEF3F2] hover:text-[#D92D20] transition-all"
+                  >
+                    <X className="w-[14px] h-[14px]" />
+                  </button>
                 </div>
               </div>
-              <button
-                onClick={() => setSelectedConv(null)}
-                className="ml-auto w-8 h-8 rounded-lg bg-[#F1F3F6] text-[#475569] flex items-center justify-center hover:bg-[#FEF3F2] hover:text-[#D92D20] transition-all"
-              >
-                <X className="w-[15px] h-[15px]" />
-              </button>
             </div>
 
-            {/* Drawer tabs */}
+            {/* Drawer tabs — 4 tabs like prototype */}
             <div className="flex px-4 bg-white border-b border-[#E5E7EB] shrink-0 gap-[2px]">
-              <button
-                onClick={() => setDrawerTab('chat')}
-                className={`px-[13px] py-[10px] text-[12.5px] font-medium border-b-2 whitespace-nowrap transition-all ${
-                  drawerTab === 'chat'
-                    ? 'text-[#1B3A6B] border-[#1B3A6B] font-semibold'
-                    : 'text-[#475569] border-transparent hover:text-[#0F172A]'
-                }`}
-              >
-                💬 Conversa
-              </button>
-              <button
-                onClick={() => setDrawerTab('info')}
-                className={`px-[13px] py-[10px] text-[12.5px] font-medium border-b-2 whitespace-nowrap transition-all ${
-                  drawerTab === 'info'
-                    ? 'text-[#1B3A6B] border-[#1B3A6B] font-semibold'
-                    : 'text-[#475569] border-transparent hover:text-[#0F172A]'
-                }`}
-              >
-                📋 Ficha
-              </button>
+              {[
+                { key: 'chat', icon: '💬', label: 'Conversa' },
+                { key: 'info', icon: '📋', label: 'Ficha' },
+                { key: 'health', icon: '❤️', label: 'Saúde' },
+                { key: 'history', icon: '📊', label: 'Histórico' },
+              ].map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => setDrawerTab(tab.key as any)}
+                  className={`px-[11px] py-[10px] text-[12px] font-medium border-b-2 whitespace-nowrap transition-all ${
+                    drawerTab === tab.key
+                      ? 'text-[#1B3A6B] border-[#1B3A6B] font-semibold'
+                      : 'text-[#475569] border-transparent hover:text-[#0F172A]'
+                  }`}
+                >
+                  {tab.icon} {tab.label}
+                </button>
+              ))}
             </div>
 
             {/* Drawer panes */}
@@ -651,29 +674,37 @@ export default function Conversations() {
                   <div className="self-center text-[10.5px] text-[#94A3B8] bg-white/85 px-[9px] py-[3px] rounded-[10px]">
                     Hoje
                   </div>
-                  {messages.map((msg) => {
-                    const isOutbound = msg.sender === 'agent' || msg.sender === 'ai';
-                    return (
-                      <div
-                        key={msg.id}
-                        className={`max-w-[82%] px-3 py-[9px] text-[12.5px] leading-[1.5] text-[#0F172A] rounded-[9px] shadow-sm ${
-                          isOutbound
-                            ? 'bg-[#DCF8C6] self-end rounded-tr-[2px]'
-                            : 'bg-white self-start rounded-tl-[2px]'
-                        } ${msg.sender === 'ai' ? 'border-l-[3px] border-l-[#E8981C]' : ''}`}
-                      >
-                        {msg.sender === 'ai' && (
-                          <div className="text-[9px] uppercase tracking-wider text-[#A56B0A] font-bold mb-[3px]">
-                            IA Prospix
+                  {messages.length === 0 ? (
+                    <div className="flex-1 flex flex-col items-center justify-center text-center py-12">
+                      <MessageSquare className="w-12 h-12 text-[#94A3B8]/30 mb-3" />
+                      <p className="text-[13px] text-[#475569] font-medium">Nenhuma mensagem ainda</p>
+                      <p className="text-[11px] text-[#94A3B8] mt-1">A conversa começará quando a IA enviar a primeira mensagem.</p>
+                    </div>
+                  ) : (
+                    messages.map((msg) => {
+                      const isOutbound = msg.sender === 'agent' || msg.sender === 'ai';
+                      return (
+                        <div
+                          key={msg.id}
+                          className={`max-w-[82%] px-3 py-[9px] text-[12.5px] leading-[1.5] text-[#0F172A] rounded-[9px] shadow-sm ${
+                            isOutbound
+                              ? 'bg-[#DCF8C6] self-end rounded-tr-[2px]'
+                              : 'bg-white self-start rounded-tl-[2px]'
+                          } ${msg.sender === 'ai' ? 'border-l-[3px] border-l-[#E8981C]' : ''}`}
+                        >
+                          {msg.sender === 'ai' && (
+                            <div className="text-[9px] uppercase tracking-wider text-[#A56B0A] font-bold mb-[3px]">
+                              IA Prospix
+                            </div>
+                          )}
+                          {msg.content}
+                          <div className="text-[9.5px] text-[#94A3B8] text-right mt-[3px] font-mono">
+                            {msg.timestamp}
                           </div>
-                        )}
-                        {msg.content}
-                        <div className="text-[9.5px] text-[#94A3B8] text-right mt-[3px] font-mono">
-                          {msg.timestamp}
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })
+                  )}
                   <div ref={messagesEndRef} />
                 </div>
 
@@ -713,8 +744,8 @@ export default function Conversations() {
                   </form>
                 )}
               </div>
-            ) : (
-              /* Info pane */
+            ) : drawerTab === 'info' ? (
+              /* Ficha pane — enriched */
               <div className="flex-1 overflow-y-auto p-5" style={{ background: '#F7F8FA' }}>
                 <h4 className="text-[11px] uppercase tracking-wider text-[#94A3B8] font-semibold mb-2">
                   Dados do Lead
@@ -723,73 +754,192 @@ export default function Conversations() {
                   <dt className="text-[#94A3B8]">Nome</dt>
                   <dd className="text-[#0F172A] font-medium">{selectedConv.leadName}</dd>
                   <dt className="text-[#94A3B8]">Telefone</dt>
-                  <dd className="text-[#0F172A] font-medium font-mono">{selectedConv.details.phone}</dd>
+                  <dd className="text-[#0F172A] font-medium font-mono">{selectedConv.details.phone || '—'}</dd>
                   <dt className="text-[#94A3B8]">Cidade</dt>
-                  <dd className="text-[#0F172A] font-medium">{selectedConv.details.city}</dd>
+                  <dd className="text-[#0F172A] font-medium">{selectedConv.details.city || '—'}</dd>
                   <dt className="text-[#94A3B8]">Profissão</dt>
-                  <dd className="text-[#0F172A] font-medium">{selectedConv.profession || 'N/A'}</dd>
+                  <dd className="text-[#0F172A] font-medium">{selectedConv.profession || '—'}</dd>
                   <dt className="text-[#94A3B8]">Empresa</dt>
-                  <dd className="text-[#0F172A] font-medium">{selectedConv.details.company}</dd>
+                  <dd className="text-[#0F172A] font-medium">{selectedConv.details.company || '—'}</dd>
                   <dt className="text-[#94A3B8]">Registro</dt>
-                  <dd className="text-[#0F172A] font-medium">{selectedConv.details.susep}</dd>
+                  <dd className="text-[#0F172A] font-medium">{selectedConv.details.susep || '—'}</dd>
                   <dt className="text-[#94A3B8]">Fit Score</dt>
-                  <dd className="text-[#A56B0A] font-bold font-mono">{selectedConv.fitScore}</dd>
+                  <dd className={`font-bold font-mono ${
+                    selectedConv.fitScore >= 8 ? 'text-[#039855]' : selectedConv.fitScore >= 5 ? 'text-[#A56B0A]' : 'text-[#94A3B8]'
+                  }`}>{selectedConv.fitScore}</dd>
+                  <dt className="text-[#94A3B8]">Faturamento</dt>
+                  <dd className="text-[#0F172A] font-medium">{selectedConv.details.faturamento || '—'}</dd>
+                </div>
+
+                <h4 className="text-[11px] uppercase tracking-wider text-[#94A3B8] font-semibold mb-2 mt-4">
+                  Prioridade
+                </h4>
+                <div className="bg-white p-3 rounded-lg border border-[#E5E7EB] mb-4">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2.5 h-2.5 rounded-full ${
+                      selectedConv.details.priority === 'high' ? 'bg-[#039855]' :
+                      selectedConv.details.priority === 'medium' ? 'bg-[#E8981C]' : 'bg-[#94A3B8]'
+                    }`} />
+                    <span className="text-[12.5px] font-semibold text-[#0F172A]">
+                      {selectedConv.details.priority === 'high' ? 'Alta prioridade' :
+                       selectedConv.details.priority === 'medium' ? 'Média prioridade' : 'Baixa prioridade'}
+                    </span>
+                    <span className="text-[11px] text-[#94A3B8] ml-auto">
+                      Fit {selectedConv.fitScore} · {selectedConv.details.health}
+                    </span>
+                  </div>
                 </div>
 
                 <h4 className="text-[11px] uppercase tracking-wider text-[#94A3B8] font-semibold mb-2 mt-4">
                   Tags
                 </h4>
                 <div className="flex flex-wrap gap-1.5 mb-4">
-                  {selectedConv.details.tags.map((tag) => (
-                    <span
-                      key={tag}
-                      className="text-[10px] bg-[#F1F3F6] text-[#475569] border border-[#E5E7EB] px-2 py-0.5 rounded-full font-medium"
-                    >
-                      {tag}
-                    </span>
-                  ))}
+                  {selectedConv.details.tags.length > 0 ? (
+                    selectedConv.details.tags.map((tag) => (
+                      <span
+                        key={tag}
+                        className="text-[10px] bg-[#F1F3F6] text-[#475569] border border-[#E5E7EB] px-2 py-0.5 rounded-full font-medium"
+                      >
+                        {tag}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-[11px] text-[#94A3B8] italic">Nenhuma tag atribuída</span>
+                  )}
                 </div>
-
-                <h4 className="text-[11px] uppercase tracking-wider text-[#94A3B8] font-semibold mb-2 mt-4">
-                  Histórico
+              </div>
+            ) : drawerTab === 'health' ? (
+              /* Saúde pane */
+              <div className="flex-1 overflow-y-auto p-5" style={{ background: '#F7F8FA' }}>
+                <h4 className="text-[11px] uppercase tracking-wider text-[#94A3B8] font-semibold mb-3">
+                  Indicadores de Engajamento
                 </h4>
-                <div className="relative border-l-2 border-[#E5E7EB] pl-4 space-y-3">
-                  {selectedConv.details.logs.map((log, idx) => (
-                    <div key={idx} className="relative text-xs">
-                      <div className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-white border-2 border-[#E5E7EB]" />
-                      <p className="text-[#0F172A] font-medium">{log.action}</p>
-                      <span className="text-[9px] text-[#94A3B8] font-mono flex items-center gap-1 mt-0.5">
-                        <Clock className="w-2.5 h-2.5" />
-                        {log.time}
+                <div className="space-y-2.5 mb-5">
+                  {[
+                    { label: 'Respondeu à abordagem', value: selectedConv.details.health !== 'Inativo', positive: true },
+                    { label: 'Conversa ativa', value: selectedConv.aiHandling, positive: true },
+                    { label: 'Pediu ligação', value: selectedConv.tagType === 'warning', positive: null },
+                    { label: 'Reunião agendada', value: selectedConv.tagType === 'success', positive: true },
+                  ].map((indicator, idx) => (
+                    <div key={idx} className="bg-white p-3 rounded-lg border border-[#E5E7EB] flex items-center gap-3">
+                      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[13px] ${
+                        indicator.value 
+                          ? (indicator.positive ? 'bg-[#ECFDF3] text-[#039855]' : 'bg-[#FFFAEB] text-[#B54708]')
+                          : 'bg-[#F1F3F6] text-[#94A3B8]'
+                      }`}>
+                        {indicator.value ? (indicator.positive ? '✓' : '⚠') : '—'}
+                      </div>
+                      <span className="text-[12.5px] text-[#0F172A] font-medium">{indicator.label}</span>
+                      <span className={`ml-auto text-[11px] font-semibold ${
+                        indicator.value ? 'text-[#039855]' : 'text-[#94A3B8]'
+                      }`}>
+                        {indicator.value ? 'Sim' : 'Não'}
                       </span>
                     </div>
                   ))}
                 </div>
+
+                <h4 className="text-[11px] uppercase tracking-wider text-[#94A3B8] font-semibold mb-3">
+                  Temperatura do Lead
+                </h4>
+                <div className="bg-white p-4 rounded-lg border border-[#E5E7EB]">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="text-[24px]">
+                      {selectedConv.fitScore >= 8 ? '🔥' : selectedConv.fitScore >= 5 ? '🌡️' : '❄️'}
+                    </div>
+                    <div>
+                      <div className="text-[13px] font-semibold text-[#0F172A]">
+                        {selectedConv.fitScore >= 8 ? 'Quente — Alto potencial' :
+                         selectedConv.fitScore >= 5 ? 'Morno — Potencial moderado' : 'Frio — Baixo potencial'}
+                      </div>
+                      <div className="text-[11px] text-[#475569]">
+                        Fit Score {selectedConv.fitScore}/10 · {selectedConv.details.priority === 'high' ? 'Prioridade alta' : 'Prioridade normal'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="w-full h-2 bg-[#F1F3F6] rounded-full overflow-hidden">
+                    <div 
+                      className={`h-full rounded-full transition-all ${
+                        selectedConv.fitScore >= 8 ? 'bg-[#039855]' : selectedConv.fitScore >= 5 ? 'bg-[#E8981C]' : 'bg-[#94A3B8]'
+                      }`}
+                      style={{ width: `${(selectedConv.fitScore / 10) * 100}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : (
+              /* Histórico pane */
+              <div className="flex-1 overflow-y-auto p-5" style={{ background: '#F7F8FA' }}>
+                <h4 className="text-[11px] uppercase tracking-wider text-[#94A3B8] font-semibold mb-3">
+                  Timeline de Eventos
+                </h4>
+                <div className="relative border-l-2 border-[#E5E7EB] pl-4 space-y-4">
+                  {selectedConv.details.logs.map((log, idx) => (
+                    <div key={idx} className="relative text-xs">
+                      <div className={`absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full border-2 border-white ${
+                        idx === 0 ? 'bg-[#1B3A6B]' : 'bg-[#E5E7EB]'
+                      }`} />
+                      <div className="bg-white p-3 rounded-lg border border-[#E5E7EB]">
+                        <p className="text-[#0F172A] font-medium">{log.action}</p>
+                        <span className="text-[9px] text-[#94A3B8] font-mono flex items-center gap-1 mt-1">
+                          <Clock className="w-2.5 h-2.5" />
+                          {log.time}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Static entries based on conversation data */}
+                  {selectedConv.aiHandling && (
+                    <div className="relative text-xs">
+                      <div className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-[#E8981C] border-2 border-white animate-pulse" />
+                      <div className="bg-white p-3 rounded-lg border border-[#E8981C]/30">
+                        <p className="text-[#A56B0A] font-medium">IA conversando agora</p>
+                        <span className="text-[9px] text-[#94A3B8] font-mono flex items-center gap-1 mt-1">
+                          <Clock className="w-2.5 h-2.5" />
+                          em andamento
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {selectedConv.details.logs.length === 0 && !selectedConv.aiHandling && (
+                  <div className="text-center py-8 text-[12px] text-[#94A3B8]">
+                    Nenhum evento registrado ainda.
+                  </div>
+                )}
               </div>
             )}
 
-            {/* Drawer footer - action buttons */}
+            {/* Drawer footer - action buttons (prototype style) */}
             <div className="px-4 py-3 border-t border-[#E5E7EB] bg-white flex gap-[6px] shrink-0 flex-wrap">
               <button
-                onClick={handleTakeover}
-                className="flex-1 min-w-[120px] h-[38px] rounded-lg text-xs font-semibold bg-[#1B3A6B] text-white hover:bg-[#142C52] inline-flex items-center justify-center gap-1.5 transition-all"
-              >
-                <User className="w-[13px] h-[13px]" />
-                Assumir
-              </button>
-              <button
-                onClick={() => toast.info('Ligação', 'Funcionalidade em breve!')}
-                className="flex-1 min-w-[120px] h-[38px] rounded-lg text-xs font-semibold bg-[#F1F3F6] text-[#0F172A] hover:bg-[#E5E7EB] inline-flex items-center justify-center gap-1.5 transition-all"
+                onClick={() => {
+                  if (selectedConv.details.phone) {
+                    window.open(`tel:${selectedConv.details.phone}`, '_self');
+                  } else {
+                    toast.info('Ligação', 'Número não disponível.');
+                  }
+                }}
+                className="flex-1 min-w-[100px] h-[38px] rounded-lg text-xs font-semibold bg-[#F1F3F6] text-[#0F172A] hover:bg-[#E5E7EB] inline-flex items-center justify-center gap-1.5 transition-all"
               >
                 <Phone className="w-[13px] h-[13px]" />
                 Ligar
               </button>
               <button
+                onClick={handleTakeover}
+                className="flex-1 min-w-[100px] h-[38px] rounded-lg text-xs font-semibold bg-[#F1F3F6] text-[#0F172A] hover:bg-[#E5E7EB] inline-flex items-center justify-center gap-1.5 transition-all"
+              >
+                <User className="w-[13px] h-[13px]" />
+                Assumir
+              </button>
+              <button
                 onClick={() => setIsOutcomeModalOpen(true)}
-                className="flex-1 min-w-[120px] h-[38px] rounded-lg text-xs font-semibold bg-[#039855] text-white hover:bg-[#027A48] inline-flex items-center justify-center gap-1.5 transition-all"
+                className="flex-1 min-w-[100px] h-[38px] rounded-lg text-xs font-semibold bg-[#039855] text-white hover:bg-[#027A48] inline-flex items-center justify-center gap-1.5 transition-all"
               >
                 <Award className="w-[13px] h-[13px]" />
-                Marcar resultado
+                Resultado
               </button>
             </div>
           </div>
