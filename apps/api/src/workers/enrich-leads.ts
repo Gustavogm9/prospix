@@ -28,17 +28,18 @@ export class EnrichLeadsWorker extends BaseWorker<EnrichLeadsPayload, EnrichLead
   async process(job: Job<EnrichLeadsPayload>): Promise<EnrichLeadsResult> {
     const { tenant_id: tenantId, lead_ids } = job.data;
 
-    // 1. Fetch credentials for the Evolution API
+    // 1. Fetch credentials for the Evolution API (optional — enrichment continues without it)
     const decryptedSecrets = await getDecryptedSecrets(tenantId);
 
     const baseUrl = decryptedSecrets?.evolutionBaseUrl || process.env.EVOLUTION_BASE_URL || 'https://evo.prospix.com.br';
     const instanceName = decryptedSecrets?.evolutionInstanceName || `tenant_${tenantId.slice(0, 8)}`;
     const apiKey = decryptedSecrets?.evolutionApiKey || process.env.EVOLUTION_GUILDS_API_KEY;
 
-    if (!apiKey || apiKey.startsWith('mock')) {
-      logger.error({ tenantId, hasTenantKey: Boolean(decryptedSecrets?.evolutionApiKey) }, 'Evolution API key missing for lead enrichment');
-      throw new Error('Evolution API key is required for lead enrichment');
+    const evolutionAvailable = Boolean(apiKey && !apiKey.startsWith('mock'));
+    if (!evolutionAvailable) {
+      logger.warn({ tenantId }, 'Evolution API not configured. WhatsApp validation will be skipped, but fit score will still be calculated.');
     }
+
 
     // 2. Fetch the tenant
     const tenant = await prisma.tenant.findUnique({
@@ -84,27 +85,33 @@ export class EnrichLeadsWorker extends BaseWorker<EnrichLeadsPayload, EnrichLead
     // 4. Process each lead
     for (const lead of leads) {
       try {
-        let whatsappValid = false;
+        let whatsappValid: boolean | null = null; // null = not checked
         
-        // Step A: Validate WhatsApp via Evolution API checkPhone
-        const checkResult = await checkPhone({
-          phone: lead.whatsapp,
-          baseUrl,
-          instanceName,
-          apiKey,
-        });
+        // Step A: Validate WhatsApp via Evolution API checkPhone (optional)
+        if (evolutionAvailable) {
+          try {
+            const checkResult = await checkPhone({
+              phone: lead.whatsapp,
+              baseUrl,
+              instanceName,
+              apiKey: apiKey!,
+            });
 
-        if (!checkResult.ok) {
-          // If external service is down, throw to trigger BullMQ exponential backoff retry!
-          if (checkResult.error.code === 'EXTERNAL_SERVICE_DOWN') {
-            logger.warn({ lead_id: lead.id, err: checkResult.error }, 'Evolution API temporarily down. Retrying job.');
-            throw new Error(`Evolution API is down: ${checkResult.error.message}`);
+            if (!checkResult.ok) {
+              if (checkResult.error.code === 'EXTERNAL_SERVICE_DOWN') {
+                logger.warn({ lead_id: lead.id }, 'Evolution API temporarily down. Skipping WhatsApp check for this lead.');
+                whatsappValid = null;
+              } else {
+                logger.error({ lead_id: lead.id, error: checkResult.error }, 'Evolution API check failed for lead');
+                whatsappValid = false;
+              }
+            } else {
+              whatsappValid = checkResult.value.exists;
+            }
+          } catch (evoErr: any) {
+            logger.warn({ lead_id: lead.id, err: evoErr.message }, 'Evolution API call failed. Continuing without WhatsApp validation.');
+            whatsappValid = null;
           }
-          // For other errors, log and assume WhatsApp is invalid
-          logger.error({ lead_id: lead.id, error: checkResult.error }, 'Evolution API check failed for lead');
-          whatsappValid = false;
-        } else {
-          whatsappValid = checkResult.value.exists;
         }
 
         // Step B: Fetch CNPJ Info if lead is an ENTREPRENEUR and CNPJ is in metadata
