@@ -384,6 +384,7 @@ export const tenantRoutes: FastifyPluginAsync = async (app) => {
       const list = await prisma.script.findMany({
         where: { tenantId: req.tenantId!, archivedAt: null },
         include: { variations: true },
+        take: 50,
       });
       return reply.code(200).send(list);
     } catch (err) {

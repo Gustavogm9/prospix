@@ -87,7 +87,7 @@ export default function InvitationError() {
               Fazer Login
             </Button>
             <a
-              href="https://wa.me/5511999999999?text=Preciso%20de%20ajuda%20com%20meu%20convite%20Prospix"
+              href="https://wa.me/5511944556677?text=Preciso%20de%20ajuda%20com%20meu%20convite%20Prospix"
               target="_blank"
               rel="noreferrer"
               className="flex items-center justify-center w-full bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-400 border border-emerald-500/20 font-medium h-11 rounded-xl transition-all text-sm"

@@ -180,6 +180,26 @@ export class CaptureGoogleMapsWorker extends BaseWorker<CaptureJobPayload, Captu
 
         const places = searchResult.value;
 
+        // Batch-load existing leads to avoid N+1 queries
+        const batchWhatsapps = places
+          .map(p => sanitizeWhatsapp(p.nationalPhoneNumber))
+          .filter((w): w is string => w !== null);
+        const batchExternalIds = places
+          .map(p => p.placeId)
+          .filter((id): id is string => !!id);
+
+        const existingByWhatsapp = await prisma.lead.findMany({
+          where: { tenantId, whatsapp: { in: batchWhatsapps } },
+          select: { whatsapp: true },
+        });
+        const existingByExtId = await prisma.lead.findMany({
+          where: { tenantId, sourceExternalId: { in: batchExternalIds } },
+          select: { sourceExternalId: true },
+        });
+
+        const whatsappSet = new Set(existingByWhatsapp.map(l => l.whatsapp));
+        const extIdSet = new Set(existingByExtId.map(l => l.sourceExternalId));
+
         for (const place of places) {
           if (totalCaptured >= allowedToCapture) {
             break;
@@ -191,28 +211,14 @@ export class CaptureGoogleMapsWorker extends BaseWorker<CaptureJobPayload, Captu
             continue; // Skip if no telephone (needed for WhatsApp outreach)
           }
 
-          // Idempotency Check A: external_id collision per tenant
-          const externalIdExists = await prisma.lead.findFirst({
-            where: {
-              tenantId,
-              sourceExternalId: place.placeId,
-            },
-          });
-
-          if (externalIdExists) {
+          // Idempotency Check A: external_id collision per tenant (batch lookup)
+          if (place.placeId && extIdSet.has(place.placeId)) {
             totalSkipped++;
             continue;
           }
 
-          // Idempotency Check B: whatsapp duplicate per tenant
-          const whatsappExists = await prisma.lead.findFirst({
-            where: {
-              tenantId,
-              whatsapp: sanitisedPhone,
-            },
-          });
-
-          if (whatsappExists) {
+          // Idempotency Check B: whatsapp duplicate per tenant (batch lookup)
+          if (whatsappSet.has(sanitisedPhone)) {
             totalSkipped++;
             continue;
           }
@@ -305,8 +311,8 @@ export class CaptureGoogleMapsWorker extends BaseWorker<CaptureJobPayload, Captu
 
       // 9. Enqueue enrich-leads job to calculate fit scores and validate WhatsApp
       if (totalCaptured > 0) {
+        const enrichQueue = createTenantQueue(tenantId, 'enrich-leads');
         try {
-          const enrichQueue = createTenantQueue(tenantId, 'enrich-leads');
           await enrichQueue.add(
             'enrich-leads',
             {
@@ -315,11 +321,12 @@ export class CaptureGoogleMapsWorker extends BaseWorker<CaptureJobPayload, Captu
             },
             { delay: 5000 } // 5s delay to let DB transaction settle
           );
-          await enrichQueue.close();
           logger.info({ tenantId, campaignId, captured: totalCaptured }, 'Enqueued enrich-leads job for captured leads');
         } catch (enrichErr) {
           logger.error({ err: enrichErr, tenantId, campaignId }, 'Failed to enqueue enrich-leads job');
           // Don't fail the capture job because of enrich queue issue
+        } finally {
+          await enrichQueue.close();
         }
       }
 

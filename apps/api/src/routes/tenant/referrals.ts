@@ -1,4 +1,5 @@
 import { FastifyPluginAsync } from 'fastify';
+import { z } from 'zod';
 import { redis } from '../../lib/redis.js';
 import { logger } from '../../lib/logger.js';
 
@@ -54,14 +55,26 @@ export const referralRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // POST /tenant/referrals/track — track a click or signup event
-  app.post('/track', async (request, reply) => {
-    const body = request.body as any;
-    const refCode = body.refCode;
-    const eventType = body.type || 'click'; // 'click' or 'signup'
+  const trackSchema = z.object({
+    refCode: z.string().min(1),
+    type: z.enum(['click', 'signup']).default('click'),
+  });
 
-    if (!refCode) {
-      return reply.status(400).send({ message: 'refCode is required' });
+  app.post('/track', async (request, reply) => {
+    // Per-IP rate limiting: max 10 requests per minute
+    const ip = request.ip;
+    const rateLimitKey = `ratelimit:referral:${ip}`;
+    const current = await redis.incr(rateLimitKey);
+    if (current === 1) await redis.expire(rateLimitKey, 60); // 1 min window
+    if (current > 10) {
+      return reply.status(429).send({ message: 'Too many requests. Try again later.' });
     }
+
+    const parsed = trackSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ message: parsed.error.errors[0]?.message ?? 'Invalid request body' });
+    }
+    const { refCode, type: eventType } = parsed.data;
 
     try {
       // Find tenant by refCode prefix — scan is needed since we store by tenantId

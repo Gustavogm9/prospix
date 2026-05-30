@@ -480,7 +480,7 @@ model Campaign {
   hourWindowEnd   Int            @default(18) @map("hour_window_end")
 
   activeScriptId  String?        @map("active_script_id") @db.Uuid
-  activeScript    Script?        @relation(fields: [activeScriptId], references: [id])
+  activeScript    Script?        @relation(fields: [activeScriptId], references: [id], onDelete: SetNull)
 
   filters         Json? // { age_min, cnpj_min_age, exclude_existing_clients, min_fit_score }
 
@@ -623,7 +623,7 @@ model Conversation {
   aiHandling       Boolean            @default(true) @map("ai_handling")
 
   scriptId         String?            @map("script_id") @db.Uuid
-  script           Script?            @relation(fields: [scriptId], references: [id])
+  script           Script?            @relation(fields: [scriptId], references: [id], onDelete: SetNull)
   currentNodeId   String?             @map("current_node_id") @db.VarChar(64)
 
   messageCount     Int                @default(0) @map("message_count")
@@ -714,7 +714,7 @@ model Meeting {
   leadId              String          @map("lead_id") @db.Uuid
   lead                Lead            @relation(fields: [leadId], references: [id], onDelete: Cascade)
   conversationId      String?         @map("conversation_id") @db.Uuid
-  conversation        Conversation?   @relation(fields: [conversationId], references: [id])
+  conversation        Conversation?   @relation(fields: [conversationId], references: [id], onDelete: SetNull)
 
   googleEventId       String?         @unique @map("google_event_id") @db.VarChar(128)
   scheduledFor        DateTime        @map("scheduled_for") @db.Timestamptz()
@@ -954,6 +954,7 @@ model Notification {
 
   @@index([tenantId, userId, readAt])
   @@index([createdAt])
+  @@index([userId])
   @@map("notifications")
 }
 

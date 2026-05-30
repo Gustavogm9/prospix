@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, Input, toast } from '@prospix/ui';
 import { apiClient } from '../../lib/api-client';
@@ -11,6 +11,13 @@ export default function Login() {
   const [isLoading, setIsLoading] = useState(false);
   const setSession = useAuthStore((state) => state.setSession);
   const navigate = useNavigate();
+  const navTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (navTimerRef.current) clearTimeout(navTimerRef.current);
+    };
+  }, []);
 
   // Force password change state
   const [mustChangePassword, setMustChangePassword] = useState(false);
@@ -49,7 +56,7 @@ export default function Login() {
         toast.info('Troca de Senha Obrigatória', 'Por segurança, escolha uma nova senha para continuar.');
       } else {
         toast.success('Acesso Autorizado!', `Olá, ${user.name}! Bem-vindo(a) de volta.`);
-        setTimeout(() => navigate('/'), 1000);
+        navTimerRef.current = setTimeout(() => navigate('/'), 1000);
       }
     } catch (error: any) {
       toast.error('Erro ao entrar', error.response?.data?.message || 'E-mail ou senha incorretos. Verifique suas credenciais.');
@@ -83,7 +90,7 @@ export default function Login() {
       });
 
       toast.success('Senha Atualizada!', 'Sua nova senha foi salva. Bem-vindo(a) ao Prospix!');
-      setTimeout(() => navigate('/'), 1000);
+      navTimerRef.current = setTimeout(() => navigate('/'), 1000);
     } catch (error: any) {
       toast.error('Erro ao trocar senha', error.response?.data?.message || 'Não foi possível atualizar a senha.');
     } finally {

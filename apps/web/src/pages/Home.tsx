@@ -80,6 +80,7 @@ export default function Home() {
   }, [stats]);
 
   useEffect(() => {
+    const controller = new AbortController();
     const fetchDashboardData = async () => {
       const emptyStats: DashboardStats = {
         todayMeetings: 0, pendingConversations: 0, pendingManualConversations: 0,
@@ -90,11 +91,13 @@ export default function Home() {
       try {
         // Fetch all dashboard data in parallel from real endpoints
         const [todayRes, funnelRes, weeklyRes, hotLeadsRes] = await Promise.allSettled([
-          apiClient.get('/tenant/dashboard/today'),
-          apiClient.get('/tenant/dashboard/funnel'),
-          apiClient.get('/tenant/dashboard/weekly-captures'),
-          apiClient.get('/tenant/dashboard/hot-leads'),
+          apiClient.get('/tenant/dashboard/today', { signal: controller.signal }),
+          apiClient.get('/tenant/dashboard/funnel', { signal: controller.signal }),
+          apiClient.get('/tenant/dashboard/weekly-captures', { signal: controller.signal }),
+          apiClient.get('/tenant/dashboard/hot-leads', { signal: controller.signal }),
         ]);
+
+        if (controller.signal.aborted) return;
 
         const todayData = todayRes.status === 'fulfilled' ? (todayRes.value.data?.data ?? todayRes.value.data) : {};
         const funnelRaw = funnelRes.status === 'fulfilled' ? (funnelRes.value.data?.data ?? funnelRes.value.data) : null;
@@ -147,15 +150,17 @@ export default function Home() {
           hotLeads,
         });
       } catch (err) {
+        if (controller.signal.aborted) return;
         console.error('Error fetching dashboard stats', err);
         setStats(emptyStats);
         toast.error('Erro de Conexão', 'Não foi possível carregar o dashboard.');
       } finally {
-        setIsLoading(false);
+        if (!controller.signal.aborted) setIsLoading(false);
       }
     };
 
     fetchDashboardData();
+    return () => controller.abort();
   }, []);
 
   if (isLoading || !stats) {

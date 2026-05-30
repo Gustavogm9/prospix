@@ -313,7 +313,13 @@ export const leadRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // ── 5. DELETE /leads/:id (Soft Delete) ──────────────────────────────────────
-  app.delete('/:id', async (req: FastifyRequest, reply: FastifyReply) => {
+  app.delete('/:id', {
+    preHandler: [async (req, reply) => {
+      if ((req as any).userRole && (req as any).userRole !== 'OWNER') {
+        return reply.code(403).send({ error: 'Forbidden', message: 'Only owners can perform this action' });
+      }
+    }],
+  }, async (req: FastifyRequest, reply: FastifyReply) => {
     const { id } = req.params as { id: string };
     const tenantId = req.tenantId!;
 

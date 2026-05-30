@@ -80,9 +80,16 @@ export const notificationsRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // PATCH /v1/tenant/notifications/:id/read - Mark a notification as read
+  const idParamSchema = z.object({ id: z.string().uuid('Invalid ID format — expected UUID') });
+
   app.patch('/:id/read', async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    const paramsParsed = idParamSchema.safeParse(req.params);
+    if (!paramsParsed.success) {
+      return reply.code(400).send({ error: 'Validation Error', message: paramsParsed.error.errors[0]?.message });
+    }
+
     await prisma.notification.update({
-      where: { id: req.params.id },
+      where: { id: paramsParsed.data.id, tenantId: req.tenantId! },
       data: { readAt: new Date() },
     });
 
@@ -92,7 +99,7 @@ export const notificationsRoutes: FastifyPluginAsync = async (app) => {
   // POST /v1/tenant/notifications/read-all - Mark all notifications as read
   app.post('/read-all', async (req: FastifyRequest, reply: FastifyReply) => {
     await prisma.notification.updateMany({
-      where: { userId: req.userId!, readAt: null },
+      where: { userId: req.userId!, tenantId: req.tenantId!, readAt: null },
       data: { readAt: new Date() },
     });
 

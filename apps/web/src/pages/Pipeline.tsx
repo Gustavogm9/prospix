@@ -79,19 +79,25 @@ export default function Pipeline() {
   const [filter, setFilter] = useState('all');
   const [newLead, setNewLead] = useState({ name: '', company: '', whatsapp: '', email: '', city: '', faturamento: '' });
 
-  const fetchLeads = useCallback(async () => {
+  const fetchLeads = useCallback(async (signal?: AbortSignal) => {
     try {
-      const response = await apiClient.get('/tenant/leads');
+      const response = await apiClient.get('/tenant/leads', { signal });
+      if (signal?.aborted) return;
       const list = Array.isArray(response.data) ? response.data : response.data?.data;
       setLeads((list || []).map(mapBackendLeadToCard));
     } catch (error) {
+      if (signal?.aborted) return;
       console.error('Error fetching pipeline leads:', error);
       setLeads([]);
       toast.error('Erro de Conexão', 'Não foi possível carregar o pipeline.');
     }
   }, []);
 
-  useEffect(() => { fetchLeads(); }, [fetchLeads]);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchLeads(controller.signal);
+    return () => controller.abort();
+  }, [fetchLeads]);
 
   const handleDragStart = (e: React.DragEvent, id: string) => {
     setDraggedId(id);

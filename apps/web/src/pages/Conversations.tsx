@@ -227,7 +227,7 @@ export default function Conversations() {
     };
 
     fetchMessages();
-  }, [selectedConv]);
+  }, [selectedConv?.id]);
 
    // 3. SSE Real-time Synchronization (replaces Supabase Realtime)
   useRealtimeEvents(tenantId, {
@@ -397,8 +397,8 @@ export default function Conversations() {
 
       await apiClient.patch(`/tenant/meetings/${meetingId}`, {
         outcome: 'CLOSED',
-        policy_value_cents: Math.floor(parseFloat(outcomeValue) * 100),
-        commission_cents: Math.floor(parseFloat(outcomeCommission) * 100),
+        policy_value_cents: Math.floor((parseFloat(outcomeValue) || 0) * 100),
+        commission_cents: Math.floor((parseFloat(outcomeCommission) || 0) * 100),
       });
 
       toast.success('Venda Registrada!', 'Parabéns pela apólice fechada! Faturamento cadastrado com sucesso.');
@@ -865,7 +865,7 @@ export default function Conversations() {
                   Tags
                 </h4>
                 <div className="flex flex-wrap gap-1.5 mb-4">
-                  {selectedConv.details.tags.length > 0 ? (
+                  {selectedConv.details.tags?.length > 0 ? (
                     selectedConv.details.tags.map((tag) => (
                       <span
                         key={tag}

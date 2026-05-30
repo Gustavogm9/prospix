@@ -13,7 +13,7 @@ services:
       POSTGRES_MAX_CONNECTIONS: "200"
       POSTGRES_SHARED_BUFFERS: "256MB"
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
       - pg_backups:/backups
@@ -61,7 +61,7 @@ services:
       PGBOUNCER_SERVER_IDLE_TIMEOUT: 300
       PGBOUNCER_STATS_PERIOD: 60
     ports:
-      - "6432:6432"
+      - "127.0.0.1:6432:6432"
     depends_on:
       postgres:
         condition: service_healthy
@@ -76,9 +76,10 @@ services:
     image: redis:7-alpine
     container_name: prospix-redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     command: >
       redis-server
+        --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD}
         --maxmemory 1gb
         --maxmemory-policy noeviction
         --appendonly yes
@@ -91,7 +92,7 @@ services:
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -115,7 +116,7 @@ services:
       PORT: 3000
       # Aponta para PgBouncer em vez do PostgreSQL direto
       DATABASE_URL: postgresql://${POSTGRES_USER:-prospix}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB:-prospix}?pgbouncer=true&connection_limit=10
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       WORKERS_ENABLED: "false"
     ports:
       - "3000:3000"
@@ -148,7 +149,7 @@ services:
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER:-prospix}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB:-prospix}?pgbouncer=true&connection_limit=10
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       WORKERS_ENABLED: "true"
     command: ["node", "dist/workers/index.js"]
     depends_on:
@@ -156,6 +157,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"const r=require('ioredis');const c=new r('redis://:${REDIS_PASSWORD}@redis:6379');c.ping().then(()=>{c.quit();process.exit(0)}).catch(()=>process.exit(1))\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
     deploy:
       resources:
         limits:

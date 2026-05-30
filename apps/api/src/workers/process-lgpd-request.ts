@@ -149,7 +149,7 @@ export class ProcessLgpdRequestWorker extends BaseWorker<
           fitScore: true,
           createdAt: true,
         },
-        take: 50000,
+        take: 10000, // Capped to prevent OOM — full export via R2 streaming in future
       });
     }
 
@@ -162,7 +162,7 @@ export class ProcessLgpdRequestWorker extends BaseWorker<
           startedAt: true,
           messageCount: true,
         },
-        take: 50000,
+        take: 10000, // Capped to prevent OOM
       });
       exportPayload.conversations = conversations;
     }

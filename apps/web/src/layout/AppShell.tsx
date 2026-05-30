@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/auth-store';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 import {
   Home,
   MessageSquare,
@@ -190,6 +191,7 @@ export default function AppShell() {
   );
 
   return (
+    <ErrorBoundary>
     <div className="min-h-screen bg-bg flex relative">
       {/* ── Desktop Sidebar (236px) ────────────────────────────────────────── */}
       <aside className="hidden md:flex flex-col w-[236px] bg-surface border-r border-border h-screen sticky top-0 shrink-0 z-20">
@@ -468,5 +470,6 @@ export default function AppShell() {
         </main>
       </div>
     </div>
+    </ErrorBoundary>
   );
 }

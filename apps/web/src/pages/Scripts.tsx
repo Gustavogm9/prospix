@@ -103,9 +103,11 @@ export default function Scripts() {
 
 
   useEffect(() => {
+    const controller = new AbortController();
     const fetchScripts = async () => {
       try {
-        const response = await apiClient.get('/tenant/scripts');
+        const response = await apiClient.get('/tenant/scripts', { signal: controller.signal });
+        if (controller.signal.aborted) return;
         const list = Array.isArray(response.data) ? response.data : response.data?.data;
         setAllScripts(list || []);
         const activeScript = (list || []).find((script: any) => script.status === 'ACTIVE') || list?.[0];
@@ -120,17 +122,19 @@ export default function Scripts() {
           setVariations([]);
         }
       } catch (err) {
+        if (controller.signal.aborted) return;
         console.error('Error fetching scripts', err);
         setCurrentScriptId(null);
         setBaseMessage('');
         setVariations([]);
         toast.error('Erro de Conexão', 'Não foi possível carregar os roteiros.');
       } finally {
-        setIsLoadingScripts(false);
+        if (!controller.signal.aborted) setIsLoadingScripts(false);
       }
     };
 
     fetchScripts();
+    return () => controller.abort();
   }, []);
 
   const handleSwitchScript = (scriptId: string) => {

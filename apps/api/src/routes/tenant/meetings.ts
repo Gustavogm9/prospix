@@ -28,6 +28,7 @@ export const meetingsRoutes: FastifyPluginAsync = async (app) => {
         },
       },
       orderBy: { scheduledFor: 'desc' },
+      take: 100,
     });
     return reply.send({ data: meetings });
   });

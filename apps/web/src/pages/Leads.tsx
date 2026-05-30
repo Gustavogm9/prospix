@@ -125,6 +125,7 @@ export default function Leads() {
   }, [search]);
 
   useEffect(() => {
+    const controller = new AbortController();
     const fetchLeads = async () => {
       setIsLoading(true);
       try {
@@ -132,12 +133,15 @@ export default function Leads() {
           medicos: 'DOCTOR', advogados: 'LAWYER', dentistas: 'DENTIST', empresarios: 'BUSINESS_OWNER'
         };
         const response = await apiClient.get('/tenant/leads', {
+          signal: controller.signal,
           params: {
             search: debouncedSearch || undefined,
             profession: fitFilter !== 'all' ? profMap[fitFilter] : undefined,
             limit: 50,
           }
         });
+
+        if (controller.signal.aborted) return;
 
         if (response?.data) {
           const list = Array.isArray(response.data) ? response.data : response.data.data;
@@ -148,15 +152,17 @@ export default function Leads() {
           setLeads([]);
         }
       } catch (err) {
+        if (controller.signal.aborted) return;
         console.error(err);
         setLeads([]);
         toast.error('Erro de Conexão', 'Não foi possível carregar os leads.');
       } finally {
-        setIsLoading(false);
+        if (!controller.signal.aborted) setIsLoading(false);
       }
     };
 
     fetchLeads();
+    return () => controller.abort();
   }, [debouncedSearch, fitFilter]);
 
   const loadMore = async () => {

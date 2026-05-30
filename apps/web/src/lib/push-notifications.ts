@@ -44,7 +44,7 @@ export async function subscribeToPush(): Promise<boolean> {
 
     // Send subscription to backend
     await apiClient.post('/tenant/notifications/push-subscription', subscription.toJSON());
-    console.log('[Push] Successfully subscribed');
+
     return true;
   } catch (err) {
     console.error('[Push] Subscription failed:', err);

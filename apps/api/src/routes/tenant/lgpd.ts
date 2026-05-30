@@ -94,7 +94,13 @@ export function registerTenantLgpdRoutes(app: FastifyInstance): void {
   });
 
   // ── POST /lgpd/requests · cria nova solicitacao ──────────────────────────
-  app.post('/requests', async (req: FastifyRequest, reply: FastifyReply) => {
+  app.post('/requests', {
+    preHandler: [async (req, reply) => {
+      if ((req as any).userRole && (req as any).userRole !== 'OWNER') {
+        return reply.code(403).send({ error: 'Forbidden', message: 'Only owners can perform this action' });
+      }
+    }],
+  }, async (req: FastifyRequest, reply: FastifyReply) => {
     const tenantId = (req as FastifyRequest & { tenantId?: string }).tenantId;
     const userId = (req as FastifyRequest & { userId?: string }).userId;
 

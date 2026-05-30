@@ -67,7 +67,8 @@ const mapBackendMeeting = (meeting: any): Meeting => {
   const lead = meeting.lead || {};
   const scheduledAt = meeting.scheduledFor || meeting.scheduled_for || meeting.scheduledAt || meeting.scheduled_at || meeting.startAt || meeting.start_at;
   const scheduledDate = scheduledAt ? new Date(scheduledAt) : null;
-  const dayOfWeek = scheduledDate ? Math.max(1, Math.min(5, scheduledDate.getDay())) : 1;
+  const dayNum = scheduledDate ? scheduledDate.getDay() : NaN;
+  const dayOfWeek = !isNaN(dayNum) ? Math.max(1, Math.min(5, dayNum)) : 1;
   const timeSlot = scheduledDate
     ? scheduledDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
     : meeting.timeSlot || '09:00';

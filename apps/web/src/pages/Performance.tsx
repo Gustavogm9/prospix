@@ -25,23 +25,27 @@ export default function Performance() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const controller = new AbortController();
     const fetchAll = async () => {
       setLoading(true);
       try {
         const [perfRes, funnelRes] = await Promise.all([
-          apiClient.get('/tenant/dashboard/performance', { params: { period } }),
-          apiClient.get('/tenant/dashboard/funnel', { params: { period } }),
+          apiClient.get('/tenant/dashboard/performance', { params: { period }, signal: controller.signal }),
+          apiClient.get('/tenant/dashboard/funnel', { params: { period }, signal: controller.signal }),
         ]);
+        if (controller.signal.aborted) return;
         setPerfData(perfRes.data?.data ?? perfRes.data);
         setFunnelData(funnelRes.data?.data ?? funnelRes.data);
       } catch (err) {
+        if (controller.signal.aborted) return;
         console.error('Failed to fetch performance data', err);
         toast.error('Erro ao carregar', 'Não foi possível carregar métricas de performance.');
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     };
     fetchAll();
+    return () => controller.abort();
   }, [period]);
 
   const fmt = (cents: number) => {
