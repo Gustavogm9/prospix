@@ -1,13 +1,14 @@
-const CACHE_NAME = 'prospix-v1';
+const CACHE_NAME = 'prospix-v2';
 const PRECACHE_URLS = [
   '/',
-  '/index.html',
 ];
 
-// Install: cache shell
+// Install: cache shell (non-fatal if precache fails)
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE_URLS))
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.addAll(PRECACHE_URLS))
+      .catch(() => { /* precache failure is non-fatal */ })
   );
   self.skipWaiting();
 });
@@ -35,7 +36,7 @@ self.addEventListener('fetch', (event) => {
   // For navigation requests, try network first, fallback to cache
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request).catch(() => caches.match('/index.html'))
+      fetch(request).catch(() => caches.match('/'))
     );
     return;
   }
