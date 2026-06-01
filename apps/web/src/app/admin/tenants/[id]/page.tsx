@@ -8,7 +8,7 @@ import {
   CheckCircle2, AlertCircle, Loader2, RefreshCw, MessageSquare, Calendar,
   FileText, ShieldAlert, DollarSign, Activity, Zap, Mail, Copy, XCircle, Plus,
 } from 'lucide-react';
-import { adminApiClient } from '@/lib/admin-api-client';
+import { adminNextApi } from '@/lib/admin-api-client';
 import { adminTenantsQueries } from '@/lib/admin-queries';
 import { AxiosError } from 'axios';
 
@@ -120,7 +120,7 @@ export default function TenantDetail() {
     try {
       const [tenantResult, insightsRes] = await Promise.all([
         adminTenantsQueries.getById(id),
-        adminApiClient.get(`/admin/tenants/${id}/insights`),
+        adminNextApi.get(`/api/admin/tenants/${id}/insights`),
       ]);
       if (tenantResult.error) throw new Error(tenantResult.error.message);
       // Map snake_case Supabase fields to camelCase expected by UI
@@ -167,7 +167,7 @@ export default function TenantDetail() {
     if (!id) return;
     setInvitationsLoading(true);
     try {
-      const res = await adminApiClient.get(`/admin/tenants/${id}/invitations`);
+      const res = await adminNextApi.get(`/api/admin/tenants/${id}/invitations`);
       setInvitations(res.data?.data ?? []);
     } catch {
       // silently fail, invitations are secondary data
@@ -208,7 +208,7 @@ export default function TenantDetail() {
     if (!confirm('Deseja revogar este convite? Ele não poderá mais ser utilizado.')) return;
     setInvitationBusy(invitationId);
     try {
-      await adminApiClient.delete(`/admin/tenants/${tenant.id}/invitations/${invitationId}`);
+      await adminNextApi.delete(`/api/admin/tenants/${tenant.id}/invitations/${invitationId}`);
       toast.success('Convite revogado com sucesso.');
       await fetchInvitations();
     } catch (err: unknown) {
@@ -224,7 +224,7 @@ export default function TenantDetail() {
     const notes = prompt('Notas internas (opcional):') ?? undefined;
     setInvitationBusy('create');
     try {
-      await adminApiClient.post(`/admin/tenants/${tenant.id}/invitations`, { notes });
+      await adminNextApi.post(`/api/admin/tenants/${tenant.id}/invitations`, { notes });
       toast.success('Convite gerado com sucesso.');
       await fetchInvitations();
     } catch (err: unknown) {
@@ -248,7 +248,7 @@ export default function TenantDetail() {
     if (!reason) return;
     setActionBusy('suspend');
     try {
-      await adminApiClient.post(`/admin/tenants/${tenant.id}/suspend`, { reason });
+      await adminNextApi.post(`/api/admin/tenants/${tenant.id}/suspend`, { reason });
       toast.success('Tenant suspenso', `${tenant.name} agora está SUSPENDED.`);
       await fetchAll();
     } catch (err: unknown) {
@@ -263,7 +263,7 @@ export default function TenantDetail() {
     if (!tenant) return;
     setActionBusy('resume');
     try {
-      await adminApiClient.post(`/admin/tenants/${tenant.id}/resume`);
+      await adminNextApi.post(`/api/admin/tenants/${tenant.id}/resume`);
       toast.success('Tenant reativado');
       await fetchAll();
     } catch (err: unknown) {
@@ -281,7 +281,7 @@ export default function TenantDetail() {
     if (!reason) return;
     setActionBusy('churn');
     try {
-      await adminApiClient.post(`/admin/tenants/${tenant.id}/churn`, { reason });
+      await adminNextApi.post(`/api/admin/tenants/${tenant.id}/churn`, { reason });
       toast.success('Tenant marcado como churning');
       await fetchAll();
     } catch (err: unknown) {

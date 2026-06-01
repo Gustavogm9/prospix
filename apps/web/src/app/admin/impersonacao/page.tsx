@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badge, toast } from '@prospix/ui';
 import { UserCheck, Shield, Loader2, RefreshCw, AlertTriangle, ExternalLink, Clock, X } from 'lucide-react';
-import { adminApiClient } from '@/lib/admin-api-client';
+import { adminNextApi } from '@/lib/admin-api-client';
 import { adminTenantsQueries, adminUsersQueries } from '@/lib/admin-queries';
 import { AxiosError } from 'axios';
 
@@ -44,7 +44,7 @@ export default function Impersonation() {
   const fetchActiveSessions = async () => {
     setSessionsLoading(true);
     try {
-      const res = await adminApiClient.get('/admin/impersonate/active');
+      const res = await adminNextApi.get('/api/admin/impersonate');
       setActiveSessions(res.data?.data ?? []);
     } catch { /* swallow */ }
     setSessionsLoading(false);
@@ -82,7 +82,7 @@ export default function Impersonation() {
 
     setIsLoading(true);
     try {
-      const res = await adminApiClient.post(`/admin/impersonate/${selectedTenant}/${selectedUser}`, { reason, mode });
+      const res = await adminNextApi.post('/api/admin/impersonate', { tenantId: selectedTenant, userId: selectedUser, reason, mode });
       const data = res.data?.data;
       setImpResult({
         token: data.impersonationToken,
@@ -103,7 +103,7 @@ export default function Impersonation() {
 
   const handleEnd = async (sessionId: string) => {
     try {
-      await adminApiClient.post('/admin/impersonate/end', { sessionId });
+      await adminNextApi.post('/api/admin/impersonate', { action: 'end', sessionId });
       toast.success('Encerrada', 'SessÃ£o de impersonificaÃ§Ã£o encerrada.');
       await fetchActiveSessions();
     } catch (err: unknown) {

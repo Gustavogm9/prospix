@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, Button, toast, Badge, Modal, Skeleton } from '@prospix/ui';
 import { Plus, Edit3, Trash2, Layers, AlertTriangle, Inbox, AlertCircle, RotateCw } from 'lucide-react';
-import { adminApiClient } from '@/lib/admin-api-client';
+import { adminNextApi } from '@/lib/admin-api-client';
 import { adminScriptTemplatesQueries } from '@/lib/admin-queries';
 
 
@@ -76,7 +76,7 @@ export default function Templates() {
     const entries = await Promise.all(
       templates.map(async (t) => {
         try {
-          const response = await adminApiClient.get(`/admin/templates/${t.id}/impact`);
+          const response = await adminNextApi.get(`/api/admin/templates/${t.id}/impact`);
           const d = response.data?.data;
           return [t.id, { scriptsCloned: d?.scriptsCloned ?? 0, tenantsCount: d?.tenantsCount ?? 0, activeCampaigns: d?.activeCampaigns ?? 0 }] as const;
         } catch {
@@ -115,7 +115,7 @@ export default function Templates() {
         throw new Error('Os nÃ³s do roteiro precisam ser um Array de objetos JSON.');
       }
 
-      await adminApiClient.patch(`/admin/templates/${selectedTemplate.id}`, {
+      await adminNextApi.patch(`/api/admin/templates/${selectedTemplate.id}`, {
         flowTemplate: parsedNodes,
       });
 
@@ -136,7 +136,7 @@ export default function Templates() {
     setDeleteModalOpen(true);
     setIsLoadingImpact(true);
     try {
-      const response = await adminApiClient.get(`/admin/templates/${id}/impact`);
+      const response = await adminNextApi.get(`/api/admin/templates/${id}/impact`);
       setImpactPreview(response.data?.data ?? null);
     } catch (err) {
       console.error('impact fetch failed:', err);
@@ -148,7 +148,7 @@ export default function Templates() {
   const confirmDelete = async () => {
     if (!templateToDelete) return;
     try {
-      await adminApiClient.delete(`/admin/templates/${templateToDelete}`);
+      await adminNextApi.delete(`/api/admin/templates/${templateToDelete}`);
       toast.success('Template Removido', 'Arquivo de fluxo master apagado com sucesso.');
       fetchTemplates();
     } catch (err: unknown) {
@@ -165,7 +165,7 @@ export default function Templates() {
       { id: 'node_1', type: 'greeting', label: 'Boas vindas', messageText: 'OlÃ¡! Como posso ajudar vocÃª hoje?' }
     ];
     try {
-      await adminApiClient.post('/admin/templates', {
+      await adminNextApi.post('/api/admin/templates', {
         name: 'Roteiro Master Novo',
         segment: 'general',
         category: 'Geral',

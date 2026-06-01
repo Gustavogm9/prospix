@@ -3,9 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Badge, Button, Input, toast } from '@prospix/ui';
 import { Compass, Loader2, AlertCircle, Save, FileText } from 'lucide-react';
-import { adminApiClient } from '@/lib/admin-api-client';
+import { supabaseAdmin } from '@/lib/supabase';
 import { adminTenantsQueries } from '@/lib/admin-queries';
-import { AxiosError } from 'axios';
 import { MaterialsUploader } from './discovery/MaterialsUploader';
 import { DraftsEditor } from './discovery/DraftsEditor';
 import { PromotionPanel } from './discovery/PromotionPanel';
@@ -22,13 +21,13 @@ type DiscoveryStatus =
 const STATUS_FLOW: DiscoveryStatus[] = ['NOT_STARTED', 'SCHEDULED', 'IN_SESSION', 'CONSOLIDATING', 'VALIDATING', 'APPROVED'];
 
 const STATUS_LABEL: Record<DiscoveryStatus, string> = {
-  NOT_STARTED: 'NÃ£o iniciada',
+  NOT_STARTED: 'Não iniciada',
   SCHEDULED: 'Agendada',
-  IN_SESSION: 'Em sessÃ£o',
+  IN_SESSION: 'Em sessão',
   CONSOLIDATING: 'Consolidando',
   VALIDATING: 'Validando',
   APPROVED: 'Aprovada',
-  CHURNED_BEFORE_APPROVAL: 'Churn prÃ©-aprovaÃ§Ã£o',
+  CHURNED_BEFORE_APPROVAL: 'Churn pré-aprovação',
 };
 
 const STATUS_COLOR: Record<DiscoveryStatus, string> = {
@@ -85,6 +84,28 @@ function fromInputDateTime(value: string): string | null {
   return isNaN(d.getTime()) ? null : d.toISOString();
 }
 
+function mapRowToPayload(row: any): DiscoveryPayload {
+  return {
+    tenantId: row.tenant_id,
+    status: row.status,
+    scheduledFor: row.scheduled_for,
+    conductedAt: row.conducted_at,
+    validatedAt: row.validated_at,
+    validationRounds: row.validation_rounds ?? 0,
+    approvedAt: row.approved_at,
+    pmUserId: row.pm_user_id,
+    notes: row.notes,
+    hasAudio: row.has_audio ?? false,
+    hasVideo: row.has_video ?? false,
+    hasTranscript: row.has_transcript ?? false,
+    hasVoiceProfileDraft: row.has_voice_profile_draft ?? false,
+    hasScriptsDraft: row.has_scripts_draft ?? false,
+    hasApprovalProof: row.has_approval_proof ?? false,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 export default function Discovery() {
   const [tenants, setTenants] = useState<TenantSummary[]>([]);
   const [tenantsError, setTenantsError] = useState<string | null>(null);
@@ -131,8 +152,34 @@ export default function Discovery() {
     if (!silent) setIsLoadingDiscovery(true);
     setDiscoveryError(null);
     try {
-      const response = await adminApiClient.get(`/admin/tenants/${id}/discovery`);
-      const payload: DiscoveryPayload = response.data?.data;
+      const { data: row, error } = await supabaseAdmin
+        .from('discoveries')
+        .select('*')
+        .eq('tenant_id', id)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      if (!row) {
+        // No discovery record yet — create a fresh default
+        const { data: newRow, error: insertError } = await supabaseAdmin
+          .from('discoveries')
+          .insert({ tenant_id: id, status: 'NOT_STARTED' })
+          .select('*')
+          .single();
+        if (insertError) throw insertError;
+        const payload = mapRowToPayload(newRow);
+        setDiscovery(payload);
+        if (!silent) {
+          setDraftStatus(payload.status);
+          setDraftScheduledFor(toInputDateTime(payload.scheduledFor));
+          setDraftConductedAt(toInputDateTime(payload.conductedAt));
+          setDraftNotes(payload.notes ?? '');
+        }
+        return;
+      }
+
+      const payload = mapRowToPayload(row);
       setDiscovery(payload);
       if (!silent) {
         setDraftStatus(payload.status);
@@ -141,9 +188,7 @@ export default function Discovery() {
         setDraftNotes(payload.notes ?? '');
       }
     } catch (err: unknown) {
-      const message = err instanceof AxiosError
-        ? err.response?.data?.message || 'Falha ao carregar discovery.'
-        : 'Falha ao carregar discovery.';
+      const message = err instanceof Error ? err.message : 'Falha ao carregar discovery.';
       setDiscoveryError(message);
       if (!silent) setDiscovery(null);
     } finally {
@@ -154,7 +199,7 @@ export default function Discovery() {
   useEffect(() => {
     if (!selectedTenantId) return;
     refreshDiscovery(selectedTenantId);
-
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTenantId]);
 
   const progressIndex = useMemo(() => STATUS_FLOW.indexOf(draftStatus), [draftStatus]);
@@ -164,19 +209,27 @@ export default function Discovery() {
     if (!selectedTenantId) return;
     setIsSaving(true);
     try {
-      const response = await adminApiClient.patch(`/admin/tenants/${selectedTenantId}/discovery`, {
+      const updateData: Record<string, any> = {
         status: draftStatus,
-        scheduledFor: fromInputDateTime(draftScheduledFor),
-        conductedAt: fromInputDateTime(draftConductedAt),
+        scheduled_for: fromInputDateTime(draftScheduledFor),
+        conducted_at: fromInputDateTime(draftConductedAt),
         notes: draftNotes || null,
-      });
-      const payload: DiscoveryPayload = response.data?.data;
+      };
+
+      const { data: updatedRow, error } = await supabaseAdmin
+        .from('discoveries')
+        .update(updateData)
+        .eq('tenant_id', selectedTenantId)
+        .select('*')
+        .single();
+
+      if (error) throw error;
+
+      const payload = mapRowToPayload(updatedRow);
       setDiscovery(payload);
       toast.success('Discovery atualizada', `Status: ${STATUS_LABEL[payload.status]}`);
     } catch (err: unknown) {
-      const message = err instanceof AxiosError
-        ? err.response?.data?.message || 'Falha ao salvar discovery.'
-        : 'Falha ao salvar discovery.';
+      const message = err instanceof Error ? err.message : 'Falha ao salvar discovery.';
       toast.error('Erro ao salvar', message);
     } finally {
       setIsSaving(false);
@@ -189,10 +242,10 @@ export default function Discovery() {
         <div>
           <h2 className="text-2xl font-bold font-heading text-text tracking-tight flex items-center gap-2">
             <Compass className="w-5 h-5 text-primary" aria-hidden />
-            Discovery & Onboarding
+            Discovery &amp; Onboarding
           </h2>
           <p className="text-text-secondary text-xs mt-1">
-            Frente G Â· NÃ­vel 1 Â· tracking manual da sessÃ£o de descoberta atÃ© a aprovaÃ§Ã£o para promoÃ§Ã£o.
+            Frente G · Nível 1 · tracking manual da sessão de descoberta até a aprovação para promoção.
           </p>
         </div>
       </div>
@@ -224,7 +277,7 @@ export default function Discovery() {
             >
               {tenants.map((t) => (
                 <option key={t.id} value={t.id}>
-                  {t.name} Â· {t.slug} Â· {t.status}
+                  {t.name} · {t.slug} · {t.status}
                 </option>
               ))}
             </select>
@@ -318,7 +371,7 @@ export default function Discovery() {
                     </div>
                     <div>
                       <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider block mb-1">
-                        Rodadas de validaÃ§Ã£o
+                        Rodadas de validação
                       </label>
                       <Input
                         readOnly
@@ -330,7 +383,7 @@ export default function Discovery() {
 
                   <div>
                     <label htmlFor="d-notes" className="text-xs font-semibold text-text-secondary uppercase tracking-wider block mb-1">
-                      AnotaÃ§Ãµes
+                      Anotações
                     </label>
                     <textarea
                       id="d-notes"
@@ -339,7 +392,7 @@ export default function Discovery() {
                       maxLength={8000}
                       rows={6}
                       className="w-full bg-white border border-border rounded-lg px-3 py-2 text-xs text-text focus:border-border-strong focus:outline-none resize-y"
-                      placeholder="ObservaÃ§Ãµes sobre a sessÃ£o, follow-ups pendentes, pontos sensÃ­veis..."
+                      placeholder="Observações sobre a sessão, follow-ups pendentes, pontos sensíveis..."
                     />
                   </div>
 
@@ -349,7 +402,7 @@ export default function Discovery() {
                     className="bg-primary hover:bg-primary-hover text-white font-semibold text-xs px-4 h-10 rounded-xl flex items-center gap-2 disabled:opacity-60"
                   >
                     {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                    {isSaving ? 'Salvando...' : 'Salvar alteraÃ§Ãµes'}
+                    {isSaving ? 'Salvando...' : 'Salvar alterações'}
                   </Button>
                 </CardContent>
               </Card>
@@ -358,10 +411,10 @@ export default function Discovery() {
                 <CardHeader className="pb-3">
                   <CardTitle className="text-base font-bold font-heading text-text flex items-center gap-2">
                     <FileText className="w-4 h-4 text-text-secondary" aria-hidden />
-                    Materiais da sessÃ£o
+                    Materiais da sessão
                   </CardTitle>
                   <CardDescription className="text-text-secondary text-xs">
-                    Ãudio/vÃ­deo/transcriÃ§Ã£o da call + prova de aprovaÃ§Ã£o do owner. Uploads diretos ao Cloudflare R2 (presigned).
+                    Áudio/vídeo/transcrição da call + prova de aprovação do owner. Uploads diretos ao Cloudflare R2 (presigned).
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -396,4 +449,3 @@ export default function Discovery() {
     </div>
   );
 }
-

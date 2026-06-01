@@ -1,9 +1,9 @@
-﻿'use client';
+'use client';
 
 import React, { useState } from 'react';
 import { Card, CardContent, Button, Input, Select, toast, Badge } from '@prospix/ui';
 import { CheckCircle2, ChevronRight, ChevronLeft, Building, DollarSign, User, FileText, Cpu, Key, Copy, Sparkles } from 'lucide-react';
-import { adminApiClient } from '@/lib/admin-api-client';
+import { adminNextApi } from '@/lib/admin-api-client';
 import { AxiosError } from 'axios';
 
 export default function NewTenant() {
@@ -131,7 +131,7 @@ export default function NewTenant() {
     try {
       const planValue = formData.plan === 'Start' ? 'STARTER' : formData.plan === 'Enterprise' ? 'ENTERPRISE' : 'STANDARD';
       
-      const response = await adminApiClient.post('/admin/tenants', {
+      const response = await adminNextApi.post('/api/admin/tenants', {
         name: formData.name,
         slug: formData.slug,
         plan: planValue,
@@ -146,7 +146,7 @@ export default function NewTenant() {
         throw new Error('Tenant ID not returned from API.');
       }
 
-      const inviteResponse = await adminApiClient.post(`/admin/tenants/${tenantId}/invitations`, {
+      const inviteResponse = await adminNextApi.post(`/api/admin/tenants/${tenantId}/invitations`, {
         notes: 'Chave de Onboarding gerada no wizard do painel super-admin',
       });
       

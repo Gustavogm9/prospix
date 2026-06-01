@@ -3,8 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Search, Loader2, Building, User, UserCircle } from 'lucide-react';
-import { adminApiClient } from '@/lib/admin-api-client';
-import { AxiosError } from 'axios';
+import { supabaseAdmin } from '@/lib/supabase';
 
 interface SearchResult {
   kind: 'tenant' | 'user' | 'lead';
@@ -32,6 +31,58 @@ const KIND_LABEL: Record<SearchResult['kind'], string> = {
   lead: 'Lead',
 };
 
+async function performSearch(term: string, limit = 8): Promise<SearchResponse> {
+  const pattern = `%${term}%`;
+
+  // Search tenants
+  const { data: tenantRows } = await supabaseAdmin
+    .from('tenants')
+    .select('id, name, slug, status')
+    .or(`name.ilike.${pattern},slug.ilike.${pattern}`)
+    .limit(limit);
+
+  const tenants: SearchResult[] = (tenantRows ?? []).map((t: any) => ({
+    kind: 'tenant' as const,
+    id: t.id,
+    label: t.name,
+    sub: `${t.slug} · ${t.status}`,
+    href: `/admin/tenants/${t.id}`,
+  }));
+
+  // Search users
+  const { data: userRows } = await supabaseAdmin
+    .from('users')
+    .select('id, name, email, role, tenant_id, tenants(name)')
+    .or(`name.ilike.${pattern},email.ilike.${pattern}`)
+    .limit(limit);
+
+  const users: SearchResult[] = (userRows ?? []).map((u: any) => ({
+    kind: 'user' as const,
+    id: u.id,
+    label: u.name ?? u.email,
+    sub: `${u.email} · ${u.role}${u.tenants?.name ? ` · ${u.tenants.name}` : ''}`,
+    href: `/admin/usuarios`,
+  }));
+
+  // Search leads
+  const { data: leadRows } = await supabaseAdmin
+    .from('leads')
+    .select('id, name, whatsapp, status, tenant_id, tenants(name)')
+    .is('deleted_at', null)
+    .or(`name.ilike.${pattern},whatsapp.ilike.${pattern}`)
+    .limit(limit);
+
+  const leads: SearchResult[] = (leadRows ?? []).map((l: any) => ({
+    kind: 'lead' as const,
+    id: l.id,
+    label: l.name ?? l.whatsapp,
+    sub: `${l.whatsapp ?? '—'} · ${l.status}${l.tenants?.name ? ` · ${l.tenants.name}` : ''}`,
+    href: `/admin/leads`,
+  }));
+
+  return { tenants, users, leads };
+}
+
 export function GlobalSearch() {
   const router = useRouter();
   const [query, setQuery] = useState('');
@@ -50,10 +101,10 @@ export function GlobalSearch() {
     const handle = setTimeout(async () => {
       setIsLoading(true);
       try {
-        const response = await adminApiClient.get(`/admin/search?q=${encodeURIComponent(term)}&limit=8`);
-        setResults(response.data?.data ?? null);
+        const data = await performSearch(term);
+        setResults(data);
       } catch (err: unknown) {
-        if (!(err instanceof AxiosError)) console.error(err);
+        console.error(err);
         setResults(null);
       } finally {
         setIsLoading(false);

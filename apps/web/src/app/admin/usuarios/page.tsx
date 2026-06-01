@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle, Button, Badge, toast } from '@prospix/ui';
 import { Users as UsersIcon, Plus, Loader2, Search, RefreshCw, KeyRound, UserX, UserCheck, Pencil, AlertCircle, Copy, Eye, EyeOff } from 'lucide-react';
-import { adminApiClient } from '@/lib/admin-api-client';
+import { adminNextApi } from '@/lib/admin-api-client';
 import { adminTenantsQueries, adminUsersQueries } from '@/lib/admin-queries';
 import { AxiosError } from 'axios';
 
@@ -123,7 +123,7 @@ export default function UserManagement() {
     }
     setCreateLoading(true);
     try {
-      const response = await adminApiClient.post('/admin/users', createForm);
+      const response = await adminNextApi.post('/api/admin/users', createForm);
       const user = response.data?.data;
       setTempPassword(user?.tempPassword ?? null);
       toast.success('UsuÃ¡rio criado', `${user?.name} foi criado com sucesso.`);
@@ -140,7 +140,7 @@ export default function UserManagement() {
     if (!editUser) return;
     setEditLoading(true);
     try {
-      await adminApiClient.patch(`/admin/users/${editUser.id}`, editForm);
+      await adminNextApi.patch(`/api/admin/users/${editUser.id}`, editForm);
       toast.success('Atualizado', 'UsuÃ¡rio atualizado com sucesso.');
       setShowEditModal(false);
       await fetchUsers(pagination.offset);
@@ -156,7 +156,7 @@ export default function UserManagement() {
     if (!confirm('Resetar senha deste usuÃ¡rio? Todas as sessÃµes ativas serÃ£o revogadas.')) return;
     setBusyId(userId);
     try {
-      const response = await adminApiClient.post(`/admin/users/${userId}/reset-password`);
+      const response = await adminNextApi.post(`/api/admin/users/${userId}/reset-password`);
       const result = response.data?.data;
       setResetResult({ userId, tempPassword: result?.tempPassword ?? '' });
       toast.success('Senha resetada', 'Nova senha temporÃ¡ria gerada.');
@@ -172,7 +172,7 @@ export default function UserManagement() {
     if (!confirm('Desativar este usuÃ¡rio? Ele serÃ¡ removido do sistema e todas as sessÃµes serÃ£o revogadas.')) return;
     setBusyId(userId);
     try {
-      await adminApiClient.delete(`/admin/users/${userId}`);
+      await adminNextApi.delete(`/api/admin/users/${userId}`);
       toast.success('Desativado', 'UsuÃ¡rio desativado com sucesso.');
       await fetchUsers(pagination.offset);
     } catch (err: unknown) {
@@ -186,7 +186,7 @@ export default function UserManagement() {
   const handleReactivate = async (userId: string) => {
     setBusyId(userId);
     try {
-      await adminApiClient.post(`/admin/users/${userId}/reactivate`);
+      await adminNextApi.post(`/api/admin/users/${userId}/reactivate`);
       toast.success('Reativado', 'UsuÃ¡rio reativado com sucesso.');
       await fetchUsers(pagination.offset);
     } catch (err: unknown) {

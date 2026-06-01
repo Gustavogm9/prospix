@@ -3,9 +3,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badge } from '@prospix/ui';
 import { Share2, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, TrendingUp, CheckCircle2, Users, Gift } from 'lucide-react';
-import { adminApiClient } from '@/lib/admin-api-client';
+import { supabaseAdmin } from '@/lib/supabase';
 import { adminTenantsQueries } from '@/lib/admin-queries';
-import { AxiosError } from 'axios';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -88,19 +87,40 @@ export default function ReferralMonitor() {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const params = new URLSearchParams();
-      params.set('limit', String(PAGE_SIZE));
-      params.set('offset', String(newOffset));
-      if (filterTenantId) params.set('tenantId', filterTenantId);
-      if (filterFrom) params.set('from', new Date(filterFrom).toISOString());
-      if (filterTo) params.set('to', new Date(filterTo).toISOString());
+      // Query leads where source = 'REFERRAL'
+      let query = supabaseAdmin
+        .from('leads')
+        .select('id, name, whatsapp, email, status, source, profession, tenant_id, created_at, tenants(id, name, slug)', { count: 'exact' })
+        .eq('source', 'REFERRAL')
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .range(newOffset, newOffset + PAGE_SIZE - 1);
 
-      const response = await adminApiClient.get(`/admin/referrals?${params.toString()}`);
-      const payload = response.data?.data;
-      setItems(payload?.items ?? []);
-      setPagination(payload?.pagination ?? { total: 0, limit: PAGE_SIZE, offset: 0, hasMore: false });
+      if (filterTenantId) query = query.eq('tenant_id', filterTenantId);
+      if (filterFrom) query = query.gte('created_at', new Date(filterFrom).toISOString());
+      if (filterTo) query = query.lte('created_at', new Date(filterTo).toISOString());
+
+      const { data: rows, count, error } = await query;
+      if (error) throw error;
+
+      const mapped: ReferralEntry[] = (rows ?? []).map((r: any) => ({
+        id: r.id,
+        name: r.name,
+        whatsapp: r.whatsapp,
+        email: r.email,
+        status: r.status,
+        source: r.source,
+        profession: r.profession,
+        tenantId: r.tenant_id,
+        tenant: r.tenants ? { id: r.tenants.id, name: r.tenants.name, slug: r.tenants.slug } : null,
+        createdAt: r.created_at,
+      }));
+
+      const total = count ?? 0;
+      setItems(mapped);
+      setPagination({ total, limit: PAGE_SIZE, offset: newOffset, hasMore: newOffset + PAGE_SIZE < total });
     } catch (err: unknown) {
-      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha ao carregar indicações.' : 'Falha ao carregar indicações.';
+      const message = err instanceof Error ? err.message : 'Falha ao carregar indicações.';
       setLoadError(message);
     } finally {
       setIsLoading(false);
@@ -110,8 +130,46 @@ export default function ReferralMonitor() {
   /* ---------- Fetch stats ---------- */
   const fetchStats = useCallback(async () => {
     try {
-      const response = await adminApiClient.get('/admin/referrals/stats');
-      setStats(response.data?.data ?? null);
+      // Fetch all referral leads for stats
+      const { data: allReferrals } = await supabaseAdmin
+        .from('leads')
+        .select('id, status, tenant_id, tenants(name)')
+        .eq('source', 'REFERRAL')
+        .is('deleted_at', null);
+
+      const rows = allReferrals ?? [];
+      const totalReferrals = rows.length;
+      const converted = rows.filter((r: any) =>
+        r.status === 'CLOSED_WON' || r.status === 'MEETING_SCHEDULED' || r.status === 'QUALIFIED'
+      ).length;
+      const conversionRate = totalReferrals > 0 ? Math.round((converted / totalReferrals) * 1000) / 10 : 0;
+
+      // referralsCollected = total count of referrals from meetings
+      const { count: referralsCollected } = await supabaseAdmin
+        .from('meetings')
+        .select('id', { count: 'exact', head: true })
+        .gt('referrals_count', 0);
+
+      // Top tenants
+      const tenantCounts: Record<string, { name: string; count: number }> = {};
+      rows.forEach((r: any) => {
+        const tid = r.tenant_id;
+        const tname = (r.tenants as any)?.name ?? 'Unknown';
+        if (!tenantCounts[tid]) tenantCounts[tid] = { name: tname, count: 0 };
+        tenantCounts[tid].count++;
+      });
+      const topTenants = Object.entries(tenantCounts)
+        .map(([tenantId, v]) => ({ tenantId, tenantName: v.name, count: v.count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5);
+
+      setStats({
+        totalReferrals,
+        converted,
+        conversionRate,
+        referralsCollected: referralsCollected ?? 0,
+        topTenants,
+      });
     } catch {
       /* non-blocking */
     }

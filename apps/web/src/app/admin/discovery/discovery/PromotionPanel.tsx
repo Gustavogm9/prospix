@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badge, toast } from '@prospix/ui';
 import { Shield, Rocket, CheckCircle2, AlertCircle, Loader2, RefreshCw } from 'lucide-react';
-import { adminApiClient } from '@/lib/admin-api-client';
+import { adminNextApi } from '@/lib/admin-api-client';
 import { AxiosError } from 'axios';
 
 interface GateField {
@@ -50,7 +50,7 @@ export function PromotionPanel({ tenantId, discoveryStatus, validationRounds, on
   const fetchReport = async () => {
     setIsLoading(true);
     try {
-      const response = await adminApiClient.get(`/admin/tenants/${tenantId}/discovery/quality`);
+      const response = await adminNextApi.get(`/api/admin/tenants/${tenantId}/discovery/quality`);
       setReport(response.data?.data ?? null);
     } catch (err: unknown) {
       const message = err instanceof AxiosError
@@ -74,7 +74,7 @@ export function PromotionPanel({ tenantId, discoveryStatus, validationRounds, on
     }
     setBusy('validate');
     try {
-      await adminApiClient.post(`/admin/tenants/${tenantId}/discovery/validate`);
+      await adminNextApi.post(`/api/admin/tenants/${tenantId}/discovery/validate`);
       toast.success('Validação registrada', `Rodada ${validationRounds + 1}/2 confirmada.`);
       onChanged();
       await fetchReport();
@@ -92,7 +92,7 @@ export function PromotionPanel({ tenantId, discoveryStatus, validationRounds, on
     if (!confirm('Confirmar aprovação formal? O tenant é marcado como APPROVED e habilita promoção.')) return;
     setBusy('approve');
     try {
-      await adminApiClient.post(`/admin/tenants/${tenantId}/discovery/approve`);
+      await adminNextApi.post(`/api/admin/tenants/${tenantId}/discovery/approve`);
       toast.success('Discovery aprovada', 'Status agora é APPROVED.');
       onChanged();
       await fetchReport();
@@ -110,7 +110,7 @@ export function PromotionPanel({ tenantId, discoveryStatus, validationRounds, on
     if (!confirm('PROMOVER PARA PRODUÇÃO?\n\nIsso vai:\n- Criar 3 Scripts ACTIVE (médicos/advogados/empresários)\n- Substituir Tenant.aiVoiceProfile\n- Registrar audit log\n\nNão pode ser desfeito automaticamente.')) return;
     setBusy('promote');
     try {
-      const response = await adminApiClient.post(`/admin/tenants/${tenantId}/discovery/promote`);
+      const response = await adminNextApi.post(`/api/admin/tenants/${tenantId}/discovery/promote`);
       const created = response.data?.data?.scriptsCreated ?? [];
       toast.success('Promovido!', `${created.length} scripts criados · voice profile aplicado.`);
       onChanged();

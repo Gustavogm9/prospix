@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, toast } from '@prospix/ui';
 import { Save, Loader2, AlertCircle, CheckCircle2, FileText, MessageSquare } from 'lucide-react';
-import { adminApiClient } from '@/lib/admin-api-client';
+import { adminNextApi } from '@/lib/admin-api-client';
 import { AxiosError } from 'axios';
 
 interface ObjectionEntry {
@@ -83,7 +83,7 @@ export function DraftsEditor({ tenantId, onSaved }: DraftsEditorProps) {
     (async () => {
       setIsLoading(true);
       try {
-        const response = await adminApiClient.get(`/admin/tenants/${tenantId}/discovery/drafts`);
+        const response = await adminNextApi.get(`/api/admin/tenants/${tenantId}/discovery/drafts`);
         const data = response.data?.data;
         setVoiceProfileText(data?.voiceProfile ? JSON.stringify(data.voiceProfile, null, 2) : '');
         setScriptsText(data?.scripts ? JSON.stringify(data.scripts, null, 2) : '');
@@ -143,7 +143,7 @@ export function DraftsEditor({ tenantId, onSaved }: DraftsEditorProps) {
     }
     setIsSavingVoice(true);
     try {
-      await adminApiClient.put(`/admin/tenants/${tenantId}/discovery/voice-profile`, { profile });
+      await adminNextApi.put(`/api/admin/tenants/${tenantId}/discovery/voice-profile`, { profile });
       toast.success('Voice profile salvo', `${objectionsCount} objeções · ${complianceCount} compliance`);
       onSaved();
     } catch (err: unknown) {
@@ -167,7 +167,7 @@ export function DraftsEditor({ tenantId, onSaved }: DraftsEditorProps) {
     }
     setIsSavingScripts(true);
     try {
-      await adminApiClient.put(`/admin/tenants/${tenantId}/discovery/scripts`, { scripts });
+      await adminNextApi.put(`/api/admin/tenants/${tenantId}/discovery/scripts`, { scripts });
       toast.success('Scripts salvos');
       onSaved();
     } catch (err: unknown) {

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Button, toast } from '@prospix/ui';
 import { Upload, Trash2, Download, Loader2, CheckCircle2, AlertCircle, FileAudio, FileVideo, FileText, ImageIcon } from 'lucide-react';
-import { adminApiClient } from '@/lib/admin-api-client';
+import { adminNextApi } from '@/lib/admin-api-client';
 import { AxiosError } from 'axios';
 
 export type MaterialKind = 'audio' | 'video' | 'transcript' | 'approval_proof';
@@ -55,9 +55,9 @@ export function MaterialsUploader({ tenantId, presentMaterials, onMaterialChange
     }
     setUploadingKind(kind);
     try {
-      const presignResponse = await adminApiClient.post(
-        `/admin/tenants/${tenantId}/discovery/materials/presign`,
-        { kind, contentType: file.type || 'application/octet-stream', filename: file.name },
+      const presignResponse = await adminNextApi.post(
+        `/api/admin/tenants/${tenantId}/discovery/materials`,
+        { action: 'presign', kind, contentType: file.type || 'application/octet-stream', filename: file.name },
       );
       const { key, uploadUrl } = presignResponse.data?.data || {};
       if (!uploadUrl || !key) throw new Error('Resposta de presign inválida.');
@@ -69,7 +69,7 @@ export function MaterialsUploader({ tenantId, presentMaterials, onMaterialChange
       });
       if (!putResponse.ok) throw new Error(`R2 PUT falhou (${putResponse.status})`);
 
-      await adminApiClient.post(`/admin/tenants/${tenantId}/discovery/materials/confirm`, { kind, key });
+      await adminNextApi.post(`/api/admin/tenants/${tenantId}/discovery/materials`, { action: 'confirm', kind, key });
       toast.success('Upload concluído', `${file.name} salvo.`);
       onMaterialChanged();
     } catch (err: unknown) {
@@ -88,7 +88,7 @@ export function MaterialsUploader({ tenantId, presentMaterials, onMaterialChange
     if (!confirm('Remover este material? A ação não pode ser desfeita.')) return;
     setBusyKind(kind);
     try {
-      await adminApiClient.delete(`/admin/tenants/${tenantId}/discovery/materials/${kind}`);
+      await adminNextApi.delete(`/api/admin/tenants/${tenantId}/discovery/materials?kind=${kind}`);
       toast.success('Material removido');
       onMaterialChanged();
     } catch (err: unknown) {
@@ -104,7 +104,7 @@ export function MaterialsUploader({ tenantId, presentMaterials, onMaterialChange
   const handleDownload = async (kind: MaterialKind) => {
     setBusyKind(kind);
     try {
-      const response = await adminApiClient.get(`/admin/tenants/${tenantId}/discovery/materials/${kind}/download`);
+      const response = await adminNextApi.get(`/api/admin/tenants/${tenantId}/discovery/materials/${kind}/download`);
       const url = response.data?.data?.downloadUrl;
       if (!url) throw new Error('URL ausente.');
       window.open(url, '_blank', 'noopener,noreferrer');

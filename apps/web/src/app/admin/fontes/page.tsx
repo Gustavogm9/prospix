@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, Button, Badge } from '@prospix/ui';
 import { MapPin, RefreshCw, Loader2, AlertCircle, TrendingUp, Layers, Award, BarChart3 } from 'lucide-react';
-import { adminApiClient } from '@/lib/admin-api-client';
+import { supabaseAdmin } from '@/lib/supabase';
 import { adminTenantsQueries } from '@/lib/admin-queries';
 
 /* ------------------------------------------------------------------ */
@@ -89,11 +89,39 @@ export default function LeadSourcesMonitor() {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const params = new URLSearchParams();
-      if (filterTenantId) params.set('tenantId', filterTenantId);
+      let query = supabaseAdmin
+        .from('leads')
+        .select('id, source, status')
+        .is('deleted_at', null);
+      if (filterTenantId) query = query.eq('tenant_id', filterTenantId);
+      const { data: allLeads, error } = await query;
+      if (error) throw error;
 
-      const response = await adminApiClient.get(`/admin/lead-sources?${params.toString()}`);
-      setData(response.data?.data ?? null);
+      const leads = allLeads ?? [];
+      const total = leads.length;
+
+      // Group by source
+      const sourceMap: Record<string, { count: number; converted: number }> = {};
+      leads.forEach((l: any) => {
+        const src = l.source ?? 'UNKNOWN';
+        if (!sourceMap[src]) sourceMap[src] = { count: 0, converted: 0 };
+        sourceMap[src].count++;
+        if (l.status === 'CLOSED_WON' || l.status === 'MEETING_SCHEDULED' || l.status === 'QUALIFIED') {
+          sourceMap[src].converted++;
+        }
+      });
+
+      const breakdown: SourceBreakdown[] = Object.entries(sourceMap)
+        .map(([source, v]) => ({
+          source,
+          count: v.count,
+          percentage: total > 0 ? Math.round((v.count / total) * 1000) / 10 : 0,
+          convertedCount: v.converted,
+          conversionRate: v.count > 0 ? Math.round((v.converted / v.count) * 1000) / 10 : 0,
+        }))
+        .sort((a, b) => b.count - a.count);
+
+      setData({ total, breakdown });
     } catch {
       setLoadError('Falha ao carregar fontes de leads.');
     } finally {

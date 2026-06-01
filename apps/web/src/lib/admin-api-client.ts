@@ -52,3 +52,40 @@ adminApiClient.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+/**
+ * Axios client for Next.js API route handlers (same-origin /api/...).
+ * Use this for admin operations that have been migrated to Next.js route handlers.
+ */
+export const adminNextApi = axios.create({
+  baseURL: '',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+adminNextApi.interceptors.request.use(
+  async (config: InternalAxiosRequestConfig) => {
+    const { data } = await supabaseAdmin.auth.getSession();
+    const accessToken = data.session?.access_token;
+    if (accessToken) {
+      config.headers.set('Authorization', `Bearer ${accessToken}`);
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
+adminNextApi.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401 || error.response?.status === 403) {
+      const { clearAdminSession } = useAdminAuthStore.getState();
+      clearAdminSession();
+      if (typeof window !== 'undefined' && window.location.pathname !== '/admin/login') {
+        window.location.href = '/admin/login';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
