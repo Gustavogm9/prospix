@@ -22,7 +22,15 @@ import { sseRoutes } from './routes/sse.js';
 
 const isProduction = env.NODE_ENV === 'production' || process.env.NODE_ENV === 'production';
 
-const productionAllowedOrigins = Array.from(new Set([env.APP_URL, env.ADMIN_URL, env.LANDING_URL].filter(Boolean)));
+const productionAllowedOrigins = Array.from(new Set([
+  env.APP_URL,
+  env.ADMIN_URL,
+  env.LANDING_URL,
+  // After frontend unification, all traffic comes from these domains
+  'https://www.prospix.com.br',
+  'https://prospix.com.br',
+  'https://app.prospix.com.br',
+].filter(Boolean)));
 
 function getPublicErrorMessage(error: any, statusCode: number): string {
   if (!isProduction) {
