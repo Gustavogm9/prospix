@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Button, Input, Badge, toast } from '@prospix/ui';
 import { Settings as SettingsIcon, Shield, CreditCard, Key, Calendar, Phone, Loader2, CheckCircle2, AlertCircle, RefreshCw, FileText, ExternalLink, Bell } from 'lucide-react';
 import { useAuthStore } from '@/store/auth-store';
+import { profileQueries, billingQueries } from '@/lib/queries';
 import { apiClient } from '@/lib/api-client';
 import { AxiosError } from 'axios';
 import { z } from 'zod';
@@ -75,13 +76,16 @@ type BillingInvoice = {
   status: 'PENDING' | 'PAID' | 'OVERDUE' | 'REFUNDED' | 'WAIVED';
   paidAt: string | null;
   dueAt: string;
-  invoiceUrl: string | null;
-  paymentMethod: string | null;
-  externalInvoiceId: string | null;
+  invoiceUrl?: string | null;
+  paymentMethod?: string | null;
+  externalInvoiceId?: string | null;
 };
 
 type TenantBillingData = {
   tenant: {
+    id?: string;
+    name?: string;
+    plan?: string;
     planName: string;
     mrrCents: number;
     status: string;
@@ -113,7 +117,7 @@ const tabConfig: { key: TabKey; label: string; icon: React.ElementType }[] = [
 ];
 
 export default function Settings() {
-  const { user } = useAuthStore();
+  const { user, tenantId } = useAuthStore();
   const [activeTab, setActiveTab] = useState('perfil');
 
   // Profile fields state
@@ -165,17 +169,19 @@ export default function Settings() {
   };
 
   const fetchProfile = async () => {
+    if (!user?.id || !tenantId) return;
     setIsProfileLoading(true);
     try {
-      const response = await apiClient.get('/tenant/profile');
-      const profile = response.data?.data;
+      const result = await profileQueries.get(user.id, tenantId);
+      if (result.error) throw new Error(result.error.message);
+      const profile = result.data;
       setName(profile?.name || '');
       setEmail(profile?.email || '');
       setSusep(profile?.susep || '');
     } catch (err: unknown) {
       console.error('Error loading profile:', err);
-      const message = err instanceof AxiosError
-        ? err.response?.data?.message || 'Não foi possível carregar os dados do perfil.'
+      const message = err instanceof Error
+        ? err.message || 'Não foi possível carregar os dados do perfil.'
         : 'Não foi possível carregar os dados do perfil.';
       toast.error('Erro ao carregar perfil', message);
     } finally {
@@ -196,21 +202,23 @@ export default function Settings() {
       return;
     }
     setProfileErrors({});
+    if (!user?.id || !tenantId) return;
     setIsProfileSaving(true);
     try {
-      const response = await apiClient.patch('/tenant/profile', {
+      const result = await profileQueries.update(user.id, tenantId, {
         name: parsed.data.name,
         email: parsed.data.email,
         susep: parsed.data.susep || null,
       });
-      const profile = response.data?.data;
+      if (result.error) throw new Error(result.error.message);
+      const profile = result.data;
       setName(profile?.name || name);
       setEmail(profile?.email || email);
       setSusep(profile?.susep || '');
       toast.success('Perfil salvo', 'As informações cadastrais foram atualizadas.');
     } catch (err: unknown) {
-      const message = err instanceof AxiosError
-        ? err.response?.data?.message || 'Não foi possível salvar o perfil.'
+      const message = err instanceof Error
+        ? err.message || 'Não foi possível salvar o perfil.'
         : 'Não foi possível salvar o perfil.';
       toast.error('Erro ao salvar perfil', message);
     } finally {
@@ -241,15 +249,17 @@ export default function Settings() {
   };
 
   const fetchBilling = async () => {
+    if (!tenantId) return;
     setIsBillingLoading(true);
     try {
-      const response = await apiClient.get('/tenant/billing');
-      setBillingData(response.data?.data || null);
+      const result = await billingQueries.get(tenantId);
+      if (result.error) throw new Error(result.error.message);
+      setBillingData(result.data || null);
     } catch (err: unknown) {
       console.error('Error loading billing:', err);
       setBillingData(null);
-      const message = err instanceof AxiosError
-        ? err.response?.data?.message || 'Não foi possível carregar as faturas reais.'
+      const message = err instanceof Error
+        ? err.message || 'Não foi possível carregar as faturas reais.'
         : 'Não foi possível carregar as faturas reais.';
       toast.error('Erro ao carregar faturamento', message);
     } finally {

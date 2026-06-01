@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { FunnelChart, BarChart, toast } from '@prospix/ui';
 import { Calendar, MessageSquare, Phone, Search, Info, ChevronRight, Star, MapPin } from 'lucide-react';
-import { apiClient } from '@/lib/api-client';
+import { dashboardQueries } from '@/lib/queries';
+import { useAuthStore } from '@/store/auth-store';
 import { useRouter } from 'next/navigation';
 import { OnboardingChecklist } from '@/components/OnboardingChecklist';
 
@@ -68,6 +69,7 @@ const PROFESSION_LABELS: Record<string, string> = {
 
 export default function HomePage() {
   const router = useRouter();
+  const tenantId = useAuthStore(state => state.tenantId);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -82,7 +84,8 @@ export default function HomePage() {
   }, [stats]);
 
   useEffect(() => {
-    const controller = new AbortController();
+    if (!tenantId) return;
+    let cancelled = false;
     const fetchDashboardData = async () => {
       const emptyStats: DashboardStats = {
         todayMeetings: 0, pendingConversations: 0, pendingManualConversations: 0,
@@ -92,18 +95,18 @@ export default function HomePage() {
 
       try {
         const [todayRes, funnelRes, weeklyRes, hotLeadsRes] = await Promise.allSettled([
-          apiClient.get('/tenant/dashboard/today', { signal: controller.signal }),
-          apiClient.get('/tenant/dashboard/funnel', { signal: controller.signal }),
-          apiClient.get('/tenant/dashboard/weekly-captures', { signal: controller.signal }),
-          apiClient.get('/tenant/dashboard/hot-leads', { signal: controller.signal }),
+          dashboardQueries.today(tenantId),
+          dashboardQueries.funnel(tenantId),
+          dashboardQueries.weeklyCaptures(tenantId),
+          dashboardQueries.hotLeads(tenantId),
         ]);
 
-        if (controller.signal.aborted) return;
+        if (cancelled) return;
 
-        const todayData = todayRes.status === 'fulfilled' ? (todayRes.value.data?.data ?? todayRes.value.data) : {};
-        const funnelRaw = funnelRes.status === 'fulfilled' ? (funnelRes.value.data?.data ?? funnelRes.value.data) : null;
-        const weeklyRaw = weeklyRes.status === 'fulfilled' ? (weeklyRes.value.data?.data ?? weeklyRes.value.data) : [];
-        const hotLeadsRaw = hotLeadsRes.status === 'fulfilled' ? (hotLeadsRes.value.data?.data ?? hotLeadsRes.value.data) : [];
+        const todayData = todayRes.status === 'fulfilled' && !todayRes.value.error ? todayRes.value.data : null;
+        const funnelRaw = funnelRes.status === 'fulfilled' && !funnelRes.value.error ? funnelRes.value.data : null;
+        const weeklyRaw = weeklyRes.status === 'fulfilled' && !weeklyRes.value.error ? weeklyRes.value.data : [];
+        const hotLeadsRaw = hotLeadsRes.status === 'fulfilled' && !hotLeadsRes.value.error ? hotLeadsRes.value.data : [];
 
         const capturedTotal = (funnelRaw?.stages?.CAPTURED || 0) + (funnelRaw?.stages?.ENRICHED || 0) + (funnelRaw?.stages?.NEW || 0);
         const contactedTotal = (funnelRaw?.stages?.CONTACTED || 0) + (funnelRaw?.stages?.CONVERSING || 0) + (funnelRaw?.stages?.NO_RESPONSE || 0);
@@ -137,29 +140,29 @@ export default function HomePage() {
           }));
 
         setStats({
-          todayMeetings: todayData.meetings_today ?? 0,
-          pendingConversations: todayData.conversations_ready ?? 0,
-          pendingManualConversations: todayData.pending_manual_conversations ?? 0,
-          needsAttention: todayData.need_callback ?? 0,
-          newLeadsToday: todayData.new_leads_today ?? 0,
-          nextMeetingTime: todayData.next_meeting_time ?? null,
+          todayMeetings: todayData?.meetings_today ?? 0,
+          pendingConversations: todayData?.conversations_ready ?? 0,
+          pendingManualConversations: todayData?.pending_manual_conversations ?? 0,
+          needsAttention: todayData?.need_callback ?? 0,
+          newLeadsToday: todayData?.new_leads_today ?? 0,
+          nextMeetingTime: todayData?.next_meeting_time ?? null,
           funnelData,
           weeklyPerformance,
           hotLeads,
         });
       } catch (err) {
-        if (controller.signal.aborted) return;
+        if (cancelled) return;
         console.error('Error fetching dashboard stats', err);
         setStats(emptyStats);
         toast.error('Erro de Conexão', 'Não foi possível carregar o dashboard.');
       } finally {
-        if (!controller.signal.aborted) setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     };
 
     fetchDashboardData();
-    return () => controller.abort();
-  }, []);
+    return () => { cancelled = true; };
+  }, [tenantId]);
 
   if (isLoading || !stats) {
     return (

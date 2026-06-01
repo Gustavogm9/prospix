@@ -1,11 +1,11 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badge, toast } from '@prospix/ui';
 import { CreditCard, AlertCircle, Loader2, CheckCircle2, RefreshCw, Calendar } from 'lucide-react';
-import { adminApiClient } from '@/lib/admin-api-client';
-import { AxiosError } from 'axios';
+import { adminBillingQueries } from '@/lib/admin-queries';
+import { supabaseAdmin } from '@/lib/supabase';
 
 interface BillingRecord {
   id: string;
@@ -47,12 +47,29 @@ export default function Billing() {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const response = await adminApiClient.get('/admin/billing');
-      setBillings(response.data?.data || []);
+      const { data, error } = await supabaseAdmin
+        .from('billing_records')
+        .select('*, tenants(name)')
+        .in('status', ['PENDING', 'OVERDUE'])
+        .order('due_at', { ascending: true });
+
+      if (error) throw new Error(error.message);
+
+      const mapped: BillingRecord[] = (data ?? []).map((b: any) => ({
+        id: b.id,
+        tenantId: b.tenant_id,
+        periodMonth: b.period_month,
+        totalCents: b.total_cents,
+        status: b.status,
+        dueAt: b.due_at,
+        paidAt: b.paid_at,
+        paymentMethod: b.payment_method,
+        tenant: { name: b.tenants?.name ?? 'N/A' },
+      }));
+
+      setBillings(mapped);
     } catch (err: unknown) {
-      const message = err instanceof AxiosError
-        ? err.response?.data?.message || 'Falha ao carregar cobranÃ§as.'
-        : 'Falha ao carregar cobranÃ§as.';
+      const message = err instanceof Error ? err.message : 'Falha ao carregar cobranças.';
       setLoadError(message);
     } finally {
       setIsLoading(false);
@@ -67,13 +84,12 @@ export default function Billing() {
     if (!confirm('Confirmar pagamento offline?\n\nMarca como PAID, registra paymentMethod=manual_offline e reativa o tenant se estiver SUSPENDED.')) return;
     setPayingId(id);
     try {
-      await adminApiClient.patch(`/admin/billing/${id}/pay`);
+      const result = await adminBillingQueries.markPaid(id);
+      if (result.error) throw new Error(result.error.message);
       toast.success('Pagamento confirmado', 'Fatura marcada como PAID.');
       await fetchBillings();
     } catch (err: unknown) {
-      const message = err instanceof AxiosError
-        ? err.response?.data?.message || 'Falha ao confirmar.'
-        : 'Falha ao confirmar.';
+      const message = err instanceof Error ? err.message : 'Falha ao confirmar.';
       toast.error('Erro', message);
     } finally {
       setPayingId(null);
@@ -102,10 +118,10 @@ export default function Billing() {
         <div>
           <h2 className="text-2xl font-bold font-heading text-text tracking-tight flex items-center gap-2">
             <CreditCard className="w-5 h-5 text-primary" aria-hidden />
-            Faturamento & CobranÃ§as
+            Faturamento & Cobranças
           </h2>
           <p className="text-text-secondary text-xs mt-1">
-            CobranÃ§as PENDING e OVERDUE cross-tenant. Permite confirmaÃ§Ã£o manual de pagamentos offline (PIX/transferÃªncia fora do Asaas).
+            Cobranças PENDING e OVERDUE cross-tenant. Permite confirmação manual de pagamentos offline (PIX/transferência fora do Asaas).
           </p>
         </div>
         <Button
@@ -148,7 +164,7 @@ export default function Billing() {
               <div>
                 <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">Total a receber</span>
                 <span className="text-2xl font-bold font-heading font-mono text-text">{formatBRL(totals.overdueAmount + totals.pendingAmount)}</span>
-                <span className="text-[10px] text-text-secondary block mt-0.5">{billings.length} cobranÃ§as abertas</span>
+                <span className="text-[10px] text-text-secondary block mt-0.5">{billings.length} cobranças abertas</span>
               </div>
               <CreditCard className="w-4 h-4 text-text-secondary opacity-80" aria-hidden />
             </div>
@@ -161,7 +177,7 @@ export default function Billing() {
               value={filter}
               onChange={(e) => setFilter(e.target.value as typeof filter)}
               className="mt-1 w-full bg-white border border-border rounded-lg px-2 py-1.5 text-xs text-text focus:border-border-strong focus:outline-none"
-              aria-label="Filtrar cobranÃ§as por status"
+              aria-label="Filtrar cobranças por status"
             >
               <option value="all">Todas ({billings.length})</option>
               <option value="OVERDUE">Vencidas ({totals.overdueCount})</option>
@@ -173,9 +189,9 @@ export default function Billing() {
 
       <Card className="bg-white border-border shadow-sm">
         <CardHeader className="pb-3">
-          <CardTitle className="text-base font-bold font-heading text-text">CobranÃ§as abertas</CardTitle>
+          <CardTitle className="text-base font-bold font-heading text-text">Cobranças abertas</CardTitle>
           <CardDescription className="text-text-secondary text-xs">
-            Ordenadas por data de vencimento ascendente. Use "Confirmar pagamento" apenas para PIX/transferÃªncia fora do Asaas.
+            Ordenadas por data de vencimento ascendente. Use "Confirmar pagamento" apenas para PIX/transferência fora do Asaas.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -191,9 +207,9 @@ export default function Billing() {
           ) : filtered.length === 0 ? (
             <div className="text-center py-10">
               <CheckCircle2 className="w-6 h-6 text-success-text mx-auto mb-2" aria-hidden />
-              <p className="text-sm font-semibold text-text">Sem cobranÃ§as abertas.</p>
+              <p className="text-sm font-semibold text-text">Sem cobranças abertas.</p>
               <p className="text-[11px] text-text-secondary mt-1">
-                {filter === 'all' ? 'Todos os tenants estÃ£o em dia.' : `Nenhuma cobranÃ§a ${filter}.`}
+                {filter === 'all' ? 'Todos os tenants estão em dia.' : `Nenhuma cobrança ${filter}.`}
               </p>
             </div>
           ) : (
@@ -202,11 +218,11 @@ export default function Billing() {
                 <thead>
                   <tr className="border-b border-border text-[10px] text-text-secondary uppercase tracking-wider">
                     <th className="text-left py-2 px-2">Tenant</th>
-                    <th className="text-left py-2 px-2">PerÃ­odo</th>
+                    <th className="text-left py-2 px-2">Período</th>
                     <th className="text-right py-2 px-2">Valor</th>
                     <th className="text-left py-2 px-2">Status</th>
                     <th className="text-left py-2 px-2">Vencimento</th>
-                    <th className="text-right py-2 px-2">AÃ§Ãµes</th>
+                    <th className="text-right py-2 px-2">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/60">
@@ -219,7 +235,7 @@ export default function Billing() {
                           <Link href={`/admin/tenants/${b.tenantId}`} className="font-semibold text-text hover:text-primary hover:underline">
                             {b.tenant.name}
                           </Link>
-                          <div className="text-[9px] text-text-secondary font-mono">id: {b.tenantId.slice(0, 8)}â€¦</div>
+                          <div className="text-[9px] text-text-secondary font-mono">id: {b.tenantId.slice(0, 8)}…</div>
                         </td>
                         <td className="py-2 px-2 font-mono">{b.periodMonth.slice(0, 7)}</td>
                         <td className="py-2 px-2 text-right font-mono font-bold">{formatBRL(b.totalCents)}</td>

@@ -3,8 +3,9 @@
 import { useEffect, useState } from 'react';
 import { Button, Input, Textarea, toast, Badge } from '@prospix/ui';
 import { Play, Sparkles, MessageSquare, Plus, Save, Trash2, Wand2, X } from 'lucide-react';
+import { scriptsQueries } from '@/lib/queries';
+import { useAuthStore } from '@/store/auth-store';
 import { apiClient } from '@/lib/api-client';
-import { AxiosError } from 'axios';
 
 
 interface ScriptVariation {
@@ -46,6 +47,7 @@ const mapScriptVariations = (script: any): ScriptVariation[] => {
 };
 
 export default function Scripts() {
+  const tenantId = useAuthStore(state => state.tenantId);
   const [activeSection, setActiveSection] = useState<'roteiro' | 'variantes' | 'simulacao'>('roteiro');
   const [currentScriptId, setCurrentScriptId] = useState<string | null>(null);
   const [allScripts, setAllScripts] = useState<Array<{ id: string; name?: string; status?: string }>>([]); 
@@ -105,18 +107,20 @@ export default function Scripts() {
 
 
   useEffect(() => {
+    if (!tenantId) return;
     const controller = new AbortController();
     const fetchScripts = async () => {
       try {
-        const response = await apiClient.get('/tenant/scripts', { signal: controller.signal });
+        const result = await scriptsQueries.list(tenantId);
         if (controller.signal.aborted) return;
-        const list = Array.isArray(response.data) ? response.data : response.data?.data;
-        setAllScripts(list || []);
-        const activeScript = (list || []).find((script: any) => script.status === 'ACTIVE') || list?.[0];
+        if (result.error) throw new Error(result.error.message);
+        const list = result.data || [];
+        setAllScripts(list);
+        const activeScript = list.find((script: any) => script.status === 'ACTIVE') || list[0];
 
         if (activeScript) {
           setCurrentScriptId(activeScript.id);
-          setBaseMessage(activeScript.baseMessage || '');
+          setBaseMessage((activeScript as any).base_message || (activeScript as any).baseMessage || '');
           setVariations(mapScriptVariations(activeScript));
         } else {
           setCurrentScriptId(null);
@@ -137,34 +141,35 @@ export default function Scripts() {
 
     fetchScripts();
     return () => controller.abort();
-  }, []);
+  }, [tenantId]);
 
   const handleSwitchScript = (scriptId: string) => {
     const script = allScripts.find((s: any) => s.id === scriptId) as any;
     if (script) {
       setCurrentScriptId(script.id);
-      setBaseMessage(script.baseMessage || '');
+      setBaseMessage(script.base_message || script.baseMessage || '');
       setVariations(mapScriptVariations(script));
     }
   };
 
   const handleDeleteScript = async () => {
-    if (!currentScriptId) return;
+    if (!currentScriptId || !tenantId) return;
     if (!window.confirm('Tem certeza que deseja excluir este roteiro? Esta ação não pode ser desfeita.')) return;
     try {
-      await apiClient.delete(`/tenant/scripts/${currentScriptId}`);
+      const result = await scriptsQueries.delete(tenantId, currentScriptId);
+      if (result.error) throw new Error(result.error.message);
       toast.success('Roteiro excluído');
       setCurrentScriptId(null);
       setBaseMessage('');
       setVariations([]);
       // Re-fetch
-      const response = await apiClient.get('/tenant/scripts');
-      const list = Array.isArray(response.data) ? response.data : response.data?.data;
-      setAllScripts(list || []);
-      const next = (list || [])[0] as any;
+      const listResult = await scriptsQueries.list(tenantId);
+      const list = listResult.data || [];
+      setAllScripts(list);
+      const next = list[0] as any;
       if (next) {
         setCurrentScriptId(next.id);
-        setBaseMessage(next.baseMessage || '');
+        setBaseMessage(next.base_message || next.baseMessage || '');
         setVariations(mapScriptVariations(next));
       }
     } catch (err) {
@@ -206,6 +211,7 @@ export default function Scripts() {
   };
 
   const handleSave = async () => {
+    if (!tenantId) return;
     if (!baseMessage.trim()) {
       toast.error('Roteiro vazio', 'Informe a abordagem base antes de salvar.');
       return;
@@ -222,33 +228,36 @@ export default function Scripts() {
       return;
     }
 
-    const payload = {
-      baseMessage: baseMessage.trim(),
-      variations: variations.map((variation) => ({
-        id: variation.id,
-        name: variation.name,
-        weight: variation.weight,
-        content: variation.content.trim(),
-      })),
-    };
+    const mappedVariations = variations.map((variation) => ({
+      id: variation.id,
+      name: variation.name,
+      weight: variation.weight,
+      content: variation.content.trim(),
+    }));
 
     try {
-      const response = currentScriptId
-        ? await apiClient.patch(`/tenant/scripts/${currentScriptId}`, {
-            baseMessage: payload.baseMessage,
-            flow: { variations: payload.variations },
-          })
-        : await apiClient.post('/tenant/scripts', payload);
-
-      const savedScript = response?.data?.data ?? response?.data;
+      let result;
+      if (currentScriptId) {
+        result = await scriptsQueries.update(tenantId, currentScriptId, {
+          baseMessage: baseMessage.trim(),
+          flow: { variations: mappedVariations },
+          variations: mappedVariations,
+        });
+      } else {
+        result = await scriptsQueries.create(tenantId, {
+          baseMessage: baseMessage.trim(),
+        });
+      }
+      if (result.error) throw new Error(result.error.message);
+      const savedScript = result.data;
       if (savedScript?.id) {
         setCurrentScriptId(savedScript.id);
       }
-      toast.success('Roteiro salvo', 'Alterações confirmadas pela API.');
+      toast.success('Roteiro salvo', 'Alterações confirmadas.');
     } catch (err: unknown) {
-      const message = err instanceof AxiosError
-        ? err.response?.data?.message || 'Não foi possível confirmar a gravação do roteiro na API.'
-        : 'Não foi possível confirmar a gravação do roteiro na API.';
+      const message = err instanceof Error
+        ? err.message || 'Não foi possível confirmar a gravação do roteiro.'
+        : 'Não foi possível confirmar a gravação do roteiro.';
       toast.error('Erro ao salvar', message);
     }
   };
@@ -270,8 +279,8 @@ export default function Scripts() {
       }
       setIsLoadingSim(false);
     } catch (err: unknown) {
-      const message = err instanceof AxiosError
-        ? err.response?.data?.message || 'A API não gerou uma resposta para a simulação.'
+      const message = err instanceof Error
+        ? err.message || 'A API não gerou uma resposta para a simulação.'
         : 'A API não gerou uma resposta para a simulação.';
       toast.error('Erro na simulação', message);
       setIsLoadingSim(false);

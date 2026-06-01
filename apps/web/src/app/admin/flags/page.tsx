@@ -1,10 +1,9 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badge, Input, toast } from '@prospix/ui';
 import { ToggleLeft, ToggleRight, Plus, Trash2, Loader2, AlertCircle, RefreshCw, Globe, Building } from 'lucide-react';
-import { adminApiClient } from '@/lib/admin-api-client';
-import { AxiosError } from 'axios';
+import { supabaseAdmin } from '@/lib/supabase';
 
 interface FeatureFlag {
   id: string;
@@ -52,14 +51,35 @@ export default function FeatureFlags() {
     setLoadError(null);
     try {
       const [flagsResponse, tenantsResponse] = await Promise.all([
-        adminApiClient.get('/admin/feature-flags'),
-        adminApiClient.get('/admin/tenants'),
+        supabaseAdmin
+          .from('feature_flags')
+          .select('*, tenants(id, name, slug)')
+          .order('key'),
+        supabaseAdmin
+          .from('tenants')
+          .select('id, name, slug')
+          .is('deleted_at', null)
+          .order('name'),
       ]);
-      setFlags(flagsResponse.data?.data ?? []);
-      const tList = (tenantsResponse.data?.data ?? []) as Array<{ id: string; name: string; slug: string }>;
-      setTenants(tList.map((t) => ({ id: t.id, name: t.name, slug: t.slug })));
+
+      if (flagsResponse.error) throw new Error(flagsResponse.error.message);
+      if (tenantsResponse.error) throw new Error(tenantsResponse.error.message);
+
+      const mappedFlags: FeatureFlag[] = (flagsResponse.data ?? []).map((f: any) => ({
+        id: f.id,
+        key: f.key,
+        tenantId: f.tenant_id,
+        tenant: f.tenants ? { id: f.tenants.id, name: f.tenants.name, slug: f.tenants.slug } : null,
+        enabled: f.enabled,
+        reason: f.reason,
+        createdAt: f.created_at,
+        updatedAt: f.updated_at,
+      }));
+
+      setFlags(mappedFlags);
+      setTenants((tenantsResponse.data ?? []).map((t: any) => ({ id: t.id, name: t.name, slug: t.slug })));
     } catch (err: unknown) {
-      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha ao carregar.' : 'Falha ao carregar.';
+      const message = err instanceof Error ? err.message : 'Falha ao carregar.';
       setLoadError(message);
     } finally {
       setIsLoading(false);
@@ -71,11 +91,16 @@ export default function FeatureFlags() {
   const handleToggle = async (flag: FeatureFlag) => {
     setBusyId(flag.id);
     try {
-      await adminApiClient.patch(`/admin/feature-flags/${flag.id}`, { enabled: !flag.enabled });
-      toast.success('Flag atualizada', `${flag.key} â†’ ${!flag.enabled ? 'ON' : 'OFF'}`);
+      const { error } = await supabaseAdmin
+        .from('feature_flags')
+        .update({ enabled: !flag.enabled, updated_at: new Date().toISOString() })
+        .eq('id', flag.id);
+
+      if (error) throw new Error(error.message);
+      toast.success('Flag atualizada', `${flag.key} → ${!flag.enabled ? 'ON' : 'OFF'}`);
       await fetchAll();
     } catch (err: unknown) {
-      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha.' : 'Falha.';
+      const message = err instanceof Error ? err.message : 'Falha.';
       toast.error('Erro', message);
     } finally {
       setBusyId(null);
@@ -83,14 +108,19 @@ export default function FeatureFlags() {
   };
 
   const handleDelete = async (flag: FeatureFlag) => {
-    if (!confirm(`Remover a flag "${flag.key}"${flag.tenant ? ` para o tenant ${flag.tenant.name}` : ' global'}?\n\nCÃ³digo voltarÃ¡ ao comportamento default.`)) return;
+    if (!confirm(`Remover a flag "${flag.key}"${flag.tenant ? ` para o tenant ${flag.tenant.name}` : ' global'}?\n\nCódigo voltará ao comportamento default.`)) return;
     setBusyId(flag.id);
     try {
-      await adminApiClient.delete(`/admin/feature-flags/${flag.id}`);
+      const { error } = await supabaseAdmin
+        .from('feature_flags')
+        .delete()
+        .eq('id', flag.id);
+
+      if (error) throw new Error(error.message);
       toast.success('Flag removida');
       await fetchAll();
     } catch (err: unknown) {
-      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha.' : 'Falha.';
+      const message = err instanceof Error ? err.message : 'Falha.';
       toast.error('Erro', message);
     } finally {
       setBusyId(null);
@@ -100,27 +130,37 @@ export default function FeatureFlags() {
   const handleCreate = async () => {
     const trimmedKey = newKey.trim();
     if (!trimmedKey || !/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/.test(trimmedKey)) {
-      toast.error('Chave invÃ¡lida', 'Use formato snake_case com pontos Â· ex: ai.disabled');
+      toast.error('Chave inválida', 'Use formato snake_case com pontos · ex: ai.disabled');
       return;
     }
     if (newScope === 'tenant' && !newTenantId) {
-      toast.error('Selecione um tenant', 'Para escopo "tenant" o campo Ã© obrigatÃ³rio.');
+      toast.error('Selecione um tenant', 'Para escopo "tenant" o campo é obrigatório.');
       return;
     }
     setIsSaving(true);
     try {
-      await adminApiClient.post('/admin/feature-flags', {
-        key: trimmedKey,
-        tenantId: newScope === 'tenant' ? newTenantId : null,
-        enabled: newEnabled,
-        reason: newReason.trim() || undefined,
-      });
+      // Upsert by key + tenant_id
+      const tenantId = newScope === 'tenant' ? newTenantId : null;
+
+      const { error } = await supabaseAdmin
+        .from('feature_flags')
+        .upsert({
+          key: trimmedKey,
+          tenant_id: tenantId,
+          enabled: newEnabled,
+          reason: newReason.trim() || null,
+          updated_at: new Date().toISOString(),
+        }, {
+          onConflict: 'key,tenant_id',
+        });
+
+      if (error) throw new Error(error.message);
       toast.success('Flag salva', trimmedKey);
       setCreateOpen(false);
       setNewKey(''); setNewTenantId(''); setNewReason(''); setNewEnabled(true); setNewScope('global');
       await fetchAll();
     } catch (err: unknown) {
-      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha.' : 'Falha.';
+      const message = err instanceof Error ? err.message : 'Falha.';
       toast.error('Erro', message);
     } finally {
       setIsSaving(false);
@@ -146,7 +186,7 @@ export default function FeatureFlags() {
             Feature Flags / Kill Switches
           </h2>
           <p className="text-text-secondary text-xs mt-1">
-            Controle remoto sem deploy. Override por tenant tem precedÃªncia sobre flag global. Cache runtime de 30s.
+            Controle remoto sem deploy. Override por tenant tem precedência sobre flag global. Cache runtime de 30s.
           </p>
         </div>
         <div className="flex gap-2">
@@ -164,7 +204,7 @@ export default function FeatureFlags() {
           <CardHeader className="pb-3">
             <CardTitle className="text-base font-bold font-heading text-text">Criar / atualizar flag</CardTitle>
             <CardDescription className="text-text-secondary text-xs">
-              Se a combinaÃ§Ã£o (key + scope/tenant) jÃ¡ existir, Ã© atualizada in-place.
+              Se a combinação (key + scope/tenant) já existir, é atualizada in-place.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -192,7 +232,7 @@ export default function FeatureFlags() {
                   className="w-full bg-white border border-border rounded-lg px-2 py-1.5 text-xs text-text focus:border-border-strong focus:outline-none"
                 >
                   <option value="global">Global (todos tenants)</option>
-                  <option value="tenant">Tenant especÃ­fico</option>
+                  <option value="tenant">Tenant específico</option>
                 </select>
               </div>
               {newScope === 'tenant' && (
@@ -204,7 +244,7 @@ export default function FeatureFlags() {
                     onChange={(e) => setNewTenantId(e.target.value)}
                     className="w-full bg-white border border-border rounded-lg px-2 py-1.5 text-xs text-text focus:border-border-strong focus:outline-none"
                   >
-                    <option value="">â€” selecione â€”</option>
+                    <option value="">— selecione —</option>
                     {tenants.map((t) => <option key={t.id} value={t.id}>{t.name} ({t.slug})</option>)}
                   </select>
                 </div>
@@ -269,7 +309,7 @@ export default function FeatureFlags() {
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-bold font-heading text-text font-mono">{key}</CardTitle>
                 <CardDescription className="text-text-secondary text-xs">
-                  {entries.length} configuraÃ§Ã£o(Ãµes) Â· {entries.filter((e) => !e.tenantId).length} global, {entries.filter((e) => !!e.tenantId).length} por tenant
+                  {entries.length} configuração(ões) · {entries.filter((e) => !e.tenantId).length} global, {entries.filter((e) => !!e.tenantId).length} por tenant
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-2 pt-0">

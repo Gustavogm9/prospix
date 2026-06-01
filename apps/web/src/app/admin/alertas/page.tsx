@@ -1,11 +1,12 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badge, toast } from '@prospix/ui';
 import { Bell, RefreshCw, Loader2, AlertCircle, AlertTriangle, CheckCircle2, Info, PlayCircle, Eye, X } from 'lucide-react';
-import { adminApiClient } from '@/lib/admin-api-client';
-import { AxiosError } from 'axios';
+import { adminAlertsQueries } from '@/lib/admin-queries';
+import { supabaseAdmin } from '@/lib/supabase';
+import { useAdminAuthStore } from '@/store/admin-auth-store';
 
 type Severity = 'INFO' | 'WARNING' | 'CRITICAL';
 
@@ -59,19 +60,65 @@ export default function Alerts() {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const params = new URLSearchParams();
-      params.set('limit', String(PAGE_SIZE));
-      params.set('offset', String(newOffset));
-      params.set('status', filterStatus);
-      if (filterSeverity !== 'all') params.set('severity', filterSeverity);
+      // Build query with filters
+      let query = supabaseAdmin
+        .from('operational_alerts')
+        .select('*, tenants(id, name, slug), ack_user:users!operational_alerts_ack_by_id_fkey(id, name, email)', { count: 'exact' })
+        .order('created_at', { ascending: false })
+        .range(newOffset, newOffset + PAGE_SIZE - 1);
 
-      const response = await adminApiClient.get(`/admin/alerts?${params.toString()}`);
-      const payload = response.data?.data;
-      setItems(payload?.items ?? []);
-      setPagination(payload?.pagination ?? { total: 0, limit: PAGE_SIZE, offset: 0, hasMore: false });
-      setSummary(payload?.summary ?? {});
+      // Status filter
+      if (filterStatus === 'open') {
+        query = query.is('ack_at', null).is('resolved_at', null);
+      } else if (filterStatus === 'acked') {
+        query = query.not('ack_at', 'is', null).is('resolved_at', null);
+      } else if (filterStatus === 'resolved') {
+        query = query.not('resolved_at', 'is', null);
+      }
+
+      if (filterSeverity !== 'all') {
+        query = query.eq('severity', filterSeverity);
+      }
+
+      const { data, error, count } = await query;
+      if (error) throw new Error(error.message);
+
+      const total = count ?? 0;
+      const mapped: OperationalAlert[] = (data ?? []).map((a: any) => ({
+        id: a.id,
+        type: a.type,
+        severity: a.severity,
+        tenantId: a.tenant_id,
+        tenant: a.tenants ? { id: a.tenants.id, name: a.tenants.name, slug: a.tenants.slug } : null,
+        title: a.title,
+        message: a.message,
+        context: a.context,
+        dedupKey: a.dedup_key,
+        ackById: a.ack_by_id,
+        ackBy: a.ack_user ? { id: a.ack_user.id, name: a.ack_user.name, email: a.ack_user.email } : null,
+        ackAt: a.ack_at,
+        resolvedAt: a.resolved_at,
+        createdAt: a.created_at,
+        updatedAt: a.updated_at,
+      }));
+
+      setItems(mapped);
+      setPagination({ total, limit: PAGE_SIZE, offset: newOffset, hasMore: newOffset + PAGE_SIZE < total });
+
+      // Calculate summary counts for open alerts
+      const summaryQuery = await supabaseAdmin
+        .from('operational_alerts')
+        .select('severity')
+        .is('resolved_at', null)
+        .is('ack_at', null);
+
+      const summaryMap: Record<string, number> = { CRITICAL: 0, WARNING: 0, INFO: 0 };
+      (summaryQuery.data ?? []).forEach((a: any) => {
+        summaryMap[a.severity] = (summaryMap[a.severity] || 0) + 1;
+      });
+      setSummary(summaryMap);
     } catch (err: unknown) {
-      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha ao carregar alertas.' : 'Falha ao carregar alertas.';
+      const message = err instanceof Error ? err.message : 'Falha ao carregar alertas.';
       setLoadError(message);
     } finally {
       setIsLoading(false);
@@ -86,12 +133,15 @@ export default function Alerts() {
   const handleScan = async () => {
     setScanBusy(true);
     try {
-      const response = await adminApiClient.post('/admin/alerts/scan');
-      const r = response.data?.data;
-      toast.success('Scan executado', `${r?.created ?? 0} criados Â· ${r?.updated ?? 0} atualizados Â· ${r?.errors ?? 0} erros`);
+      // Scan is a server-side operation that can't run from client Supabase
+      // We trigger it via an edge function or RPC
+      const { data, error } = await supabaseAdmin.rpc('run_operational_scan');
+      if (error) throw new Error(error.message);
+      const r = data as any;
+      toast.success('Scan executado', `${r?.created ?? 0} criados · ${r?.updated ?? 0} atualizados · ${r?.errors ?? 0} erros`);
       await fetchAlerts(0);
     } catch (err: unknown) {
-      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha ao executar scan.' : 'Falha ao executar scan.';
+      const message = err instanceof Error ? err.message : 'Falha ao executar scan.';
       toast.error('Erro', message);
     } finally {
       setScanBusy(false);
@@ -101,11 +151,13 @@ export default function Alerts() {
   const handleAck = async (id: string) => {
     setBusyId(id);
     try {
-      await adminApiClient.patch(`/admin/alerts/${id}/ack`);
+      const adminUser = useAdminAuthStore.getState().adminUser;
+      const result = await adminAlertsQueries.acknowledge(id, adminUser?.id ?? '');
+      if (result.error) throw new Error(result.error.message);
       toast.success('Alerta acknowledged');
       await fetchAlerts(pagination.offset);
     } catch (err: unknown) {
-      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha.' : 'Falha.';
+      const message = err instanceof Error ? err.message : 'Falha.';
       toast.error('Erro', message);
     } finally {
       setBusyId(null);
@@ -113,14 +165,15 @@ export default function Alerts() {
   };
 
   const handleResolve = async (id: string) => {
-    if (!confirm('Resolver este alerta? Vai sair do feed "open" e ficar disponÃ­vel apenas no filtro "resolvidos".')) return;
+    if (!confirm('Resolver este alerta? Vai sair do feed "open" e ficar disponível apenas no filtro "resolvidos".')) return;
     setBusyId(id);
     try {
-      await adminApiClient.patch(`/admin/alerts/${id}/resolve`);
+      const result = await adminAlertsQueries.resolve(id);
+      if (result.error) throw new Error(result.error.message);
       toast.success('Alerta resolvido');
       await fetchAlerts(pagination.offset);
     } catch (err: unknown) {
-      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha.' : 'Falha.';
+      const message = err instanceof Error ? err.message : 'Falha.';
       toast.error('Erro', message);
     } finally {
       setBusyId(null);
@@ -136,7 +189,7 @@ export default function Alerts() {
             Alertas operacionais
           </h2>
           <p className="text-text-secondary text-xs mt-1">
-            Scanner diÃ¡rio cross-tenant (08:15 BRT) Â· billing overdue, LGPD SLA, churn risk, DLQ acumulaÃ§Ã£o, integration gaps.
+            Scanner diário cross-tenant (08:15 BRT) · billing overdue, LGPD SLA, churn risk, DLQ acumulação, integration gaps.
           </p>
         </div>
         <div className="flex gap-2">
@@ -155,7 +208,7 @@ export default function Alerts() {
           <CardContent className="pt-4 pb-3">
             <div className="flex items-start justify-between">
               <div>
-                <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">CrÃ­ticos abertos</span>
+                <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">Críticos abertos</span>
                 <span className={`text-2xl font-bold font-heading font-mono ${(summary.CRITICAL ?? 0) > 0 ? 'text-error-text' : 'text-text'}`}>{summary.CRITICAL ?? 0}</span>
               </div>
               <AlertCircle className={`w-4 h-4 ${(summary.CRITICAL ?? 0) > 0 ? 'text-error-text' : 'text-text-secondary'} opacity-80`} aria-hidden />
@@ -201,7 +254,7 @@ export default function Alerts() {
                 {s === 'open' ? 'Abertos' : s === 'acked' ? 'Acked' : s === 'resolved' ? 'Resolvidos' : 'Todos'}
               </Button>
             ))}
-            <span className="text-text-secondary text-xs px-2 self-center">Â·</span>
+            <span className="text-text-secondary text-xs px-2 self-center">·</span>
             {(['all', 'CRITICAL', 'WARNING', 'INFO'] as const).map((s) => (
               <Button
                 key={s}
@@ -219,7 +272,7 @@ export default function Alerts() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base font-bold font-heading text-text">Feed</CardTitle>
           <CardDescription className="text-text-secondary text-xs">
-            {pagination.total.toLocaleString('pt-BR')} total Â· ordenado por severity (CRITICAL primeiro) + data desc
+            {pagination.total.toLocaleString('pt-BR')} total · ordenado por severity (CRITICAL primeiro) + data desc
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -236,7 +289,7 @@ export default function Alerts() {
             <div className="text-center py-10">
               <CheckCircle2 className="w-6 h-6 text-success-text mx-auto mb-2" aria-hidden />
               <p className="text-sm font-semibold text-text">Sem alertas {filterStatus === 'open' ? 'abertos' : ''}.</p>
-              <p className="text-[11px] text-text-secondary mt-1">Sistema operacional saudÃ¡vel.</p>
+              <p className="text-[11px] text-text-secondary mt-1">Sistema operacional saudável.</p>
             </div>
           ) : (
             <div className="space-y-2">
@@ -281,7 +334,7 @@ export default function Alerts() {
                         <div className="text-xs font-bold text-text mt-1">{a.title}</div>
                         <div className="text-[11px] text-text mt-0.5 leading-relaxed">{a.message}</div>
                         <div className="text-[9px] text-text-secondary font-mono mt-1">
-                          criado {new Date(a.createdAt).toLocaleString('pt-BR')} Â· atualizado {new Date(a.updatedAt).toLocaleString('pt-BR')}
+                          criado {new Date(a.createdAt).toLocaleString('pt-BR')} · atualizado {new Date(a.updatedAt).toLocaleString('pt-BR')}
                         </div>
                         {isExpanded && a.context !== null && (
                           <pre className="text-[10px] font-mono text-text whitespace-pre-wrap break-words mt-2 p-2 bg-white/60 rounded border border-border/40 max-h-60 overflow-y-auto">

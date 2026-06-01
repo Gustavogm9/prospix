@@ -26,7 +26,8 @@ import {
   toast,
 } from '@prospix/ui';
 import { Download, Trash2, FileText, AlertTriangle, Clock, X, RotateCw, Inbox } from 'lucide-react';
-import { apiClient } from '@/lib/api-client';
+import { lgpdQueries } from '@/lib/queries';
+import { useAuthStore } from '@/store/auth-store';
 
 type LgpdRequestType =
   | 'EXPORT_DATA'
@@ -82,6 +83,8 @@ function statusBadge(status: LgpdRequestStatus) {
 }
 
 export default function PrivacyTab() {
+  const tenantId = useAuthStore(state => state.tenantId);
+  const user = useAuthStore(state => state.user);
   const [requests, setRequests] = useState<LgpdRequestView[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -95,17 +98,26 @@ export default function PrivacyTab() {
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
 
   const fetchRequests = async () => {
+    if (!tenantId) return;
     setIsLoading(true);
     setLoadError(null);
     try {
-      const response = await apiClient.get<{ data: LgpdRequestView[] }>('/tenant/lgpd/requests');
-      setRequests(response.data?.data ?? []);
+      const result = await lgpdQueries.list(tenantId);
+      if (result.error) throw new Error(result.error.message);
+      setRequests((result.data ?? []).map((r: any) => ({
+        id: r.id,
+        type: r.type,
+        status: r.status,
+        scope: r.scope,
+        downloadUrl: r.download_url,
+        downloadExpiresAt: r.download_expires_at,
+        rejectionReason: r.rejection_reason,
+        createdAt: r.created_at,
+        processedAt: r.processed_at,
+        updatedAt: r.updated_at,
+      })));
     } catch (err: unknown) {
-      const error = err as { response?: { data?: { error?: { message?: string } } }; message?: string };
-      const message =
-        error?.response?.data?.error?.message ||
-        error?.message ||
-        'Não foi possível carregar suas solicitações LGPD.';
+      const message = err instanceof Error ? err.message : 'Não foi possível carregar suas solicitações LGPD.';
       setLoadError(message);
     } finally {
       setIsLoading(false);
@@ -114,15 +126,31 @@ export default function PrivacyTab() {
 
   useEffect(() => {
     fetchRequests();
-  }, []);
+  }, [tenantId]);
 
   const createRequest = async (
     type: LgpdRequestType,
     scope?: Record<string, unknown>,
   ): Promise<boolean> => {
+    if (!tenantId || !user?.id) {
+      toast.error('Erro', 'Sessão inválida. Faça login novamente.');
+      return false;
+    }
     setIsCreating(true);
     try {
-      await apiClient.post('/tenant/lgpd/requests', { type, scope });
+      const result = await lgpdQueries.create(tenantId, user.id, type as any, scope);
+      if (result.error) {
+        const code = result.error.code;
+        const message = result.error.message;
+        if (code === 'RATE_LIMITED') {
+          toast.error('Limite atingido', message || 'Aguarde solicitações em andamento serem processadas.');
+        } else if (code === 'VALIDATION_ERROR') {
+          toast.error('Dados inválidos', message || 'Confira os campos da solicitação.');
+        } else {
+          toast.error('Erro ao registrar', message || 'Tente novamente em instantes.');
+        }
+        return false;
+      }
       toast.success(
         'Solicitação registrada',
         'Resposta em até 15 dias úteis conforme LGPD art. 19.',
@@ -130,19 +158,7 @@ export default function PrivacyTab() {
       await fetchRequests();
       return true;
     } catch (err: unknown) {
-      const error = err as {
-        response?: { status?: number; data?: { error?: { code?: string; message?: string } } };
-      };
-      const code = error?.response?.data?.error?.code;
-      const message = error?.response?.data?.error?.message;
-
-      if (code === 'RATE_LIMITED') {
-        toast.error('Limite atingido', message || 'Aguarde solicitações em andamento serem processadas.');
-      } else if (code === 'VALIDATION_ERROR') {
-        toast.error('Dados inválidos', message || 'Confira os campos da solicitação.');
-      } else {
-        toast.error('Erro ao registrar', message || 'Tente novamente em instantes.');
-      }
+      toast.error('Erro ao registrar', 'Tente novamente em instantes.');
       return false;
     } finally {
       setIsCreating(false);
@@ -150,8 +166,10 @@ export default function PrivacyTab() {
   };
 
   const handleCancelRequest = async (requestId: string) => {
+    if (!tenantId) return;
     try {
-      await apiClient.post(`/tenant/lgpd/requests/${requestId}/cancel`);
+      const result = await lgpdQueries.cancel(tenantId, requestId);
+      if (result.error) throw new Error(result.error.message);
       toast.success('Solicitação cancelada', 'A solicitação foi marcada como cancelada.');
       await fetchRequests();
     } catch {

@@ -3,8 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badge } from '@prospix/ui';
 import { Target, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, Users, MessageSquare, CalendarCheck } from 'lucide-react';
-import { adminApiClient } from '@/lib/admin-api-client';
-import { AxiosError } from 'axios';
+import { supabaseAdmin } from '@/lib/supabase';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -96,12 +95,14 @@ export default function CampaignMonitor() {
   const [tenants, setTenants] = useState<Array<{ id: string; name: string }>>([]);
 
   useEffect(() => {
-    adminApiClient.get('/admin/tenants')
-      .then((res) => {
-        const list = (res.data?.data ?? []) as Array<{ id: string; name: string }>;
-        setTenants(list.sort((a, b) => a.name.localeCompare(b.name)));
-      })
-      .catch(() => { /* ignore */ });
+    supabaseAdmin
+      .from('tenants')
+      .select('id, name')
+      .is('deleted_at', null)
+      .order('name')
+      .then(({ data }) => {
+        if (data) setTenants(data as Array<{ id: string; name: string }>);
+      });
   }, []);
 
   /* ---------- Fetch campaigns ---------- */
@@ -109,19 +110,48 @@ export default function CampaignMonitor() {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const params = new URLSearchParams();
-      params.set('limit', String(PAGE_SIZE));
-      params.set('offset', String(newOffset));
-      if (filterTenantId) params.set('tenantId', filterTenantId);
-      if (filterStatus) params.set('status', filterStatus);
-      if (filterProfession) params.set('profession', filterProfession);
+      let query = supabaseAdmin
+        .from('campaigns')
+        .select('*, tenants(id, name, slug)', { count: 'exact' })
+        .order('created_at', { ascending: false })
+        .range(newOffset, newOffset + PAGE_SIZE - 1);
 
-      const response = await adminApiClient.get(`/admin/campaigns?${params.toString()}`);
-      const payload = response.data?.data;
-      setItems(payload?.items ?? []);
-      setPagination(payload?.pagination ?? { total: 0, limit: PAGE_SIZE, offset: 0, hasMore: false });
+      if (filterTenantId) query = query.eq('tenant_id', filterTenantId);
+      if (filterStatus) query = query.eq('status', filterStatus);
+      if (filterProfession) query = query.eq('profession', filterProfession);
+
+      const { data, error, count } = await query;
+      if (error) throw new Error(error.message);
+
+      const total = count ?? 0;
+      const mapped: CampaignEntry[] = (data ?? []).map((c: any) => ({
+        id: c.id,
+        tenantId: c.tenant_id,
+        tenantName: c.tenants?.name ?? null,
+        tenantSlug: c.tenants?.slug ?? null,
+        name: c.name,
+        status: c.status,
+        profession: c.profession,
+        cities: c.cities ?? [],
+        neighborhoods: c.neighborhoods ?? [],
+        dailyLimit: c.daily_limit ?? 0,
+        hourWindowStart: c.hour_window_start ?? 0,
+        hourWindowEnd: c.hour_window_end ?? 0,
+        activeScriptId: c.active_script_id,
+        filters: c.filters,
+        totalCaptured: c.total_captured ?? 0,
+        totalConversing: c.total_conversing ?? 0,
+        totalScheduled: c.total_scheduled ?? 0,
+        totalClosedWon: c.total_closed_won ?? 0,
+        createdAt: c.created_at,
+        updatedAt: c.updated_at,
+        archivedAt: c.archived_at,
+      }));
+
+      setItems(mapped);
+      setPagination({ total, limit: PAGE_SIZE, offset: newOffset, hasMore: newOffset + PAGE_SIZE < total });
     } catch (err: unknown) {
-      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha ao carregar campanhas.' : 'Falha ao carregar campanhas.';
+      const message = err instanceof Error ? err.message : 'Falha ao carregar campanhas.';
       setLoadError(message);
     } finally {
       setIsLoading(false);
@@ -131,8 +161,50 @@ export default function CampaignMonitor() {
   /* ---------- Fetch stats ---------- */
   const fetchStats = useCallback(async () => {
     try {
-      const response = await adminApiClient.get('/admin/campaigns/stats');
-      setStats(response.data?.data ?? null);
+      const { data: allCampaigns } = await supabaseAdmin
+        .from('campaigns')
+        .select('status, profession, tenant_id, total_captured, total_conversing, total_scheduled, total_closed_won, tenants(name)');
+
+      if (!allCampaigns) return;
+
+      const byStatus: Record<string, number> = {};
+      const byProfession: Record<string, number> = {};
+      let totalCaptured = 0;
+      let totalConversing = 0;
+      let totalScheduled = 0;
+      let totalClosedWon = 0;
+      const tenantCampaignCount: Record<string, { tenantId: string; tenantName: string; campaignCount: number }> = {};
+
+      allCampaigns.forEach((c: any) => {
+        byStatus[c.status] = (byStatus[c.status] || 0) + 1;
+        byProfession[c.profession] = (byProfession[c.profession] || 0) + 1;
+        totalCaptured += c.total_captured ?? 0;
+        totalConversing += c.total_conversing ?? 0;
+        totalScheduled += c.total_scheduled ?? 0;
+        totalClosedWon += c.total_closed_won ?? 0;
+
+        if (c.status === 'ACTIVE' && c.tenant_id) {
+          if (!tenantCampaignCount[c.tenant_id]) {
+            tenantCampaignCount[c.tenant_id] = {
+              tenantId: c.tenant_id,
+              tenantName: c.tenants?.name ?? 'N/A',
+              campaignCount: 0,
+            };
+          }
+          tenantCampaignCount[c.tenant_id]!.campaignCount++;
+        }
+      });
+
+      const topTenants = Object.values(tenantCampaignCount)
+        .sort((a, b) => b.campaignCount - a.campaignCount)
+        .slice(0, 5);
+
+      setStats({
+        byStatus,
+        totals: { totalCaptured, totalConversing, totalScheduled, totalClosedWon },
+        topTenants,
+        byProfession,
+      });
     } catch {
       /* non-blocking; KPIs stay at previous values */
     }

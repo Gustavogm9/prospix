@@ -2,7 +2,8 @@
 
 import { Target, Plus, Pause, Edit2, Copy, Play, Loader2, Info, X, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { apiClient } from '@/lib/api-client';
+import { campaignsQueries } from '@/lib/queries';
+import { useAuthStore } from '@/store/auth-store';
 import { toast } from '@prospix/ui';
 
 interface Campaign {
@@ -27,6 +28,7 @@ const PROF_LABEL: Record<string, string> = {
 };
 
 export default function Campaigns() {
+  const tenantId = useAuthStore(state => state.tenantId);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'ACTIVE' | 'PAUSED' | 'DRAFT'>('all');
@@ -39,10 +41,23 @@ export default function Campaigns() {
   });
 
   const fetchCampaigns = async () => {
+    if (!tenantId) return;
     try {
-      const res = await apiClient.get('/tenant/campaigns');
-      const data = Array.isArray(res.data) ? res.data : (res.data?.data ?? []);
-      setCampaigns(data);
+      const result = await campaignsQueries.list(tenantId);
+      if (result.error) throw new Error(result.error.message);
+      setCampaigns((result.data || []).map((c: any) => ({
+        id: c.id,
+        name: c.name,
+        profession: c.profession,
+        cities: c.cities || [],
+        neighborhoods: c.neighborhoods || [],
+        dailyLimit: c.daily_limit,
+        hourWindowStart: c.hour_window_start,
+        hourWindowEnd: c.hour_window_end,
+        status: c.status,
+        createdAt: c.created_at,
+        filters: c.filters,
+      })));
     } catch (err) {
       console.error('Failed to fetch campaigns', err);
       toast.error('Erro ao carregar', 'Não foi possível carregar as campanhas.');
@@ -52,12 +67,14 @@ export default function Campaigns() {
     }
   };
 
-  useEffect(() => { fetchCampaigns(); }, []);
+  useEffect(() => { fetchCampaigns(); }, [tenantId]);
 
   const handlePause = async (id: string) => {
+    if (!tenantId) return;
     setActionLoading(id);
     try {
-      await apiClient.post(`/tenant/campaigns/${id}/pause`);
+      const result = await campaignsQueries.pause(tenantId, id);
+      if (result.error) throw new Error(result.error.message);
       toast.success('Campanha pausada');
       await fetchCampaigns();
     } catch (err) { console.error(err); toast.error('Erro', 'Não foi possível pausar a campanha.'); }
@@ -65,9 +82,11 @@ export default function Campaigns() {
   };
 
   const handleResume = async (id: string) => {
+    if (!tenantId) return;
     setActionLoading(id);
     try {
-      await apiClient.post(`/tenant/campaigns/${id}/resume`);
+      const result = await campaignsQueries.resume(tenantId, id);
+      if (result.error) throw new Error(result.error.message);
       toast.success('Campanha ativada');
       await fetchCampaigns();
     } catch (err) { console.error(err); toast.error('Erro', 'Não foi possível ativar a campanha.'); }
@@ -75,17 +94,19 @@ export default function Campaigns() {
   };
 
   const handleDuplicate = async (camp: Campaign) => {
+    if (!tenantId) return;
     setActionLoading(camp.id);
     try {
-      await apiClient.post('/tenant/campaigns', {
+      const result = await campaignsQueries.create(tenantId, {
         name: `${camp.name} (cópia)`,
-        profession: camp.profession,
+        profession: camp.profession as any,
         cities: camp.cities,
         neighborhoods: camp.neighborhoods || [],
         dailyLimit: camp.dailyLimit,
         hourWindowStart: camp.hourWindowStart,
         hourWindowEnd: camp.hourWindowEnd,
       });
+      if (result.error) throw new Error(result.error.message);
       toast.success('Campanha duplicada');
       await fetchCampaigns();
     } catch (err) { console.error(err); toast.error('Erro', 'Não foi possível duplicar a campanha.'); }
@@ -107,9 +128,11 @@ export default function Campaigns() {
 
   const handleDelete = async (camp: Campaign) => {
     if (!window.confirm(`Tem certeza que deseja excluir a campanha "${camp.name}"? Esta ação não pode ser desfeita.`)) return;
+    if (!tenantId) return;
     setActionLoading(camp.id);
     try {
-      await apiClient.patch(`/tenant/campaigns/${camp.id}`, { status: 'ARCHIVED' });
+      const result = await campaignsQueries.delete(tenantId, camp.id);
+      if (result.error) throw new Error(result.error.message);
       toast.success('Campanha excluída');
       await fetchCampaigns();
     } catch (err) { console.error(err); toast.error('Erro', 'Não foi possível excluir a campanha.'); }
@@ -119,10 +142,11 @@ export default function Campaigns() {
   const handleCreateOrEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCamp.name.trim()) { toast.error('Nome obrigatório', 'Dê um nome à campanha.'); return; }
+    if (!tenantId) return;
     setIsCreating(true);
     const payload = {
       name: newCamp.name.trim(),
-      profession: newCamp.profession,
+      profession: newCamp.profession as any,
       cities: newCamp.cities.split(',').map(c => c.trim()).filter(Boolean),
       dailyLimit: Number(newCamp.dailyLimit) || 20,
       hourWindowStart: Number(newCamp.hourStart) || 8,
@@ -130,10 +154,12 @@ export default function Campaigns() {
     };
     try {
       if (editingCampaign) {
-        await apiClient.patch(`/tenant/campaigns/${editingCampaign.id}`, payload);
+        const result = await campaignsQueries.update(tenantId, editingCampaign.id, payload);
+        if (result.error) throw new Error(result.error.message);
         toast.success('Campanha atualizada!', 'As alterações foram salvas.');
       } else {
-        await apiClient.post('/tenant/campaigns', payload);
+        const result = await campaignsQueries.create(tenantId, payload);
+        if (result.error) throw new Error(result.error.message);
         toast.success('Campanha criada!', 'Ela começará a capturar leads automaticamente.');
       }
       setIsCreateOpen(false);

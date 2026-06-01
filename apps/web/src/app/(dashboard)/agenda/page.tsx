@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Card, Button, Badge, Input, toast } from '@prospix/ui';
 import { Clock, Phone, Mail, Calendar, X, Plus, Info } from 'lucide-react';
+import { meetingsQueries, leadsQueries } from '@/lib/queries';
+import { useAuthStore } from '@/store/auth-store';
 import { apiClient } from '@/lib/api-client';
-import { AxiosError } from 'axios';
 
 interface Meeting {
   id: string;
@@ -66,29 +67,30 @@ const API_STATUS_TO_STATUS: Record<string, Meeting['status']> = {
 };
 
 const mapBackendMeeting = (meeting: any): Meeting => {
-  const lead = meeting.lead || {};
-  const scheduledAt = meeting.scheduledFor || meeting.scheduled_for || meeting.scheduledAt || meeting.scheduled_at || meeting.startAt || meeting.start_at;
+  const lead = meeting.leads || meeting.lead || {};
+  const scheduledAt = meeting.scheduled_for || meeting.scheduledFor || meeting.scheduled_at || meeting.scheduledAt || meeting.start_at || meeting.startAt;
   const scheduledDate = scheduledAt ? new Date(scheduledAt) : null;
   const dayNum = scheduledDate ? scheduledDate.getDay() : NaN;
   const dayOfWeek = !isNaN(dayNum) ? Math.max(1, Math.min(5, dayNum)) : 1;
   const timeSlot = scheduledDate
     ? scheduledDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-    : meeting.timeSlot || '09:00';
+    : '09:00';
 
   return {
     id: meeting.id,
-    leadName: lead.name || meeting.leadName || 'Sem lead',
-    phone: lead.whatsapp || meeting.phone || '',
-    email: lead.email || meeting.email || '',
-    company: lead.metadata?.cnpj_info?.nomeFantasia || lead.metadata?.cnpj_info?.razaoSocial || (lead.sourceRawData as any)?.name || lead.name || meeting.company || '',
+    leadName: lead.name || 'Sem lead',
+    phone: lead.whatsapp || '',
+    email: lead.email || '',
+    company: lead.metadata?.cnpj_info?.nomeFantasia || lead.metadata?.cnpj_info?.razaoSocial || (lead.source_raw_data as any)?.name || lead.name || '',
     dayOfWeek,
     timeSlot,
-    durationMin: meeting.durationMinutes || meeting.duration_minutes || meeting.durationMin || meeting.duration_min || 30,
+    durationMin: meeting.duration_minutes || meeting.durationMinutes || 30,
     status: API_STATUS_TO_STATUS[meeting.status] || 'agendada',
   };
 };
 
 export default function Schedule() {
+  const tenantId = useAuthStore(state => state.tenantId);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [weekOffset, setWeekOffset] = useState(0);
 
@@ -131,30 +133,32 @@ export default function Schedule() {
   };
 
   const fetchMeetings = useCallback(async () => {
+    if (!tenantId) return;
     try {
-      const response = await apiClient.get('/tenant/meetings');
-      const list = Array.isArray(response.data) ? response.data : response.data?.data;
-      setMeetings((list || []).map(mapBackendMeeting));
+      const result = await meetingsQueries.list(tenantId);
+      if (result.error) throw new Error(result.error.message);
+      setMeetings((result.data || []).map(mapBackendMeeting));
     } catch (error) {
       console.error('Error fetching meetings:', error);
       setMeetings([]);
       toast.error('Erro de Conexão', 'Não foi possível carregar a agenda.');
     }
-  }, []);
+  }, [tenantId]);
 
   useEffect(() => {
     fetchMeetings();
   }, [fetchMeetings]);
 
   const fetchLeadOptions = async () => {
+    if (!tenantId) return;
     setIsLoadingLeads(true);
     try {
-      const response = await apiClient.get('/tenant/leads');
-      const list = Array.isArray(response.data) ? response.data : response.data?.data;
-      const options = (list || []).map((lead: any) => ({
+      const result = await leadsQueries.list(tenantId, { limit: 200 });
+      if (result.error) throw new Error(result.error.message);
+      const options = (result.data || []).map((lead: any) => ({
         id: lead.id,
         name: lead.name || 'Sem nome',
-        company: lead.metadata?.cnpj_info?.nomeFantasia || lead.metadata?.cnpj_info?.razaoSocial || (lead.sourceRawData as any)?.name || lead.name || '',
+        company: lead.metadata?.cnpj_info?.nomeFantasia || lead.metadata?.cnpj_info?.razaoSocial || (lead.source_raw_data as any)?.name || lead.name || '',
         whatsapp: lead.whatsapp || '',
       }));
       setLeadOptions(options);
@@ -188,19 +192,20 @@ export default function Schedule() {
   };
 
   const handleCreateMeeting = async () => {
-    if (!selectedSlot || !selectedLeadId) {
+    if (!selectedSlot || !selectedLeadId || !tenantId) {
       toast.error('Lead obrigatório', 'Selecione um lead para criar a reunião.');
       return;
     }
 
     setIsCreatingMeeting(true);
     try {
-      await apiClient.post('/tenant/meetings', {
+      const result = await meetingsQueries.create(tenantId, {
         leadId: selectedLeadId,
         scheduledFor: getSlotDate(selectedSlot).toISOString(),
         durationMinutes: meetingDuration,
         location: meetingLocation.trim() || undefined,
       });
+      if (result.error) throw new Error(result.error.message);
 
       toast.success('Reunião agendada', 'O compromisso foi salvo e enviado para sincronização.');
       setIsCreateMeetingOpen(false);
@@ -209,8 +214,8 @@ export default function Schedule() {
       setMeetingDuration(30);
       await fetchMeetings();
     } catch (error: unknown) {
-      const message = error instanceof AxiosError
-        ? error.response?.data?.message || 'Não foi possível criar a reunião no servidor.'
+      const message = error instanceof Error
+        ? error.message || 'Não foi possível criar a reunião no servidor.'
         : 'Não foi possível criar a reunião no servidor.';
       toast.error(
         'Erro ao agendar',
@@ -222,6 +227,7 @@ export default function Schedule() {
   };
 
   const handleStatusChange = async (meetingId: string, newStatus: Meeting['status']) => {
+    if (!tenantId) return;
     const previousMeetings = meetings;
     const previousSelectedMeeting = selectedMeeting;
     setMeetings(meetings.map(m => m.id === meetingId ? { ...m, status: newStatus } : m));
@@ -230,7 +236,8 @@ export default function Schedule() {
     }
 
     try {
-      await apiClient.patch(`/tenant/meetings/${meetingId}`, { status: STATUS_TO_API[newStatus] });
+      const result = await meetingsQueries.update(tenantId, meetingId, { status: STATUS_TO_API[newStatus] as any });
+      if (result.error) throw new Error(result.error.message);
     } catch {
       setMeetings(previousMeetings);
       setSelectedMeeting(previousSelectedMeeting);

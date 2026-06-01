@@ -1,11 +1,11 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badge, toast } from '@prospix/ui';
 import { ShieldAlert, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, Clock, Play, CheckCircle2, XCircle, X } from 'lucide-react';
-import { adminApiClient } from '@/lib/admin-api-client';
-import { AxiosError } from 'axios';
+import { adminLgpdQueries } from '@/lib/admin-queries';
+import { supabaseAdmin } from '@/lib/supabase';
 
 type LgpdStatus = 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'REJECTED' | 'CANCELED';
 type LgpdType = 'EXPORT_DATA' | 'DELETE_TENANT_DATA' | 'DELETE_LEAD_DATA' | 'CORRECT_DATA' | 'CONFIRM_DATA';
@@ -47,7 +47,7 @@ const TYPE_LABEL: Record<LgpdType, string> = {
   CONFIRM_DATA: 'Confirmar dados (art. 18 I)',
 };
 
-// SLA LGPD Â· ANPD: 15 dias para confirmaÃ§Ã£o, prÃ¡tica Guilds: 30d completion
+// SLA LGPD · ANPD: 15 dias para confirmação, prática Guilds: 30d completion
 const SLA_DAYS = 15;
 
 function daysSinceCreation(iso: string): number {
@@ -62,13 +62,6 @@ function slaState(req: LgpdRequest): { label: string; ok: boolean; warn: boolean
   if (days > SLA_DAYS) return { label: `SLA vencido (${days}d)`, ok: false, warn: false, expired: true };
   if (days >= SLA_DAYS - 3) return { label: `${SLA_DAYS - days}d restantes`, ok: false, warn: true, expired: false };
   return { label: `${SLA_DAYS - days}d restantes`, ok: true, warn: false, expired: false };
-}
-
-function getApiErrorMessage(err: unknown, fallback: string): string {
-  if (err instanceof AxiosError) {
-    return err.response?.data?.message || fallback;
-  }
-  return fallback;
 }
 
 export default function Compliance() {
@@ -90,19 +83,60 @@ export default function Compliance() {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const params = new URLSearchParams();
-      params.set('limit', String(PAGE_SIZE));
-      params.set('offset', String(newOffset));
-      if (filterStatus !== 'all') params.set('status', filterStatus);
-      if (filterType !== 'all') params.set('type', filterType);
+      let query = supabaseAdmin
+        .from('lgpd_requests')
+        .select(`
+          *,
+          tenants(id, name, slug),
+          requested_user:users!lgpd_requests_requested_by_user_id_fkey(id, name, email),
+          processed_user:users!lgpd_requests_processed_by_id_fkey(id, name, email)
+        `, { count: 'exact' })
+        .order('created_at', { ascending: false })
+        .range(newOffset, newOffset + PAGE_SIZE - 1);
 
-      const response = await adminApiClient.get(`/admin/lgpd-requests?${params.toString()}`);
-      const payload = response.data?.data;
-      setItems(payload?.items ?? []);
-      setPagination(payload?.pagination ?? { total: 0, limit: PAGE_SIZE, offset: 0, hasMore: false });
-      setStatusCounts(payload?.statusCounts ?? {});
+      if (filterStatus !== 'all') {
+        query = query.eq('status', filterStatus);
+      }
+      if (filterType !== 'all') {
+        query = query.eq('type', filterType);
+      }
+
+      const { data, error, count } = await query;
+      if (error) throw new Error(error.message);
+
+      const total = count ?? 0;
+      const mapped: LgpdRequest[] = (data ?? []).map((r: any) => ({
+        id: r.id,
+        tenantId: r.tenant_id,
+        tenant: r.tenants ? { id: r.tenants.id, name: r.tenants.name, slug: r.tenants.slug } : { id: '', name: 'N/A', slug: '' },
+        type: r.type,
+        status: r.status,
+        scope: r.scope,
+        requestedByUser: r.requested_user ? { id: r.requested_user.id, name: r.requested_user.name, email: r.requested_user.email } : null,
+        requestedByLead: r.requested_by_lead,
+        rejectionReason: r.rejection_reason,
+        processedBy: r.processed_user ? { id: r.processed_user.id, name: r.processed_user.name, email: r.processed_user.email } : null,
+        processedAt: r.processed_at,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+        downloadExpiresAt: r.download_expires_at,
+      }));
+
+      setItems(mapped);
+      setPagination({ total, limit: PAGE_SIZE, offset: newOffset, hasMore: newOffset + PAGE_SIZE < total });
+
+      // Fetch status counts
+      const countsQuery = await supabaseAdmin
+        .from('lgpd_requests')
+        .select('status');
+
+      const counts: Record<string, number> = {};
+      (countsQuery.data ?? []).forEach((r: any) => {
+        counts[r.status] = (counts[r.status] || 0) + 1;
+      });
+      setStatusCounts(counts);
     } catch (err: unknown) {
-      const message = getApiErrorMessage(err, 'Falha ao carregar LGPD.');
+      const message = err instanceof Error ? err.message : 'Falha ao carregar LGPD.';
       setLoadError(message);
       toast.error('Erro', message);
     } finally {
@@ -118,11 +152,12 @@ export default function Compliance() {
   const handleProcess = async (id: string) => {
     setActionLoadingId(id);
     try {
-      await adminApiClient.patch(`/admin/lgpd-requests/${id}/process`);
-      toast.success('Processamento iniciado', 'RequisiÃ§Ã£o LGPD movida para PROCESSING.');
+      const result = await adminLgpdQueries.markProcessing(id);
+      if (result.error) throw new Error(result.error.message);
+      toast.success('Processamento iniciado', 'Requisição LGPD movida para PROCESSING.');
       await fetchRequests(pagination.offset);
     } catch (err: unknown) {
-      toast.error('Erro', getApiErrorMessage(err, 'Falha ao iniciar processamento.'));
+      toast.error('Erro', err instanceof Error ? err.message : 'Falha ao iniciar processamento.');
     } finally {
       setActionLoadingId(null);
     }
@@ -131,11 +166,12 @@ export default function Compliance() {
   const handleComplete = async (id: string) => {
     setActionLoadingId(id);
     try {
-      await adminApiClient.patch(`/admin/lgpd-requests/${id}/complete`, {});
-      toast.success('RequisiÃ§Ã£o concluÃ­da', 'RequisiÃ§Ã£o LGPD marcada como COMPLETED.');
+      const result = await adminLgpdQueries.complete(id);
+      if (result.error) throw new Error(result.error.message);
+      toast.success('Requisição concluída', 'Requisição LGPD marcada como COMPLETED.');
       await fetchRequests(pagination.offset);
     } catch (err: unknown) {
-      toast.error('Erro', getApiErrorMessage(err, 'Falha ao concluir requisiÃ§Ã£o.'));
+      toast.error('Erro', err instanceof Error ? err.message : 'Falha ao concluir requisição.');
     } finally {
       setActionLoadingId(null);
     }
@@ -155,19 +191,18 @@ export default function Compliance() {
   const handleReject = async () => {
     if (!rejectModalId) return;
     if (rejectionReason.trim().length < 5) {
-      toast.error('Motivo obrigatÃ³rio', 'Informe o motivo da rejeiÃ§Ã£o (mÃ­nimo 5 caracteres).');
+      toast.error('Motivo obrigatório', 'Informe o motivo da rejeição (mínimo 5 caracteres).');
       return;
     }
     setIsRejecting(true);
     try {
-      await adminApiClient.patch(`/admin/lgpd-requests/${rejectModalId}/reject`, {
-        rejectionReason: rejectionReason.trim(),
-      });
-      toast.success('RequisiÃ§Ã£o rejeitada', 'RequisiÃ§Ã£o LGPD marcada como REJECTED.');
+      const result = await adminLgpdQueries.reject(rejectModalId, rejectionReason.trim());
+      if (result.error) throw new Error(result.error.message);
+      toast.success('Requisição rejeitada', 'Requisição LGPD marcada como REJECTED.');
       closeRejectModal();
       await fetchRequests(pagination.offset);
     } catch (err: unknown) {
-      toast.error('Erro', getApiErrorMessage(err, 'Falha ao rejeitar requisiÃ§Ã£o.'));
+      toast.error('Erro', err instanceof Error ? err.message : 'Falha ao rejeitar requisição.');
     } finally {
       setIsRejecting(false);
     }
@@ -184,7 +219,7 @@ export default function Compliance() {
             Compliance LGPD
           </h2>
           <p className="text-text-secondary text-xs mt-1">
-            RequisiÃ§Ãµes art. 18 (LGPD) cross-tenant. SLA legal: confirmaÃ§Ã£o em atÃ© 15 dias, sob pena de sanÃ§Ã£o ANPD.
+            Requisições art. 18 (LGPD) cross-tenant. SLA legal: confirmação em até 15 dias, sob pena de sanção ANPD.
           </p>
         </div>
         <Button
@@ -240,9 +275,9 @@ export default function Compliance() {
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle className="text-base font-bold font-heading text-text">RequisiÃ§Ãµes</CardTitle>
+              <CardTitle className="text-base font-bold font-heading text-text">Requisições</CardTitle>
               <CardDescription className="text-text-secondary text-xs">
-                Total: {pagination.total.toLocaleString('pt-BR')} Â· pÃ¡gina {Math.floor(pagination.offset / PAGE_SIZE) + 1}
+                Total: {pagination.total.toLocaleString('pt-BR')} · página {Math.floor(pagination.offset / PAGE_SIZE) + 1}
               </CardDescription>
             </div>
             <div className="flex items-center gap-1">
@@ -267,7 +302,7 @@ export default function Compliance() {
             </div>
           ) : items.length === 0 ? (
             <div className="text-center py-10">
-              <p className="text-sm font-semibold text-text">Sem requisiÃ§Ãµes.</p>
+              <p className="text-sm font-semibold text-text">Sem requisições.</p>
               <p className="text-[11px] text-text-secondary mt-1">Nenhum registro LGPD corresponde aos filtros.</p>
             </div>
           ) : (
@@ -282,7 +317,7 @@ export default function Compliance() {
                     <th className="text-left py-2 px-2">SLA</th>
                     <th className="text-left py-2 px-2">Solicitante</th>
                     <th className="text-left py-2 px-2">Processado por</th>
-                    <th className="text-left py-2 px-2">AÃ§Ãµes</th>
+                    <th className="text-left py-2 px-2">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/60">
@@ -328,7 +363,7 @@ export default function Compliance() {
                           ) : r.requestedByLead ? (
                             <span className="font-mono text-text-secondary">{r.requestedByLead}</span>
                           ) : (
-                            <span className="text-text-secondary italic">â€”</span>
+                            <span className="text-text-secondary italic">—</span>
                           )}
                         </td>
                         <td className="py-2 px-2">
@@ -340,7 +375,7 @@ export default function Compliance() {
                               </div>
                             </>
                           ) : (
-                            <span className="text-text-secondary italic">nÃ£o processado</span>
+                            <span className="text-text-secondary italic">não processado</span>
                           )}
                           {r.status === 'REJECTED' && r.rejectionReason && (
                             <div className="text-[9px] text-red-600 mt-0.5 max-w-[160px] truncate" title={r.rejectionReason}>
@@ -399,7 +434,7 @@ export default function Compliance() {
                               </Button>
                             )}
                             {(r.status === 'COMPLETED' || r.status === 'REJECTED' || r.status === 'CANCELED') && (
-                              <span className="text-[9px] text-text-secondary italic">â€”</span>
+                              <span className="text-[9px] text-text-secondary italic">—</span>
                             )}
                           </div>
                         </td>
@@ -421,7 +456,7 @@ export default function Compliance() {
             <div className="flex items-center justify-between px-5 py-4 border-b border-border">
               <h3 className="text-sm font-bold font-heading text-text flex items-center gap-2">
                 <XCircle className="w-4 h-4 text-red-500" aria-hidden />
-                Rejeitar requisiÃ§Ã£o LGPD
+                Rejeitar requisição LGPD
               </h3>
               <button
                 onClick={closeRejectModal}
@@ -434,18 +469,18 @@ export default function Compliance() {
             <div className="px-5 py-4 space-y-3">
               <div>
                 <label htmlFor="rejection-reason" className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block mb-1">
-                  Motivo da rejeiÃ§Ã£o *
+                  Motivo da rejeição *
                 </label>
                 <textarea
                   id="rejection-reason"
                   rows={4}
                   value={rejectionReason}
                   onChange={(e) => setRejectionReason(e.target.value)}
-                  placeholder="Descreva o motivo da rejeiÃ§Ã£o (mÃ­n. 5 caracteres)..."
+                  placeholder="Descreva o motivo da rejeição (mín. 5 caracteres)..."
                   className="w-full bg-white border border-border rounded-lg px-3 py-2 text-xs text-text placeholder:text-text-secondary/60 focus:border-border-strong focus:outline-none resize-none"
                 />
                 <p className="text-[9px] text-text-secondary mt-1">
-                  O motivo ficarÃ¡ registrado no audit log e serÃ¡ exibido ao solicitante.
+                  O motivo ficará registrado no audit log e será exibido ao solicitante.
                 </p>
               </div>
             </div>
@@ -467,7 +502,7 @@ export default function Compliance() {
                 ) : (
                   <XCircle className="w-3.5 h-3.5" />
                 )}
-                Confirmar rejeiÃ§Ã£o
+                Confirmar rejeição
               </Button>
             </div>
           </div>

@@ -1,11 +1,11 @@
-﻿'use client';
+'use client';
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Card, CardContent, Button, Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell, toast, Input, Modal, Skeleton } from '@prospix/ui';
 import { Search, Ban, Play, Inbox, AlertCircle, RotateCw } from 'lucide-react';
-import { adminApiClient } from '@/lib/admin-api-client';
-import { AxiosError } from 'axios';
+import { adminTenantsQueries } from '@/lib/admin-queries';
+import { supabaseAdmin } from '@/lib/supabase';
 
 interface Tenant {
   id: string;
@@ -43,8 +43,15 @@ export default function Tenants() {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const response = await adminApiClient.get('/admin/tenants');
-      const data = response.data.data || [];
+      // Fetch tenants with their users
+      const { data: tenantsData, error: tenantsError } = await supabaseAdmin
+        .from('tenants')
+        .select('*, users(id, name, email, role, whatsapp)')
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false });
+
+      if (tenantsError) throw new Error(tenantsError.message);
+      const data = tenantsData ?? [];
       
       const mapped = data.map((t: any) => {
         const owner = t.users?.[0];
@@ -58,10 +65,10 @@ export default function Tenants() {
         if (t.status === 'CHURNING') displayStatus = 'grace_period';
 
         const displayHealth: 'excellent' | 'good' | 'fair' | 'critical' =
-          t.integrationHealth?.status || (t.status === 'SUSPENDED' ? 'critical' : t.status === 'CHURNING' ? 'fair' : 'excellent');
-        const healthMissing = Array.isArray(t.integrationHealth?.missing) ? t.integrationHealth.missing : [];
+          t.status === 'SUSPENDED' ? 'critical' : t.status === 'CHURNING' ? 'fair' : 'excellent';
+        const healthMissing: string[] = [];
 
-        const formattedMRR = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format((t.mrrCents || 0) / 100);
+        const formattedMRR = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format((t.mrr_cents || 0) / 100);
 
         return {
           id: t.id,
@@ -80,11 +87,9 @@ export default function Tenants() {
       setTenants(mapped);
     } catch (err: unknown) {
       console.error('Error fetching tenants:', err);
-      const message = err instanceof AxiosError
-        ? err.response?.data?.error?.message || err.message || 'NÃ£o foi possÃ­vel carregar a lista de tenants.'
-        : err instanceof Error ? err.message : 'NÃ£o foi possÃ­vel carregar a lista de tenants.';
+      const message = err instanceof Error ? err.message : 'Não foi possível carregar a lista de tenants.';
       setLoadError(message);
-      toast.error('Erro de ConexÃ£o', message);
+      toast.error('Erro de Conexão', message);
     } finally {
       setIsLoading(false);
     }
@@ -92,10 +97,21 @@ export default function Tenants() {
 
   const fetchChurnRisk = async () => {
     try {
-      const response = await adminApiClient.get('/admin/churn-risk');
-      const list: ChurnRiskEntry[] = response.data?.data?.tenants ?? [];
+      // Query churn_risk_scores directly from Supabase
+      const { data } = await supabaseAdmin
+        .from('churn_risk_scores')
+        .select('tenant_id, score, level, reasons')
+        .order('score', { ascending: false });
+
       const map: Record<string, ChurnRiskEntry> = {};
-      for (const r of list) map[r.tenantId] = r;
+      for (const r of (data ?? [])) {
+        map[r.tenant_id] = {
+          tenantId: r.tenant_id,
+          score: r.score,
+          level: r.level,
+          reasons: r.reasons ?? [],
+        };
+      }
       setChurnRisks(map);
     } catch (err) {
       console.error('churn risk fetch failed:', err);
@@ -121,12 +137,11 @@ export default function Tenants() {
     setTenants(prev => prev.map(t => t.id === tenantId ? { ...t, status: 'suspended', health: 'critical' } : t));
 
     try {
-      await adminApiClient.post(`/admin/tenants/${tenantId}/suspend`);
+      const result = await adminTenantsQueries.updateStatus(tenantId, 'SUSPENDED');
+      if (result.error) throw new Error(result.error.message);
       toast.success('Tenant Suspenso', 'Status atualizado via role CONNECTION guilds_admin.');
     } catch (error: unknown) {
-      const message = error instanceof AxiosError
-        ? error.response?.data?.message || error.message || 'Ocorreu um erro ao suspender o tenant no servidor.'
-        : error instanceof Error ? error.message : 'Ocorreu um erro ao suspender o tenant no servidor.';
+      const message = error instanceof Error ? error.message : 'Ocorreu um erro ao suspender o tenant no servidor.';
       toast.error('Erro ao suspender', message);
       fetchTenants();
     }
@@ -137,12 +152,11 @@ export default function Tenants() {
     setTenants(prev => prev.map(t => t.id === tenantId ? { ...t, status: 'active' } : t));
 
     try {
-      await adminApiClient.post(`/admin/tenants/${tenantId}/resume`);
-      toast.success('Tenant Ativado', 'SessÃ£o e limites liberados.');
+      const result = await adminTenantsQueries.updateStatus(tenantId, 'ACTIVE');
+      if (result.error) throw new Error(result.error.message);
+      toast.success('Tenant Ativado', 'Sessão e limites liberados.');
     } catch (error: unknown) {
-      const message = error instanceof AxiosError
-        ? error.response?.data?.message || error.message || 'Ocorreu um erro ao reativar o tenant no servidor.'
-        : error instanceof Error ? error.message : 'Ocorreu um erro ao reativar o tenant no servidor.';
+      const message = error instanceof Error ? error.message : 'Ocorreu um erro ao reativar o tenant no servidor.';
       toast.error('Erro ao ativar', message);
       fetchTenants();
     }
@@ -153,11 +167,11 @@ export default function Tenants() {
       case 'excellent':
         return <Badge variant="success">Excelente</Badge>;
       case 'good':
-        return <Badge variant="primary">SaudÃ¡vel</Badge>;
+        return <Badge variant="primary">Saudável</Badge>;
       case 'fair':
         return <Badge variant="warning">Regular</Badge>;
       case 'critical':
-        return <Badge variant="error" className="animate-pulse">CrÃ­tico</Badge>;
+        return <Badge variant="error" className="animate-pulse">Crítico</Badge>;
     }
   };
 
@@ -185,7 +199,7 @@ export default function Tenants() {
         <div>
           <h2 className="text-3xl font-bold font-heading text-text tracking-tight">Gerenciamento de Tenants</h2>
           <p className="text-text-secondary text-sm mt-1">
-            Lista completa de corretoras clientes. Administre acessos, cobranÃ§as e integridade dos workspaces.
+            Lista completa de corretoras clientes. Administre acessos, cobranças e integridade dos workspaces.
           </p>
         </div>
       </div>
@@ -196,7 +210,7 @@ export default function Tenants() {
           <div className="relative flex-1 max-w-md">
             <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-text-secondary" />
             <Input
-              placeholder="Buscar por imobiliÃ¡ria, corretora ou owner..."
+              placeholder="Buscar por imobiliária, corretora ou owner..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="pl-10 bg-surface border-border text-xs focus:border-primary/50 h-10 text-text"
@@ -244,9 +258,9 @@ export default function Tenants() {
                 <TableHead className="py-3 px-6 text-left">Representante Owner</TableHead>
                 <TableHead className="py-3 px-6 text-left">Plano / MRR</TableHead>
                 <TableHead className="py-3 px-6 text-left">Status</TableHead>
-                <TableHead className="py-3 px-6 text-left">SaÃºde (QR)</TableHead>
+                <TableHead className="py-3 px-6 text-left">Saúde (QR)</TableHead>
                 <TableHead className="py-3 px-6 text-left">Risco</TableHead>
-                <TableHead className="py-3 px-6 text-right">AÃ§Ãµes</TableHead>
+                <TableHead className="py-3 px-6 text-right">Ações</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody className="divide-y divide-border-subtle/40">
@@ -269,7 +283,7 @@ export default function Tenants() {
                         <AlertCircle className="w-6 h-6 text-error-text" />
                       </div>
                       <div>
-                        <div className="text-sm font-semibold text-text">NÃ£o conseguimos carregar a lista</div>
+                        <div className="text-sm font-semibold text-text">Não conseguimos carregar a lista</div>
                         <div className="text-xs text-text-secondary mt-1 max-w-md">{loadError}</div>
                       </div>
                       <Button
@@ -299,7 +313,7 @@ export default function Tenants() {
                         </div>
                         <div className="text-xs text-text-secondary mt-1 max-w-md">
                           {tenants.length === 0
-                            ? 'Use o botÃ£o "Novo Tenant" para criar o primeiro workspace e enviar o cÃ³digo de convite.'
+                            ? 'Use o botão "Novo Tenant" para criar o primeiro workspace e enviar o código de convite.'
                             : 'Ajuste a busca ou troque o filtro de status para ver outros tenants.'}
                         </div>
                       </div>
@@ -340,13 +354,13 @@ export default function Tenants() {
                     </div>
                   </TableCell>
                   <TableCell className="py-3.5 px-6">{getStatusBadge(t.status)}</TableCell>
-                  <TableCell className="py-3.5 px-6" title={t.healthMissing.length ? `Pendente: ${t.healthMissing.join(', ')}` : 'IntegraÃ§Ãµes essenciais configuradas'}>
+                  <TableCell className="py-3.5 px-6" title={t.healthMissing.length ? `Pendente: ${t.healthMissing.join(', ')}` : 'Integrações essenciais configuradas'}>
                     {getHealthBadge(t.health)}
                   </TableCell>
                   <TableCell className="py-3.5 px-6">
                     {(() => {
                       const risk = churnRisks[t.id];
-                      if (!risk) return <span className="text-text-secondary text-[10px]">â€”</span>;
+                      if (!risk) return <span className="text-text-secondary text-[10px]">—</span>;
                       const toneClass =
                         risk.level === 'critical' ? 'bg-red-50 text-red-700 border-red-200' :
                         risk.level === 'high' ? 'bg-amber-50 text-amber-800 border-amber-300' :
@@ -355,9 +369,9 @@ export default function Tenants() {
                       return (
                         <span
                           className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-bold ${toneClass}`}
-                          title={risk.reasons.join(' Â· ') || 'Sem sinais de risco'}
+                          title={risk.reasons.join(' · ') || 'Sem sinais de risco'}
                         >
-                          {risk.level.toUpperCase()} Â· {risk.score}
+                          {risk.level.toUpperCase()} · {risk.score}
                         </span>
                       );
                     })()}
@@ -400,7 +414,7 @@ export default function Tenants() {
       <Modal
         isOpen={suspendModal.isOpen}
         onClose={() => setSuspendModal({ isOpen: false, tenantId: null })}
-        title="Confirmar SuspensÃ£o"
+        title="Confirmar Suspensão"
         footer={
           <div className="flex gap-2">
             <Button
@@ -415,7 +429,7 @@ export default function Tenants() {
               size="compact"
               onClick={handleConfirmSuspend}
             >
-              Confirmar SuspensÃ£o
+              Confirmar Suspensão
             </Button>
           </div>
         }
@@ -424,7 +438,7 @@ export default function Tenants() {
           Deseja realmente <strong>SUSPENDER</strong> este tenant?
         </p>
         <p className="text-xs text-text-muted mt-2">
-          O acesso de todos os corretores e administradores desse workspace serÃ¡ bloqueado imediatamente. As conexÃµes ativas do WhatsApp podem ser interrompidas.
+          O acesso de todos os corretores e administradores desse workspace será bloqueado imediatamente. As conexões ativas do WhatsApp podem ser interrompidas.
         </p>
       </Modal>
     </div>

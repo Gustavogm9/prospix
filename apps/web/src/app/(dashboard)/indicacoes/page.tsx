@@ -2,7 +2,7 @@
 
 import { Star, Copy, Users, Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { apiClient } from '@/lib/api-client';
+import { referralsQueries } from '@/lib/queries';
 import { toast } from '@prospix/ui';
 
 interface Referral {
@@ -33,29 +33,23 @@ export default function Referrals() {
 
   useEffect(() => {
     const fetchReferrals = async () => {
+      if (!user?.id) {
+        setLoading(false);
+        return;
+      }
       try {
-        // Register our refCode mapping first
-        await apiClient.post('/tenant/referrals/register-code').catch(() => {});
+        // Register partner code if not set
+        await referralsQueries.registerCode(user.id, refCode).catch(() => {});
 
-        // Fetch real referral stats
-        const response = await apiClient.get('/tenant/referrals');
-        const data = response.data?.data;
+        // Fetch referral data
+        const result = await referralsQueries.get(user.id);
         
-        if (data) {
-          setStats(data.stats || { totalClicks: 0, totalSignups: 0, conversionRate: 0 });
-          setRewardTier(data.rewards?.currentTier || 'bronze');
-
-          // Map recent activity as referrals list
-          const activity = (data.recentActivity || [])
-            .filter((a: any) => a.type === 'signup')
-            .map((a: any, i: number) => ({
-              id: `ref-${i}`,
-              name: `Corretor indicado #${i + 1}`,
-              status: 'QUALIFIED',
-              phone: '',
-              createdAt: a.timestamp ? new Date(a.timestamp).toLocaleDateString('pt-BR') : '-',
-            }));
-          setReferrals(activity);
+        if (result.data) {
+          // Basic referral info from the users table
+          // Stats come from the referrals system (currently basic)
+          setStats({ totalClicks: 0, totalSignups: 0, conversionRate: 0 });
+          setRewardTier('bronze');
+          setReferrals([]);
         }
       } catch (err) {
         console.error('Failed to fetch referrals', err);
@@ -66,7 +60,7 @@ export default function Referrals() {
       }
     };
     fetchReferrals();
-  }, []);
+  }, [user?.id]);
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(referralLink);

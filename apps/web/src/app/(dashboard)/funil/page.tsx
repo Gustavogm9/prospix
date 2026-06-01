@@ -4,8 +4,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Button, Input, toast } from '@prospix/ui';
 import { AlertCircle, X, Info, Columns, LayoutList } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { apiClient } from '@/lib/api-client';
-import { AxiosError } from 'axios';
+import { leadsQueries } from '@/lib/queries';
+import { useAuthStore } from '@/store/auth-store';
 
 interface LeadCard {
   id: string;
@@ -56,7 +56,7 @@ const PROFESSION_LABELS_PIPE: Record<string, string> = {
 
 const mapBackendLeadToCard = (lead: any): LeadCard => {
   const metadata = (lead.metadata || {}) as Record<string, any>;
-  const rawData = (lead.sourceRawData || {}) as Record<string, any>;
+  const rawData = (lead.source_raw_data || {}) as Record<string, any>;
   const stage = STATUS_TO_STAGE[lead.status] || 'capturado';
   return {
     id: lead.id,
@@ -64,15 +64,16 @@ const mapBackendLeadToCard = (lead: any): LeadCard => {
     phone: lead.whatsapp || '',
     company: metadata.cnpj_info?.nomeFantasia || metadata.cnpj_info?.razaoSocial || rawData.name || lead.name || '',
     profession: lead.profession ? (PROFESSION_LABELS_PIPE[lead.profession] || lead.profession) : '',
-    fitScore: Number(lead.fitScore) || 0,
+    fitScore: Number(lead.fit_score) || 0,
     stage,
-    when: lead.createdAt ? new Date(lead.createdAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '',
+    when: lead.created_at ? new Date(lead.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '',
     tags: [],
   };
 };
 
 export default function PipelinePage() {
   const router = useRouter();
+  const tenantId = useAuthStore(state => state.tenantId);
   const [leads, setLeads] = useState<LeadCard[]>([]);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [isDraggingOver, setIsDraggingOver] = useState<string | null>(null);
@@ -81,24 +82,21 @@ export default function PipelinePage() {
   const [filter, setFilter] = useState('all');
   const [newLead, setNewLead] = useState({ name: '', company: '', whatsapp: '', email: '', city: '', faturamento: '' });
 
-  const fetchLeads = useCallback(async (signal?: AbortSignal) => {
+  const fetchLeads = useCallback(async () => {
+    if (!tenantId) return;
     try {
-      const response = await apiClient.get('/tenant/leads', { signal });
-      if (signal?.aborted) return;
-      const list = Array.isArray(response.data) ? response.data : response.data?.data;
-      setLeads((list || []).map(mapBackendLeadToCard));
+      const result = await leadsQueries.list(tenantId, { limit: 500 });
+      if ('error' in result && result.error) throw new Error(result.error.message);
+      setLeads((result.data || []).map(mapBackendLeadToCard));
     } catch (error) {
-      if (signal?.aborted) return;
       console.error('Error fetching pipeline leads:', error);
       setLeads([]);
       toast.error('Erro de Conexão', 'Não foi possível carregar o pipeline.');
     }
-  }, []);
+  }, [tenantId]);
 
   useEffect(() => {
-    const controller = new AbortController();
-    fetchLeads(controller.signal);
-    return () => controller.abort();
+    fetchLeads();
   }, [fetchLeads]);
 
   const handleDragStart = (e: React.DragEvent, id: string) => {
@@ -121,12 +119,14 @@ export default function PipelinePage() {
   };
 
   const handleMoveLead = async (id: string, targetStage: LeadCard['stage']) => {
+    if (!tenantId) return;
     const lead = leads.find(l => l.id === id);
     if (!lead || lead.stage === targetStage) return;
     const originalStage = lead.stage;
     setLeads(leads.map(l => l.id === id ? { ...l, stage: targetStage } : l));
     try {
-      await apiClient.patch(`/tenant/leads/${id}`, { status: STAGE_TO_STATUS[targetStage] });
+      const result = await leadsQueries.update(tenantId, id, { status: STAGE_TO_STATUS[targetStage] as any });
+      if (result.error) throw new Error(result.error.message);
       toast.success('Sucesso', 'Estágio atualizado.');
     } catch {
       setLeads(leads.map(l => l.id === id ? { ...l, stage: originalStage } : l));
@@ -139,21 +139,23 @@ export default function PipelinePage() {
   const handleCreateLead = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!newLead.whatsapp.trim()) { toast.error('WhatsApp obrigatório', 'Informe um WhatsApp.'); return; }
+    if (!tenantId) return;
     setIsCreatingLead(true);
     try {
-      await apiClient.post('/tenant/leads', {
+      const result = await leadsQueries.create(tenantId, {
         name: newLead.name.trim() || newLead.company.trim() || undefined,
         whatsapp: newLead.whatsapp.trim(),
         email: newLead.email.trim() || undefined,
         address: newLead.city.trim() ? { city: newLead.city.trim() } : undefined,
         metadata: { company: newLead.company.trim() || undefined, faturamento: newLead.faturamento.trim() || undefined, source: 'pipeline_manual' },
       });
+      if (result.error) throw new Error(result.error.message);
       toast.success('Lead criado', 'O novo lead entrou no pipeline.');
       setIsCreateLeadOpen(false);
       setNewLead({ name: '', company: '', whatsapp: '', email: '', city: '', faturamento: '' });
       await fetchLeads();
     } catch (error: unknown) {
-      const message = error instanceof AxiosError ? error.response?.data?.message || 'Erro ao salvar.' : 'Erro ao salvar.';
+      const message = error instanceof Error ? error.message || 'Erro ao salvar.' : 'Erro ao salvar.';
       toast.error('Erro ao criar lead', message);
     } finally { setIsCreatingLead(false); }
   };

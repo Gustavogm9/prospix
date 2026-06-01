@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, Button, Badge } from '@prospix/ui';
 import { MapPin, RefreshCw, Loader2, AlertCircle, TrendingUp, Layers, Award, BarChart3 } from 'lucide-react';
 import { adminApiClient } from '@/lib/admin-api-client';
+import { adminTenantsQueries } from '@/lib/admin-queries';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -75,12 +76,12 @@ export default function LeadSourcesMonitor() {
   const [tenants, setTenants] = useState<Array<{ id: string; name: string }>>([]);
 
   useEffect(() => {
-    adminApiClient.get('/admin/tenants')
-      .then((res) => {
-        const list = (res.data?.data ?? []) as Array<{ id: string; name: string }>;
+    adminTenantsQueries.list().then((result) => {
+      if (!result.error) {
+        const list = (result.data ?? []).map((t) => ({ id: t.id, name: t.name }));
         setTenants(list.sort((a, b) => a.name.localeCompare(b.name)));
-      })
-      .catch(() => { /* ignore */ });
+      }
+    });
   }, []);
 
   /* ---------- Fetch lead sources ---------- */

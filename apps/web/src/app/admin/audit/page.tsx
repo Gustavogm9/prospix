@@ -1,11 +1,10 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badge, Input, toast } from '@prospix/ui';
 import { History, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, Filter } from 'lucide-react';
-import { adminApiClient } from '@/lib/admin-api-client';
-import { AxiosError } from 'axios';
+import { supabaseAdmin } from '@/lib/supabase';
 
 interface AuditLogItem {
   id: string;
@@ -58,23 +57,55 @@ export default function AuditLog() {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const params = new URLSearchParams();
-      params.set('limit', String(PAGE_SIZE));
-      params.set('offset', String(newOffset));
-      if (filterAction) params.set('action', filterAction);
-      if (filterTenantId) params.set('tenantId', filterTenantId);
-      if (filterFrom) params.set('from', new Date(filterFrom).toISOString());
-      if (filterTo) params.set('to', new Date(filterTo + 'T23:59:59').toISOString());
+      let query = supabaseAdmin
+        .from('audit_logs')
+        .select(`
+          *,
+          tenants(id, name, slug),
+          users(id, name, email, role)
+        `, { count: 'exact' })
+        .order('created_at', { ascending: false })
+        .range(newOffset, newOffset + PAGE_SIZE - 1);
 
-      const response = await adminApiClient.get(`/admin/audit-logs?${params.toString()}`);
-      const payload = response.data?.data;
-      setItems(payload?.items ?? []);
-      setPagination(payload?.pagination ?? { total: 0, limit: PAGE_SIZE, offset: 0, hasMore: false });
-      setKnownActions(payload?.knownActions ?? []);
+      if (filterAction) query = query.eq('action', filterAction);
+      if (filterTenantId) query = query.eq('tenant_id', filterTenantId);
+      if (filterFrom) query = query.gte('created_at', new Date(filterFrom).toISOString());
+      if (filterTo) query = query.lte('created_at', new Date(filterTo + 'T23:59:59').toISOString());
+
+      const { data, error, count } = await query;
+      if (error) throw new Error(error.message);
+
+      const total = count ?? 0;
+      const mapped: AuditLogItem[] = (data ?? []).map((l: any) => ({
+        id: l.id,
+        tenantId: l.tenant_id,
+        tenant: l.tenants ? { id: l.tenants.id, name: l.tenants.name, slug: l.tenants.slug } : null,
+        userId: l.user_id,
+        user: l.users ? { id: l.users.id, name: l.users.name, email: l.users.email, role: l.users.role } : null,
+        action: l.action,
+        targetType: l.target_type,
+        targetId: l.target_id,
+        payload: l.payload,
+        ipAddress: l.ip_address,
+        userAgent: l.user_agent,
+        createdAt: l.created_at,
+      }));
+
+      setItems(mapped);
+      setPagination({ total, limit: PAGE_SIZE, offset: newOffset, hasMore: newOffset + PAGE_SIZE < total });
+
+      // Fetch known actions for filter dropdown
+      if (knownActions.length === 0) {
+        const { data: actionsData } = await supabaseAdmin
+          .from('audit_logs')
+          .select('action')
+          .limit(1000);
+
+        const uniqueActions = [...new Set((actionsData ?? []).map((a: any) => a.action))].sort();
+        setKnownActions(uniqueActions);
+      }
     } catch (err: unknown) {
-      const message = err instanceof AxiosError
-        ? err.response?.data?.message || 'Falha ao carregar audit logs.'
-        : 'Falha ao carregar audit logs.';
+      const message = err instanceof Error ? err.message : 'Falha ao carregar audit logs.';
       setLoadError(message);
       toast.error('Erro', message);
     } finally {
@@ -108,7 +139,7 @@ export default function AuditLog() {
             Audit Log
           </h2>
           <p className="text-text-secondary text-xs mt-1">
-            HistÃ³rico imutÃ¡vel de aÃ§Ãµes sensÃ­veis. Use para investigaÃ§Ã£o de incidentes, compliance LGPD e auditoria interna.
+            Histórico imutável de ações sensíveis. Use para investigação de incidentes, compliance LGPD e auditoria interna.
           </p>
         </div>
         <Button
@@ -130,7 +161,7 @@ export default function AuditLog() {
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <div>
-              <label htmlFor="f-action" className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block mb-1">AÃ§Ã£o</label>
+              <label htmlFor="f-action" className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block mb-1">Ação</label>
               <select
                 id="f-action"
                 value={filterAction}
@@ -158,7 +189,7 @@ export default function AuditLog() {
               <Input id="f-from" type="date" value={filterFrom} onChange={(e) => setFilterFrom(e.target.value)} className="bg-white border-border text-text text-xs h-9" />
             </div>
             <div>
-              <label htmlFor="f-to" className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block mb-1">AtÃ©</label>
+              <label htmlFor="f-to" className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block mb-1">Até</label>
               <Input id="f-to" type="date" value={filterTo} onChange={(e) => setFilterTo(e.target.value)} className="bg-white border-border text-text text-xs h-9" />
             </div>
           </div>
@@ -179,15 +210,15 @@ export default function AuditLog() {
             <div>
               <CardTitle className="text-base font-bold font-heading text-text">Registros</CardTitle>
               <CardDescription className="text-text-secondary text-xs">
-                Total: {pagination.total.toLocaleString('pt-BR')} Â· pÃ¡gina {Math.floor(pagination.offset / PAGE_SIZE) + 1} ({pagination.offset + 1}â€“{pagination.offset + items.length})
+                Total: {pagination.total.toLocaleString('pt-BR')} · página {Math.floor(pagination.offset / PAGE_SIZE) + 1} ({pagination.offset + 1}–{pagination.offset + items.length})
               </CardDescription>
             </div>
             <div className="flex items-center gap-1">
               <Button onClick={handlePrev} disabled={pagination.offset === 0 || isLoading} className="bg-white border border-border text-text text-xs px-2 h-8 rounded-lg disabled:opacity-40">
-                <ChevronLeft className="w-3.5 h-3.5" aria-label="PÃ¡gina anterior" />
+                <ChevronLeft className="w-3.5 h-3.5" aria-label="Página anterior" />
               </Button>
               <Button onClick={handleNext} disabled={!pagination.hasMore || isLoading} className="bg-white border border-border text-text text-xs px-2 h-8 rounded-lg disabled:opacity-40">
-                <ChevronRight className="w-3.5 h-3.5" aria-label="PrÃ³xima pÃ¡gina" />
+                <ChevronRight className="w-3.5 h-3.5" aria-label="Próxima página" />
               </Button>
             </div>
           </div>
@@ -213,7 +244,7 @@ export default function AuditLog() {
                 <thead>
                   <tr className="border-b border-border text-[10px] text-text-secondary uppercase tracking-wider">
                     <th className="text-left py-2 px-2">Quando</th>
-                    <th className="text-left py-2 px-2">AÃ§Ã£o</th>
+                    <th className="text-left py-2 px-2">Ação</th>
                     <th className="text-left py-2 px-2">Tenant</th>
                     <th className="text-left py-2 px-2">Por</th>
                     <th className="text-left py-2 px-2">Alvo</th>
@@ -243,7 +274,7 @@ export default function AuditLog() {
                                 {l.tenant.name}
                               </Link>
                             ) : (
-                              <span className="text-text-secondary italic">â€”</span>
+                              <span className="text-text-secondary italic">—</span>
                             )}
                           </td>
                           <td className="py-2 px-2">
@@ -260,11 +291,11 @@ export default function AuditLog() {
                             {l.targetType ? (
                               <>
                                 <div>{l.targetType}</div>
-                                {l.targetId && <div className="text-[9px] opacity-70 truncate max-w-[120px]" title={l.targetId}>{l.targetId.slice(0, 16)}â€¦</div>}
+                                {l.targetId && <div className="text-[9px] opacity-70 truncate max-w-[120px]" title={l.targetId}>{l.targetId.slice(0, 16)}…</div>}
                               </>
-                            ) : 'â€”'}
+                            ) : '—'}
                           </td>
-                          <td className="py-2 px-2 font-mono text-text-secondary text-[10px]">{l.ipAddress ?? 'â€”'}</td>
+                          <td className="py-2 px-2 font-mono text-text-secondary text-[10px]">{l.ipAddress ?? '—'}</td>
                           <td className="py-2 px-2 text-right">
                             {l.payload ? (
                               <button
@@ -276,7 +307,7 @@ export default function AuditLog() {
                                 {isExpanded ? 'recolher' : 'ver'}
                               </button>
                             ) : (
-                              <span className="text-text-secondary text-[10px]">â€”</span>
+                              <span className="text-text-secondary text-[10px]">—</span>
                             )}
                           </td>
                         </tr>

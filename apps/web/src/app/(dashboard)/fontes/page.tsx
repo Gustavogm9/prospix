@@ -2,7 +2,8 @@
 
 import { Info, MapPin, Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { apiClient } from '@/lib/api-client';
+import { campaignsQueries } from '@/lib/queries';
+import { useAuthStore } from '@/store/auth-store';
 import { toast } from '@prospix/ui';
 
 interface LeadSource {
@@ -21,6 +22,7 @@ const PROF_ICONS: Record<string, string> = {
 };
 
 export default function LeadSources() {
+  const tenantId = useAuthStore(state => state.tenantId);
   const [sources, setSources] = useState<LeadSource[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'active' | 'paused'>('all');
@@ -28,19 +30,21 @@ export default function LeadSources() {
   const [leadsByCampaign, setLeadsByCampaign] = useState<Record<string, number>>({});
 
   useEffect(() => {
+    if (!tenantId) return;
     const fetchData = async () => {
       try {
-        const campaignsRes = await apiClient.get('/tenant/campaigns');
-        const camps = Array.isArray(campaignsRes.data) ? campaignsRes.data : campaignsRes.data?.data ?? [];
+        const result = await campaignsQueries.list(tenantId);
+        if (result.error) throw new Error(result.error.message);
+        const camps = result.data || [];
         
         setSources(camps.map((c: any) => ({
           id: c.id,
           name: c.name,
-          description: `${c.cities?.join(', ') || '—'} · Meta: ${c.dailyLimit}/dia`,
+          description: `${c.cities?.join(', ') || '—'} · Meta: ${c.daily_limit}/dia`,
           profession: c.profession || 'OTHER',
           cities: c.cities || [],
           status: c.status,
-          dailyLimit: c.dailyLimit || 0,
+          dailyLimit: c.daily_limit || 0,
           icon: PROF_ICONS[c.profession] || '📋',
         })));
 
@@ -48,7 +52,7 @@ export default function LeadSources() {
         const counts: Record<string, number> = {};
         let total = 0;
         camps.forEach((c: any) => {
-          const cnt = c._count?.leads ?? c.totalCaptured ?? c.leadsCount ?? 0;
+          const cnt = c._count?.leads ?? c.total_captured ?? c.leads_count ?? 0;
           counts[c.id] = cnt;
           total += cnt;
         });
@@ -62,7 +66,7 @@ export default function LeadSources() {
       }
     };
     fetchData();
-  }, []);
+  }, [tenantId]);
 
   const filtered = filter === 'all' ? sources : sources.filter(s => 
     filter === 'active' ? s.status === 'ACTIVE' : s.status === 'PAUSED' || s.status === 'DRAFT'

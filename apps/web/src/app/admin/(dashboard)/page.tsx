@@ -1,9 +1,9 @@
-﻿'use client';
+'use client';
 
 import { useState, useEffect } from 'react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, BarChart, toast } from '@prospix/ui';
 import { DollarSign, Percent, TrendingUp, Cpu, Server, Map } from 'lucide-react';
-import { adminApiClient } from '@/lib/admin-api-client';
+import { supabaseAdmin } from '@/lib/supabase';
 
 interface FinancialMetric {
   mrrTotal: string;
@@ -22,8 +22,21 @@ export default function Dashboard() {
   useEffect(() => {
     const fetchMetrics = async () => {
       try {
-        const response = await adminApiClient.get('/admin/usage/consolidated');
-        const report = response.data.data || [];
+        // Query tenant_usage joined with tenants to get MRR, aggregating cost fields
+        const [usageRes, tenantsRes] = await Promise.all([
+          supabaseAdmin
+            .from('tenant_usage')
+            .select('tenant_id, llm_cost_cents, whatsapp_cost_cents, maps_cost_cents, total_costs_cents')
+            .order('created_at', { ascending: false }),
+          supabaseAdmin
+            .from('tenants')
+            .select('id, mrr_cents')
+            .is('deleted_at', null)
+            .in('status', ['ACTIVE', 'ONBOARDING']),
+        ]);
+
+        const report = usageRes.data ?? [];
+        const tenantsList = tenantsRes.data ?? [];
 
         let mrrTotalCents = 0;
         let costLLMCents = 0;
@@ -31,8 +44,13 @@ export default function Dashboard() {
         let costMapsCents = 0;
         let totalCostsCents = 0;
 
+        // Sum MRR from tenants
+        tenantsList.forEach((t: any) => {
+          mrrTotalCents += t.mrr_cents || 0;
+        });
+
+        // Sum costs from usage records
         report.forEach((rec: any) => {
-          mrrTotalCents += rec.mrr_cents || 0;
           costLLMCents += rec.llm_cost_cents || 0;
           costWhatsAppCents += rec.whatsapp_cost_cents || 0;
           costMapsCents += rec.maps_cost_cents || 0;
@@ -62,7 +80,7 @@ export default function Dashboard() {
         ]);
       } catch (err: unknown) {
         console.error('Error fetching consolidated usage metrics:', err);
-        toast.error('Erro de ConexÃ£o', 'NÃ£o foi possÃ­vel carregar as mÃ©tricas financeiras consolidadas.');
+        toast.error('Erro de Conexão', 'Não foi possível carregar as métricas financeiras consolidadas.');
       } finally {
         setIsLoading(false);
       }
@@ -89,7 +107,7 @@ export default function Dashboard() {
       {/* Header */}
       <div>
         <h2 className="text-3xl font-bold font-heading text-text tracking-tight">Custos & Margens Financeiras</h2>
-        <p className="text-text-secondary text-sm mt-1">ConsolidaÃ§Ã£o em tempo real dos custos de IA/infraestrutura vs faturamento de MRR.</p>
+        <p className="text-text-secondary text-sm mt-1">Consolidação em tempo real dos custos de IA/infraestrutura vs faturamento de MRR.</p>
       </div>
 
       {/* KPI Cards Grid */}
@@ -115,7 +133,7 @@ export default function Dashboard() {
           <CardContent className="pt-6">
             <div className="flex justify-between items-start">
               <div className="space-y-1.5">
-                <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider block">Lucro LÃ­quido Real</span>
+                <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider block">Lucro Líquido Real</span>
                 <span className="text-3xl font-bold font-heading tracking-tight text-text font-mono">{metrics.netProfit}</span>
               </div>
               <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 rounded-xl">
@@ -151,7 +169,7 @@ export default function Dashboard() {
         <Card className="lg:col-span-2 bg-surface border-border">
           <CardHeader>
             <CardTitle className="text-base font-bold font-heading text-text">Detalhamento Financeiro de Custos Operacionais</CardTitle>
-            <CardDescription className="text-text-secondary text-xs">DivisÃ£o de faturamento consumido por APIs externas.</CardDescription>
+            <CardDescription className="text-text-secondary text-xs">Divisão de faturamento consumido por APIs externas.</CardDescription>
           </CardHeader>
           <CardContent className="grid grid-cols-1 sm:grid-cols-3 gap-4 py-4">
             <div className="p-4 rounded-xl bg-surface-sunken/40 border border-border space-y-2.5">
@@ -172,7 +190,7 @@ export default function Dashboard() {
               </div>
               <div>
                 <p className="text-sm font-bold font-mono text-text">{metrics.costWhatsApp}</p>
-                <p className="text-[10px] text-text-muted">Custos mensais de instÃ¢ncias</p>
+                <p className="text-[10px] text-text-muted">Custos mensais de instâncias</p>
               </div>
             </div>
 

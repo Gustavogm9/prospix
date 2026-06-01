@@ -1335,8 +1335,9 @@ export const billingQueries = {
               status: currentInvoice.status,
               paidAt: currentInvoice.paid_at || null,
               dueAt: currentInvoice.due_at,
-              invoiceUrl: currentInvoice.invoice_url,
-              paymentMethod: currentInvoice.payment_method,
+              invoiceUrl: currentInvoice.invoice_url || null,
+              paymentMethod: currentInvoice.payment_method || null,
+              externalInvoiceId: currentInvoice.external_invoice_id || null,
             }
           : null,
         invoices: invoices.map((inv) => ({
@@ -1348,6 +1349,9 @@ export const billingQueries = {
           status: inv.status,
           paidAt: inv.paid_at || null,
           dueAt: inv.due_at,
+          invoiceUrl: inv.invoice_url || null,
+          paymentMethod: inv.payment_method || null,
+          externalInvoiceId: inv.external_invoice_id || null,
         })),
       },
       error: null,

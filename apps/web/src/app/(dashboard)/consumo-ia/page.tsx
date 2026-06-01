@@ -2,7 +2,8 @@
 
 import { AlertTriangle, Cpu, Info } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { apiClient } from '@/lib/api-client';
+import { dashboardQueries } from '@/lib/queries';
+import { useAuthStore } from '@/store/auth-store';
 import { toast } from '@prospix/ui';
 
 interface AIUsageData {
@@ -18,11 +19,16 @@ interface AIUsageData {
 }
 
 export default function AIConsumption() {
+  const tenantId = useAuthStore(state => state.tenantId);
   const [data, setData] = useState<AIUsageData | null>(null);
 
   useEffect(() => {
-    apiClient.get('/tenant/dashboard/ai-usage')
-      .then(res => setData(res.data?.data ?? res.data))
+    if (!tenantId) return;
+    dashboardQueries.aiUsage(tenantId)
+      .then(result => {
+        if (result.error) throw new Error(result.error.message);
+        setData(result.data);
+      })
       .catch(() => {
         toast.error('Erro ao carregar', 'Não foi possível carregar dados de consumo.');
         setData({
@@ -31,7 +37,7 @@ export default function AIConsumption() {
           limit: { max_limit_cents: 0, used_percent: 0, remaining_cents: 0 }
         });
       });
-  }, []);
+  }, [tenantId]);
 
   const fmt = (cents: number) => `R$ ${(cents / 100).toFixed(2)}`;
 

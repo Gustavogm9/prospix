@@ -3,8 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Button, Input, toast } from '@prospix/ui';
 import { MessageSquare, Send, Bot, User, Phone, ChevronRight, Filter, ArrowUpDown, LayoutList, Columns3, X, Award, Clock } from 'lucide-react';
-import { apiClient } from '@/lib/api-client';
-import { AxiosError } from 'axios';
+import { conversationsQueries, meetingsQueries, leadsQueries } from '@/lib/queries';
 
 import { useRealtimeEvents } from '@/hooks/useRealtimeEvents';
 import { useAuthStore } from '@/store/auth-store';
@@ -101,7 +100,7 @@ export default function Conversations() {
 
   // Helper to map DB Conversation to Web Frontend UI type
   const mapBackendConversation = (conv: any, index?: number): Conversation => {
-    const lead = conv.lead || {};
+    const lead = conv.leads || conv.lead || {};
     const metadata = (lead.metadata || {}) as Record<string, any>;
     const name = lead.name || 'Sem nome';
     const idx = index ?? 0;
@@ -109,58 +108,59 @@ export default function Conversations() {
     // Derive company from real data sources
     const company = metadata.cnpj_info?.nomeFantasia
       || metadata.cnpj_info?.razaoSocial
-      || (lead.sourceRawData as any)?.name
+      || (lead.source_raw_data as any)?.name
       || '';
 
     // Translate profession enum to PT-BR
     const professionLabel = lead.profession ? (PROFESSION_LABELS[lead.profession] || lead.profession) : '';
 
-    // HealthProfile from backend include
-    const hp = lead.healthProfile || null;
+    // HealthProfile from backend include (Supabase returns snake_case nested)
+    const hpArr = lead.health_profiles;
+    const hp = Array.isArray(hpArr) && hpArr.length > 0 ? hpArr[0] : null;
 
     return {
       id: conv.id,
-      leadId: lead.id || conv.leadId || '',
+      leadId: lead.id || conv.lead_id || '',
       leadName: name,
-      aiHandling: conv.aiHandling,
-      lastMessage: conv.lastMessage || 'Nenhuma mensagem recebida.',
-      timestamp: conv.lastMessageAt 
-        ? new Date(conv.lastMessageAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) 
-        : new Date(conv.startedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
-      fitScore: Number(lead.fitScore) || 0,
-      unread: conv.status === 'ACTIVE' && !conv.lastOutboundAt,
-      meetingId: conv.meetings?.[0]?.id,
+      aiHandling: conv.ai_handling,
+      lastMessage: conv.last_message || 'Nenhuma mensagem recebida.',
+      timestamp: conv.last_message_at 
+        ? new Date(conv.last_message_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) 
+        : new Date(conv.started_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+      fitScore: Number(lead.fit_score) || 0,
+      unread: conv.status === 'ACTIVE' && !conv.last_outbound_at,
+      meetingId: undefined,
       initials: getInitials(name),
       avatarColor: getAvatarColor(idx),
       profession: professionLabel,
-      tagType: conv.meetings?.[0] ? 'success' : conv.aiHandling ? 'live' : undefined,
-      tagLabel: conv.meetings?.[0] ? '✓ Agendada' : conv.aiHandling ? 'IA respondendo' : undefined,
-      whenLabel: conv.lastMessageAt 
-        ? new Date(conv.lastMessageAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) 
-        : new Date(conv.startedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+      tagType: conv.ai_handling ? 'live' : undefined,
+      tagLabel: conv.ai_handling ? 'IA respondendo' : undefined,
+      whenLabel: conv.last_message_at 
+        ? new Date(conv.last_message_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) 
+        : new Date(conv.started_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
       details: {
         phone: lead.whatsapp || '',
-        city: lead.address?.city || '',
-        googleRating: lead.googleRating ? Number(lead.googleRating) : null,
-        googleReviewsCount: lead.googleReviewsCount ?? null,
-        susep: lead.registrationNumber || '',
+        city: (lead.address as any)?.city || '',
+        googleRating: lead.google_rating ? Number(lead.google_rating) : null,
+        googleReviewsCount: lead.google_reviews_count ?? null,
+        susep: lead.registration_number || '',
         company,
-        health: lead.firstResponseAt ? 'Ativo' : lead.contactedAt ? 'Aguardando' : 'Novo',
-        priority: Number(lead.fitScore) >= 8.5 ? 'high' : Number(lead.fitScore) >= 6.0 ? 'medium' : 'low',
+        health: lead.first_response_at ? 'Ativo' : lead.contacted_at ? 'Aguardando' : 'Novo',
+        priority: Number(lead.fit_score) >= 8.5 ? 'high' : Number(lead.fit_score) >= 6.0 ? 'medium' : 'low',
         tags: lead.tags || [],
         logs: [
-          { action: 'Lead capturado', time: new Date(lead.createdAt).toLocaleString('pt-BR') },
-          { action: 'Campanha iniciada', time: new Date(conv.startedAt).toLocaleString('pt-BR') }
+          { action: 'Lead capturado', time: new Date(lead.created_at).toLocaleString('pt-BR') },
+          { action: 'Campanha iniciada', time: new Date(conv.started_at).toLocaleString('pt-BR') }
         ],
         healthProfile: hp ? {
           smoker: hp.smoker,
-          physicalActivity: hp.physicalActivity,
-          bmiCalculated: hp.bmiCalculated ? Number(hp.bmiCalculated) : null,
-          preExistingDiseases: hp.preExistingDiseases,
-          continuousMedication: hp.continuousMedication,
-          riskCategory: hp.riskCategory,
-          estimatedPremiumMinCents: hp.estimatedPremiumMinCents,
-          estimatedPremiumMaxCents: hp.estimatedPremiumMaxCents,
+          physicalActivity: hp.physical_activity,
+          bmiCalculated: hp.bmi_calculated ? Number(hp.bmi_calculated) : null,
+          preExistingDiseases: hp.pre_existing_diseases,
+          continuousMedication: hp.continuous_medication,
+          riskCategory: hp.risk_category,
+          estimatedPremiumMinCents: hp.estimated_premium_min_cents,
+          estimatedPremiumMaxCents: hp.estimated_premium_max_cents,
         } : null,
       }
     };
@@ -176,15 +176,17 @@ export default function Conversations() {
       id: msg.id,
       sender,
       content: msg.content,
-      timestamp: new Date(msg.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+      timestamp: new Date(msg.created_at || msg.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
     };
   };
 
-  // 1. Fetch Conversations from backend API
+  // 1. Fetch Conversations from Supabase
   const fetchConversations = async (silent = false) => {
+    if (!tenantId) return;
     try {
-      const response = await apiClient.get('/tenant/conversations');
-      const list = response.data;
+      const result = await conversationsQueries.list(tenantId);
+      if (result.error) throw new Error(result.error.message);
+      const list = result.data;
       if (list && list.length > 0) {
         const mapped = list.map((conv: any, idx: number) => mapBackendConversation(conv, idx));
         setConversations(mapped);
@@ -200,7 +202,7 @@ export default function Conversations() {
       if (!silent) {
         setConversations([]);
         setSelectedConv(null);
-        if (!silent) toast.error('Erro de Conexão', 'Não foi possível carregar as conversas.');
+        toast.error('Erro de Conexão', 'Não foi possível carregar as conversas.');
       }
     }
   };
@@ -215,13 +217,13 @@ export default function Conversations() {
 
   // 2. Fetch Messages for selected conversation
   useEffect(() => {
-    if (!selectedConv) return;
+    if (!selectedConv || !tenantId) return;
 
     const fetchMessages = async () => {
       try {
-        const response = await apiClient.get(`/tenant/conversations/${selectedConv.id}/messages`);
-        const list = response.data || [];
-        setMessages(list.map(mapBackendMessage));
+        const result = await conversationsQueries.getMessages(selectedConv.id, tenantId);
+        if (result.error) throw new Error(result.error.message);
+        setMessages((result.data || []).map(mapBackendMessage));
       } catch (error) {
         console.error('Error fetching messages:', error);
         toast.error('Erro de sincronização', 'Não foi possível carregar as novas mensagens do servidor.');
@@ -229,7 +231,7 @@ export default function Conversations() {
     };
 
     fetchMessages();
-  }, [selectedConv?.id]);
+  }, [selectedConv?.id, tenantId]);
 
    // 3. SSE Real-time Synchronization (replaces Supabase Realtime)
   useRealtimeEvents(tenantId, {
@@ -291,13 +293,13 @@ export default function Conversations() {
   // Fetch real lead events when history tab is opened
   useEffect(() => {
     if (!selectedConv || drawerTab !== 'history') return;
-    if (!selectedConv.leadId) return;
+    if (!selectedConv.leadId || !tenantId) return;
 
     const fetchEvents = async () => {
       try {
-        const response = await apiClient.get(`/tenant/leads/${selectedConv.leadId}/events`);
-        const events = response.data?.data || [];
-        setLeadEvents(events);
+        const result = await leadsQueries.getEvents(tenantId, selectedConv.leadId);
+        if (result.error) throw new Error(result.error.message);
+        setLeadEvents(result.data || []);
       } catch (err) {
         console.error('Error fetching lead events:', err);
         setLeadEvents([]);
@@ -305,10 +307,10 @@ export default function Conversations() {
     };
 
     fetchEvents();
-  }, [selectedConv?.leadId, drawerTab]);
+  }, [selectedConv?.leadId, drawerTab, tenantId]);
 
   const handleTakeover = async () => {
-    if (!selectedConv) return;
+    if (!selectedConv || !tenantId) return;
     
     const updated = { ...selectedConv, aiHandling: false };
     setSelectedConv(updated);
@@ -320,9 +322,8 @@ export default function Conversations() {
     }
 
     try {
-      await apiClient.patch(`/tenant/conversations/${selectedConv.id}`, {
-        aiHandling: false,
-      });
+      const result = await conversationsQueries.update(tenantId, selectedConv.id, false);
+      if (result.error) throw new Error(result.error.message);
       toast.success('Controle Manual Ativo', 'A IA foi desativada temporariamente. Você está no controle da conversa.');
     } catch {
       toast.error('Erro de Conexão', 'Não foi possível alterar o status do bot.');
@@ -358,15 +359,14 @@ export default function Conversations() {
     }
 
     try {
-      const response = await apiClient.post(`/tenant/conversations/${selectedConv.id}/messages`, {
-        content: userMsgContent,
-      });
-      const savedMsg = mapBackendMessage(response.data);
+      const result = await conversationsQueries.sendMessage(tenantId!, selectedConv.id, userMsgContent);
+      if (result.error) throw new Error(result.error.message);
+      const savedMsg = mapBackendMessage(result.data);
       setMessages(prev => prev.map(m => m.id === tempId ? savedMsg : m));
     } catch (err: unknown) {
       console.error('Error sending message:', err);
-      const message = err instanceof AxiosError
-        ? err.response?.data?.message || 'Falha ao enviar a mensagem pelo gateway WhatsApp.'
+      const message = err instanceof Error
+        ? err.message || 'Falha ao enviar a mensagem pelo gateway WhatsApp.'
         : 'Falha ao enviar a mensagem pelo gateway WhatsApp.';
       toast.error('Erro ao enviar', message);
       setMessages(prev => prev.filter(m => m.id !== tempId));
@@ -387,21 +387,22 @@ export default function Conversations() {
       }
 
       let meetingId = selectedConv.meetingId;
-      if (!meetingId) {
-        const meetingsResponse = await apiClient.get('/tenant/meetings');
-        const meetings = meetingsResponse.data?.data || [];
-        meetingId = meetings.find((meeting: any) => meeting.conversationId === selectedConv.id)?.id;
+      if (!meetingId && tenantId) {
+        const meetingsResult = await meetingsQueries.list(tenantId);
+        const meetings = meetingsResult.data || [];
+        meetingId = meetings.find((meeting: any) => meeting.lead_id === selectedConv.leadId)?.id;
       }
 
-      if (!meetingId) {
+      if (!meetingId || !tenantId) {
         throw new Error('Meeting not found for selected conversation');
       }
 
-      await apiClient.patch(`/tenant/meetings/${meetingId}`, {
-        outcome: 'CLOSED',
+      const result = await meetingsQueries.update(tenantId, meetingId, {
+        outcome: 'CLOSED' as any,
         policy_value_cents: Math.floor((parseFloat(outcomeValue) || 0) * 100),
         commission_cents: Math.floor((parseFloat(outcomeCommission) || 0) * 100),
       });
+      if (result.error) throw new Error(result.error.message);
 
       toast.success('Venda Registrada!', 'Parabéns pela apólice fechada! Faturamento cadastrado com sucesso.');
       setIsOutcomeModalOpen(false);
