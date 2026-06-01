@@ -3,8 +3,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Input, toast } from '@prospix/ui';
-import { apiClient } from '@/lib/api-client';
-import { useAuthStore } from '@/store/auth-store';
+import { supabase } from '@/lib/supabase';
+import { useAuthStore, type UserSession } from '@/store/auth-store';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -33,35 +33,51 @@ export default function Login() {
     e.preventDefault();
 
     if (!email.trim() || !email.includes('@')) {
-      toast.error('E-mail inv├ílido', 'Por favor, insira um e-mail v├ílido para continuar.');
+      toast.error('E-mail inválido', 'Por favor, insira um e-mail válido para continuar.');
       return;
     }
 
     if (!password.trim()) {
-      toast.error('Senha obrigat├│ria', 'Por favor, informe sua senha de acesso.');
+      toast.error('Senha obrigatória', 'Por favor, informe sua senha de acesso.');
       return;
     }
 
     setIsLoading(true);
     try {
-      const response = await apiClient.post('/auth/login', {
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password,
       });
 
-      const { must_change_password, user } = response.data;
-      setSession(user);
+      if (authError) {
+        throw new Error(authError.message);
+      }
 
-      if (must_change_password) {
+      // Fetch user profile from users table
+      const { data: userData, error: userError } = await supabase
+        .from('users')
+        .select('id, tenant_id, name, email, role')
+        .eq('id', data.user.id)
+        .single();
+
+      if (userError || !userData) {
+        throw new Error('Não foi possível carregar os dados do usuário.');
+      }
+
+      setSession(userData as UserSession);
+
+      const mustChange = data.user.user_metadata?.must_change_password === true;
+
+      if (mustChange) {
         setCurrentPw(password);
         setMustChangePassword(true);
-        toast.info('Troca de Senha Obrigat├│ria', 'Por seguran├ºa, escolha uma nova senha para continuar.');
+        toast.info('Troca de Senha Obrigatória', 'Por segurança, escolha uma nova senha para continuar.');
       } else {
-        toast.success('Acesso Autorizado!', `Ol├í, ${user.name}! Bem-vindo(a) de volta.`);
+        toast.success('Acesso Autorizado!', `Olá, ${userData.name}! Bem-vindo(a) de volta.`);
         navTimerRef.current = setTimeout(() => router.push('/inicio'), 1000);
       }
     } catch (error: any) {
-      toast.error('Erro ao entrar', error.response?.data?.message || 'E-mail ou senha incorretos. Verifique suas credenciais.');
+      toast.error('Erro ao entrar', error.message || 'E-mail ou senha incorretos. Verifique suas credenciais.');
     } finally {
       setIsLoading(false);
     }
@@ -85,16 +101,19 @@ export default function Login() {
 
     setIsChanging(true);
     try {
-      await apiClient.patch('/auth/change-password', {
-        current_password: currentPw,
-        new_password: newPw,
-        confirm_password: confirmPw,
+      const { error: updateError } = await supabase.auth.updateUser({
+        password: newPw,
+        data: { must_change_password: false },
       });
+
+      if (updateError) {
+        throw new Error(updateError.message);
+      }
 
       toast.success('Senha Atualizada!', 'Sua nova senha foi salva. Bem-vindo(a) ao Prospix!');
       navTimerRef.current = setTimeout(() => router.push('/inicio'), 1000);
     } catch (error: any) {
-      toast.error('Erro ao trocar senha', error.response?.data?.message || 'N├úo foi poss├¡vel atualizar a senha.');
+      toast.error('Erro ao trocar senha', error.message || 'Não foi possível atualizar a senha.');
     } finally {
       setIsChanging(false);
     }

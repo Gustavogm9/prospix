@@ -18,6 +18,8 @@ interface AuthState {
   setSession: (user: UserSession) => void;
   clearSession: () => void;
   setInitialized: (value: boolean) => void;
+  /** Check Supabase session and load user data from the users table */
+  initializeFromSupabase: () => Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -41,6 +43,36 @@ export const useAuthStore = create<AuthState>()(
         });
       },
       setInitialized: (value) => set({ initialized: value }),
+      initializeFromSupabase: async () => {
+        try {
+          const { data: sessionData } = await supabase.auth.getSession();
+          const session = sessionData.session;
+
+          if (!session?.user) {
+            set({ initialized: true });
+            return;
+          }
+
+          const { data: userData, error } = await supabase
+            .from('users')
+            .select('id, tenant_id, name, email, role')
+            .eq('id', session.user.id)
+            .single();
+
+          if (error || !userData) {
+            set({ initialized: true });
+            return;
+          }
+
+          set({
+            tenantId: userData.tenant_id,
+            user: userData as UserSession,
+            initialized: true,
+          });
+        } catch {
+          set({ initialized: true });
+        }
+      },
     }),
     {
       name: 'prospix-auth-storage',

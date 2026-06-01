@@ -4,10 +4,8 @@ import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Input, toast } from '@prospix/ui';
 import { useAdminAuthStore } from '@/store/admin-auth-store';
-import { supabaseAdmin as supabase } from '@/lib/supabase';
+import { supabaseAdmin } from '@/lib/supabase';
 import { ShieldCheck, Lock, Mail } from 'lucide-react';
-import axios, { AxiosError } from 'axios';
-import { API_BASE_URL } from '@/lib/admin-api-client';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -28,34 +26,46 @@ export default function Login() {
     setIsLoading(true);
 
     try {
-      const response = await axios.post(`${API_BASE_URL}/auth/admin-login`, {
+      const { data, error: authError } = await supabaseAdmin.auth.signInWithPassword({
         email,
         password,
       });
 
-      const { access_token, refresh_token, user } = response.data;
+      if (authError) {
+        throw new Error(authError.message);
+      }
 
-      // Install Supabase session for auto-refresh
-      await supabase.auth.setSession({
-        access_token,
-        refresh_token,
-      });
+      // Fetch user profile and verify admin role
+      const { data: userData, error: userError } = await supabaseAdmin
+        .from('users')
+        .select('id, name, email, role')
+        .eq('id', data.user.id)
+        .single();
+
+      if (userError || !userData) {
+        throw new Error('Não foi possível carregar os dados do usuário.');
+      }
+
+      if (userData.role !== 'GUILDS_ADMIN') {
+        await supabaseAdmin.auth.signOut();
+        throw new Error('Acesso negado. Apenas administradores GUILDS podem acessar este painel.');
+      }
 
       // Persist admin user metadata in Zustand store
       setAdminSession({
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
+        id: userData.id,
+        name: userData.name,
+        email: userData.email,
+        role: userData.role as 'GUILDS_ADMIN',
       });
 
-      toast.success('Acesso Autorizado', 'ConexÃ£o ativa com o banco de dados.');
+      toast.success('Acesso Autorizado', 'Conexão ativa com o banco de dados.');
       router.push('/admin');
     } catch (err: unknown) {
-      const message = err instanceof AxiosError
-        ? err.response?.data?.message || 'Credenciais invÃ¡lidas ou erro ao conectar com o servidor.'
-        : 'Credenciais invÃ¡lidas ou erro ao conectar com o servidor.';
-      toast.error('Erro de AutenticaÃ§Ã£o', message);
+      const message = err instanceof Error
+        ? err.message
+        : 'Credenciais inválidas ou erro ao conectar com o servidor.';
+      toast.error('Erro de Autenticação', message);
     } finally {
       setIsLoading(false);
     }

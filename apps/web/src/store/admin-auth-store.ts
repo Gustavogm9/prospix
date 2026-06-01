@@ -16,6 +16,8 @@ interface AdminAuthState {
   setAdminSession: (user: AdminSession) => void;
   clearAdminSession: () => void;
   setInitialized: (value: boolean) => void;
+  /** Check Supabase session and load admin user data from the users table */
+  initializeFromSupabase: () => Promise<void>;
 }
 
 export const useAdminAuthStore = create<AdminAuthState>()(
@@ -36,6 +38,42 @@ export const useAdminAuthStore = create<AdminAuthState>()(
         });
       },
       setInitialized: (value) => set({ initialized: value }),
+      initializeFromSupabase: async () => {
+        try {
+          const { data: sessionData } = await supabase.auth.getSession();
+          const session = sessionData.session;
+
+          if (!session?.user) {
+            set({ initialized: true });
+            return;
+          }
+
+          const { data: userData, error } = await supabase
+            .from('users')
+            .select('id, name, email, role')
+            .eq('id', session.user.id)
+            .single();
+
+          if (error || !userData) {
+            set({ initialized: true });
+            return;
+          }
+
+          // Only allow admin roles
+          const adminRoles: AdminSession['role'][] = ['SUPER_ADMIN', 'ADMIN', 'GUILDS_ADMIN'];
+          if (!adminRoles.includes(userData.role as AdminSession['role'])) {
+            set({ initialized: true });
+            return;
+          }
+
+          set({
+            adminUser: userData as AdminSession,
+            initialized: true,
+          });
+        } catch {
+          set({ initialized: true });
+        }
+      },
     }),
     {
       name: 'prospix-admin-auth-storage',

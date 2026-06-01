@@ -2,8 +2,8 @@
 
 import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useAuthStore } from '@/store/auth-store';
-import { apiClient } from '@/lib/api-client';
+import { useAuthStore, type UserSession } from '@/store/auth-store';
+import { supabase } from '@/lib/supabase';
 import { toast } from '@prospix/ui';
 
 function LoginCallbackInner() {
@@ -18,7 +18,7 @@ function LoginCallbackInner() {
 
     if (!token) {
       setStatus('error');
-      setErrorMessage('Token de acesso n├úo encontrado no link.');
+      setErrorMessage('Token de acesso não encontrado no link.');
       toast.error(
         'Token ausente',
         'Por favor, utilize o link completo enviado no seu WhatsApp.'
@@ -29,26 +29,51 @@ function LoginCallbackInner() {
 
     const verifyToken = async () => {
       try {
-        const response = await apiClient.get(`/auth/callback?token=${token}`);
-        
-        const { user } = response.data;
-        
+        // Try verifying the OTP token (magic link)
+        const { data: otpData, error: otpError } = await supabase.auth.verifyOtp({
+          token_hash: token,
+          type: 'magiclink',
+        });
+
+        // If verifyOtp failed, try getting existing session (token may have been auto-exchanged)
+        let userId: string | undefined;
+        if (otpError || !otpData.user) {
+          const { data: sessionData } = await supabase.auth.getSession();
+          if (!sessionData.session?.user) {
+            throw new Error('Link mágico expirado, inválido ou já utilizado.');
+          }
+          userId = sessionData.session.user.id;
+        } else {
+          userId = otpData.user.id;
+        }
+
+        // Fetch user profile from users table
+        const { data: userData, error: userError } = await supabase
+          .from('users')
+          .select('id, tenant_id, name, email, role')
+          .eq('id', userId)
+          .single();
+
+        if (userError || !userData) {
+          throw new Error('Não foi possível carregar os dados do usuário.');
+        }
+
         // Save in Zustand
-        setSession(user);
-        
+        setSession(userData as UserSession);
+
         setStatus('success');
         toast.success(
           'Acesso Autorizado!',
-          `Ol├í, ${user.name}! Bem-vindo(a) de volta.`
+          `Olá, ${userData.name}! Bem-vindo(a) de volta.`
         );
-        
+
         // Redirect to main panel
         setTimeout(() => router.push('/inicio'), 1000);
       } catch (error: any) {
         setStatus('error');
-        const message = error.response?.data?.message || 'Link m├ígico expirado, inv├ílido ou j├í utilizado.';
+        const message = error.message || 'Link mágico expirado, inválido ou já utilizado.';
         setErrorMessage(message);
-        toast.error('Erro na Autentica├º├úo', message);
+        toast.error('Erro na Autenticação', message);
         setTimeout(() => router.push('/login'), 4000);
       }
     };
