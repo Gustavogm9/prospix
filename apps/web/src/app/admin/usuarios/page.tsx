@@ -1,10 +1,11 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle, Button, Badge, toast } from '@prospix/ui';
 import { Users as UsersIcon, Plus, Loader2, Search, RefreshCw, KeyRound, UserX, UserCheck, Pencil, AlertCircle, Copy, Eye, EyeOff } from 'lucide-react';
 import { adminApiClient } from '@/lib/admin-api-client';
+import { adminTenantsQueries, adminUsersQueries } from '@/lib/admin-queries';
 import { AxiosError } from 'axios';
 
 interface UserItem {
@@ -67,17 +68,31 @@ export default function UserManagement() {
   const fetchUsers = async (newOffset = 0) => {
     setIsLoading(true);
     try {
-      const params = new URLSearchParams();
-      params.set('limit', String(PAGE_SIZE));
-      params.set('offset', String(newOffset));
-      if (searchTerm.trim()) params.set('search', searchTerm.trim());
-      if (filterRole !== 'all') params.set('role', filterRole);
-      const response = await adminApiClient.get(`/admin/users?${params.toString()}`);
-      const payload = response.data?.data;
-      setItems(payload?.items ?? []);
-      setPagination(payload?.pagination ?? { total: 0, limit: PAGE_SIZE, offset: 0, hasMore: false });
+      const result = await adminUsersQueries.list({
+        ...(searchTerm.trim() ? { search: searchTerm.trim() } : {}),
+        ...(filterRole !== 'all' ? { role: filterRole } : {}),
+      });
+      if (result.error) throw new Error(result.error.message);
+      // Apply client-side pagination since adminUsersQueries.list() returns all
+      const allItems = (result.data ?? []).map((u: any) => ({
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        whatsapp: u.whatsapp,
+        role: u.role,
+        tenantId: u.tenant_id,
+        susep: u.susep,
+        createdAt: u.created_at,
+        updatedAt: u.updated_at,
+        deletedAt: u.deleted_at,
+        tenant: u.tenants ? { id: u.tenant_id, name: u.tenants.name, slug: u.tenants.slug, status: '' } : null,
+      }));
+      const total = allItems.length;
+      const paged = allItems.slice(newOffset, newOffset + PAGE_SIZE);
+      setItems(paged);
+      setPagination({ total, limit: PAGE_SIZE, offset: newOffset, hasMore: newOffset + PAGE_SIZE < total });
     } catch (err: unknown) {
-      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha ao carregar usuÃ¡rios.' : 'Falha ao carregar usuÃ¡rios.';
+      const message = err instanceof Error ? err.message : 'Falha ao carregar usuários.';
       toast.error('Erro', message);
     } finally {
       setIsLoading(false);
@@ -85,10 +100,10 @@ export default function UserManagement() {
   };
 
   const fetchTenants = async () => {
-    try {
-      const response = await adminApiClient.get('/admin/tenants');
-      setTenants((response.data?.data ?? []).map((t: any) => ({ id: t.id, name: t.name, slug: t.slug })));
-    } catch { /* swallow */ }
+    const result = await adminTenantsQueries.list();
+    if (!result.error) {
+      setTenants(result.data.map((t) => ({ id: t.id, name: t.name, slug: t.slug })));
+    }
   };
 
   useEffect(() => {

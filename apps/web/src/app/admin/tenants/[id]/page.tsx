@@ -9,6 +9,7 @@ import {
   FileText, ShieldAlert, DollarSign, Activity, Zap, Mail, Copy, XCircle, Plus,
 } from 'lucide-react';
 import { adminApiClient } from '@/lib/admin-api-client';
+import { adminTenantsQueries } from '@/lib/admin-queries';
 import { AxiosError } from 'axios';
 
 interface TenantUser { id: string; name: string; email: string; role: string; }
@@ -117,15 +118,44 @@ export default function TenantDetail() {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const [detailRes, insightsRes] = await Promise.all([
-        adminApiClient.get(`/admin/tenants/${id}`),
+      const [tenantResult, insightsRes] = await Promise.all([
+        adminTenantsQueries.getById(id),
         adminApiClient.get(`/admin/tenants/${id}/insights`),
       ]);
-      setTenant(detailRes.data?.data ?? null);
-      setInsights(insightsRes.data?.data ?? null);
+      if (tenantResult.error) throw new Error(tenantResult.error.message);
+      // Map snake_case Supabase fields to camelCase expected by UI
+      // Note: credentialState and integrationHealth come from the API insights endpoint
+      const rawTenant = tenantResult.data;
+      const insightsData = insightsRes.data?.data ?? null;
+      if (rawTenant) {
+        setTenant({
+          id: rawTenant.id,
+          name: rawTenant.name,
+          slug: rawTenant.slug,
+          status: rawTenant.status,
+          plan: rawTenant.plan,
+          segment: rawTenant.segment ?? null,
+          mrrCents: rawTenant.mrr_cents,
+          setupPaidCents: rawTenant.setup_paid_cents ?? null,
+          contractSignedAt: rawTenant.contract_signed_at ?? null,
+          goLiveAt: rawTenant.go_live_at ?? null,
+          createdAt: rawTenant.created_at,
+          users: ((rawTenant as any).users ?? []).map((u: any) => ({
+            id: u.id,
+            name: u.name,
+            email: u.email,
+            role: u.role,
+          })),
+          credentialState: insightsData?.credentialState ?? { exists: false, evolution: { baseUrlConfigured: false, instanceConfigured: false, tokenConfigured: false, webhookConfigured: false }, google: { calendarConfigured: false, oauthConnected: false, oauthScope: null, mapsConfigured: false }, ai: { provider: null, openaiConfigured: false, anthropicConfigured: false, googleConfigured: false }, telephony: { accountConfigured: false, tokenConfigured: false }, updatedAt: null },
+          integrationHealth: insightsData?.integrationHealth ?? { status: 'critical', missing: [] },
+        });
+      } else {
+        setTenant(null);
+      }
+      setInsights(insightsData);
     } catch (err: unknown) {
-      const message = err instanceof AxiosError
-        ? err.response?.data?.message || 'Falha ao carregar tenant.'
+      const message = err instanceof Error
+        ? err.message
         : 'Falha ao carregar tenant.';
       setLoadError(message);
     } finally {

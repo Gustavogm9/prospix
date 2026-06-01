@@ -1,9 +1,10 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Badge, Button, Input, toast } from '@prospix/ui';
 import { Compass, Loader2, AlertCircle, Save, FileText } from 'lucide-react';
 import { adminApiClient } from '@/lib/admin-api-client';
+import { adminTenantsQueries } from '@/lib/admin-queries';
 import { AxiosError } from 'axios';
 import { MaterialsUploader } from './discovery/MaterialsUploader';
 import { DraftsEditor } from './discovery/DraftsEditor';
@@ -105,13 +106,19 @@ export default function Discovery() {
       setIsLoadingTenants(true);
       setTenantsError(null);
       try {
-        const response = await adminApiClient.get('/admin/tenants');
-        const list: TenantSummary[] = response.data?.data || [];
+        const result = await adminTenantsQueries.list();
+        if (result.error) throw new Error(result.error.message);
+        const list: TenantSummary[] = (result.data ?? []).map((t) => ({
+          id: t.id,
+          name: t.name,
+          slug: t.slug,
+          status: t.status,
+        }));
         setTenants(list);
         if (list[0]) setSelectedTenantId(list[0].id);
       } catch (err: unknown) {
-        const message = err instanceof AxiosError
-          ? err.response?.data?.message || 'Falha ao carregar tenants.'
+        const message = err instanceof Error
+          ? err.message
           : 'Falha ao carregar tenants.';
         setTenantsError(message);
       } finally {

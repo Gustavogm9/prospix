@@ -1,10 +1,11 @@
-﻿'use client';
+'use client';
 
 import { useState, useEffect } from 'react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, Button, toast, Badge, Modal, Skeleton } from '@prospix/ui';
 import { Plus, Edit3, Trash2, Layers, AlertTriangle, Inbox, AlertCircle, RotateCw } from 'lucide-react';
 import { adminApiClient } from '@/lib/admin-api-client';
-import { AxiosError } from 'axios';
+import { adminScriptTemplatesQueries } from '@/lib/admin-queries';
+
 
 interface ScriptNode {
   id: string;
@@ -42,12 +43,12 @@ export default function Templates() {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const response = await adminApiClient.get('/admin/templates');
-      const data = response.data.data || [];
-      const mapped = data.map((t: any) => {
+      const result = await adminScriptTemplatesQueries.list();
+      if (result.error) throw new Error(result.error.message);
+      const mapped = (result.data ?? []).map((t: any) => {
         let parsedNodes = [];
         try {
-          parsedNodes = typeof t.flowTemplate === 'string' ? JSON.parse(t.flowTemplate) : t.flowTemplate || [];
+          parsedNodes = typeof t.flow_template === 'string' ? JSON.parse(t.flow_template) : t.flow_template || [];
         } catch (_) {
           parsedNodes = [];
         }
@@ -63,11 +64,9 @@ export default function Templates() {
       setTemplates(mapped);
     } catch (err: unknown) {
       console.error('Error fetching templates:', err);
-      const message = err instanceof AxiosError
-        ? err.response?.data?.error?.message || err.message || 'NÃ£o foi possÃ­vel carregar a lista de templates.'
-        : err instanceof Error ? err.message : 'NÃ£o foi possÃ­vel carregar a lista de templates.';
+      const message = err instanceof Error ? err.message : 'Não foi possível carregar a lista de templates.';
       setLoadError(message);
-      toast.error('Erro de ConexÃ£o', message);
+      toast.error('Erro de Conexão', message);
     } finally {
       setIsLoading(false);
     }

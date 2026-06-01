@@ -1,9 +1,10 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badge, toast } from '@prospix/ui';
 import { UserCheck, Shield, Loader2, RefreshCw, AlertTriangle, ExternalLink, Clock, X } from 'lucide-react';
 import { adminApiClient } from '@/lib/admin-api-client';
+import { adminTenantsQueries, adminUsersQueries } from '@/lib/admin-queries';
 import { AxiosError } from 'axios';
 
 interface Tenant { id: string; name: string; slug: string; status: string; }
@@ -34,10 +35,10 @@ export default function Impersonation() {
   const [impResult, setImpResult] = useState<{ token: string; tenant: string; user: string; mode: string; expiresAt: string } | null>(null);
 
   const fetchTenants = async () => {
-    try {
-      const res = await adminApiClient.get('/admin/tenants');
-      setTenants((res.data?.data ?? []).map((t: any) => ({ id: t.id, name: t.name, slug: t.slug, status: t.status })));
-    } catch { /* swallow */ }
+    const result = await adminTenantsQueries.list();
+    if (!result.error) {
+      setTenants(result.data.map((t) => ({ id: t.id, name: t.name, slug: t.slug, status: t.status })));
+    }
   };
 
   const fetchActiveSessions = async () => {
@@ -50,10 +51,12 @@ export default function Impersonation() {
   };
 
   const fetchUsers = async (tenantId: string) => {
-    try {
-      const res = await adminApiClient.get(`/admin/users?tenantId=${tenantId}&limit=100`);
-      setUsers((res.data?.data?.items ?? []).map((u: any) => ({ id: u.id, name: u.name, email: u.email, role: u.role })));
-    } catch { setUsers([]); }
+    const result = await adminUsersQueries.list({ tenantId });
+    if (!result.error) {
+      setUsers(result.data.map((u: any) => ({ id: u.id, name: u.name, email: u.email, role: u.role })));
+    } else {
+      setUsers([]);
+    }
   };
 
   useEffect(() => {
