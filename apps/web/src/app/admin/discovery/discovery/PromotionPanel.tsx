@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badge, toast } from '@prospix/ui';
 import { Shield, Rocket, CheckCircle2, AlertCircle, Loader2, RefreshCw } from 'lucide-react';
-import { adminNextApi } from '@/lib/admin-api-client';
+import { adminNextApi } from '@/lib/admin-api-fetch';
 import { AxiosError } from 'axios';
 
 interface GateField {

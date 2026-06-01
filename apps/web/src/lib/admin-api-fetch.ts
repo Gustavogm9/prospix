@@ -4,10 +4,10 @@ import { supabaseAdmin } from './supabase';
 import { useAdminAuthStore } from '../store/admin-auth-store';
 
 /**
- * Lightweight fetch wrapper for admin Next.js API route handlers.
+ * Low-level fetch wrapper for admin Next.js API route handlers.
  * Automatically injects Authorization header from admin session.
  */
-export async function adminApiFetch(
+async function baseFetch(
   path: string,
   options: RequestInit = {}
 ): Promise<Response> {
@@ -38,3 +38,42 @@ export async function adminApiFetch(
 
   return response;
 }
+
+/**
+ * Admin API client with Axios-like convenience methods.
+ * Usage: adminNextApi.get('/api/admin/users'), adminNextApi.post('/api/admin/users', body)
+ */
+export const adminNextApi = {
+  async get(path: string) {
+    const res = await baseFetch(path);
+    return { data: await res.json() };
+  },
+  async post(path: string, body?: unknown) {
+    const res = await baseFetch(path, {
+      method: 'POST',
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    return { data: await res.json() };
+  },
+  async put(path: string, body?: unknown) {
+    const res = await baseFetch(path, {
+      method: 'PUT',
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    return { data: await res.json() };
+  },
+  async patch(path: string, body?: unknown) {
+    const res = await baseFetch(path, {
+      method: 'PATCH',
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    return { data: await res.json() };
+  },
+  async delete(path: string) {
+    const res = await baseFetch(path, { method: 'DELETE' });
+    return { data: await res.json() };
+  },
+};
+
+/** Raw fetch alias for cases that need full Response control */
+export const adminApiFetch = baseFetch;

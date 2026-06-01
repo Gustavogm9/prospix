@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badge, toast } from '@prospix/ui';
 import { UserCheck, Shield, Loader2, RefreshCw, AlertTriangle, ExternalLink, Clock, X } from 'lucide-react';
-import { adminNextApi } from '@/lib/admin-api-client';
+import { adminNextApi } from '@/lib/admin-api-fetch';
 import { adminTenantsQueries, adminUsersQueries } from '@/lib/admin-queries';
 import { AxiosError } from 'axios';
 

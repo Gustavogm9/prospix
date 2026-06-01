@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle, Button, Badge, toast } from '@prospix/ui';
 import { Users as UsersIcon, Plus, Loader2, Search, RefreshCw, KeyRound, UserX, UserCheck, Pencil, AlertCircle, Copy, Eye, EyeOff } from 'lucide-react';
-import { adminNextApi } from '@/lib/admin-api-client';
+import { adminNextApi } from '@/lib/admin-api-fetch';
 import { adminTenantsQueries, adminUsersQueries } from '@/lib/admin-queries';
 import { AxiosError } from 'axios';
 

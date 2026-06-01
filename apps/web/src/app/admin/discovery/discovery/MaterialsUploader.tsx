@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Button, toast } from '@prospix/ui';
 import { Upload, Trash2, Download, Loader2, CheckCircle2, AlertCircle, FileAudio, FileVideo, FileText, ImageIcon } from 'lucide-react';
-import { adminNextApi } from '@/lib/admin-api-client';
+import { adminNextApi } from '@/lib/admin-api-fetch';
 import { AxiosError } from 'axios';
 
 export type MaterialKind = 'audio' | 'video' | 'transcript' | 'approval_proof';

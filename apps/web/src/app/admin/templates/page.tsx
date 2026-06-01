@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, Button, toast, Badge, Modal, Skeleton } from '@prospix/ui';
 import { Plus, Edit3, Trash2, Layers, AlertTriangle, Inbox, AlertCircle, RotateCw } from 'lucide-react';
-import { adminNextApi } from '@/lib/admin-api-client';
+import { adminNextApi } from '@/lib/admin-api-fetch';
 import { adminScriptTemplatesQueries } from '@/lib/admin-queries';
 
 

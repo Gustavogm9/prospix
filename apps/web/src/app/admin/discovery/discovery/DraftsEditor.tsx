@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, toast } from '@prospix/ui';
 import { Save, Loader2, AlertCircle, CheckCircle2, FileText, MessageSquare } from 'lucide-react';
-import { adminNextApi } from '@/lib/admin-api-client';
+import { adminNextApi } from '@/lib/admin-api-fetch';
 import { AxiosError } from 'axios';
 
 interface ObjectionEntry {

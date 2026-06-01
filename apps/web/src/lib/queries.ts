@@ -9,7 +9,7 @@
  */
 
 import { supabase } from './supabase';
-import type { Database } from '../../../api/src/lib/database.types';
+import type { Database } from './database.types';
 
 // ─── Row Types (shorthand) ─────────────────────────────────────────────────────
 

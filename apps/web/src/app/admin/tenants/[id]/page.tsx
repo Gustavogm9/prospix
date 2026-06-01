@@ -8,7 +8,7 @@ import {
   CheckCircle2, AlertCircle, Loader2, RefreshCw, MessageSquare, Calendar,
   FileText, ShieldAlert, DollarSign, Activity, Zap, Mail, Copy, XCircle, Plus,
 } from 'lucide-react';
-import { adminNextApi } from '@/lib/admin-api-client';
+import { adminNextApi } from '@/lib/admin-api-fetch';
 import { adminTenantsQueries } from '@/lib/admin-queries';
 import { AxiosError } from 'axios';
 

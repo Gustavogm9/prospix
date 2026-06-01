@@ -9,7 +9,7 @@
  */
 
 import { supabaseAdmin } from './supabase';
-import type { Database } from '../../../api/src/lib/database.types';
+import type { Database } from './database.types';
 
 type Tables = Database['public']['Tables'];
 
