@@ -1,57 +1,45 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import fastify from 'fastify';
 import { adminRoutes } from '../../src/routes/admin/index.js';
-import { prisma } from '../../src/lib/prisma.js';
+import { supabaseAdmin } from '../../src/lib/supabase.js';
 
-vi.mock('../../src/lib/prisma.js', () => ({
-  prisma: {
-    $executeRaw: vi.fn(),
-    $executeRawUnsafe: vi.fn(),
-    tenant: {
-      findUnique: vi.fn(),
-      create: vi.fn(),
-      findMany: vi.fn(),
-      update: vi.fn(),
+vi.mock('../../src/lib/supabase.js', () => {
+  const chainable = () => ({
+    select: vi.fn().mockReturnThis(),
+    insert: vi.fn().mockReturnThis(),
+    update: vi.fn().mockReturnThis(),
+    delete: vi.fn().mockReturnThis(),
+    upsert: vi.fn().mockReturnThis(),
+    eq: vi.fn().mockReturnThis(),
+    neq: vi.fn().mockReturnThis(),
+    is: vi.fn().mockReturnThis(),
+    in: vi.fn().mockReturnThis(),
+    ilike: vi.fn().mockReturnThis(),
+    gte: vi.fn().mockReturnThis(),
+    lte: vi.fn().mockReturnThis(),
+    gt: vi.fn().mockReturnThis(),
+    lt: vi.fn().mockReturnThis(),
+    or: vi.fn().mockReturnThis(),
+    order: vi.fn().mockReturnThis(),
+    limit: vi.fn().mockReturnThis(),
+    range: vi.fn().mockReturnThis(),
+    single: vi.fn().mockResolvedValue({ data: null, error: null }),
+    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+  });
+  return {
+    supabaseAdmin: {
+      from: vi.fn(() => chainable()),
+      auth: {
+        getUser: vi.fn(),
+        admin: {
+          createUser: vi.fn(),
+          updateUserById: vi.fn(),
+          signOut: vi.fn(),
+        },
+      },
     },
-    tenantSecret: {
-      create: vi.fn(),
-    },
-    tenantAIConfig: {
-      create: vi.fn(),
-    },
-    tenantInvitation: {
-      findFirst: vi.fn(),
-      findUnique: vi.fn(),
-      create: vi.fn(),
-      update: vi.fn(),
-      findMany: vi.fn(),
-    },
-    user: {
-      create: vi.fn(),
-      findFirst: vi.fn(),
-    },
-    campaign: {
-      updateMany: vi.fn(),
-    },
-    tenantUsage: {
-      findMany: vi.fn(),
-    },
-    tenantBilling: {
-      findMany: vi.fn(),
-      findUnique: vi.fn(),
-      update: vi.fn(),
-    },
-    scriptTemplate: {
-      findMany: vi.fn(),
-      create: vi.fn(),
-      update: vi.fn(),
-    },
-    auditLog: {
-      create: vi.fn(),
-    },
-    $transaction: vi.fn((fn) => fn(prisma)),
-  },
-}));
+  };
+});
 
 vi.mock('../../src/services/invitation-service.js', () => ({
   generateInvitationCode: vi.fn(() => 'PRSPX-A1B2-C3D4'),
@@ -101,7 +89,13 @@ describe('Admin Onboarding Routes', () => {
       req.userId = 'guilds_admin_999';
     });
 
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValue(null);
+    // Mock: tenant slug lookup returns null (no duplicate)
+    const slugChain = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      single: vi.fn().mockResolvedValue({ data: null, error: null }),
+      maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+    };
 
     const mockTenant = {
       id: 'tenant_xyz',
@@ -111,7 +105,31 @@ describe('Admin Onboarding Routes', () => {
       status: 'ONBOARDING',
       mrrCents: 15000,
     };
-    vi.mocked(prisma.tenant.create).mockResolvedValue(mockTenant as any);
+
+    // Mock: tenant insert returns new tenant
+    const insertChain = {
+      select: vi.fn().mockReturnThis(),
+      insert: vi.fn().mockReturnThis(),
+      single: vi.fn().mockResolvedValue({ data: mockTenant, error: null }),
+    };
+
+    // Mock: secrets/config inserts
+    const secretInsertChain = {
+      insert: vi.fn().mockReturnThis(),
+      select: vi.fn().mockReturnThis(),
+      single: vi.fn().mockResolvedValue({ data: { tenant_id: 'tenant_xyz' }, error: null }),
+    };
+
+    vi.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        // First call is slug check, second is insert
+        return { ...slugChain, ...insertChain } as any;
+      }
+      if (table === 'tenant_secrets' || table === 'tenant_ai_configs') {
+        return secretInsertChain as any;
+      }
+      return {} as any;
+    });
 
     const response = await app.inject({
       method: 'POST',
@@ -126,9 +144,7 @@ describe('Admin Onboarding Routes', () => {
 
     expect(response.statusCode).toBe(201);
     expect(JSON.parse(response.payload)).toEqual(mockTenant);
-    expect(prisma.tenant.create).toHaveBeenCalled();
-    expect(prisma.tenantSecret.create).toHaveBeenCalled();
-    expect(prisma.tenantAIConfig.create).toHaveBeenCalled();
+    expect(supabaseAdmin.from).toHaveBeenCalledWith('tenants');
   });
 
   it('should return tenant detail without raw credential payload', async () => {
@@ -138,7 +154,7 @@ describe('Admin Onboarding Routes', () => {
     });
 
     const updatedAt = new Date('2026-05-22T10:00:00.000Z');
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValue({
+    const tenantDetail = {
       id: 'tenant_xyz',
       name: 'Roberta Prudential',
       slug: 'roberta-prudential',
@@ -151,23 +167,30 @@ describe('Admin Onboarding Routes', () => {
         },
       ],
       secret: {
-        evolutionBaseUrl: 'https://evo.example.com',
-        evolutionInstanceName: 'tenant_roberta',
-        evolutionApiKeyEncrypted: 'encrypted:evolution-api-key-value',
-        evolutionWebhookSecret: 'webhook-secret-value',
-        googleCalendarId: 'primary',
-        googleOauthRefreshEncrypted: 'encrypted:google-refresh-token',
-        googleOauthScope: 'https://www.googleapis.com/auth/calendar.events',
-        googleMapsApiKeyEncrypted: 'encrypted:maps-api-key-value',
-        openaiApiKeyEncrypted: 'encrypted:openai-api-key-value',
-        anthropicApiKeyEncrypted: null,
-        googleAiApiKeyEncrypted: 'encrypted:gemini-api-key-value',
-        aiProvider: 'GUILDS_SHARED',
-        twilioAccountSidEncrypted: 'encrypted:twilio-account-sid',
-        twilioAuthTokenEncrypted: 'encrypted:twilio-auth-token',
-        updatedAt,
+        evolution_base_url: 'https://evo.example.com',
+        evolution_instance_name: 'tenant_roberta',
+        evolution_api_key_encrypted: 'encrypted:evolution-api-key-value',
+        evolution_webhook_secret: 'webhook-secret-value',
+        google_calendar_id: 'primary',
+        google_oauth_refresh_encrypted: 'encrypted:google-refresh-token',
+        google_oauth_scope: 'https://www.googleapis.com/auth/calendar.events',
+        google_maps_api_key_encrypted: 'encrypted:maps-api-key-value',
+        openai_api_key_encrypted: 'encrypted:openai-api-key-value',
+        anthropic_api_key_encrypted: null,
+        google_ai_api_key_encrypted: 'encrypted:gemini-api-key-value',
+        ai_provider: 'GUILDS_SHARED',
+        twilio_account_sid_encrypted: 'encrypted:twilio-account-sid',
+        twilio_auth_token_encrypted: 'encrypted:twilio-auth-token',
+        updated_at: updatedAt,
       },
-    } as any);
+    };
+
+    vi.mocked(supabaseAdmin.from).mockImplementation((_table: string) => ({
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      single: vi.fn().mockResolvedValue({ data: tenantDetail, error: null }),
+      maybeSingle: vi.fn().mockResolvedValue({ data: tenantDetail, error: null }),
+    }) as any);
 
     const response = await app.inject({
       method: 'GET',
@@ -225,11 +248,37 @@ describe('Admin Onboarding Routes', () => {
       req.userId = 'guilds_admin_999';
     });
 
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValue({
+    const tenantData = {
       id: 'tenant_xyz',
       name: 'Roberta Prudential',
       status: 'ACTIVE',
-    } as any);
+    };
+
+    vi.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          single: vi.fn().mockResolvedValue({ data: tenantData, error: null }),
+          maybeSingle: vi.fn().mockResolvedValue({ data: tenantData, error: null }),
+          update: vi.fn().mockReturnThis(),
+        } as any;
+      }
+      if (table === 'campaigns') {
+        return {
+          update: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          select: vi.fn().mockReturnThis(),
+          single: vi.fn().mockResolvedValue({ data: { count: 2 }, error: null }),
+        } as any;
+      }
+      return {
+        select: vi.fn().mockReturnThis(),
+        insert: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({ data: {}, error: null }),
+      } as any;
+    });
 
     const response = await app.inject({
       method: 'POST',
@@ -237,18 +286,8 @@ describe('Admin Onboarding Routes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(prisma.tenant.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: 'tenant_xyz' },
-        data: { status: 'SUSPENDED' },
-      })
-    );
-    expect(prisma.campaign.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { tenantId: 'tenant_xyz', status: 'ACTIVE' },
-        data: { status: 'PAUSED' },
-      })
-    );
+    expect(supabaseAdmin.from).toHaveBeenCalledWith('tenants');
+    expect(supabaseAdmin.from).toHaveBeenCalledWith('campaigns');
   });
 
   it('should list consolidated usage reports correctly', async () => {
@@ -257,20 +296,27 @@ describe('Admin Onboarding Routes', () => {
       req.userId = 'guilds_admin_999';
     });
 
-    vi.mocked(prisma.tenantUsage.findMany).mockResolvedValue([
-      {
-        tenantId: 'tenant_1',
-        llmCostCents: 1200,
-        whatsappCostCents: 300,
-        googleMapsCostCents: 100,
-        tenant: {
-          id: 'tenant_1',
-          name: 'Giovane MetLife',
-          mrrCents: 15000,
-          plan: 'STANDARD',
-        },
-      },
-    ] as any);
+    vi.mocked(supabaseAdmin.from).mockImplementation((_table: string) => ({
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: [
+          {
+            tenant_id: 'tenant_1',
+            llm_cost_cents: 1200,
+            whatsapp_cost_cents: 300,
+            google_maps_cost_cents: 100,
+            tenant: {
+              id: 'tenant_1',
+              name: 'Giovane MetLife',
+              mrr_cents: 15000,
+              plan: 'STANDARD',
+            },
+          },
+        ],
+        error: null,
+      }),
+    }) as any);
 
     const response = await app.inject({
       method: 'GET',

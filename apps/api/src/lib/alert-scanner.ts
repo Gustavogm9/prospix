@@ -15,21 +15,22 @@
  * é atualizado in-place, não cria duplicata.
  */
 import { Queue } from 'bullmq';
-import { prisma } from './prisma.js';
+import { dbAdmin } from './db.js';
 import { logger } from './logger.js';
 import { redisConnection } from './redis.js';
 import { getTenantQueueName } from './queue.js';
 import { listDlqJobs } from './dlq.js';
 import { workerQueueNames } from '../workers/index.js';
-import { AlertSeverity, type Prisma } from '@prisma/client';
+
+type AlertSeverityValue = 'INFO' | 'WARNING' | 'CRITICAL';
 
 export interface AlertSeed {
   type: string;
-  severity: AlertSeverity;
+  severity: AlertSeverityValue;
   tenantId?: string | null;
   title: string;
   message: string;
-  context?: Prisma.InputJsonValue;
+  context?: Record<string, any>;
   dedupKey: string;
 }
 
@@ -46,50 +47,58 @@ const DLQ_ACCUMULATION_THRESHOLD = 10;
 const OVERDUE_GRACE_DAYS = 3;
 
 async function upsertAlert(seed: AlertSeed): Promise<'created' | 'updated'> {
-  const existing = await prisma.operationalAlert.findFirst({
-    where: { dedupKey: seed.dedupKey, resolvedAt: null },
-  });
+  const { data: existing } = await dbAdmin
+    .from('operational_alerts')
+    .select('id')
+    .eq('dedup_key', seed.dedupKey)
+    .is('resolved_at', null)
+    .limit(1)
+    .maybeSingle();
+
   if (existing) {
-    await prisma.operationalAlert.update({
-      where: { id: existing.id },
-      data: {
+    await dbAdmin
+      .from('operational_alerts')
+      .update({
         severity: seed.severity,
         title: seed.title,
         message: seed.message,
-        context: seed.context as Prisma.InputJsonValue,
-      },
-    });
+        context: seed.context as any,
+      })
+      .eq('id', existing.id);
     return 'updated';
   }
-  await prisma.operationalAlert.create({
-    data: {
+
+  await dbAdmin
+    .from('operational_alerts')
+    .insert({
       type: seed.type,
       severity: seed.severity,
-      tenantId: seed.tenantId ?? null,
+      tenant_id: seed.tenantId ?? null,
       title: seed.title,
       message: seed.message,
-      context: seed.context as Prisma.InputJsonValue,
-      dedupKey: seed.dedupKey,
-    },
-  });
+      context: seed.context as any,
+      dedup_key: seed.dedupKey,
+    } as any);
   return 'created';
 }
 
 export async function scanBillingOverdue(): Promise<AlertSeed[]> {
   const cutoff = new Date(Date.now() - OVERDUE_GRACE_DAYS * 24 * 60 * 60 * 1000);
-  const overdue = await prisma.tenantBilling.findMany({
-    where: { status: 'OVERDUE', dueAt: { lt: cutoff } },
-    include: { tenant: { select: { id: true, name: true } } },
-  });
-  return overdue.map((b) => {
-    const daysOverdue = Math.floor((Date.now() - b.dueAt.getTime()) / (1000 * 60 * 60 * 24));
+  const { data: overdue } = await dbAdmin
+    .from('tenant_billing')
+    .select('*, tenants(id, name)')
+    .eq('status', 'OVERDUE')
+    .lt('due_at', cutoff.toISOString());
+
+  return (overdue ?? []).map((b: any) => {
+    const daysOverdue = Math.floor((Date.now() - new Date(b.due_at).getTime()) / (1000 * 60 * 60 * 24));
     return {
       type: 'billing.overdue',
-      severity: daysOverdue > 14 ? AlertSeverity.CRITICAL : AlertSeverity.WARNING,
-      tenantId: b.tenantId,
-      title: `Fatura vencida há ${daysOverdue}d · ${b.tenant.name}`,
-      message: `Cobrança de R$ ${(b.totalCents / 100).toFixed(2)} em atraso desde ${b.dueAt.toLocaleDateString('pt-BR')}. Risco de churn e bloqueio automático.`,
-      context: { billingId: b.id, totalCents: b.totalCents, dueAt: b.dueAt.toISOString(), daysOverdue },
+      severity: (daysOverdue > 14 ? 'CRITICAL' : 'WARNING') as AlertSeverityValue,
+      tenantId: b.tenant_id,
+      title: `Fatura vencida há ${daysOverdue}d · ${b.tenants?.name}`,
+      message: `Cobrança de R$ ${(b.total_cents / 100).toFixed(2)} em atraso desde ${new Date(b.due_at).toLocaleDateString('pt-BR')}. Risco de churn e bloqueio automático.`,
+      context: { billingId: b.id, totalCents: b.total_cents, dueAt: b.due_at, daysOverdue },
       dedupKey: `billing.overdue:${b.id}`,
     };
   });
@@ -100,24 +109,22 @@ export async function scanLgpdSla(): Promise<AlertSeed[]> {
   const cutoffNear = new Date(now - (LGPD_SLA_DAYS - LGPD_NEAR_THRESHOLD_DAYS) * 24 * 60 * 60 * 1000);
   const cutoffExpired = new Date(now - LGPD_SLA_DAYS * 24 * 60 * 60 * 1000);
 
-  const requests = await prisma.lgpdRequest.findMany({
-    where: {
-      status: { in: ['PENDING', 'PROCESSING'] },
-      createdAt: { lt: cutoffNear },
-    },
-    include: { tenant: { select: { id: true, name: true } } },
-  });
+  const { data: requests } = await dbAdmin
+    .from('lgpd_requests')
+    .select('*, tenants(id, name)')
+    .in('status', ['PENDING', 'PROCESSING'])
+    .lt('created_at', cutoffNear.toISOString());
 
-  return requests.map((r) => {
-    const daysSince = Math.floor((now - r.createdAt.getTime()) / (1000 * 60 * 60 * 24));
-    const expired = r.createdAt < cutoffExpired;
+  return (requests ?? []).map((r: any) => {
+    const daysSince = Math.floor((now - new Date(r.created_at).getTime()) / (1000 * 60 * 60 * 24));
+    const expired = new Date(r.created_at) < cutoffExpired;
     return {
       type: expired ? 'lgpd.sla_expired' : 'lgpd.sla_near',
-      severity: expired ? AlertSeverity.CRITICAL : AlertSeverity.WARNING,
-      tenantId: r.tenantId,
+      severity: (expired ? 'CRITICAL' : 'WARNING') as AlertSeverityValue,
+      tenantId: r.tenant_id,
       title: expired
-        ? `LGPD ${r.type} VENCIDA · ${r.tenant.name} (${daysSince}d)`
-        : `LGPD ${r.type} próxima do SLA · ${r.tenant.name} (${LGPD_SLA_DAYS - daysSince}d restantes)`,
+        ? `LGPD ${r.type} VENCIDA · ${r.tenants?.name} (${daysSince}d)`
+        : `LGPD ${r.type} próxima do SLA · ${r.tenants?.name} (${LGPD_SLA_DAYS - daysSince}d restantes)`,
       message: expired
         ? `Requisição art. 18 fora do prazo legal de 15d (ANPD). Resolva imediatamente.`
         : `Requisição art. 18 com ${LGPD_SLA_DAYS - daysSince}d restantes. Processar antes do prazo.`,
@@ -135,7 +142,7 @@ export async function scanDlqAccumulation(): Promise<AlertSeed[]> {
       if (jobs.length >= DLQ_ACCUMULATION_THRESHOLD) {
         alerts.push({
           type: 'dlq.accumulation',
-          severity: AlertSeverity.CRITICAL,
+          severity: 'CRITICAL',
           tenantId: null,
           title: `DLQ acumulando · worker "${workerName}" tem ${jobs.length}+ jobs`,
           message: `Mais de ${DLQ_ACCUMULATION_THRESHOLD} jobs falharam e estão na DLQ. Investigue causa raiz antes de replay.`,
@@ -151,37 +158,55 @@ export async function scanDlqAccumulation(): Promise<AlertSeed[]> {
 }
 
 export async function scanIntegrationGaps(): Promise<AlertSeed[]> {
-  const tenantsActiveNoEvolution = await prisma.tenant.findMany({
-    where: {
-      status: 'ACTIVE',
-      deletedAt: null,
-      OR: [
-        { secret: { is: null } },
-        { secret: { evolutionApiKeyEncrypted: null } },
-      ],
-    },
-    select: { id: true, name: true },
-  });
-  return tenantsActiveNoEvolution.map((t) => ({
-    type: 'integration.evolution_missing',
-    severity: AlertSeverity.WARNING,
-    tenantId: t.id,
-    title: `Evolution API não configurada · ${t.name}`,
-    message: 'Tenant ACTIVE sem Evolution API key. Outbound WhatsApp impossível até credenciais serem configuradas.',
-    context: { tenantId: t.id },
-    dedupKey: `integration.evolution:${t.id}`,
-  }));
+  // Find active tenants without evolution API key
+  const { data: tenants } = await dbAdmin
+    .from('tenants')
+    .select('id, name')
+    .eq('status', 'ACTIVE')
+    .is('deleted_at', null);
+
+  const alerts: AlertSeed[] = [];
+  for (const t of tenants ?? []) {
+    const { data: secret } = await dbAdmin
+      .from('tenant_secrets')
+      .select('evolution_api_key_encrypted')
+      .eq('tenant_id', t.id)
+      .maybeSingle();
+
+    if (!secret || !secret.evolution_api_key_encrypted) {
+      alerts.push({
+        type: 'integration.evolution_missing',
+        severity: 'WARNING',
+        tenantId: t.id,
+        title: `Evolution API não configurada · ${t.name}`,
+        message: 'Tenant ACTIVE sem Evolution API key. Outbound WhatsApp impossível até credenciais serem configuradas.',
+        context: { tenantId: t.id },
+        dedupKey: `integration.evolution:${t.id}`,
+      });
+    }
+  }
+  return alerts;
 }
 
 async function autoResolveOldAlerts(): Promise<number> {
   // Resolve alertas cujo dedup_key não foi reativado nesta varredura · indica que condição cessou
   // Lógica simplificada: alertas com updated_at > 25h (mais que 1 ciclo + margem) são auto-resolvidos
   const cutoff = new Date(Date.now() - 25 * 60 * 60 * 1000);
-  const result = await prisma.operationalAlert.updateMany({
-    where: { resolvedAt: null, updatedAt: { lt: cutoff } },
-    data: { resolvedAt: new Date() },
-  });
-  return result.count;
+  const { data: staleAlerts } = await dbAdmin
+    .from('operational_alerts')
+    .select('id')
+    .is('resolved_at', null)
+    .lt('updated_at', cutoff.toISOString());
+
+  if (!staleAlerts?.length) return 0;
+
+  const ids = staleAlerts.map((a: any) => a.id);
+  await dbAdmin
+    .from('operational_alerts')
+    .update({ resolved_at: new Date().toISOString() })
+    .in('id', ids);
+
+  return ids.length;
 }
 
 export async function runAlertScan(options: { autoResolve?: boolean } = {}): Promise<ScanResult> {
@@ -235,16 +260,18 @@ export async function runAlertScan(options: { autoResolve?: boolean } = {}): Pro
 
 // Helper para health-check do worker
 export async function listOpenAlertSummary(): Promise<{ critical: number; warning: number; info: number; total: number }> {
-  const counts = await prisma.operationalAlert.groupBy({
-    by: ['severity'],
-    where: { resolvedAt: null },
-    _count: { severity: true },
-  });
   const summary = { critical: 0, warning: 0, info: 0, total: 0 };
-  for (const c of counts) {
-    if (c.severity === AlertSeverity.CRITICAL) summary.critical = c._count.severity;
-    else if (c.severity === AlertSeverity.WARNING) summary.warning = c._count.severity;
-    else if (c.severity === AlertSeverity.INFO) summary.info = c._count.severity;
+  for (const sev of ['CRITICAL', 'WARNING', 'INFO'] as const) {
+    const { count, error } = await dbAdmin
+      .from('operational_alerts')
+      .select('*', { count: 'exact', head: true })
+      .is('resolved_at', null)
+      .eq('severity', sev);
+    if (!error && count !== null) {
+      if (sev === 'CRITICAL') summary.critical = count;
+      else if (sev === 'WARNING') summary.warning = count;
+      else summary.info = count;
+    }
   }
   summary.total = summary.critical + summary.warning + summary.info;
   return summary;

@@ -1,4 +1,4 @@
-import { Profession } from '@prisma/client';
+import { Profession } from '@prospix/shared-types';
 
 export interface LeadInput {
   profession?: Profession | string | null;

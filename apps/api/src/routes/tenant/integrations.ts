@@ -1,7 +1,7 @@
 import { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
-import { AIProvider } from '@prisma/client';
+import { AIProvider } from '@prospix/shared-types';
 import { z } from 'zod';
-import { prisma } from '../../lib/prisma.js';
+import { getDb, dbAdmin } from '../../lib/db.js';
 import { redis } from '../../lib/redis.js';
 import { env } from '../../config/env.js';
 import { logger } from '../../lib/logger.js';
@@ -23,39 +23,39 @@ const ensureOwnerCanManageCredentials = (req: FastifyRequest, reply: FastifyRepl
 };
 
 const credentialStateFromSecret = (secret: {
-  aiProvider: AIProvider;
-  evolutionBaseUrl: string | null;
-  evolutionInstanceName: string | null;
-  evolutionApiKeyEncrypted: string | null;
-  evolutionWebhookSecret: string | null;
-  googleCalendarId: string | null;
-  googleOauthRefreshEncrypted: string | null;
-  googleOauthScope: string | null;
-  googleMapsApiKeyEncrypted: string | null;
-  openaiApiKeyEncrypted: string | null;
-  anthropicApiKeyEncrypted: string | null;
-  googleAiApiKeyEncrypted: string | null;
-  updatedAt: Date;
+  ai_provider: string;
+  evolution_base_url: string | null;
+  evolution_instance_name: string | null;
+  evolution_api_key_encrypted: string | null;
+  evolution_webhook_secret: string | null;
+  google_calendar_id: string | null;
+  google_oauth_refresh_encrypted: string | null;
+  google_oauth_scope: string | null;
+  google_maps_api_key_encrypted: string | null;
+  openai_api_key_encrypted: string | null;
+  anthropic_api_key_encrypted: string | null;
+  google_ai_api_key_encrypted: string | null;
+  updated_at: string;
 } | null) => ({
-  aiProvider: secret?.aiProvider || AIProvider.GUILDS_SHARED,
+  aiProvider: secret?.ai_provider || AIProvider.GUILDS_SHARED,
   keys: {
-    openai: { configured: Boolean(secret?.openaiApiKeyEncrypted) },
-    anthropic: { configured: Boolean(secret?.anthropicApiKeyEncrypted) },
-    googleAi: { configured: Boolean(secret?.googleAiApiKeyEncrypted) },
-    googleMaps: { configured: Boolean(secret?.googleMapsApiKeyEncrypted) },
-    evolution: { configured: Boolean(secret?.evolutionApiKeyEncrypted) },
+    openai: { configured: Boolean(secret?.openai_api_key_encrypted) },
+    anthropic: { configured: Boolean(secret?.anthropic_api_key_encrypted) },
+    googleAi: { configured: Boolean(secret?.google_ai_api_key_encrypted) },
+    googleMaps: { configured: Boolean(secret?.google_maps_api_key_encrypted) },
+    evolution: { configured: Boolean(secret?.evolution_api_key_encrypted) },
   },
   whatsapp: {
-    baseUrlConfigured: Boolean(secret?.evolutionBaseUrl),
-    instanceConfigured: Boolean(secret?.evolutionInstanceName),
-    webhookConfigured: Boolean(secret?.evolutionWebhookSecret),
+    baseUrlConfigured: Boolean(secret?.evolution_base_url),
+    instanceConfigured: Boolean(secret?.evolution_instance_name),
+    webhookConfigured: Boolean(secret?.evolution_webhook_secret),
   },
   google: {
-    calendarConnected: Boolean(secret?.googleOauthRefreshEncrypted),
-    calendarId: secret?.googleCalendarId || null,
-    oauthScope: secret?.googleOauthScope || null,
+    calendarConnected: Boolean(secret?.google_oauth_refresh_encrypted),
+    calendarId: secret?.google_calendar_id || null,
+    oauthScope: secret?.google_oauth_scope || null,
   },
-  updatedAt: secret?.updatedAt || null,
+  updatedAt: secret?.updated_at || null,
 });
 
 const credentialsSchema = z.object({
@@ -75,9 +75,12 @@ export const integrationsRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(401).send({ error: 'Unauthorized', message: 'Tenant context is required' });
     }
 
-    const secret = await prisma.tenantSecret.findUnique({
-      where: { tenantId: req.tenantId },
-    });
+    const db = getDb(req);
+    const { data: secret } = await db
+      .from('tenant_secrets')
+      .select('*')
+      .eq('tenant_id', req.tenantId)
+      .maybeSingle();
 
     return reply.send({ data: credentialStateFromSecret(secret) });
   });
@@ -111,34 +114,38 @@ export const integrationsRoutes: FastifyPluginAsync = async (app) => {
     const encryptedGoogleMaps = await encryptOrClear(payload.googleMapsApiKey);
     const encryptedEvolution = await encryptOrClear(payload.evolutionApiKey);
 
-    if (payload.aiProvider !== undefined) updateData.aiProvider = payload.aiProvider;
-    if (payload.evolutionBaseUrl !== undefined) updateData.evolutionBaseUrl = payload.evolutionBaseUrl || null;
-    if (encryptedOpenAI !== undefined) updateData.openaiApiKeyEncrypted = encryptedOpenAI;
-    if (encryptedAnthropic !== undefined) updateData.anthropicApiKeyEncrypted = encryptedAnthropic;
-    if (encryptedGoogleAi !== undefined) updateData.googleAiApiKeyEncrypted = encryptedGoogleAi;
-    if (encryptedGoogleMaps !== undefined) updateData.googleMapsApiKeyEncrypted = encryptedGoogleMaps;
-    if (encryptedEvolution !== undefined) updateData.evolutionApiKeyEncrypted = encryptedEvolution;
+    if (payload.aiProvider !== undefined) updateData.ai_provider = payload.aiProvider;
+    if (payload.evolutionBaseUrl !== undefined) updateData.evolution_base_url = payload.evolutionBaseUrl || null;
+    if (encryptedOpenAI !== undefined) updateData.openai_api_key_encrypted = encryptedOpenAI;
+    if (encryptedAnthropic !== undefined) updateData.anthropic_api_key_encrypted = encryptedAnthropic;
+    if (encryptedGoogleAi !== undefined) updateData.google_ai_api_key_encrypted = encryptedGoogleAi;
+    if (encryptedGoogleMaps !== undefined) updateData.google_maps_api_key_encrypted = encryptedGoogleMaps;
+    if (encryptedEvolution !== undefined) updateData.evolution_api_key_encrypted = encryptedEvolution;
 
     const hasTenantOwnedKey = Boolean(
-      updateData.openaiApiKeyEncrypted ||
-      updateData.anthropicApiKeyEncrypted ||
-      updateData.googleAiApiKeyEncrypted ||
-      updateData.googleMapsApiKeyEncrypted ||
-      updateData.evolutionApiKeyEncrypted
+      updateData.openai_api_key_encrypted ||
+      updateData.anthropic_api_key_encrypted ||
+      updateData.google_ai_api_key_encrypted ||
+      updateData.google_maps_api_key_encrypted ||
+      updateData.evolution_api_key_encrypted
     );
 
     if (payload.aiProvider === undefined && hasTenantOwnedKey) {
-      updateData.aiProvider = AIProvider.TENANT_OWN;
+      updateData.ai_provider = AIProvider.TENANT_OWN;
     }
 
-    const secret = await prisma.tenantSecret.upsert({
-      where: { tenantId: req.tenantId },
-      create: {
-        tenantId: req.tenantId,
+    // Use dbAdmin for upsert on tenant_secrets (service-role needed for sensitive data)
+    const { data: secret, error } = await dbAdmin
+      .from('tenant_secrets')
+      .upsert({
+        tenant_id: req.tenantId,
+        updated_at: new Date().toISOString(),
         ...updateData,
-      },
-      update: updateData,
-    });
+      }, { onConflict: 'tenant_id' })
+      .select()
+      .single();
+
+    if (error) throw error;
 
     logger.info({ tenantId: req.tenantId, userId: req.userId }, 'Tenant credentials updated from Settings');
     return reply.send({ data: credentialStateFromSecret(secret) });
@@ -228,11 +235,13 @@ export const integrationsRoutes: FastifyPluginAsync = async (app) => {
       if (!tokenData.refresh_token) {
         logger.warn({ tenantId }, 'Google OAuth Callback did not return refresh token');
         // If Google didn't return a refresh token, check if we already have one
-        const existingSecret = await prisma.tenantSecret.findUnique({
-          where: { tenantId },
-        });
+        const { data: existingSecret } = await dbAdmin
+          .from('tenant_secrets')
+          .select('google_oauth_refresh_encrypted')
+          .eq('tenant_id', tenantId)
+          .maybeSingle();
 
-        if (existingSecret?.googleOauthRefreshEncrypted) {
+        if (existingSecret?.google_oauth_refresh_encrypted) {
           logger.info({ tenantId }, 'Google OAuth Callback: Using pre-existing refresh token');
           return reply.redirect(`${env.APP_URL}/dashboard/integrations?google=success`);
         }
@@ -243,16 +252,13 @@ export const integrationsRoutes: FastifyPluginAsync = async (app) => {
       // 3. Encrypt & Save refresh token
       const encrypted = await encryptSecret(tokenData.refresh_token);
 
-      await prisma.tenantSecret.upsert({
-        where: { tenantId },
-        create: {
-          tenantId,
-          googleOauthRefreshEncrypted: encrypted,
-        },
-        update: {
-          googleOauthRefreshEncrypted: encrypted,
-        },
-      });
+      await dbAdmin
+        .from('tenant_secrets')
+        .upsert({
+          tenant_id: tenantId,
+          google_oauth_refresh_encrypted: encrypted,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'tenant_id' });
 
       logger.info({ tenantId }, 'Google Calendar OAuth integration configured successfully');
       
@@ -264,7 +270,7 @@ export const integrationsRoutes: FastifyPluginAsync = async (app) => {
     }
   });
 
-  // ── WhatsApp (Evolution API) ────────────────────────────────────────────────
+  // 🔹 WhatsApp (Evolution API) 🔹
   
   // GET /v1/tenant/integrations/whatsapp/status - Check WhatsApp connection status
   app.get('/whatsapp/status', async (req: FastifyRequest, reply: FastifyReply) => {
@@ -275,11 +281,13 @@ export const integrationsRoutes: FastifyPluginAsync = async (app) => {
     const tenantId = req.tenantId;
 
     try {
-      const secretRecord = await prisma.tenantSecret.findUnique({
-        where: { tenantId },
-      });
+      const { data: secretRecord } = await dbAdmin
+        .from('tenant_secrets')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .maybeSingle();
 
-      if (!secretRecord || !secretRecord.evolutionInstanceName) {
+      if (!secretRecord || !secretRecord.evolution_instance_name) {
         return reply.send({
           status: 'disconnected',
           configured: false,
@@ -287,11 +295,11 @@ export const integrationsRoutes: FastifyPluginAsync = async (app) => {
         });
       }
 
-      const instanceName = secretRecord.evolutionInstanceName;
-      const baseUrl = secretRecord.evolutionBaseUrl || env.EVOLUTION_BASE_URL;
+      const instanceName = secretRecord.evolution_instance_name;
+      const baseUrl = secretRecord.evolution_base_url || env.EVOLUTION_BASE_URL;
       
       let apiKey = env.EVOLUTION_GUILDS_API_KEY;
-      if (secretRecord.evolutionApiKeyEncrypted) {
+      if (secretRecord.evolution_api_key_encrypted) {
         const decrypted = await getDecryptedSecrets(tenantId);
         if (decrypted && decrypted.evolutionApiKey) {
           apiKey = decrypted.evolutionApiKey;
@@ -335,44 +343,60 @@ export const integrationsRoutes: FastifyPluginAsync = async (app) => {
     const tenantId = req.tenantId;
 
     try {
-      const tenant = await prisma.tenant.findUnique({
-        where: { id: tenantId },
-      });
+      const { data: tenant, error: tenantErr } = await dbAdmin
+        .from('tenants')
+        .select('*')
+        .eq('id', tenantId)
+        .maybeSingle();
+
+      if (tenantErr) throw tenantErr;
 
       if (!tenant) {
         return reply.code(404).send({ error: 'NotFound', message: 'Tenant not found' });
       }
 
-      let secretRecord = await prisma.tenantSecret.findUnique({
-        where: { tenantId },
-      });
+      let { data: secretRecord } = await dbAdmin
+        .from('tenant_secrets')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .maybeSingle();
 
       const cleanSlug = tenant.slug.toLowerCase().replace(/[^a-z0-9]/g, '');
       const defaultInstanceName = `tenant_${cleanSlug}`;
 
       if (!secretRecord) {
-        secretRecord = await prisma.tenantSecret.create({
-          data: {
-            tenantId,
-            evolutionInstanceName: defaultInstanceName,
-            evolutionWebhookSecret: crypto.randomBytes(16).toString('hex'),
-          },
-        });
-      } else if (!secretRecord.evolutionInstanceName) {
-        secretRecord = await prisma.tenantSecret.update({
-          where: { tenantId },
-          data: {
-            evolutionInstanceName: defaultInstanceName,
-            evolutionWebhookSecret: secretRecord.evolutionWebhookSecret || crypto.randomBytes(16).toString('hex'),
-          },
-        });
+        const { data: created, error: createErr } = await dbAdmin
+          .from('tenant_secrets')
+          .insert({
+            tenant_id: tenantId,
+            evolution_instance_name: defaultInstanceName,
+            evolution_webhook_secret: crypto.randomBytes(16).toString('hex'),
+            updated_at: new Date().toISOString(),
+          })
+          .select()
+          .single();
+        if (createErr) throw createErr;
+        secretRecord = created;
+      } else if (!secretRecord.evolution_instance_name) {
+        const { data: updated, error: updateErr } = await dbAdmin
+          .from('tenant_secrets')
+          .update({
+            evolution_instance_name: defaultInstanceName,
+            evolution_webhook_secret: secretRecord.evolution_webhook_secret || crypto.randomBytes(16).toString('hex'),
+            updated_at: new Date().toISOString(),
+          })
+          .eq('tenant_id', tenantId)
+          .select()
+          .single();
+        if (updateErr) throw updateErr;
+        secretRecord = updated;
       }
 
-      const instanceName = secretRecord.evolutionInstanceName!;
-      const baseUrl = secretRecord.evolutionBaseUrl || env.EVOLUTION_BASE_URL;
+      const instanceName = secretRecord!.evolution_instance_name!;
+      const baseUrl = secretRecord!.evolution_base_url || env.EVOLUTION_BASE_URL;
       let apiKey = env.EVOLUTION_GUILDS_API_KEY;
 
-      if (secretRecord.evolutionApiKeyEncrypted) {
+      if (secretRecord!.evolution_api_key_encrypted) {
         const decrypted = await getDecryptedSecrets(tenantId);
         if (decrypted && decrypted.evolutionApiKey) {
           apiKey = decrypted.evolutionApiKey;
@@ -394,20 +418,20 @@ export const integrationsRoutes: FastifyPluginAsync = async (app) => {
         const newApiKey = createRes.value.apikey;
         if (newApiKey && newApiKey !== apiKey && newApiKey !== env.EVOLUTION_GUILDS_API_KEY) {
           const encryptedKey = await encryptSecret(newApiKey);
-          await prisma.tenantSecret.update({
-            where: { tenantId },
-            data: { evolutionApiKeyEncrypted: encryptedKey },
-          });
+          await dbAdmin
+            .from('tenant_secrets')
+            .update({ evolution_api_key_encrypted: encryptedKey, updated_at: new Date().toISOString() })
+            .eq('tenant_id', tenantId);
           apiKey = newApiKey;
         }
       }
 
-      const webhookSecret = secretRecord.evolutionWebhookSecret || crypto.randomBytes(16).toString('hex');
-      if (!secretRecord.evolutionWebhookSecret) {
-        await prisma.tenantSecret.update({
-          where: { tenantId },
-          data: { evolutionWebhookSecret: webhookSecret },
-        });
+      const webhookSecret = secretRecord!.evolution_webhook_secret || crypto.randomBytes(16).toString('hex');
+      if (!secretRecord!.evolution_webhook_secret) {
+        await dbAdmin
+          .from('tenant_secrets')
+          .update({ evolution_webhook_secret: webhookSecret, updated_at: new Date().toISOString() })
+          .eq('tenant_id', tenantId);
       }
 
       const webhookUrl = `${env.API_URL}/v1/webhooks/evolution`;
@@ -460,19 +484,21 @@ export const integrationsRoutes: FastifyPluginAsync = async (app) => {
     const tenantId = req.tenantId;
 
     try {
-      const secretRecord = await prisma.tenantSecret.findUnique({
-        where: { tenantId },
-      });
+      const { data: secretRecord } = await dbAdmin
+        .from('tenant_secrets')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .maybeSingle();
 
-      if (!secretRecord || !secretRecord.evolutionInstanceName) {
+      if (!secretRecord || !secretRecord.evolution_instance_name) {
         return reply.code(400).send({ error: 'BadRequest', message: 'WhatsApp integration is not configured' });
       }
 
-      const instanceName = secretRecord.evolutionInstanceName;
-      const baseUrl = secretRecord.evolutionBaseUrl || env.EVOLUTION_BASE_URL;
+      const instanceName = secretRecord.evolution_instance_name;
+      const baseUrl = secretRecord.evolution_base_url || env.EVOLUTION_BASE_URL;
       let apiKey = env.EVOLUTION_GUILDS_API_KEY;
 
-      if (secretRecord.evolutionApiKeyEncrypted) {
+      if (secretRecord.evolution_api_key_encrypted) {
         const decrypted = await getDecryptedSecrets(tenantId);
         if (decrypted && decrypted.evolutionApiKey) {
           apiKey = decrypted.evolutionApiKey;
@@ -503,12 +529,13 @@ export const integrationsRoutes: FastifyPluginAsync = async (app) => {
         logger.error({ tenantId, error: deleteRes.error }, 'Failed to delete instance from Evolution API');
       }
 
-      await prisma.tenantSecret.update({
-        where: { tenantId },
-        data: {
-          evolutionApiKeyEncrypted: null,
-        },
-      });
+      await dbAdmin
+        .from('tenant_secrets')
+        .update({
+          evolution_api_key_encrypted: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('tenant_id', tenantId);
 
       return reply.send({ success: true, message: 'WhatsApp session disconnected successfully' });
     } catch (err: any) {

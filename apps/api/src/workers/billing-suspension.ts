@@ -1,9 +1,9 @@
 import { Job } from 'bullmq';
 import { BaseWorker } from './_base-worker.js';
-import { prisma } from '../lib/prisma.js';
+import { dbAdmin } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 import { BaseJobPayload } from '@prospix/shared-types';
-import { BillingStatus, TenantStatus, CampaignStatus, UserRole } from '@prisma/client';
+import { BillingStatus, TenantStatus, CampaignStatus, UserRole } from '@prospix/shared-types';
 import { sendNotification } from '../services/notification-service.js';
 
 export interface BillingSuspensionPayload extends BaseJobPayload {
@@ -23,12 +23,13 @@ export class BillingSuspensionWorker extends BaseWorker<BillingSuspensionPayload
     const { tenant_id, billing_id } = job.data;
 
     // 1. Fetch the billing invoice
-    const billing = await prisma.tenantBilling.findUnique({
-      where: { id: billing_id },
-      include: { tenant: true },
-    });
+    const { data: billing, error: billingErr } = await dbAdmin
+      .from('tenant_billing')
+      .select('*, tenants(*)')
+      .eq('id', billing_id)
+      .single();
 
-    if (!billing) {
+    if (billingErr || !billing) {
       logger.warn({ billing_id }, 'Billing invoice not found for suspension check');
       return { success: false, suspended: false };
     }
@@ -39,43 +40,50 @@ export class BillingSuspensionWorker extends BaseWorker<BillingSuspensionPayload
     if (isUnpaid) {
       logger.info({ tenant_id, billing_id }, 'Unpaid invoice detected after grace period. Executing auto-suspension.');
 
-      await prisma.$transaction(async (tx) => {
-        // Suspend Tenant
-        await tx.tenant.update({
-          where: { id: tenant_id },
-          data: { status: TenantStatus.SUSPENDED },
-        });
+      // Suspend Tenant
+      const { error: tenantErr } = await dbAdmin
+        .from('tenants')
+        .update({ status: TenantStatus.SUSPENDED })
+        .eq('id', tenant_id);
+      if (tenantErr) throw tenantErr;
 
-        // Pause all active campaigns
-        await tx.campaign.updateMany({
-          where: { tenantId: tenant_id, status: CampaignStatus.ACTIVE },
-          data: { status: CampaignStatus.PAUSED },
-        });
+      // Pause all active campaigns
+      const { error: campErr } = await dbAdmin
+        .from('campaigns')
+        .update({ status: CampaignStatus.PAUSED })
+        .eq('tenant_id', tenant_id)
+        .eq('status', CampaignStatus.ACTIVE);
+      if (campErr) throw campErr;
 
-        // Log Audit
-        await tx.auditLog.create({
-          data: {
-            action: 'tenant.auto_suspend_inadimplencia',
-            targetType: 'tenant',
-            targetId: tenant_id,
-            payload: { billing_id, due_at: billing.dueAt },
-          },
+      // Log Audit
+      const { error: auditErr } = await dbAdmin
+        .from('audit_log')
+        .insert({
+          action: 'tenant.auto_suspend_inadimplencia',
+          target_type: 'tenant',
+          target_id: tenant_id,
+          payload: { billing_id, due_at: billing.due_at },
         });
-      });
+      if (auditErr) throw auditErr;
 
       // Send quota warning notification to owner
-      const owner = await prisma.user.findFirst({
-        where: { tenantId: tenant_id, role: UserRole.OWNER, deletedAt: null },
-      });
+      const { data: owner } = await dbAdmin
+        .from('users')
+        .select('id')
+        .eq('tenant_id', tenant_id)
+        .eq('role', UserRole.OWNER)
+        .is('deleted_at', null)
+        .limit(1)
+        .single();
 
       if (owner) {
         await sendNotification({
           tenantId: tenant_id,
           userId: owner.id,
           type: 'billing_suspension',
-          title: '🚨 Sua conta do Prospix foi suspensa',
+          title: '⚠️ Sua conta do Prospix foi suspensa',
           body: 'Identificamos uma fatura pendente há mais de 15 dias. O atendimento automatizado foi pausado. Regularize sua assinatura para reativar.',
-          data: { billing_id, amount_cents: billing.totalCents },
+          data: { billing_id, amount_cents: billing.total_cents },
         });
       }
 

@@ -1,4 +1,4 @@
-import { prisma } from '../lib/prisma.js';
+import { dbAdmin } from '../lib/db.js';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { getDecryptedSecrets } from '../tenant/secrets-vault.js';
@@ -54,34 +54,44 @@ export class AIRouter {
       logger.warn({ err, tenantId }, '⚠️ Failed to get AI Config from Redis cache');
     }
 
-    let config = await prisma.tenantAIConfig.findUnique({
-      where: { tenantId },
-    });
+    const { data: config, error } = await dbAdmin
+      .from('tenant_ai_configs')
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .single();
 
-    if (!config) {
+    if (error || !config) {
       // Create defaults
-      config = await prisma.tenantAIConfig.create({
-        data: {
-          tenantId,
-          systemProvider: 'openai',
-          systemModel: 'gpt-4o-mini',
-          classifierProvider: 'openai',
-          classifierModel: 'gpt-4o-mini',
-          guardrailProvider: 'openai',
-          guardrailModel: 'gpt-4o-mini',
-          fallbackChain: DEFAULT_FALLBACK_CHAIN,
-          systemTemperature: 0.4,
-          classifierTemperature: 0.0,
-          maxOutputTokens: 1024,
-        },
-      });
+      const { data: newConfig, error: createErr } = await dbAdmin
+        .from('tenant_ai_configs')
+        .insert({
+          tenant_id: tenantId,
+          system_provider: 'openai',
+          system_model: 'gpt-4o-mini',
+          classifier_provider: 'openai',
+          classifier_model: 'gpt-4o-mini',
+          guardrail_provider: 'openai',
+          guardrail_model: 'gpt-4o-mini',
+          system_temperature: 0.4,
+          classifier_temperature: 0.0,
+          max_output_tokens: 1024,
+          fallback_chain: DEFAULT_FALLBACK_CHAIN,
+        } as any)
+        .select()
+        .single();
+
+      if (createErr) throw createErr;
+
+      try {
+        await redis.setex(cacheKey, 300, JSON.stringify(newConfig));
+      } catch { /* ignore cache failures */ }
+
+      return newConfig;
     }
 
     try {
-      await redis.set(cacheKey, JSON.stringify(config), 'EX', 300); // 5 minutes cache
-    } catch (err) {
-      logger.warn({ err, tenantId }, '⚠️ Failed to save AI Config to Redis cache');
-    }
+      await redis.setex(cacheKey, 300, JSON.stringify(config));
+    } catch { /* ignore cache failures */ }
 
     return config;
   }
@@ -96,21 +106,21 @@ export class AIRouter {
     let temp = temperature;
 
     if (useCase === 'system') {
-      primaryProvider = config.systemProvider || 'openai';
-      primaryModel = config.systemModel || DEFAULT_MODELS[primaryProvider as keyof typeof DEFAULT_MODELS];
-      temp = temp !== undefined ? temp : Number(config.systemTemperature || 0.4);
+      primaryProvider = config.system_provider || 'openai';
+      primaryModel = config.system_model || DEFAULT_MODELS[primaryProvider as keyof typeof DEFAULT_MODELS];
+      temp = temp !== undefined ? temp : Number(config.system_temperature || 0.4);
     } else if (useCase === 'classifier') {
-      primaryProvider = config.classifierProvider || 'openai';
-      primaryModel = config.classifierModel || DEFAULT_MODELS[primaryProvider as keyof typeof DEFAULT_MODELS];
-      temp = temp !== undefined ? temp : Number(config.classifierTemperature || 0.0);
+      primaryProvider = config.classifier_provider || 'openai';
+      primaryModel = config.classifier_model || DEFAULT_MODELS[primaryProvider as keyof typeof DEFAULT_MODELS];
+      temp = temp !== undefined ? temp : Number(config.classifier_temperature || 0.0);
     } else if (useCase === 'guardrail') {
-      primaryProvider = config.guardrailProvider || 'openai';
-      primaryModel = config.guardrailModel || DEFAULT_MODELS[primaryProvider as keyof typeof DEFAULT_MODELS];
+      primaryProvider = config.guardrail_provider || 'openai';
+      primaryModel = config.guardrail_model || DEFAULT_MODELS[primaryProvider as keyof typeof DEFAULT_MODELS];
       temp = temp !== undefined ? temp : 0.0;
     }
 
-    const fallbackChain = (config.fallbackChain as string[]) || DEFAULT_FALLBACK_CHAIN;
-    const providersToTry = [primaryProvider, ...fallbackChain.filter((p) => p !== primaryProvider)];
+    const fallbackChain = (config.fallback_chain as string[]) || DEFAULT_FALLBACK_CHAIN;
+    const providersToTry = [primaryProvider, ...fallbackChain.filter((p: string) => p !== primaryProvider)];
 
     let lastError: any;
 
@@ -118,7 +128,7 @@ export class AIRouter {
       tenantId,
       model: primaryModel,
       messages,
-      maxTokens: maxTokens || config.maxOutputTokens || 1024,
+      maxTokens: maxTokens || config.max_output_tokens || 1024,
     });
 
     const decryptedSecrets = await getDecryptedSecrets(tenantId);
@@ -148,7 +158,7 @@ export class AIRouter {
             model: model,
             messages: messages as any,
             temperature: temp,
-            max_tokens: maxTokens || config.maxOutputTokens || 1024,
+            max_tokens: maxTokens || config.max_output_tokens || 1024,
             response_format: responseFormat === 'json' ? { type: 'json_object' } : undefined,
           });
 
@@ -170,7 +180,7 @@ export class AIRouter {
             system: systemMsg,
             messages: userMsgs as any,
             temperature: temp,
-            max_tokens: maxTokens || config.maxOutputTokens || 1024,
+            max_tokens: maxTokens || config.max_output_tokens || 1024,
           });
 
           const content = response.content
@@ -212,7 +222,7 @@ export class AIRouter {
               contents,
               generationConfig: {
                 temperature: temp,
-                maxOutputTokens: maxTokens || config.maxOutputTokens || 1024,
+                maxOutputTokens: maxTokens || config.max_output_tokens || 1024,
                 responseMimeType: responseFormat === 'json' ? 'application/json' : 'text/plain',
               },
             }),

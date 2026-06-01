@@ -1,5 +1,4 @@
 import fastify from 'fastify';
-import fastifyJwt from '@fastify/jwt';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CRITICAL_API_CONTRACTS,
@@ -17,63 +16,49 @@ const templateId = 'template-admin-contract-1';
 const invitationId = 'invitation-admin-contract-1';
 const invitationCode = 'PRSPX-A1B2-C3D4';
 
-const prismaMock = vi.hoisted(() => ({
-  $executeRaw: vi.fn(),
-  $executeRawUnsafe: vi.fn(),
-  $transaction: vi.fn((callback) => callback(prismaMock)),
-  tenant: {
-    findMany: vi.fn(),
-    findUnique: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-  },
-  tenantSecret: {
-    create: vi.fn(),
-  },
-  tenantAIConfig: {
-    create: vi.fn(),
-  },
-  tenantUsage: {
-    findMany: vi.fn(),
-  },
-  user: {
-    create: vi.fn(),
-    findFirst: vi.fn(),
-    findUnique: vi.fn(),
-  },
-  campaign: {
-    updateMany: vi.fn(),
-  },
-  tenantInvitation: {
-    findFirst: vi.fn(),
-    findUnique: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    findMany: vi.fn(),
-  },
-  tenantBilling: {
-    findMany: vi.fn(),
-    findUnique: vi.fn(),
-    update: vi.fn(),
-  },
-  scriptTemplate: {
-    findMany: vi.fn(),
-    findUnique: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-  },
-  auditLog: {
-    create: vi.fn(),
-  },
-}));
+const supabaseMock = vi.hoisted(() => {
+  const chainable = () => ({
+    select: vi.fn().mockReturnThis(),
+    insert: vi.fn().mockReturnThis(),
+    update: vi.fn().mockReturnThis(),
+    delete: vi.fn().mockReturnThis(),
+    upsert: vi.fn().mockReturnThis(),
+    eq: vi.fn().mockReturnThis(),
+    neq: vi.fn().mockReturnThis(),
+    is: vi.fn().mockReturnThis(),
+    in: vi.fn().mockReturnThis(),
+    ilike: vi.fn().mockReturnThis(),
+    gte: vi.fn().mockReturnThis(),
+    lte: vi.fn().mockReturnThis(),
+    gt: vi.fn().mockReturnThis(),
+    lt: vi.fn().mockReturnThis(),
+    or: vi.fn().mockReturnThis(),
+    order: vi.fn().mockReturnThis(),
+    limit: vi.fn().mockReturnThis(),
+    range: vi.fn().mockReturnThis(),
+    single: vi.fn().mockResolvedValue({ data: null, error: null }),
+    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+  });
+  return {
+    from: vi.fn(() => chainable()),
+    auth: {
+      getUser: vi.fn(),
+      admin: {
+        createUser: vi.fn(),
+        updateUserById: vi.fn(),
+        signOut: vi.fn(),
+      },
+    },
+  };
+});
 
 const sendMagicLinkMock = vi.hoisted(() => vi.fn());
 const createSessionMock = vi.hoisted(() => vi.fn());
 const verifyInvitationMock = vi.hoisted(() => vi.fn());
 const redeemInvitationMock = vi.hoisted(() => vi.fn());
 
-vi.mock('../../src/lib/prisma.js', () => ({
-  prisma: prismaMock,
+vi.mock('../../src/lib/supabase.js', () => ({
+  supabaseAdmin: supabaseMock,
 }));
 
 vi.mock('../../src/lib/logger.js', () => ({
@@ -90,7 +75,7 @@ vi.mock('../../src/services/auth-service.js', () => ({
   createSession: createSessionMock,
   rotateSession: vi.fn(),
   revokeSession: vi.fn(),
-  withAuthRlsBypass: vi.fn((operation) => operation(prismaMock)),
+  withAuthRlsBypass: vi.fn((operation) => operation(supabaseMock)),
 }));
 
 vi.mock('../../src/services/invitation-service.js', () => ({
@@ -105,7 +90,7 @@ vi.mock('../../src/lib/crypto.js', () => ({
 
 async function buildAuthApp() {
   const app = fastify({ logger: false });
-  await app.register(fastifyJwt, { secret: 'contract-test-secret' });
+  await app.register(fastify, { secret: 'contract-test-secret' });
   await app.register(authRoutes, { prefix: '/v1/auth' });
   await app.ready();
   return app;
@@ -185,14 +170,45 @@ function seedAuthMocks() {
     accessTokenId: 'access-token-contract-1',
     refreshToken: 'refresh-token-contract-1',
   });
-  prismaMock.user.findFirst.mockResolvedValue({
-    id: adminUserId,
-    tenantId: null,
-    name: 'Guilds Admin',
-    email: 'admin@prospix.test',
-    role: 'GUILDS_ADMIN',
-    passwordHash: 'hashed-password',
+
+  // Mock user lookup for admin login
+  (supabaseMock.from as any).mockImplementation((table: string) => {
+    if (table === 'users') {
+      return {
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({
+          data: {
+            id: adminUserId,
+            tenant_id: null,
+            name: 'Guilds Admin',
+            email: 'admin@prospix.test',
+            role: 'GUILDS_ADMIN',
+            password_hash: 'hashed-password',
+          },
+          error: null,
+        }),
+        maybeSingle: vi.fn().mockResolvedValue({
+          data: {
+            id: adminUserId,
+            tenant_id: null,
+            name: 'Guilds Admin',
+            email: 'admin@prospix.test',
+            role: 'GUILDS_ADMIN',
+            password_hash: 'hashed-password',
+          },
+          error: null,
+        }),
+      } as any;
+    }
+    return {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      single: vi.fn().mockResolvedValue({ data: null, error: null }),
+    } as any;
   });
+
   verifyInvitationMock.mockResolvedValue({
     ok: true,
     value: { tenantName: 'Contract Tenant', role: 'OWNER' },
@@ -210,123 +226,181 @@ function seedAdminMocks() {
     slug: 'contract-tenant',
     status: 'ACTIVE',
     plan: 'STANDARD',
-    mrrCents: 15000,
+    mrr_cents: 15000,
     users: [],
     secret: null,
   };
 
-  prismaMock.tenant.findMany.mockResolvedValue([
-    { id: adminTenantId, name: 'Contract Tenant', slug: 'contract-tenant' },
-  ]);
-  prismaMock.tenant.findUnique.mockImplementation(({ where }: { where?: { slug?: string } }) => {
-    if (where?.slug === 'contract-tenant') {
-      return Promise.resolve(null);
+  (supabaseMock.from as any).mockImplementation((table: string) => {
+    if (table === 'tenants') {
+      return {
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        order: vi.fn().mockResolvedValue({
+          data: [{ id: adminTenantId, name: 'Contract Tenant', slug: 'contract-tenant' }],
+          error: null,
+        }),
+        single: vi.fn().mockImplementation(() => Promise.resolve({ data: tenantRecord, error: null })),
+        maybeSingle: vi.fn().mockResolvedValue({ data: tenantRecord, error: null }),
+        insert: vi.fn().mockReturnThis(),
+        update: vi.fn().mockReturnThis(),
+      } as any;
     }
-
-    return Promise.resolve(tenantRecord);
-  });
-  prismaMock.tenant.create.mockResolvedValue({
-    id: adminTenantId,
-    name: 'Contract Tenant',
-    slug: 'contract-tenant',
-    plan: 'STANDARD',
-    status: 'ONBOARDING',
-    mrrCents: 15000,
-  });
-  prismaMock.tenant.update.mockResolvedValue({
-    id: adminTenantId,
-    name: 'Contract Tenant',
-    plan: 'STANDARD',
-    status: 'SUSPENDED',
-  });
-  prismaMock.tenantSecret.create.mockResolvedValue({ tenantId: adminTenantId });
-  prismaMock.tenantAIConfig.create.mockResolvedValue({ tenantId: adminTenantId });
-  prismaMock.campaign.updateMany.mockResolvedValue({ count: 2 });
-  prismaMock.auditLog.create.mockResolvedValue({ id: 'audit-1' });
-  prismaMock.tenantUsage.findMany.mockResolvedValue([
-    {
-      tenantId: adminTenantId,
-      llmCostCents: 1200,
-      whatsappCostCents: 300,
-      googleMapsCostCents: 100,
-      tenant: {
-        id: adminTenantId,
-        name: 'Contract Tenant',
-        mrrCents: 15000,
-        plan: 'STANDARD',
-      },
-    },
-  ]);
-  prismaMock.tenantBilling.findMany.mockResolvedValue([
-    {
-      id: billingId,
-      tenantId: adminTenantId,
-      status: 'PENDING',
-      totalCents: 15000,
-      dueAt: new Date('2026-05-30T12:00:00.000Z'),
-      tenant: { name: 'Contract Tenant' },
-    },
-  ]);
-  prismaMock.tenantBilling.findUnique.mockResolvedValue({
-    id: billingId,
-    tenantId: adminTenantId,
-    status: 'PENDING',
-    totalCents: 15000,
-    tenant: {
-      id: adminTenantId,
-      status: 'SUSPENDED',
-    },
-  });
-  prismaMock.tenantBilling.update.mockResolvedValue({
-    id: billingId,
-    tenantId: adminTenantId,
-    status: 'PAID',
-  });
-  prismaMock.tenantInvitation.findFirst.mockImplementation(({ where }: { where?: { id?: string } }) => {
-    if (where?.id === invitationId) {
-      return Promise.resolve({
-        id: invitationId,
-        tenantId: adminTenantId,
-        code: invitationCode,
-        usedAt: null,
-        revokedAt: null,
-      });
+    if (table === 'tenant_secrets') {
+      return {
+        insert: vi.fn().mockReturnThis(),
+        select: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({ data: { tenant_id: adminTenantId }, error: null }),
+      } as any;
     }
-
-    return Promise.resolve(null);
-  });
-  prismaMock.tenantInvitation.findUnique.mockResolvedValue(null);
-  prismaMock.tenantInvitation.create.mockResolvedValue({
-    id: invitationId,
-    tenantId: adminTenantId,
-    code: invitationCode,
-    role: 'OWNER',
-  });
-  prismaMock.tenantInvitation.update.mockResolvedValue({
-    id: invitationId,
-    tenantId: adminTenantId,
-    revokedAt: new Date('2026-05-23T12:00:00.000Z'),
-  });
-  prismaMock.tenantInvitation.findMany.mockResolvedValue([
-    { id: invitationId, tenantId: adminTenantId, code: invitationCode },
-  ]);
-  prismaMock.scriptTemplate.findMany.mockResolvedValue([
-    { id: templateId, name: 'Contract Template', active: true },
-  ]);
-  prismaMock.scriptTemplate.findUnique.mockResolvedValue({
-    id: templateId,
-    name: 'Contract Template',
-    active: true,
-  });
-  prismaMock.scriptTemplate.create.mockResolvedValue({
-    id: templateId,
-    name: 'Contract Template',
-    active: true,
-  });
-  prismaMock.scriptTemplate.update.mockResolvedValue({
-    id: templateId,
-    name: 'Contract Template Updated',
-    active: true,
+    if (table === 'tenant_ai_configs') {
+      return {
+        insert: vi.fn().mockReturnThis(),
+        select: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({ data: { tenant_id: adminTenantId }, error: null }),
+      } as any;
+    }
+    if (table === 'campaigns') {
+      return {
+        update: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockResolvedValue({ data: { count: 2 }, error: null }),
+      } as any;
+    }
+    if (table === 'audit_log') {
+      return {
+        insert: vi.fn().mockReturnThis(),
+        select: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({ data: { id: 'audit-1' }, error: null }),
+      } as any;
+    }
+    if (table === 'tenant_usage') {
+      return {
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        order: vi.fn().mockResolvedValue({
+          data: [{
+            tenant_id: adminTenantId,
+            llm_cost_cents: 1200,
+            whatsapp_cost_cents: 300,
+            google_maps_cost_cents: 100,
+            tenant: {
+              id: adminTenantId,
+              name: 'Contract Tenant',
+              mrr_cents: 15000,
+              plan: 'STANDARD',
+            },
+          }],
+          error: null,
+        }),
+      } as any;
+    }
+    if (table === 'tenant_billing') {
+      return {
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        order: vi.fn().mockResolvedValue({
+          data: [{
+            id: billingId,
+            tenant_id: adminTenantId,
+            status: 'PENDING',
+            total_cents: 15000,
+            due_at: new Date('2026-05-30T12:00:00.000Z').toISOString(),
+            tenant: { name: 'Contract Tenant' },
+          }],
+          error: null,
+        }),
+        single: vi.fn().mockResolvedValue({
+          data: {
+            id: billingId,
+            tenant_id: adminTenantId,
+            status: 'PENDING',
+            total_cents: 15000,
+            tenant: { id: adminTenantId, status: 'SUSPENDED' },
+          },
+          error: null,
+        }),
+        update: vi.fn().mockReturnThis(),
+      } as any;
+    }
+    if (table === 'tenant_invitations') {
+      return {
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        gte: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({
+          data: {
+            id: invitationId,
+            tenant_id: adminTenantId,
+            code: invitationCode,
+            used_at: null,
+            revoked_at: null,
+          },
+          error: null,
+        }),
+        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+        insert: vi.fn().mockReturnThis(),
+        update: vi.fn().mockReturnThis(),
+        order: vi.fn().mockResolvedValue({
+          data: [{ id: invitationId, tenant_id: adminTenantId, code: invitationCode }],
+          error: null,
+        }),
+        limit: vi.fn().mockResolvedValue({
+          data: [{ id: invitationId, tenant_id: adminTenantId, code: invitationCode }],
+          error: null,
+        }),
+      } as any;
+    }
+    if (table === 'script_templates') {
+      return {
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        order: vi.fn().mockResolvedValue({
+          data: [{ id: templateId, name: 'Contract Template', active: true }],
+          error: null,
+        }),
+        single: vi.fn().mockResolvedValue({
+          data: { id: templateId, name: 'Contract Template', active: true },
+          error: null,
+        }),
+        insert: vi.fn().mockReturnThis(),
+        update: vi.fn().mockReturnThis(),
+      } as any;
+    }
+    if (table === 'users') {
+      return {
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({
+          data: {
+            id: adminUserId,
+            tenant_id: null,
+            name: 'Guilds Admin',
+            email: 'admin@prospix.test',
+            role: 'GUILDS_ADMIN',
+            password_hash: 'hashed-password',
+          },
+          error: null,
+        }),
+        maybeSingle: vi.fn().mockResolvedValue({
+          data: {
+            id: adminUserId,
+            tenant_id: null,
+            name: 'Guilds Admin',
+            email: 'admin@prospix.test',
+            role: 'GUILDS_ADMIN',
+            password_hash: 'hashed-password',
+          },
+          error: null,
+        }),
+      } as any;
+    }
+    return {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      single: vi.fn().mockResolvedValue({ data: null, error: null }),
+    } as any;
   });
 }
 

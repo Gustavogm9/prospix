@@ -1,15 +1,39 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { app } from '../../src/index.js';
-import { prisma } from '../../src/lib/prisma.js';
+import { supabaseAdmin } from '../../src/lib/supabase.js';
 import { redis } from '../../src/lib/redis.js';
 
-vi.mock('../../src/lib/prisma.js', () => ({
-  prisma: {
-    $queryRaw: vi.fn(),
-    $executeRawUnsafe: vi.fn(),
-  },
-}));
+vi.mock('../../src/lib/supabase.js', () => {
+  const chainable = () => ({
+    select: vi.fn().mockReturnThis(),
+    insert: vi.fn().mockReturnThis(),
+    update: vi.fn().mockReturnThis(),
+    delete: vi.fn().mockReturnThis(),
+    upsert: vi.fn().mockReturnThis(),
+    eq: vi.fn().mockReturnThis(),
+    neq: vi.fn().mockReturnThis(),
+    is: vi.fn().mockReturnThis(),
+    in: vi.fn().mockReturnThis(),
+    ilike: vi.fn().mockReturnThis(),
+    gte: vi.fn().mockReturnThis(),
+    lte: vi.fn().mockReturnThis(),
+    gt: vi.fn().mockReturnThis(),
+    lt: vi.fn().mockReturnThis(),
+    or: vi.fn().mockReturnThis(),
+    order: vi.fn().mockReturnThis(),
+    limit: vi.fn().mockReturnThis(),
+    range: vi.fn().mockReturnThis(),
+    single: vi.fn().mockResolvedValue({ data: null, error: null }),
+    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+  });
+  return {
+    supabaseAdmin: {
+      from: vi.fn(() => chainable()),
+      rpc: vi.fn().mockResolvedValue({ data: [1], error: null }),
+    },
+  };
+});
 
 vi.mock('../../src/lib/redis.js', () => ({
   redis: {
@@ -34,7 +58,8 @@ describe('Liveness & Readiness Checks', () => {
   });
 
   it('should return 200 on /ready readiness check if all services are healthy', async () => {
-    vi.mocked(prisma.$queryRaw).mockResolvedValue([1]);
+    // Mock supabase health check (rpc or from)
+    vi.mocked(supabaseAdmin.rpc).mockResolvedValue({ data: [1], error: null } as any);
     vi.mocked(redis.ping).mockResolvedValue('PONG');
 
     const response = await app.inject({
@@ -53,7 +78,7 @@ describe('Liveness & Readiness Checks', () => {
   });
 
   it('should return 503 on /ready readiness check if a service is offline', async () => {
-    vi.mocked(prisma.$queryRaw).mockRejectedValue(new Error('DB connection timeout'));
+    vi.mocked(supabaseAdmin.rpc).mockResolvedValue({ data: null, error: { message: 'DB connection timeout' } } as any);
     vi.mocked(redis.ping).mockResolvedValue('PONG');
 
     const response = await app.inject({

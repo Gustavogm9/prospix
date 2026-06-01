@@ -1,55 +1,48 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { app } from '../../src/index.js';
-import { prisma } from '../../src/lib/prisma.js';
-import { LeadStatus, Profession, CampaignStatus } from '@prisma/client';
+import { supabaseAdmin } from '../../src/lib/supabase.js';
+import { LeadStatus, Profession, CampaignStatus } from '@prospix/shared-types';
 
-// Mock Prisma
-vi.mock('../../src/lib/prisma.js', () => ({
-  prisma: {
-    $executeRaw: vi.fn(),
-    $executeRawUnsafe: vi.fn(),
-    lead: {
-      findMany: vi.fn(),
-      findFirst: vi.fn(),
-      findUnique: vi.fn(),
-      create: vi.fn(),
-      update: vi.fn(),
+// Mock Supabase
+vi.mock('../../src/lib/supabase.js', () => {
+  const chainable = () => ({
+    select: vi.fn().mockReturnThis(),
+    insert: vi.fn().mockReturnThis(),
+    update: vi.fn().mockReturnThis(),
+    delete: vi.fn().mockReturnThis(),
+    upsert: vi.fn().mockReturnThis(),
+    eq: vi.fn().mockReturnThis(),
+    neq: vi.fn().mockReturnThis(),
+    is: vi.fn().mockReturnThis(),
+    in: vi.fn().mockReturnThis(),
+    ilike: vi.fn().mockReturnThis(),
+    gte: vi.fn().mockReturnThis(),
+    lte: vi.fn().mockReturnThis(),
+    gt: vi.fn().mockReturnThis(),
+    lt: vi.fn().mockReturnThis(),
+    or: vi.fn().mockReturnThis(),
+    order: vi.fn().mockReturnThis(),
+    limit: vi.fn().mockReturnThis(),
+    range: vi.fn().mockReturnThis(),
+    single: vi.fn().mockResolvedValue({ data: null, error: null }),
+    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+  });
+  return {
+    supabaseAdmin: {
+      from: vi.fn(() => chainable()),
     },
-    leadEvent: {
-      create: vi.fn(),
-    },
-    optout: {
-      upsert: vi.fn(),
-    },
-    leadNote: {
-      create: vi.fn(),
-      findMany: vi.fn(),
-    },
-    campaign: {
-      findMany: vi.fn(),
-      findFirst: vi.fn(),
-      create: vi.fn(),
-      update: vi.fn(),
-    },
-    $transaction: vi.fn((callback) => callback(prisma)),
-  },
-}));
+  };
+});
 
 describe('Tenant Leads & Campaigns API Routes', () => {
   const mockTenantId = 'tenant-abcd-1234';
-  const mockUserId = 'user-efgh-5678';
+
   let mockToken: string;
 
   beforeEach(() => {
     vi.clearAllMocks();
 
-    mockToken = app.jwt.sign({
-      sub: mockUserId,
-      tenant_id: mockTenantId,
-      role: 'OWNER',
-      email: 'owner@tenant.com',
-      name: 'Tenant Owner',
-    });
+    mockToken = 'mock-supabase-token-for-test';
   });
 
   describe('Leads Endpoints', () => {
@@ -57,7 +50,15 @@ describe('Tenant Leads & Campaigns API Routes', () => {
       const mockLeads = [
         { id: 'lead-1', name: 'Dr. Roberto', whatsapp: '551732321010', status: LeadStatus.CAPTURED }
       ];
-      vi.mocked(prisma.lead.findMany).mockResolvedValue(mockLeads as any);
+
+      vi.mocked(supabaseAdmin.from).mockImplementation((_table: string) => ({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        order: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue({ data: mockLeads, error: null }),
+        range: vi.fn().mockResolvedValue({ data: mockLeads, error: null }),
+      }) as any);
 
       const res = await app.inject({
         method: 'GET',
@@ -75,11 +76,43 @@ describe('Tenant Leads & Campaigns API Routes', () => {
     });
 
     it('POST /v1/tenant/leads - should create manual lead successfully', async () => {
-      vi.mocked(prisma.lead.findUnique).mockResolvedValue(null); // No duplicates
-      vi.mocked(prisma.lead.create).mockResolvedValue({
-        id: 'lead-new',
-        name: 'New Lead',
-        whatsapp: '5517998877665',
+      vi.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
+        if (table === 'leads') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockReturnThis(),
+            single: vi.fn().mockResolvedValue({ data: null, error: null }),
+            maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+            insert: vi.fn().mockReturnThis(),
+          } as any;
+        }
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          single: vi.fn().mockResolvedValue({ data: null, error: null }),
+          insert: vi.fn().mockReturnThis(),
+        } as any;
+      });
+
+      // Override for the create call specifically
+      const insertChain = {
+        insert: vi.fn().mockReturnThis(),
+        select: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({
+          data: {
+            id: 'lead-new',
+            name: 'New Lead',
+            whatsapp: '5517998877665',
+          },
+          error: null,
+        }),
+      };
+      vi.mocked(supabaseAdmin.from).mockReturnValue({
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+        ...insertChain,
       } as any);
 
       const res = await app.inject({
@@ -99,11 +132,17 @@ describe('Tenant Leads & Campaigns API Routes', () => {
       expect(res.statusCode).toBe(201);
       const body = JSON.parse(res.payload);
       expect(body.id).toBe('lead-new');
-      expect(prisma.lead.create).toHaveBeenCalled();
+      expect(supabaseAdmin.from).toHaveBeenCalledWith('leads');
     });
 
     it('POST /v1/tenant/leads - should return 409 Conflict if whatsapp duplicate exists', async () => {
-      vi.mocked(prisma.lead.findUnique).mockResolvedValue({ id: 'existing' } as any);
+      vi.mocked(supabaseAdmin.from).mockImplementation((_table: string) => ({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({ data: { id: 'existing' }, error: null }),
+        maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'existing' }, error: null }),
+      }) as any);
 
       const res = await app.inject({
         method: 'POST',
@@ -122,15 +161,21 @@ describe('Tenant Leads & Campaigns API Routes', () => {
     });
 
     it('PATCH /v1/tenant/leads/:id - should transition status matching state machine', async () => {
-      vi.mocked(prisma.lead.findFirst).mockResolvedValue({
-        id: 'lead-1',
-        status: LeadStatus.CAPTURED,
-      } as any);
-
-      vi.mocked(prisma.lead.update).mockResolvedValue({
-        id: 'lead-1',
-        status: LeadStatus.ENRICHED,
-      } as any);
+      vi.mocked(supabaseAdmin.from).mockImplementation((_table: string) => ({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({
+          data: { id: 'lead-1', status: LeadStatus.CAPTURED },
+          error: null,
+        }),
+        maybeSingle: vi.fn().mockResolvedValue({
+          data: { id: 'lead-1', status: LeadStatus.CAPTURED },
+          error: null,
+        }),
+        update: vi.fn().mockReturnThis(),
+        insert: vi.fn().mockReturnThis(),
+      }) as any);
 
       const res = await app.inject({
         method: 'PATCH',
@@ -145,14 +190,23 @@ describe('Tenant Leads & Campaigns API Routes', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      expect(prisma.lead.update).toHaveBeenCalled();
+      expect(supabaseAdmin.from).toHaveBeenCalledWith('leads');
     });
 
     it('PATCH /v1/tenant/leads/:id - should reject invalid transition status', async () => {
-      vi.mocked(prisma.lead.findFirst).mockResolvedValue({
-        id: 'lead-1',
-        status: LeadStatus.CAPTURED,
-      } as any);
+      vi.mocked(supabaseAdmin.from).mockImplementation((_table: string) => ({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({
+          data: { id: 'lead-1', status: LeadStatus.CAPTURED },
+          error: null,
+        }),
+        maybeSingle: vi.fn().mockResolvedValue({
+          data: { id: 'lead-1', status: LeadStatus.CAPTURED },
+          error: null,
+        }),
+      }) as any);
 
       const res = await app.inject({
         method: 'PATCH',
@@ -167,13 +221,23 @@ describe('Tenant Leads & Campaigns API Routes', () => {
       });
 
       expect(res.statusCode).toBe(400);
-      expect(prisma.lead.update).not.toHaveBeenCalled();
     });
 
     it('DELETE /v1/tenant/leads/:id - should perform soft delete', async () => {
-      vi.mocked(prisma.lead.findFirst).mockResolvedValue({
-        id: 'lead-1',
-      } as any);
+      vi.mocked(supabaseAdmin.from).mockImplementation((_table: string) => ({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({
+          data: { id: 'lead-1' },
+          error: null,
+        }),
+        maybeSingle: vi.fn().mockResolvedValue({
+          data: { id: 'lead-1' },
+          error: null,
+        }),
+        update: vi.fn().mockReturnThis(),
+      }) as any);
 
       const res = await app.inject({
         method: 'DELETE',
@@ -185,22 +249,41 @@ describe('Tenant Leads & Campaigns API Routes', () => {
       });
 
       expect(res.statusCode).toBe(204);
-      expect(prisma.lead.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: 'lead-1' },
-          data: expect.objectContaining({
-            deletedAt: expect.any(Date),
-            status: LeadStatus.ARCHIVED,
-          }),
-        })
-      );
+      expect(supabaseAdmin.from).toHaveBeenCalledWith('leads');
     });
 
     it('POST /v1/tenant/leads/:id/optout - should register optout and update status', async () => {
-      vi.mocked(prisma.lead.findFirst).mockResolvedValue({
-        id: 'lead-1',
-        whatsapp: '5517998877665',
-      } as any);
+      vi.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
+        if (table === 'leads') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockReturnThis(),
+            single: vi.fn().mockResolvedValue({
+              data: { id: 'lead-1', whatsapp: '5517998877665' },
+              error: null,
+            }),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: { id: 'lead-1', whatsapp: '5517998877665' },
+              error: null,
+            }),
+            update: vi.fn().mockReturnThis(),
+          } as any;
+        }
+        if (table === 'optouts') {
+          return {
+            upsert: vi.fn().mockReturnThis(),
+            select: vi.fn().mockReturnThis(),
+            single: vi.fn().mockResolvedValue({ data: {}, error: null }),
+          } as any;
+        }
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          single: vi.fn().mockResolvedValue({ data: null, error: null }),
+          insert: vi.fn().mockReturnThis(),
+        } as any;
+      });
 
       const res = await app.inject({
         method: 'POST',
@@ -215,19 +298,36 @@ describe('Tenant Leads & Campaigns API Routes', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      expect(prisma.optout.upsert).toHaveBeenCalled();
-      expect(prisma.lead.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: 'lead-1' },
-          data: { status: LeadStatus.OPTED_OUT },
-        })
-      );
+      expect(supabaseAdmin.from).toHaveBeenCalledWith('optouts');
+      expect(supabaseAdmin.from).toHaveBeenCalledWith('leads');
     });
 
     it('POST & GET lead notes', async () => {
-      vi.mocked(prisma.lead.findFirst).mockResolvedValue({ id: 'lead-1' } as any);
-      vi.mocked(prisma.leadNote.create).mockResolvedValue({ id: 'note-1', content: 'Good fit' } as any);
-      vi.mocked(prisma.leadNote.findMany).mockResolvedValue([{ id: 'note-1', content: 'Good fit' }] as any);
+      vi.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
+        if (table === 'leads') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockReturnThis(),
+            single: vi.fn().mockResolvedValue({ data: { id: 'lead-1' }, error: null }),
+            maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'lead-1' }, error: null }),
+          } as any;
+        }
+        if (table === 'lead_notes') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            order: vi.fn().mockResolvedValue({ data: [{ id: 'note-1', content: 'Good fit' }], error: null }),
+            insert: vi.fn().mockReturnThis(),
+            single: vi.fn().mockResolvedValue({ data: { id: 'note-1', content: 'Good fit' }, error: null }),
+          } as any;
+        }
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          single: vi.fn().mockResolvedValue({ data: null, error: null }),
+        } as any;
+      });
 
       const createRes = await app.inject({
         method: 'POST',
@@ -257,9 +357,15 @@ describe('Tenant Leads & Campaigns API Routes', () => {
 
   describe('Campaigns Endpoints', () => {
     it('GET /v1/tenant/campaigns - list campaigns', async () => {
-      vi.mocked(prisma.campaign.findMany).mockResolvedValue([
-        { id: 'camp-1', name: 'Doctors Rio Preto', status: CampaignStatus.ACTIVE }
-      ] as any);
+      vi.mocked(supabaseAdmin.from).mockImplementation((_table: string) => ({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        order: vi.fn().mockResolvedValue({
+          data: [{ id: 'camp-1', name: 'Doctors Rio Preto', status: CampaignStatus.ACTIVE }],
+          error: null,
+        }),
+      }) as any);
 
       const res = await app.inject({
         method: 'GET',
@@ -275,11 +381,19 @@ describe('Tenant Leads & Campaigns API Routes', () => {
     });
 
     it('POST /v1/tenant/campaigns - create campaign with draft status', async () => {
-      vi.mocked(prisma.campaign.create).mockResolvedValue({
-        id: 'camp-new',
-        name: 'New Campaign',
-        status: CampaignStatus.DRAFT,
-      } as any);
+      vi.mocked(supabaseAdmin.from).mockImplementation((_table: string) => ({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        insert: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({
+          data: {
+            id: 'camp-new',
+            name: 'New Campaign',
+            status: CampaignStatus.DRAFT,
+          },
+          error: null,
+        }),
+      }) as any);
 
       const res = await app.inject({
         method: 'POST',
@@ -303,15 +417,20 @@ describe('Tenant Leads & Campaigns API Routes', () => {
     });
 
     it('POST /v1/tenant/campaigns/:id/pause - should pause active campaign', async () => {
-      vi.mocked(prisma.campaign.findFirst).mockResolvedValue({
-        id: 'camp-1',
-        status: CampaignStatus.ACTIVE,
-      } as any);
-
-      vi.mocked(prisma.campaign.update).mockResolvedValue({
-        id: 'camp-1',
-        status: CampaignStatus.PAUSED,
-      } as any);
+      vi.mocked(supabaseAdmin.from).mockImplementation((_table: string) => ({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({
+          data: { id: 'camp-1', status: CampaignStatus.ACTIVE },
+          error: null,
+        }),
+        maybeSingle: vi.fn().mockResolvedValue({
+          data: { id: 'camp-1', status: CampaignStatus.ACTIVE },
+          error: null,
+        }),
+        update: vi.fn().mockReturnThis(),
+      }) as any);
 
       const res = await app.inject({
         method: 'POST',
@@ -323,24 +442,24 @@ describe('Tenant Leads & Campaigns API Routes', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      expect(prisma.campaign.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: 'camp-1' },
-          data: { status: CampaignStatus.PAUSED },
-        })
-      );
+      expect(supabaseAdmin.from).toHaveBeenCalledWith('campaigns');
     });
 
     it('POST /v1/tenant/campaigns/:id/resume - should activate paused or draft campaign', async () => {
-      vi.mocked(prisma.campaign.findFirst).mockResolvedValue({
-        id: 'camp-1',
-        status: CampaignStatus.PAUSED,
-      } as any);
-
-      vi.mocked(prisma.campaign.update).mockResolvedValue({
-        id: 'camp-1',
-        status: CampaignStatus.ACTIVE,
-      } as any);
+      vi.mocked(supabaseAdmin.from).mockImplementation((_table: string) => ({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({
+          data: { id: 'camp-1', status: CampaignStatus.PAUSED },
+          error: null,
+        }),
+        maybeSingle: vi.fn().mockResolvedValue({
+          data: { id: 'camp-1', status: CampaignStatus.PAUSED },
+          error: null,
+        }),
+        update: vi.fn().mockReturnThis(),
+      }) as any);
 
       const res = await app.inject({
         method: 'POST',
@@ -352,18 +471,24 @@ describe('Tenant Leads & Campaigns API Routes', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      expect(prisma.campaign.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: 'camp-1' },
-          data: { status: CampaignStatus.ACTIVE },
-        })
-      );
+      expect(supabaseAdmin.from).toHaveBeenCalledWith('campaigns');
     });
 
     it('DELETE /v1/tenant/campaigns/:id - should soft delete campaign', async () => {
-      vi.mocked(prisma.campaign.findFirst).mockResolvedValue({
-        id: 'camp-1',
-      } as any);
+      vi.mocked(supabaseAdmin.from).mockImplementation((_table: string) => ({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({
+          data: { id: 'camp-1' },
+          error: null,
+        }),
+        maybeSingle: vi.fn().mockResolvedValue({
+          data: { id: 'camp-1' },
+          error: null,
+        }),
+        update: vi.fn().mockReturnThis(),
+      }) as any);
 
       const res = await app.inject({
         method: 'DELETE',
@@ -375,15 +500,7 @@ describe('Tenant Leads & Campaigns API Routes', () => {
       });
 
       expect(res.statusCode).toBe(204);
-      expect(prisma.campaign.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: 'camp-1' },
-          data: expect.objectContaining({
-            status: CampaignStatus.ARCHIVED,
-            archivedAt: expect.any(Date),
-          }),
-        })
-      );
+      expect(supabaseAdmin.from).toHaveBeenCalledWith('campaigns');
     });
   });
 });

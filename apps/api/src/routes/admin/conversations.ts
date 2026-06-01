@@ -1,20 +1,11 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { prisma } from '../../lib/prisma.js';
+import { dbAdmin } from '../../lib/db.js';
 import { logger } from '../../lib/logger.js';
-import { tenantContextStorage } from '../../lib/tenant-context-storage.js';
-
-function withAdminRole<TResult>(operation: (tx: typeof prisma) => Promise<TResult>): Promise<TResult> {
-  const store = tenantContextStorage.getStore();
-  return tenantContextStorage.run(
-    { tenantId: store?.tenantId ?? null, userId: store?.userId ?? null, bypassRls: true },
-    () => operation(prisma)
-  );
-}
 
 export function registerAdminConversationsRoutes(app: FastifyInstance) {
   // =========================================================================
-  // GET /conversations — Cross-tenant conversation listing
+  // GET /conversations - Cross-tenant conversation listing
   // =========================================================================
   const listSchema = z.object({
     tenantId: z.string().uuid().optional(),
@@ -34,74 +25,91 @@ export function registerAdminConversationsRoutes(app: FastifyInstance) {
     const { tenantId, status, aiHandling, search, limit, offset } = parsed.data;
 
     try {
-      const where: Record<string, unknown> = {};
-      if (tenantId) where.tenantId = tenantId;
-      if (status) where.status = status;
-      if (aiHandling !== undefined) where.aiHandling = aiHandling === 'true';
+      let query = dbAdmin
+        .from('conversations')
+        .select('*, leads!inner(id, name, whatsapp, email), tenants(id, name, slug)')
+        .order('last_message_at', { ascending: false, nullsFirst: false })
+        .range(offset, offset + limit - 1);
+
+      if (tenantId) query = query.eq('tenant_id', tenantId);
+      if (status) query = query.eq('status', status);
+      if (aiHandling !== undefined) query = query.eq('ai_handling', aiHandling === 'true');
       if (search) {
-        where.lead = {
-          OR: [
-            { name: { contains: search, mode: 'insensitive' } },
-            { whatsapp: { contains: search } },
-          ],
-        };
+        query = query.or(`name.ilike.%${search}%,whatsapp.ilike.%${search}%`, { referencedTable: 'leads' });
       }
 
-      const [items, total] = await withAdminRole(async (tx) => {
-        return Promise.all([
-          tx.conversation.findMany({
-            where,
-            include: {
-              lead: { select: { id: true, name: true, whatsapp: true, email: true } },
-              tenant: { select: { id: true, name: true, slug: true } },
-              messages: {
-                orderBy: { createdAt: 'desc' },
-                take: 3,
-                select: { id: true, direction: true, sender: true, content: true, deliveryStatus: true, createdAt: true },
-              },
-            },
-            orderBy: { lastMessageAt: 'desc' },
-            take: limit,
-            skip: offset,
-          }),
-          tx.conversation.count({ where }),
-        ]);
-      });
+      const { data: items, error } = await query;
+      if (error) throw error;
+
+      // Count
+      let countQuery = dbAdmin
+        .from('conversations')
+        .select('*, leads!inner(id)', { count: 'exact', head: true });
+      if (tenantId) countQuery = countQuery.eq('tenant_id', tenantId);
+      if (status) countQuery = countQuery.eq('status', status);
+      if (aiHandling !== undefined) countQuery = countQuery.eq('ai_handling', aiHandling === 'true');
+      if (search) {
+        countQuery = countQuery.or(`name.ilike.%${search}%,whatsapp.ilike.%${search}%`, { referencedTable: 'leads' });
+      }
+
+      const { count: total, error: countErr } = await countQuery;
+      if (countErr) throw countErr;
+
+      // Fetch recent messages for each conversation
+      const conversationIds = (items ?? []).map((c: any) => c.id);
+      let messagesMap: Map<string, any[]> = new Map();
+      if (conversationIds.length > 0) {
+        // Get last 3 messages per conversation – fetched in bulk then sliced
+        const { data: allMessages } = await dbAdmin
+          .from('messages')
+          .select('id, conversation_id, direction, sender, content, delivery_status, created_at')
+          .in('conversation_id', conversationIds)
+          .order('created_at', { ascending: false })
+          .limit(conversationIds.length * 3);
+
+        for (const m of allMessages ?? []) {
+          const list = messagesMap.get(m.conversation_id) ?? [];
+          if (list.length < 3) {
+            list.push(m);
+            messagesMap.set(m.conversation_id, list);
+          }
+        }
+      }
 
       return reply.send({
         data: {
-          items: items.map((c) => ({
+          items: (items ?? []).map((c: any) => ({
             id: c.id,
-            tenantId: c.tenantId,
-            tenant: c.tenant,
-            lead: c.lead,
+            tenantId: c.tenant_id,
+            tenant: c.tenants,
+            lead: c.leads,
             status: c.status,
-            aiHandlingEnabled: c.aiHandling,
-            messageCount: c.messageCount,
-            lastInboundAt: c.lastInboundAt?.toISOString() ?? null,
-            lastOutboundAt: c.lastOutboundAt?.toISOString() ?? null,
-            startedAt: c.startedAt.toISOString(),
-            updatedAt: c.lastMessageAt?.toISOString() ?? c.startedAt.toISOString(),
-            recentMessages: c.messages.map((m) => ({
+            aiHandlingEnabled: c.ai_handling,
+            messageCount: c.message_count,
+            lastInboundAt: c.last_inbound_at ?? null,
+            lastOutboundAt: c.last_outbound_at ?? null,
+            startedAt: c.started_at,
+            updatedAt: c.last_message_at ?? c.started_at,
+            recentMessages: (messagesMap.get(c.id) ?? []).map((m: any) => ({
               id: m.id,
               direction: m.direction,
               sender: m.sender,
               content: m.content?.substring(0, 200) ?? '',
-              deliveryStatus: m.deliveryStatus,
-              createdAt: m.createdAt.toISOString(),
+              deliveryStatus: m.delivery_status,
+              createdAt: m.created_at,
             })),
           })),
-          pagination: { total, limit, offset, hasMore: offset + items.length < total },
+          pagination: { total: total ?? 0, limit, offset, hasMore: offset + (items?.length ?? 0) < (total ?? 0) },
         },
       });
     } catch (err) {
-      logger.error({ err }, 'admin/conversations · GET list failed');
+      logger.error({ err }, 'admin/conversations → GET list failed');
       return reply.code(500).send({ error: 'INTERNAL', message: 'Falha ao listar conversas.' });
     }
   });
 
   // =========================================================================
-  // GET /conversations/stats — AI quality stats
+  // GET /conversations/stats - AI quality stats
   // =========================================================================
   app.get('/conversations/stats', async (_req, reply) => {
     try {
@@ -110,48 +118,58 @@ export function registerAdminConversationsRoutes(app: FastifyInstance) {
       const weekStart = new Date(todayStart.getTime() - 7 * 24 * 60 * 60 * 1000);
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
-      const stats = await withAdminRole(async (tx) => {
-        const [totalAll, totalToday, totalWeek, totalMonth, activeAI, escalated, topTenants] = await Promise.all([
-          tx.conversation.count(),
-          tx.conversation.count({ where: { startedAt: { gte: todayStart } } }),
-          tx.conversation.count({ where: { startedAt: { gte: weekStart } } }),
-          tx.conversation.count({ where: { startedAt: { gte: monthStart } } }),
-          tx.conversation.count({ where: { status: 'ACTIVE', aiHandling: true } }),
-          tx.conversation.count({ where: { status: 'ESCALATED' } }),
-          tx.conversation.groupBy({
-            by: ['tenantId'],
-            _count: { id: true },
-            orderBy: { _count: { id: 'desc' } },
-            take: 5,
-          }),
-        ]);
+      const [totalAllRes, totalTodayRes, totalWeekRes, totalMonthRes, activeAIRes, escalatedRes] = await Promise.all([
+        dbAdmin.from('conversations').select('*', { count: 'exact', head: true }),
+        dbAdmin.from('conversations').select('*', { count: 'exact', head: true }).gte('started_at', todayStart.toISOString()),
+        dbAdmin.from('conversations').select('*', { count: 'exact', head: true }).gte('started_at', weekStart.toISOString()),
+        dbAdmin.from('conversations').select('*', { count: 'exact', head: true }).gte('started_at', monthStart.toISOString()),
+        dbAdmin.from('conversations').select('*', { count: 'exact', head: true }).eq('status', 'ACTIVE').eq('ai_handling', true),
+        dbAdmin.from('conversations').select('*', { count: 'exact', head: true }).eq('status', 'ESCALATED'),
+      ]);
 
-        // Get tenant names for top tenants
-        const tenantIds = topTenants.map((t) => t.tenantId);
-        const tenantNames = await tx.tenant.findMany({
-          where: { id: { in: tenantIds } },
-          select: { id: true, name: true },
+      // Top 5 tenants by conversation count
+      let topTenantsRaw: any[] = [];
+      try {
+        const { data } = await dbAdmin.rpc('exec_sql' as any, {
+          query: `
+            SELECT c.tenant_id, COUNT(c.id)::bigint AS cnt
+            FROM conversations c
+            GROUP BY c.tenant_id
+            ORDER BY cnt DESC
+            LIMIT 5
+          `,
         });
-        const nameMap = new Map(tenantNames.map((t) => [t.id, t.name]));
+        topTenantsRaw = data ?? [];
+      } catch { /* ignore */ }
 
-        return {
-          totalAll,
-          totalToday,
-          totalWeek,
-          totalMonth,
-          activeAI,
-          escalated,
-          topTenants: topTenants.map((t) => ({
-            tenantId: t.tenantId,
-            tenantName: nameMap.get(t.tenantId) ?? 'Desconhecido',
-            count: t._count.id,
+      // Get tenant names for top tenants
+      const tenantIds = topTenantsRaw.map((t: any) => t.tenant_id);
+      let nameMap = new Map<string, string>();
+      if (tenantIds.length > 0) {
+        const { data: tenantNames } = await dbAdmin
+          .from('tenants')
+          .select('id, name')
+          .in('id', tenantIds);
+        nameMap = new Map((tenantNames ?? []).map((t: any) => [t.id, t.name]));
+      }
+
+      return reply.send({
+        data: {
+          totalAll: totalAllRes.count ?? 0,
+          totalToday: totalTodayRes.count ?? 0,
+          totalWeek: totalWeekRes.count ?? 0,
+          totalMonth: totalMonthRes.count ?? 0,
+          activeAI: activeAIRes.count ?? 0,
+          escalated: escalatedRes.count ?? 0,
+          topTenants: topTenantsRaw.map((t: any) => ({
+            tenantId: t.tenant_id,
+            tenantName: nameMap.get(t.tenant_id) ?? 'Desconhecido',
+            count: Number(t.cnt),
           })),
-        };
+        },
       });
-
-      return reply.send({ data: stats });
     } catch (err) {
-      logger.error({ err }, 'admin/conversations/stats · GET failed');
+      logger.error({ err }, 'admin/conversations/stats → GET failed');
       return reply.code(500).send({ error: 'INTERNAL', message: 'Falha ao calcular estatísticas.' });
     }
   });

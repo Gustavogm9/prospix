@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { authState } from '../fixtures/auth';
+import { authState, mockSupabaseAuth } from '../fixtures/auth';
 import { runAxe } from '../helpers/axe';
 
 /**
@@ -30,6 +30,9 @@ test.describe('Web · A11y (AUD-P3-035)', () => {
         /* noop */
       }
     }, JSON.stringify(authState));
+
+    // Mock Supabase auth so getSession() returns valid session
+    await mockSupabaseAuth(page);
 
     await page.route('**/v1/**', async (route) => {
       const url = new URL(route.request().url());

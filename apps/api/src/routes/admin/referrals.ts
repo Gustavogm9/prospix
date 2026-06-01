@@ -3,26 +3,13 @@
  * Gate: requireRole(['GUILDS_ADMIN']) herdado do plugin pai.
  *
  * Endpoints:
- *  - GET /referrals       · lista leads com source=REFERRAL cross-tenant
- *  - GET /referrals/stats · estatísticas de indicações (conversão, coletadas, top tenants)
+ *  - GET /referrals       → lista leads com source=REFERRAL cross-tenant
+ *  - GET /referrals/stats → estatísticas de indicações (conversão, coletadas, top tenants)
  */
 import { type FastifyInstance, type FastifyRequest, type FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { prisma } from '../../lib/prisma.js';
+import { dbAdmin } from '../../lib/db.js';
 import { logger } from '../../lib/logger.js';
-import { tenantContextStorage } from '../../lib/tenant-context-storage.js';
-
-/* ------------------------------------------------------------------ */
-/* RLS bypass helper                                                   */
-/* ------------------------------------------------------------------ */
-
-function withAdminRole<TResult>(operation: (tx: typeof prisma) => Promise<TResult>): Promise<TResult> {
-  const store = tenantContextStorage.getStore();
-  return tenantContextStorage.run(
-    { tenantId: store?.tenantId ?? null, userId: store?.userId ?? null, bypassRls: true },
-    () => operation(prisma)
-  );
-}
 
 /* ------------------------------------------------------------------ */
 /* Query schemas                                                       */
@@ -59,43 +46,32 @@ export function registerAdminReferralsRoutes(app: FastifyInstance): void {
     const { tenantId, from, to, limit, offset } = parsed.data;
 
     try {
-      const where: Record<string, unknown> = { source: 'REFERRAL' };
-      if (tenantId) where.tenantId = tenantId;
+      let query = dbAdmin
+        .from('leads')
+        .select('id, name, whatsapp, email, status, source, profession, tenant_id, created_at, tenants(id, name, slug)')
+        .eq('source', 'REFERRAL')
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1);
 
-      if (from || to) {
-        const createdAtFilter: Record<string, Date> = {};
-        if (from) createdAtFilter.gte = new Date(from);
-        if (to) createdAtFilter.lte = new Date(to);
-        where.createdAt = createdAtFilter;
-      }
+      if (tenantId) query = query.eq('tenant_id', tenantId);
+      if (from) query = query.gte('created_at', new Date(from).toISOString());
+      if (to) query = query.lte('created_at', new Date(to).toISOString());
 
-      const [items, total] = await withAdminRole(async (tx) => {
-        return Promise.all([
-          tx.lead.findMany({
-            where,
-            select: {
-              id: true,
-              name: true,
-              whatsapp: true,
-              email: true,
-              status: true,
-              source: true,
-              profession: true,
-              tenantId: true,
-              createdAt: true,
-              tenant: { select: { id: true, name: true, slug: true } },
-            },
-            orderBy: { createdAt: 'desc' },
-            take: limit,
-            skip: offset,
-          }),
-          tx.lead.count({ where }),
-        ]);
-      });
+      const { data: items, error } = await query;
+      if (error) throw error;
+
+      // Count
+      let countQuery = dbAdmin.from('leads').select('*', { count: 'exact', head: true }).eq('source', 'REFERRAL');
+      if (tenantId) countQuery = countQuery.eq('tenant_id', tenantId);
+      if (from) countQuery = countQuery.gte('created_at', new Date(from).toISOString());
+      if (to) countQuery = countQuery.lte('created_at', new Date(to).toISOString());
+
+      const { count: total, error: countErr } = await countQuery;
+      if (countErr) throw countErr;
 
       return reply.send({
         data: {
-          items: items.map((l) => ({
+          items: (items ?? []).map((l: any) => ({
             id: l.id,
             name: l.name,
             whatsapp: l.whatsapp,
@@ -103,15 +79,15 @@ export function registerAdminReferralsRoutes(app: FastifyInstance): void {
             status: l.status,
             source: l.source,
             profession: l.profession,
-            tenantId: l.tenantId,
-            tenant: l.tenant,
-            createdAt: l.createdAt.toISOString(),
+            tenantId: l.tenant_id,
+            tenant: l.tenants,
+            createdAt: l.created_at,
           })),
-          pagination: { total, limit, offset, hasMore: offset + items.length < total },
+          pagination: { total: total ?? 0, limit, offset, hasMore: offset + (items?.length ?? 0) < (total ?? 0) },
         },
       });
     } catch (err) {
-      logger.error({ err }, 'admin/referrals · GET failed');
+      logger.error({ err }, 'admin/referrals → GET failed');
       return reply.code(500).send({ error: 'INTERNAL', message: 'Falha ao listar indicações.' });
     }
   });
@@ -122,60 +98,71 @@ export function registerAdminReferralsRoutes(app: FastifyInstance): void {
    */
   app.get('/referrals/stats', async (_req: FastifyRequest, reply: FastifyReply) => {
     try {
-      const stats = await withAdminRole(async (tx) => {
-        const [totalReferrals, converted, meetingsAgg, topTenants] = await Promise.all([
-          // Total leads with source=REFERRAL
-          tx.lead.count({ where: { source: 'REFERRAL' } }),
+      const [totalReferralsRes, convertedRes] = await Promise.all([
+        // Total leads with source=REFERRAL
+        dbAdmin.from('leads').select('*', { count: 'exact', head: true }).eq('source', 'REFERRAL'),
+        // Converted referrals (status in QUALIFIED, MEETING_SCHEDULED, CLOSED_WON)
+        dbAdmin.from('leads').select('*', { count: 'exact', head: true })
+          .eq('source', 'REFERRAL')
+          .in('status', [...CONVERTED_STATUSES]),
+      ]);
 
-          // Converted referrals (status in QUALIFIED, MEETING_SCHEDULED, CLOSED_WON)
-          tx.lead.count({
-            where: {
-              source: 'REFERRAL',
-              status: { in: [...CONVERTED_STATUSES] },
-            },
-          }),
+      const totalReferrals = totalReferralsRes.count ?? 0;
+      const converted = convertedRes.count ?? 0;
 
-          // Sum of referralsCount from Meeting model
-          tx.meeting.aggregate({
-            _sum: { referralsCount: true },
-          }),
-
-          // Top 5 tenants by referral count
-          tx.lead.groupBy({
-            by: ['tenantId'],
-            where: { source: 'REFERRAL' },
-            _count: { id: true },
-            orderBy: { _count: { id: 'desc' } },
-            take: 5,
-          }),
-        ]);
-
-        // Resolve tenant names for top tenants
-        const tenantIds = topTenants.map((t) => t.tenantId);
-        const tenantNames = await tx.tenant.findMany({
-          where: { id: { in: tenantIds } },
-          select: { id: true, name: true },
+      // Sum of referrals_count from Meeting model
+      let referralsCollected = 0;
+      try {
+        const { data: meetingsAggRaw } = await dbAdmin.rpc('exec_sql' as any, {
+          query: `SELECT COALESCE(SUM(referrals_count), 0)::bigint AS total FROM meetings`,
         });
-        const nameMap = new Map(tenantNames.map((t) => [t.id, t.name]));
+        referralsCollected = Number((meetingsAggRaw ?? [{ total: 0 }])[0]?.total ?? 0);
+      } catch { /* ignore */ }
 
-        const conversionRate = totalReferrals > 0 ? Number(((converted / totalReferrals) * 100).toFixed(1)) : 0;
+      // Top 5 tenants by referral count
+      let topTenantsRaw: any[] = [];
+      try {
+        const { data } = await dbAdmin.rpc('exec_sql' as any, {
+          query: `
+            SELECT l.tenant_id, COUNT(l.id)::bigint AS cnt
+            FROM leads l
+            WHERE l.source = 'REFERRAL'
+            GROUP BY l.tenant_id
+            ORDER BY cnt DESC
+            LIMIT 5
+          `,
+        });
+        topTenantsRaw = data ?? [];
+      } catch { /* ignore */ }
 
-        return {
+      // Resolve tenant names
+      const tenantIds = topTenantsRaw.map((t: any) => t.tenant_id);
+      let nameMap = new Map<string, string>();
+      if (tenantIds.length > 0) {
+        const { data: tenantNames } = await dbAdmin
+          .from('tenants')
+          .select('id, name')
+          .in('id', tenantIds);
+        nameMap = new Map((tenantNames ?? []).map((t: any) => [t.id, t.name]));
+      }
+
+      const conversionRate = totalReferrals > 0 ? Number(((converted / totalReferrals) * 100).toFixed(1)) : 0;
+
+      return reply.send({
+        data: {
           totalReferrals,
           converted,
           conversionRate,
-          referralsCollected: meetingsAgg._sum.referralsCount ?? 0,
-          topTenants: topTenants.map((t) => ({
-            tenantId: t.tenantId,
-            tenantName: nameMap.get(t.tenantId) ?? 'Desconhecido',
-            count: t._count.id,
+          referralsCollected,
+          topTenants: topTenantsRaw.map((t: any) => ({
+            tenantId: t.tenant_id,
+            tenantName: nameMap.get(t.tenant_id) ?? 'Desconhecido',
+            count: Number(t.cnt),
           })),
-        };
+        },
       });
-
-      return reply.send({ data: stats });
     } catch (err) {
-      logger.error({ err }, 'admin/referrals/stats · GET failed');
+      logger.error({ err }, 'admin/referrals/stats → GET failed');
       return reply.code(500).send({ error: 'INTERNAL', message: 'Falha ao calcular estatísticas de indicações.' });
     }
   });

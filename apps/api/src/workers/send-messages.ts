@@ -1,12 +1,12 @@
 import { Job } from 'bullmq';
 import { BaseWorker } from './_base-worker.js';
-import { prisma } from '../lib/prisma.js';
+import { dbAdmin } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 import { redis } from '../lib/redis.js';
 import { createEvolutionClient } from '../integrations/evolution.js';
 import { getDecryptedSecrets } from '../tenant/secrets-vault.js';
 import { BaseJobPayload } from '@prospix/shared-types';
-import { CampaignStatus, MessageDeliveryStatus, LeadStatus } from '@prisma/client';
+import { CampaignStatus, MessageDeliveryStatus, LeadStatus } from '@prospix/shared-types';
 import { randomUUID } from 'crypto';
 import { createRescheduledSendWhatsappJobId } from './send-whatsapp-job.js';
 
@@ -99,7 +99,7 @@ export class SendMessagesWorker extends BaseWorker<SendMessagesPayload, SendMess
     if (!acquired) {
       logger.info(
         { tenant_id, conversation_id, message_id, job_id: job.id },
-        '🔒 Tenant send lock is active. Postponing job to maintain strict per-tenant sequential order.'
+        '⏳ Tenant send lock is active. Postponing job to maintain strict per-tenant sequential order.'
       );
       // Reschedule job with a small delay (3 seconds) to allow the active send job to finish
       return this.rescheduleJob(job, 3000);
@@ -107,68 +107,77 @@ export class SendMessagesWorker extends BaseWorker<SendMessagesPayload, SendMess
 
     try {
 
-    // 1. Fetch message and conversation
-    const message = await prisma.message.findUnique({
-      where: { id: message_id },
-      include: { conversation: { include: { lead: true } } },
-    });
+    // 1. Fetch message and conversation with lead
+    const { data: message, error: msgErr } = await dbAdmin
+      .from('messages')
+      .select('*, conversations(*, leads(*))')
+      .eq('id', message_id)
+      .single();
 
-    if (!message || message.tenantId !== tenant_id) {
+    if (msgErr || !message || message.tenant_id !== tenant_id) {
       throw new Error(`Message ${message_id} not found or tenant mismatch`);
     }
 
-    const { conversation } = message;
-    const { lead } = conversation;
+    const conversation = message.conversations as any;
+    const lead = conversation.leads as any;
 
     // Check opt-out status first
-    const isOptedOut = await prisma.optout.findFirst({
-      where: { tenantId: tenant_id, whatsapp: lead.whatsapp },
-    });
+    const { data: isOptedOut } = await dbAdmin
+      .from('optouts')
+      .select('id')
+      .eq('tenant_id', tenant_id)
+      .eq('whatsapp', lead.whatsapp)
+      .limit(1)
+      .single();
 
     if (!force_send_optout_confirmation && (isOptedOut || lead.status === LeadStatus.OPTED_OUT)) {
       logger.warn({ tenant_id, lead_id: lead.id }, '🚫 Lead is opted out. Cancelling send job.');
-      await prisma.message.update({
-        where: { id: message_id },
-        data: {
-          deliveryStatus: MessageDeliveryStatus.FAILED,
-          failedReason: 'lead_opted_out',
-        },
-      });
+      await dbAdmin
+        .from('messages')
+        .update({
+          delivery_status: MessageDeliveryStatus.FAILED,
+          failed_reason: 'lead_opted_out',
+        })
+        .eq('id', message_id);
       return { sent: false, postponed: false, reason: 'lead_opted_out' };
     }
 
     // 2. Fetch Tenant and Secrets
-    const tenant = await prisma.tenant.findUnique({
-      where: { id: tenant_id },
-    });
+    const { data: tenant } = await dbAdmin
+      .from('tenants')
+      .select('*')
+      .eq('id', tenant_id)
+      .single();
 
     if (!tenant) {
       throw new Error(`Tenant not found: ${tenant_id}`);
     }
 
     const decryptedSecrets = await getDecryptedSecrets(tenant_id);
-    const secretRecord = await prisma.tenantSecret.findUnique({
-      where: { tenantId: tenant_id },
-    });
+    const { data: secretRecord } = await dbAdmin
+      .from('tenant_secrets')
+      .select('*')
+      .eq('tenant_id', tenant_id)
+      .single();
 
-    if (!decryptedSecrets?.evolutionApiKey || !secretRecord?.evolutionInstanceName || !secretRecord?.evolutionBaseUrl) {
+    if (!decryptedSecrets?.evolutionApiKey || !secretRecord?.evolution_instance_name || !secretRecord?.evolution_base_url) {
       logger.error({ tenant_id }, '❌ Evolution API secrets not configured properly for tenant');
-      await prisma.message.update({
-        where: { id: message_id },
-        data: {
-          deliveryStatus: MessageDeliveryStatus.FAILED,
-          failedReason: 'evolution_secrets_unconfigured',
-        },
-      });
+      await dbAdmin
+        .from('messages')
+        .update({
+          delivery_status: MessageDeliveryStatus.FAILED,
+          failed_reason: 'evolution_secrets_unconfigured',
+        })
+        .eq('id', message_id);
       return { sent: false, postponed: false, reason: 'secrets_missing' };
     }
 
     // 3. Validation: canSendMessage check (Warmup, off-hours, jitter)
     const evolutionClient = createEvolutionClient();
     const connStateResult = await evolutionClient.getConnectionState({
-      instance: secretRecord.evolutionInstanceName,
+      instance: secretRecord.evolution_instance_name,
       apiKey: decryptedSecrets.evolutionApiKey,
-      baseUrl: secretRecord.evolutionBaseUrl,
+      baseUrl: secretRecord.evolution_base_url,
     });
 
     if (!connStateResult.ok) {
@@ -185,21 +194,22 @@ export class SendMessagesWorker extends BaseWorker<SendMessagesPayload, SendMess
     const qualityRatingKey = `whatsapp:quality:${tenant_id}`;
     const qualityRating = await redis.get(qualityRatingKey);
     if (qualityRating === 'red') {
-      logger.error({ tenant_id }, '🔴 WhatsApp Quality Rating is RED. Pausing campaigns.');
+      logger.error({ tenant_id }, '🚨 WhatsApp Quality Rating is RED. Pausing campaigns.');
       
       // Pause campaign
-      await prisma.campaign.updateMany({
-        where: { tenantId: tenant_id, status: CampaignStatus.ACTIVE },
-        data: { status: CampaignStatus.PAUSED },
-      });
+      await dbAdmin
+        .from('campaigns')
+        .update({ status: CampaignStatus.PAUSED })
+        .eq('tenant_id', tenant_id)
+        .eq('status', CampaignStatus.ACTIVE);
 
-      await prisma.message.update({
-        where: { id: message_id },
-        data: {
-          deliveryStatus: MessageDeliveryStatus.FAILED,
-          failedReason: 'instance_quality_red',
-        },
-      });
+      await dbAdmin
+        .from('messages')
+        .update({
+          delivery_status: MessageDeliveryStatus.FAILED,
+          failed_reason: 'instance_quality_red',
+        })
+        .eq('id', message_id);
 
       return { sent: false, postponed: false, reason: 'quality_red_paused' };
     }
@@ -208,10 +218,10 @@ export class SendMessagesWorker extends BaseWorker<SendMessagesPayload, SendMess
     const todayCountKey = `tenant-warmup-count:${tenant_id}:${new Date().toISOString().split('T')[0]}`;
     const todayCountRaw = await redis.get(todayCountKey);
     const todayCount = todayCountRaw ? parseInt(todayCountRaw, 10) : 0;
-    const dailyLimit = getAquecimentoLimit(tenant.whatsappWarmupDay);
+    const dailyLimit = getAquecimentoLimit(tenant.whatsapp_warmup_day);
 
     if (todayCount >= dailyLimit) {
-      logger.warn({ tenant_id, todayCount, dailyLimit }, '🚫 Daily warmup limit reached. Postponing...');
+      logger.warn({ tenant_id, todayCount, dailyLimit }, '⏸️ Daily warmup limit reached. Postponing...');
       
       // Reschedule for next calendar day (tomorrow 9:00 AM)
       const tomorrow9am = new Date();
@@ -231,7 +241,7 @@ export class SendMessagesWorker extends BaseWorker<SendMessagesPayload, SendMess
 
       if (secondsAgo < minJitter) {
         const waitMs = Math.round((minJitter - secondsAgo) * 1000);
-        logger.info({ tenant_id, secondsAgo, minJitter, waitMs }, '⏳ Throttling for jitter limit. Re-scheduling...');
+        logger.info({ tenant_id, secondsAgo, minJitter, waitMs }, '⏱ Throttling for jitter limit. Re-scheduling...');
         return this.rescheduleJob(job, waitMs);
       }
     }
@@ -251,61 +261,61 @@ export class SendMessagesWorker extends BaseWorker<SendMessagesPayload, SendMess
       const nextStart = getNextWindowStart(now);
       const idempotencyKey = `pending-outbound:${message_id}`;
 
-      await prisma.pendingOutbound.create({
-        data: {
-          tenantId: tenant_id,
-          conversationId: conversation_id,
+      await dbAdmin
+        .from('pending_outbound')
+        .insert({
+          tenant_id: tenant_id,
+          conversation_id: conversation_id,
           content: message.content,
-          scheduledFor: nextStart,
-          idempotencyKey,
-        },
-      });
+          scheduled_for: nextStart.toISOString(),
+          idempotency_key: idempotencyKey,
+        } as any);
 
-      await prisma.message.update({
-        where: { id: message_id },
-        data: {
-          deliveryStatus: MessageDeliveryStatus.QUEUED,
-          failedReason: 'postponed_off_hours',
-        },
-      });
+      await dbAdmin
+        .from('messages')
+        .update({
+          delivery_status: MessageDeliveryStatus.QUEUED,
+          failed_reason: 'postponed_off_hours',
+        })
+        .eq('id', message_id);
 
       return { sent: false, postponed: true, reason: 'off_hours_scheduled_pending' };
     }
 
     // 4. Send Message via Evolution Client
-    logger.info({ tenant_id, message_id, recipient: redactPhoneForLog(lead.whatsapp) }, '🚀 Delivering message via Evolution API');
+    logger.info({ tenant_id, message_id, recipient: redactPhoneForLog(lead.whatsapp) }, '📤 Delivering message via Evolution API');
 
     const result = await evolutionClient.sendText({
-      instance: secretRecord.evolutionInstanceName,
+      instance: secretRecord.evolution_instance_name,
       apiKey: decryptedSecrets.evolutionApiKey,
-      baseUrl: secretRecord.evolutionBaseUrl,
+      baseUrl: secretRecord.evolution_base_url,
       number: lead.whatsapp,
       text: message.content,
     });
 
     if (!result.ok) {
       logger.error({ tenant_id, err: result.error.message }, '❌ Failed to deliver message');
-      await prisma.message.update({
-        where: { id: message_id },
-        data: {
-          deliveryStatus: MessageDeliveryStatus.FAILED,
-          failedReason: result.error.message,
-        },
-      });
+      await dbAdmin
+        .from('messages')
+        .update({
+          delivery_status: MessageDeliveryStatus.FAILED,
+          failed_reason: result.error.message,
+        })
+        .eq('id', message_id);
       return { sent: false, postponed: false, reason: result.error.message };
     }
 
     // 5. Success Registration & Counters
     const whatsappMessageId = result.value.messageId;
 
-    await prisma.message.update({
-      where: { id: message_id },
-      data: {
-        deliveryStatus: MessageDeliveryStatus.SENT,
-        whatsappMessageId,
-        deliveredAt: new Date(),
-      },
-    });
+    await dbAdmin
+      .from('messages')
+      .update({
+        delivery_status: MessageDeliveryStatus.SENT,
+        whatsapp_message_id: whatsappMessageId,
+        delivered_at: new Date().toISOString(),
+      })
+      .eq('id', message_id);
 
     // Update throttle caches in Redis
     await redis.set(lastSendKey, Date.now().toString());

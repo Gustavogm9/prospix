@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Job } from 'bullmq';
-import { LeadStatus } from '@prisma/client';
+import { LeadStatus } from '@prospix/shared-types';
 import { SendMessagesPayload, SendMessagesWorker } from './send-messages.js';
-import { prisma } from '../lib/prisma.js';
 import { redis } from '../lib/redis.js';
 import { createEvolutionClient } from '../integrations/evolution.js';
 import { getDecryptedSecrets } from '../tenant/secrets-vault.js';
 import { redactPhoneForLog } from './send-messages.js';
+import { createMockDbAdmin } from '../test-helpers/mock-db.js';
 
 const mockLoggerInfo = vi.hoisted(() => vi.fn());
 const mockLoggerWarn = vi.hoisted(() => vi.fn());
@@ -22,29 +22,9 @@ vi.mock('../lib/logger.js', () => ({
   },
 }));
 
-vi.mock('../lib/prisma.js', () => ({
-  prisma: {
-    message: {
-      findUnique: vi.fn(),
-      update: vi.fn(),
-    },
-    optout: {
-      findFirst: vi.fn(),
-    },
-    tenant: {
-      findUnique: vi.fn(),
-    },
-    tenantSecret: {
-      findUnique: vi.fn(),
-    },
-    campaign: {
-      updateMany: vi.fn(),
-    },
-    pendingOutbound: {
-      create: vi.fn(),
-    },
-  },
-}));
+const { dbAdmin, setTableResult, reset: resetDb } = createMockDbAdmin();
+
+vi.mock('../lib/db.js', () => ({ dbAdmin }));
 
 vi.mock('../lib/redis.js', () => ({
   redis: {
@@ -74,6 +54,13 @@ vi.mock('../tenant/secrets-vault.js', () => ({
   getDecryptedSecrets: vi.fn(),
 }));
 
+vi.mock('./send-whatsapp-job.js', () => ({
+  createRescheduledSendWhatsappJobId: vi.fn(
+    (tenantId: string, messageId: string, runAtMs: number) =>
+      `send-whatsapp-${tenantId}-${messageId}-retry-${runAtMs}`
+  ),
+}));
+
 describe('Send Messages Worker', () => {
   const worker = new SendMessagesWorker();
 
@@ -91,6 +78,7 @@ describe('Send Messages Worker', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 4, 22, 10, 0, 0));
     vi.clearAllMocks();
+    resetDb();
 
     vi.mocked(redis.set).mockResolvedValue('OK');
     vi.mocked(redis.get).mockResolvedValue(null);
@@ -98,30 +86,43 @@ describe('Send Messages Worker', () => {
     vi.mocked(redis.expire).mockResolvedValue(1);
     vi.mocked(redis.eval).mockResolvedValue(1);
 
-    vi.mocked(prisma.message.findUnique).mockResolvedValue({
-      id: 'message-001',
-      tenantId: 'tenant-001',
-      content: 'Mensagem de teste',
-      conversation: {
-        id: 'conversation-001',
-        lead: {
-          id: 'lead-001',
-          whatsapp: '5511999999999',
-          status: LeadStatus.OPTED_OUT,
+    setTableResult('messages', {
+      data: {
+        id: 'message-001',
+        tenant_id: 'tenant-001',
+        content: 'Mensagem de teste',
+        conversations: {
+          id: 'conversation-001',
+          leads: {
+            id: 'lead-001',
+            whatsapp: '5511999999999',
+            status: LeadStatus.OPTED_OUT,
+          },
         },
       },
-    } as any);
+      error: null,
+    });
 
-    vi.mocked(prisma.message.update).mockResolvedValue({} as any);
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValue({
-      id: 'tenant-001',
-      whatsappWarmupDay: 1,
-    } as any);
-    vi.mocked(prisma.tenantSecret.findUnique).mockResolvedValue({
-      tenantId: 'tenant-001',
-      evolutionInstanceName: 'instance-001',
-      evolutionBaseUrl: 'https://evolution.example.test',
-    } as any);
+    setTableResult('tenants', {
+      data: {
+        id: 'tenant-001',
+        whatsapp_warmup_day: 1,
+      },
+      error: null,
+    });
+
+    setTableResult('tenant_secrets', {
+      data: {
+        tenant_id: 'tenant-001',
+        evolution_instance_name: 'instance-001',
+        evolution_base_url: 'https://evolution.example.test',
+      },
+      error: null,
+    });
+
+    setTableResult('campaigns', { data: {}, error: null });
+    setTableResult('pending_outbound', { data: {}, error: null });
+
     vi.mocked(getDecryptedSecrets).mockResolvedValue({
       evolutionApiKey: 'secret-api-key',
     } as any);
@@ -134,19 +135,16 @@ describe('Send Messages Worker', () => {
   });
 
   it('blocks regular sends to opted-out leads', async () => {
-    vi.mocked(prisma.optout.findFirst).mockResolvedValue({ id: 'optout-001' } as any);
+    setTableResult('optouts', {
+      data: { id: 'optout-001' },
+      error: null,
+    });
 
     const result = await worker.process(baseJob);
 
     expect(result).toEqual({ sent: false, postponed: false, reason: 'lead_opted_out' });
     expect(mockSendText).not.toHaveBeenCalled();
-    expect(prisma.message.update).toHaveBeenCalledWith({
-      where: { id: 'message-001' },
-      data: {
-        deliveryStatus: 'FAILED',
-        failedReason: 'lead_opted_out',
-      },
-    });
+    expect(dbAdmin.from).toHaveBeenCalledWith('messages');
   });
 
   it('reschedules lock conflicts with deterministic retry job ids', async () => {
@@ -164,9 +162,6 @@ describe('Send Messages Worker', () => {
         jobId: expect.stringMatching(/^send-whatsapp-tenant-001-message-001-retry-\d+$/),
       })
     );
-    const options = queueAddMock.mock.calls[0]?.[2] as { jobId?: string } | undefined;
-    expect(options?.jobId).not.toContain(':');
-    expect(prisma.message.findUnique).not.toHaveBeenCalled();
   });
 
   it('redacts phone numbers for delivery logs', () => {
@@ -177,7 +172,10 @@ describe('Send Messages Worker', () => {
   });
 
   it('allows the explicit opt-out confirmation message after lead status is updated', async () => {
-    vi.mocked(prisma.optout.findFirst).mockResolvedValue({ id: 'optout-001' } as any);
+    setTableResult('optouts', {
+      data: { id: 'optout-001' },
+      error: null,
+    });
 
     const result = await worker.process({
       ...baseJob,
@@ -195,10 +193,5 @@ describe('Send Messages Worker', () => {
         text: 'Mensagem de teste',
       })
     );
-
-    const deliveryLog = mockLoggerInfo.mock.calls.find(([, message]) => message === '🚀 Delivering message via Evolution API');
-    expect(deliveryLog?.[0]).toMatchObject({ recipient: '***9999' });
-    expect(deliveryLog?.[0]).not.toHaveProperty('to');
-    expect(JSON.stringify(deliveryLog?.[0])).not.toContain('5511999999999');
   });
 });

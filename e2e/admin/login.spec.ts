@@ -10,7 +10,7 @@ test.describe('Admin · login publico', () => {
       if (msg.type() === 'error') consoleErrors.push(msg.text());
     });
 
-    const response = await page.goto('/');
+    const response = await page.goto('/admin/login');
     expect(response?.status()).toBeLessThan(400);
 
     // Espera-se um form de admin login (email + password ou similar)

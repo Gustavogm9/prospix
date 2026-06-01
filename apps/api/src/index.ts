@@ -1,14 +1,13 @@
 import fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
-import jwt from '@fastify/jwt';
+// @fastify/jwt REMOVED — JWT verification now handled by Supabase Auth
 import rateLimit from '@fastify/rate-limit';
 
 import { env } from './config/env.js';
 import { logger } from './lib/logger.js';
-import { prisma } from './lib/prisma.js';
+import { dbAdmin } from './lib/db.js';
 import { redis } from './lib/redis.js';
-import { tenantContextStorage } from './lib/tenant-context-storage.js';
 import { initAlertSinks } from './lib/alert-sink.js';
 
 import { tenantContext } from './middlewares/tenant-context.js';
@@ -94,30 +93,10 @@ async function bootstrap() {
     keyGenerator: (req) => req.ip,
   });
 
-  // 2. Register JWT Authentication (RS256)
-  const privateKey = env.JWT_PRIVATE_KEY.replace(/\\n/g, '\n');
-  const publicKey = env.JWT_PUBLIC_KEY.replace(/\\n/g, '\n');
-
-  await app.register(jwt, {
-    secret: {
-      private: privateKey,
-      public: publicKey,
-    },
-    sign: { algorithm: 'RS256', expiresIn: env.JWT_EXPIRES_IN },
-    verify: { algorithms: ['RS256'] },
-  });
-
-  // 3. Register global Hooks and Middlewares
-  // Idempotency plugin first (it checks and wraps the response)
+  // 2. Tenant Context preHandler hook (Supabase JWT verification happens inside)
   await app.register(idempotencyPlugin);
-  
-  // Tenant Context & RLS preHandler hook
-  app.addHook('preHandler', async (request, reply) => {
-    if (request.url.startsWith('/v1/auth/')) {
-      tenantContextStorage.enterWith({ tenantId: null, bypassRls: true });
-      return;
-    }
 
+  app.addHook('preHandler', async (request, reply) => {
     return tenantContext(request, reply);
   });
 
@@ -156,8 +135,9 @@ async function bootstrap() {
 
   app.get('/ready', async (_req, reply) => {
     try {
-      // Check database connection
-      await prisma.$queryRaw`SELECT 1`;
+      // Check database connection via Supabase
+      const { error: dbError } = await dbAdmin.from('tenants').select('id').limit(1);
+      if (dbError) throw new Error(`DB check failed: ${dbError.message}`);
       
       // Check redis connection
       const redisStatus = await redis.ping();

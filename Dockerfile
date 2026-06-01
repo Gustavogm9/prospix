@@ -7,13 +7,11 @@ WORKDIR /usr/src/app
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.base.json ./
 COPY packages/shared-types/package.json ./packages/shared-types/
 COPY apps/api/package.json ./apps/api/
-COPY apps/api/prisma ./apps/api/prisma
 RUN pnpm install --frozen-lockfile
 
 RUN rm -rf packages/shared-types/node_modules
 COPY packages/shared-types ./packages/shared-types
 COPY apps/api ./apps/api
-RUN pnpm --filter @prospix/api db:generate
 RUN pnpm --filter @prospix/api build
 
 FROM base AS api
@@ -22,7 +20,6 @@ COPY --from=build /usr/src/app/package.json /usr/src/app/pnpm-workspace.yaml /us
 COPY --from=build /usr/src/app/packages/shared-types ./packages/shared-types
 COPY --from=build /usr/src/app/apps/api ./apps/api
 RUN pnpm install --prod --frozen-lockfile
-RUN pnpm --filter @prospix/api db:generate
 
 # Run as non-root user for security (M-22)
 RUN addgroup --system prospix && adduser --system --ingroup prospix prospix

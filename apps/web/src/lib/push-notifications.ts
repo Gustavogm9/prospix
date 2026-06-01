@@ -29,7 +29,7 @@ export async function subscribeToPush(): Promise<boolean> {
       // Create new subscription using VAPID public key
       // The server should provide this, but for now we generate one
       // In production, set VITE_VAPID_PUBLIC_KEY in env
-      const vapidKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+      const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
       
       if (!vapidKey) {
         console.warn('[Push] VAPID public key not configured. Push notifications disabled.');

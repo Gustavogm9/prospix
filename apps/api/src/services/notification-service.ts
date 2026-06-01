@@ -1,8 +1,8 @@
-import { prisma } from '../lib/prisma.js';
+import { dbAdmin } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 import { env } from '../config/env.js';
 import { createEvolutionClient } from '../integrations/evolution.js';
-import { NotificationChannel } from '@prisma/client';
+import { NotificationChannel } from '@prospix/shared-types';
 
 export interface SendNotificationParams {
   tenantId: string;
@@ -22,24 +22,24 @@ export async function sendNotification(params: SendNotificationParams): Promise<
 
   try {
     // 1. Fetch User details
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-    });
+    const { data: user, error: userErr } = await dbAdmin
+      .from('users')
+      .select('*')
+      .eq('id', userId)
+      .single();
 
-    if (!user || user.deletedAt) {
+    if (userErr || !user || user.deleted_at) {
       logger.warn({ userId }, 'User not found or deleted, skipping notification dispatch');
       return;
     }
 
     // 2. Fetch User Notification Preferences
-    const pref = await prisma.notificationPreference.findUnique({
-      where: {
-        userId_eventType: {
-          userId,
-          eventType: type,
-        },
-      },
-    });
+    const { data: pref } = await dbAdmin
+      .from('notification_preferences')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('event_type', type)
+      .single();
 
     // Default channels to use if no preferences set
     const channels = pref?.enabled !== false
@@ -51,17 +51,18 @@ export async function sendNotification(params: SendNotificationParams): Promise<
     // 3. Channel: PUSH
     if (channels.includes(NotificationChannel.PUSH)) {
       try {
-        await prisma.notification.create({
-          data: {
-            tenantId,
-            userId,
+        const { error: notifErr } = await dbAdmin
+          .from('notifications')
+          .insert({
+            tenant_id: tenantId,
+            user_id: userId,
             type,
             title,
             body,
             data: data ? JSON.stringify(data) : undefined,
             link,
-          },
-        });
+          } as any);
+        if (notifErr) throw notifErr;
       } catch (err) {
         logger.error({ err, userId }, 'Failed to create in-app notification record');
       }

@@ -1,5 +1,8 @@
+'use client';
+
 import { useEffect, useState } from 'react';
-import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
+import Link from 'next/link';
+import { useRouter, usePathname } from 'next/navigation';
 import { useAuthStore } from '../store/auth-store';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import {
@@ -50,10 +53,14 @@ interface MenuItem {
   badgeColor?: string;
 }
 
-export default function AppShell() {
+interface AppShellProps {
+  children: React.ReactNode;
+}
+
+export default function AppShell({ children }: AppShellProps) {
   const { user, clearSession } = useAuthStore();
-  const navigate = useNavigate();
-  const location = useLocation();
+  const router = useRouter();
+  const pathname = usePathname() ?? '';
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [counters, setCounters] = useState<AppShellCounters | null>(null);
@@ -137,7 +144,7 @@ export default function AppShell() {
       items: [
         { name: 'Performance', path: '/performance', icon: TrendingUp },
         { name: 'Consumo de IA', path: '/consumo-ia', icon: Cpu },
-        { name: 'App mobile', path: '/app-mobile', icon: Smartphone, badge: 'novo', badgeColor: 'bg-[rgba(232,152,28,0.14)] text-[#A56B0A]' },
+        { name: 'App mobile', path: '/app-mobile', icon: Smartphone, badge: 'novo', badgeColor: 'bg-[rgba(232,152,28,0.14)] text-[#855600]' },
         { name: 'Configurações', path: '/configuracoes', icon: Settings },
       ],
     },
@@ -147,7 +154,7 @@ export default function AppShell() {
 
   const handleLogout = () => {
     clearSession();
-    navigate('/login');
+    router.push('/login');
   };
 
   const getGreeting = () => {
@@ -162,11 +169,11 @@ export default function AppShell() {
       const Icon = item.icon;
       const active = isActive(item.path);
       return (
-        <NavLink
+        <Link
           key={item.path}
-          to={item.path}
+          href={item.path}
           onClick={onItemClick}
-          className={() =>
+          className={
             `flex items-center justify-between px-3.5 py-2.5 rounded-xl text-[13px] font-medium transition-all group ${
               active
                 ? 'bg-primary text-white shadow-sm'
@@ -185,7 +192,7 @@ export default function AppShell() {
               {item.badge}
             </span>
           )}
-        </NavLink>
+        </Link>
       );
     })
   );
@@ -216,7 +223,7 @@ export default function AppShell() {
                 </div>
               )}
               <div className="space-y-0.5">
-                {renderNav(section.items, (path) => location.pathname === path)}
+                {renderNav(section.items, (path) => pathname === path)}
               </div>
             </div>
           ))}
@@ -243,7 +250,7 @@ export default function AppShell() {
             />
             <div className="min-w-0 flex-1">
               <p className="text-xs font-semibold text-text truncate leading-none mb-1">{user?.name || 'Corretor'}</p>
-              <p className="text-[10px] text-[#A56B0A] truncate leading-none font-semibold">Plano Profissional</p>
+              <p className="text-[10px] text-[#855600] truncate leading-none font-semibold">Plano Profissional</p>
             </div>
           </div>
           <button
@@ -287,7 +294,7 @@ export default function AppShell() {
                       {section.label}
                     </div>
                   )}
-                  {renderNav(section.items, (path) => location.pathname === path, () => setIsMobileMenuOpen(false))}
+                  {renderNav(section.items, (path) => pathname === path, () => setIsMobileMenuOpen(false))}
                 </div>
               ))}
             </nav>
@@ -345,7 +352,7 @@ export default function AppShell() {
                     {searchResults.map((r, i) => (
                       <button
                         key={i}
-                        onClick={() => { navigate(r.path); setGlobalSearch(''); setIsSearchFocused(false); }}
+                        onClick={() => { router.push(r.path); setGlobalSearch(''); setIsSearchFocused(false); }}
                         className="w-full text-left px-4 py-2.5 text-[12px] text-[#0F172A] hover:bg-[rgba(27,58,107,0.04)] flex items-center gap-2 transition-colors border-b border-[#EEF0F3] last:border-0"
                       >
                         <Search className="w-3 h-3 text-[#94A3B8]" />
@@ -361,7 +368,7 @@ export default function AppShell() {
           <div className="flex items-center gap-3">
             {/* Tour button */}
             <button
-              className="hidden sm:inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-[12.5px] font-semibold text-[#A56B0A] bg-[rgba(232,152,28,0.14)] border border-[rgba(232,152,28,0.3)] hover:bg-[rgba(232,152,28,0.22)] transition-all hover:-translate-y-0.5"
+              className="hidden sm:inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-[12.5px] font-semibold text-[#855600] bg-[rgba(232,152,28,0.14)] border border-[rgba(232,152,28,0.3)] hover:bg-[rgba(232,152,28,0.22)] transition-all hover:-translate-y-0.5"
             >
               <HelpCircle className="w-3.5 h-3.5" />
               Tour de 2min
@@ -369,7 +376,7 @@ export default function AppShell() {
 
             {/* New Campaign button */}
             <button
-              onClick={() => navigate('/campanhas')}
+              onClick={() => router.push('/campanhas')}
               className="hidden sm:inline-flex items-center gap-1.5 h-9 px-3.5 bg-primary hover:bg-[#142C52] text-white text-[12px] font-semibold rounded-lg shadow-sm transition-all hover:-translate-y-0.5"
             >
               <Plus className="w-3.5 h-3.5" />
@@ -413,7 +420,7 @@ export default function AppShell() {
                               if (!n.readAt) {
                                 try { await apiClient.patch(`/tenant/notifications/${n.id}/read`); fetchNotifications(); } catch {}
                               }
-                              if (n.link) navigate(n.link);
+                              if (n.link) router.push(n.link);
                               setIsNotificationsOpen(false);
                             }}
                           >
@@ -448,11 +455,11 @@ export default function AppShell() {
                 </button>
               }
             >
-              <DropdownItem onClick={() => navigate('/configuracoes')}>
+              <DropdownItem onClick={() => router.push('/configuracoes')}>
                 <User className="w-3.5 h-3.5 mr-2" />
                 Meu Perfil
               </DropdownItem>
-              <DropdownItem onClick={() => navigate('/configuracoes?tab=integracoes')}>
+              <DropdownItem onClick={() => router.push('/configuracoes?tab=integracoes')}>
                 <Settings className="w-3.5 h-3.5 mr-2" />
                 Integrações
               </DropdownItem>
@@ -466,7 +473,7 @@ export default function AppShell() {
 
         {/* Page Content */}
         <main className="flex-1 p-5 md:p-6 overflow-y-auto max-w-[1400px] w-full mx-auto">
-          <Outlet />
+          {children}
         </main>
       </div>
     </div>

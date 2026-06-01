@@ -1,12 +1,20 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
+import { supabaseAdmin } from '../lib/supabase.js';
 
 /**
  * Middleware helper to manually enforce JWT verification on bypassed routes if needed.
+ * Uses Supabase Auth to verify the token (replaces @fastify/jwt verify).
  */
 export async function verifyJWT(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  try {
-    await (req as any).jwtVerify();
-  } catch {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    return reply.code(401).send({ error: 'Unauthorized', message: 'Missing or invalid token' });
+  }
+
+  const token = authHeader.slice(7);
+  const { error } = await supabaseAdmin.auth.getUser(token);
+
+  if (error) {
     return reply.code(401).send({ error: 'Unauthorized', message: 'Invalid or expired token' });
   }
 }

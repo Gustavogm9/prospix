@@ -1,9 +1,9 @@
 import { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { prisma } from '../../lib/prisma.js';
+import { getDb } from '../../lib/db.js';
 import { logger } from '../../lib/logger.js';
 import { redis } from '../../lib/redis.js';
-import { NotificationChannel } from '@prisma/client';
+import { NotificationChannel } from '@prospix/shared-types';
 
 export const notificationsRoutes: FastifyPluginAsync = async (app) => {
   // Enforce auth
@@ -16,10 +16,14 @@ export const notificationsRoutes: FastifyPluginAsync = async (app) => {
   // GET /v1/tenant/notifications/preferences - Get notification preferences for logged user
   app.get('/preferences', async (req: FastifyRequest, reply: FastifyReply) => {
     const userId = req.userId!;
-    
-    const preferences = await prisma.notificationPreference.findMany({
-      where: { userId },
-    });
+    const db = getDb(req);
+
+    const { data: preferences, error } = await db
+      .from('notification_preferences')
+      .select('*')
+      .eq('user_id', userId);
+
+    if (error) throw error;
 
     return reply.send({ data: preferences });
   });
@@ -33,7 +37,8 @@ export const notificationsRoutes: FastifyPluginAsync = async (app) => {
 
   app.put('/preferences', async (req: FastifyRequest, reply: FastifyReply) => {
     const userId = req.userId!;
-    
+    const db = getDb(req);
+
     const parseRes = upsertPreferenceSchema.safeParse(req.body);
     if (!parseRes.success) {
       return reply.code(400).send({ error: 'Validation Error', message: parseRes.error.errors[0]?.message });
@@ -41,24 +46,46 @@ export const notificationsRoutes: FastifyPluginAsync = async (app) => {
 
     const { eventType, channels, enabled } = parseRes.data;
 
-    const preference = await prisma.notificationPreference.upsert({
-      where: {
-        userId_eventType: {
-          userId,
-          eventType,
-        },
-      },
-      create: {
-        userId,
-        eventType,
-        channels,
-        enabled,
-      },
-      update: {
-        channels,
-        enabled,
-      },
-    });
+    // Check if preference exists for this user+eventType
+    const { data: existing } = await db
+      .from('notification_preferences')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('event_type', eventType)
+      .maybeSingle();
+
+    let preference;
+    if (existing) {
+      const { data, error } = await db
+        .from('notification_preferences')
+        .update({
+          channels,
+          enabled,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existing.id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      preference = data;
+    } else {
+      const { data, error } = await db
+        .from('notification_preferences')
+        .insert({
+          id: crypto.randomUUID(),
+          user_id: userId,
+          event_type: eventType,
+          channels,
+          enabled,
+          updated_at: new Date().toISOString(),
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      preference = data;
+    }
 
     logger.info({ userId, eventType, channels }, 'Notification preference updated');
     return reply.send({ data: preference });
@@ -66,17 +93,25 @@ export const notificationsRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /v1/tenant/notifications - List notifications for the logged user
   app.get('/', async (req: FastifyRequest, reply: FastifyReply) => {
-    const notifications = await prisma.notification.findMany({
-      where: { userId: req.userId!, tenantId: req.tenantId! },
-      orderBy: { createdAt: 'desc' },
-      take: 20,
-    });
+    const db = getDb(req);
 
-    const unreadCount = await prisma.notification.count({
-      where: { userId: req.userId!, tenantId: req.tenantId!, readAt: null },
-    });
+    const [notifRes, countRes] = await Promise.all([
+      db.from('notifications')
+        .select('*')
+        .eq('user_id', req.userId!)
+        .eq('tenant_id', req.tenantId!)
+        .order('created_at', { ascending: false })
+        .limit(20),
+      db.from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', req.userId!)
+        .eq('tenant_id', req.tenantId!)
+        .is('read_at', null),
+    ]);
 
-    return reply.send({ data: notifications, unreadCount });
+    if (notifRes.error) throw notifRes.error;
+
+    return reply.send({ data: notifRes.data, unreadCount: countRes.count ?? 0 });
   });
 
   // PATCH /v1/tenant/notifications/:id/read - Mark a notification as read
@@ -88,20 +123,29 @@ export const notificationsRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'Validation Error', message: paramsParsed.error.errors[0]?.message });
     }
 
-    await prisma.notification.update({
-      where: { id: paramsParsed.data.id, tenantId: req.tenantId! },
-      data: { readAt: new Date() },
-    });
+    const db = getDb(req);
+    const { error } = await db
+      .from('notifications')
+      .update({ read_at: new Date().toISOString() })
+      .eq('id', paramsParsed.data.id)
+      .eq('tenant_id', req.tenantId!);
+
+    if (error) throw error;
 
     return reply.send({ success: true });
   });
 
   // POST /v1/tenant/notifications/read-all - Mark all notifications as read
   app.post('/read-all', async (req: FastifyRequest, reply: FastifyReply) => {
-    await prisma.notification.updateMany({
-      where: { userId: req.userId!, tenantId: req.tenantId!, readAt: null },
-      data: { readAt: new Date() },
-    });
+    const db = getDb(req);
+    const { error } = await db
+      .from('notifications')
+      .update({ read_at: new Date().toISOString() })
+      .eq('user_id', req.userId!)
+      .eq('tenant_id', req.tenantId!)
+      .is('read_at', null);
+
+    if (error) throw error;
 
     return reply.send({ success: true });
   });

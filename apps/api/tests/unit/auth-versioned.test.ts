@@ -45,9 +45,14 @@ async function importAppWithMockedAuthRoutes() {
     },
   }));
 
-  vi.doMock('../../src/lib/prisma.js', () => ({
-    prisma: {
-      $queryRaw: vi.fn().mockResolvedValue([1]),
+  vi.doMock('../../src/lib/supabase.js', () => ({
+    supabaseAdmin: {
+      from: vi.fn(() => ({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({ data: [1], error: null }),
+      })),
+      rpc: vi.fn().mockResolvedValue({ data: 1, error: null }),
     },
   }));
 

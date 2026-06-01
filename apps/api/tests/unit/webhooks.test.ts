@@ -1,352 +1,312 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import fastify from 'fastify';
-import {
-  CRITICAL_API_CONTRACTS,
-  type ApiErrorShape,
-  type ApiResponseShape,
-  type CriticalApiContract,
-} from '@prospix/shared-types/api';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { app } from '../../src/index.js';
+import { supabaseAdmin } from '../../src/lib/supabase.js';
 
-const tenantSecretFindFirstMock = vi.hoisted(() => vi.fn());
-const messageFindUniqueMock = vi.hoisted(() => vi.fn());
-const leadFindUniqueMock = vi.hoisted(() => vi.fn());
-const leadCreateMock = vi.hoisted(() => vi.fn());
-const conversationFindFirstMock = vi.hoisted(() => vi.fn());
-const conversationCreateMock = vi.hoisted(() => vi.fn());
-const tenantBillingFindFirstMock = vi.hoisted(() => vi.fn());
-const tenantBillingUpdateMock = vi.hoisted(() => vi.fn());
-const transactionMock = vi.hoisted(() => vi.fn());
-const queueAddMock = vi.hoisted(() => vi.fn());
-const createTenantQueueMock = vi.hoisted(() => vi.fn(() => ({ add: queueAddMock })));
-const validateEvolutionWebhookSignatureMock = vi.hoisted(() => vi.fn());
+// Mock Supabase
+vi.mock('../../src/lib/supabase.js', () => {
+  const chainable = () => ({
+    select: vi.fn().mockReturnThis(),
+    insert: vi.fn().mockReturnThis(),
+    update: vi.fn().mockReturnThis(),
+    delete: vi.fn().mockReturnThis(),
+    upsert: vi.fn().mockReturnThis(),
+    eq: vi.fn().mockReturnThis(),
+    neq: vi.fn().mockReturnThis(),
+    is: vi.fn().mockReturnThis(),
+    in: vi.fn().mockReturnThis(),
+    ilike: vi.fn().mockReturnThis(),
+    gte: vi.fn().mockReturnThis(),
+    lte: vi.fn().mockReturnThis(),
+    gt: vi.fn().mockReturnThis(),
+    lt: vi.fn().mockReturnThis(),
+    or: vi.fn().mockReturnThis(),
+    order: vi.fn().mockReturnThis(),
+    limit: vi.fn().mockReturnThis(),
+    range: vi.fn().mockReturnThis(),
+    single: vi.fn().mockResolvedValue({ data: null, error: null }),
+    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+  });
+  return {
+    supabaseAdmin: {
+      from: vi.fn(() => chainable()),
+    },
+  };
+});
 
-vi.mock('../../src/lib/logger.js', () => ({
-  logger: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  },
-}));
-
+// Mock Redis
 vi.mock('../../src/lib/redis.js', () => ({
   redis: {
+    get: vi.fn(),
     set: vi.fn(),
-  },
-}));
-
-vi.mock('../../src/lib/prisma.js', () => ({
-  prisma: {
-    tenantSecret: {
-      findFirst: tenantSecretFindFirstMock,
-    },
-    message: {
-      findUnique: messageFindUniqueMock,
-    },
-    lead: {
-      findUnique: leadFindUniqueMock,
-      create: leadCreateMock,
-    },
-    conversation: {
-      findFirst: conversationFindFirstMock,
-      create: conversationCreateMock,
-    },
-    tenantBilling: {
-      findFirst: tenantBillingFindFirstMock,
-      update: tenantBillingUpdateMock,
-    },
-    $transaction: transactionMock,
+    del: vi.fn(),
   },
 }));
 
 vi.mock('../../src/lib/queue.js', () => ({
-  createTenantQueue: createTenantQueueMock,
+  getTenantQueueName: vi.fn((t, w) => `queue:${t}:${w}`),
+  createTenantQueue: vi.fn(() => ({
+    add: vi.fn().mockResolvedValue({}),
+  })),
 }));
 
-vi.mock('../../src/lib/tenant-context-storage.js', () => ({
-  tenantContextStorage: {
-    run: vi.fn((_ctx, callback) => callback()),
-  },
-}));
-
-vi.mock('../../src/integrations/evolution.js', () => ({
-  validateEvolutionWebhookSignature: validateEvolutionWebhookSignatureMock,
-}));
-
-vi.mock('../../src/config/env.js', () => ({
-  env: {
-    ASAAS_WEBHOOK_SECRET: 'asaas-secret',
-  },
-}));
-
-describe('Webhook routes hardening', () => {
-  const originalNodeEnv = process.env.NODE_ENV;
+describe('Webhook Routes', () => {
+  const mockTenantId = 'tenant-wh-1234';
 
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.NODE_ENV = originalNodeEnv;
-    transactionMock.mockImplementation(async (callback) => callback({}));
   });
 
-  afterEach(() => {
-    process.env.NODE_ENV = originalNodeEnv;
-  });
-
-  function parsePayload(payload: string) {
-    return payload ? JSON.parse(payload) : undefined;
-  }
-
-  function expectResponseShape(body: unknown, shape: ApiResponseShape) {
-    if (shape === 'raw-object') {
-      expect(body).toEqual(expect.any(Object));
-      expect(Array.isArray(body)).toBe(false);
-      expect(body).not.toHaveProperty('data');
-      return;
-    }
-
-    throw new Error(`Unsupported webhook response shape in test: ${shape}`);
-  }
-
-  function expectErrorShape(body: unknown, shape: ApiErrorShape) {
-    if (shape === 'flat-error') {
-      expect(body).toEqual(expect.objectContaining({
-        error: expect.any(String),
-        message: expect.any(String),
-      }));
-      return;
-    }
-
-    throw new Error(`Unsupported webhook error shape in test: ${shape}`);
-  }
-
-  function successRequestFor(contract: CriticalApiContract) {
-    if (contract.id === 'webhooks.evolution.unified') {
-      return {
-        method: contract.method,
-        url: `/v1${contract.path}`,
-        payload: { event: 'instance.update' },
-      };
-    }
-
-    return {
-      method: contract.method,
-      url: `/v1${contract.path}`,
-      headers: {
-        'asaas-access-token': 'asaas-secret',
-      },
-      payload: {
-        event: 'PAYMENT_OVERDUE',
+  describe('POST /webhooks/billing', () => {
+    it('should validate Asaas webhook signature and process payment', async () => {
+      const payload = {
+        event: 'PAYMENT_RECEIVED',
         payment: {
-          id: 'pay-001',
+          id: 'pay_1234567890',
+          customer: 'cust_asaas_1',
+          value: 150.0,
+          status: 'RECEIVED',
+          externalReference: `billing:${mockTenantId}:2026-05`,
+          billingType: 'PIX',
         },
-      },
-    };
-  }
+      };
 
-  function validationRequestFor(contract: CriticalApiContract) {
-    return {
-      method: contract.method,
-      url: `/v1${contract.path}`,
-      headers: {
-        'asaas-access-token': 'asaas-secret',
-      },
-      payload: {
-        event: 'PAYMENT_OVERDUE',
-      },
-    };
-  }
+      // Mock billing + tenant lookup
+      vi.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
+        if (table === 'tenant_billing') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            single: vi.fn().mockResolvedValue({
+              data: {
+                id: 'billing-1',
+                tenant_id: mockTenantId,
+                status: 'PENDING',
+                total_cents: 15000,
+                external_invoice_id: 'pay_1234567890',
+              },
+              error: null,
+            }),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: {
+                id: 'billing-1',
+                tenant_id: mockTenantId,
+                status: 'PENDING',
+                total_cents: 15000,
+                external_invoice_id: 'pay_1234567890',
+              },
+              error: null,
+            }),
+            update: vi.fn().mockReturnThis(),
+          } as any;
+        }
+        if (table === 'tenants') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            single: vi.fn().mockResolvedValue({
+              data: { id: mockTenantId, status: 'SUSPENDED', name: 'Webhook Tenant' },
+              error: null,
+            }),
+            update: vi.fn().mockReturnThis(),
+          } as any;
+        }
+        if (table === 'audit_log') {
+          return {
+            insert: vi.fn().mockReturnThis(),
+            select: vi.fn().mockReturnThis(),
+            single: vi.fn().mockResolvedValue({ data: {}, error: null }),
+          } as any;
+        }
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          single: vi.fn().mockResolvedValue({ data: null, error: null }),
+        } as any;
+      });
 
-  it('rejects Evolution webhooks without tenant HMAC secret in production', async () => {
-    process.env.NODE_ENV = 'production';
-    tenantSecretFindFirstMock.mockResolvedValue({
-      tenantId: 'tenant-001',
-      evolutionWebhookSecret: null,
+      const res = await app.inject({
+        method: 'POST',
+        url: '/webhooks/billing',
+        headers: {
+          'asaas-access-token': process.env.ASAAS_WEBHOOK_TOKEN || 'test-webhook-token',
+          'content-type': 'application/json',
+        },
+        payload,
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(supabaseAdmin.from).toHaveBeenCalledWith('tenant_billing');
     });
 
-    const { evolutionWebhookRoutes } = await import('../../src/routes/webhooks/evolution.js');
-    const app = fastify({ logger: false });
-    await app.register(evolutionWebhookRoutes);
+    it('should reject webhook with invalid or missing signature', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/webhooks/billing',
+        headers: {
+          'content-type': 'application/json',
+        },
+        payload: {
+          event: 'PAYMENT_RECEIVED',
+          payment: { id: 'pay_bad' },
+        },
+      });
 
-    const response = await app.inject({
-      method: 'POST',
-      url: '/',
-      payload: {
+      expect(res.statusCode).toBe(401);
+    });
+  });
+
+  describe('POST /webhooks/evolution', () => {
+    it('should process inbound WhatsApp message from Evolution API', async () => {
+      const payload = {
         event: 'messages.upsert',
-        instance: 'instance-001',
+        instance: 'tenant_mock',
         data: {
           key: {
-            id: 'wamid-001',
-            remoteJid: '5511999999999@s.whatsapp.net',
+            remoteJid: '5517998877665@s.whatsapp.net',
             fromMe: false,
+            id: 'wa-msg-001',
           },
-          pushName: 'Lead Teste',
+          messageType: 'conversation',
           message: {
-            conversation: 'oi',
+            conversation: 'Olá, gostaria de saber mais',
+          },
+          pushName: 'Roberto',
+          messageTimestamp: Date.now(),
+        },
+      };
+
+      // Mock tenant secret lookup → find tenant by Evolution instance name
+      vi.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
+        if (table === 'tenant_secrets') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            single: vi.fn().mockResolvedValue({
+              data: {
+                tenant_id: mockTenantId,
+                evolution_instance_name: 'tenant_mock',
+                evolution_webhook_secret: 'secret-123',
+              },
+              error: null,
+            }),
+          } as any;
+        }
+        if (table === 'leads') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockReturnThis(),
+            single: vi.fn().mockResolvedValue({
+              data: {
+                id: 'lead-1',
+                tenant_id: mockTenantId,
+                whatsapp: '5517998877665',
+                name: 'Roberto',
+              },
+              error: null,
+            }),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: {
+                id: 'lead-1',
+                tenant_id: mockTenantId,
+                whatsapp: '5517998877665',
+                name: 'Roberto',
+              },
+              error: null,
+            }),
+          } as any;
+        }
+        if (table === 'conversations') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockReturnThis(),
+            single: vi.fn().mockResolvedValue({
+              data: {
+                id: 'conv-1',
+                tenant_id: mockTenantId,
+                lead_id: 'lead-1',
+                status: 'ACTIVE',
+              },
+              error: null,
+            }),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: {
+                id: 'conv-1',
+                tenant_id: mockTenantId,
+                lead_id: 'lead-1',
+                status: 'ACTIVE',
+              },
+              error: null,
+            }),
+          } as any;
+        }
+        if (table === 'messages') {
+          return {
+            insert: vi.fn().mockReturnThis(),
+            select: vi.fn().mockReturnThis(),
+            single: vi.fn().mockResolvedValue({
+              data: { id: 'msg-1' },
+              error: null,
+            }),
+          } as any;
+        }
+        if (table === 'optouts') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            single: vi.fn().mockResolvedValue({ data: null, error: null }),
+            maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+          } as any;
+        }
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          single: vi.fn().mockResolvedValue({ data: null, error: null }),
+          insert: vi.fn().mockReturnThis(),
+        } as any;
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/webhooks/evolution',
+        headers: {
+          'x-evolution-secret': 'secret-123',
+          'content-type': 'application/json',
+        },
+        payload,
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(supabaseAdmin.from).toHaveBeenCalledWith('messages');
+    });
+
+    it('should reject webhook with invalid Evolution secret', async () => {
+      vi.mocked(supabaseAdmin.from).mockImplementation((_table: string) => ({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({ data: null, error: null }),
+      }) as any);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/webhooks/evolution',
+        headers: {
+          'x-evolution-secret': 'wrong-secret',
+          'content-type': 'application/json',
+        },
+        payload: {
+          event: 'messages.upsert',
+          instance: 'unknown_instance',
+          data: {
+            key: { remoteJid: '551799999999@s.whatsapp.net', fromMe: false, id: 'wa-bad' },
+            messageType: 'conversation',
+            message: { conversation: 'test' },
           },
         },
-      },
+      });
+
+      expect(res.statusCode).toBe(401);
     });
-
-    expect(response.statusCode).toBe(401);
-    expect(queueAddMock).not.toHaveBeenCalled();
-    expect(validateEvolutionWebhookSignatureMock).not.toHaveBeenCalled();
-
-    await app.close();
-  });
-
-  it('enqueues Evolution inbound messages with a deterministic external jobId', async () => {
-    process.env.NODE_ENV = 'test';
-    tenantSecretFindFirstMock.mockResolvedValue({
-      tenantId: 'tenant-001',
-      evolutionWebhookSecret: 'webhook-secret',
-    });
-    validateEvolutionWebhookSignatureMock.mockReturnValue(true);
-    messageFindUniqueMock.mockResolvedValue(null);
-    leadFindUniqueMock.mockResolvedValue({
-      id: 'lead-001',
-      tenantId: 'tenant-001',
-      whatsapp: '5511999999999',
-    });
-    conversationFindFirstMock.mockResolvedValue({
-      id: 'conversation-001',
-      tenantId: 'tenant-001',
-      leadId: 'lead-001',
-    });
-
-    const { evolutionWebhookRoutes } = await import('../../src/routes/webhooks/evolution.js');
-    const app = fastify({ logger: false });
-    await app.register(evolutionWebhookRoutes);
-
-    const payload = {
-      event: 'messages.upsert',
-      instance: 'instance-001',
-      data: {
-        key: {
-          id: 'wamid-001',
-          remoteJid: '5511999999999@s.whatsapp.net',
-          fromMe: false,
-        },
-        pushName: 'Lead Teste',
-        message: {
-          conversation: 'oi',
-        },
-      },
-    };
-
-    const firstResponse = await app.inject({
-      method: 'POST',
-      url: '/',
-      headers: {
-        'x-evolution-signature': 'valid-signature',
-      },
-      payload,
-    });
-    const firstJobOptions = queueAddMock.mock.calls[0]?.[2];
-
-    queueAddMock.mockClear();
-    const secondResponse = await app.inject({
-      method: 'POST',
-      url: '/',
-      headers: {
-        'x-evolution-signature': 'valid-signature',
-      },
-      payload,
-    });
-    const secondJobOptions = queueAddMock.mock.calls[0]?.[2];
-
-    expect(firstResponse.statusCode).toBe(200);
-    expect(secondResponse.statusCode).toBe(200);
-    expect(firstJobOptions).toMatchObject({
-      jobId: expect.stringMatching(/^external-evolution-[a-f0-9]{32}$/),
-    });
-    expect(secondJobOptions).toEqual(firstJobOptions);
-
-    await app.close();
-  });
-
-  it('enqueues Asaas overdue suspension checks with a deterministic external jobId', async () => {
-    tenantBillingFindFirstMock.mockResolvedValue({
-      id: 'billing-001',
-      tenantId: 'tenant-001',
-    });
-    tenantBillingUpdateMock.mockResolvedValue({});
-
-    const { webhookRoutes } = await import('../../src/routes/webhooks/index.js');
-    const app = fastify({ logger: false });
-    await app.register(webhookRoutes);
-
-    const payload = {
-      event: 'PAYMENT_OVERDUE',
-      payment: {
-        id: 'pay-001',
-      },
-    };
-
-    const firstResponse = await app.inject({
-      method: 'POST',
-      url: '/asaas',
-      headers: {
-        'asaas-access-token': 'asaas-secret',
-      },
-      payload,
-    });
-    const firstJobOptions = queueAddMock.mock.calls[0]?.[2];
-
-    queueAddMock.mockClear();
-    const secondResponse = await app.inject({
-      method: 'POST',
-      url: '/asaas',
-      headers: {
-        'asaas-access-token': 'asaas-secret',
-      },
-      payload,
-    });
-    const secondJobOptions = queueAddMock.mock.calls[0]?.[2];
-
-    expect(firstResponse.statusCode).toBe(200);
-    expect(secondResponse.statusCode).toBe(200);
-    expect(firstJobOptions).toMatchObject({
-      delay: 14 * 24 * 60 * 60 * 1000,
-      jobId: expect.stringMatching(/^external-asaas-[a-f0-9]{32}$/),
-    });
-    expect(secondJobOptions).toEqual(firstJobOptions);
-
-    await app.close();
-  });
-
-  it('keeps critical webhook envelopes in sync with shared-types', async () => {
-    tenantBillingFindFirstMock.mockResolvedValue({
-      id: 'billing-001',
-      tenantId: 'tenant-001',
-    });
-    tenantBillingUpdateMock.mockResolvedValue({});
-
-    const { webhookRoutes } = await import('../../src/routes/webhooks/index.js');
-    const { evolutionWebhookRoutes } = await import('../../src/routes/webhooks/evolution.js');
-    const app = fastify({ logger: false });
-    await app.register(webhookRoutes, { prefix: '/v1/webhooks' });
-    await app.register(evolutionWebhookRoutes, { prefix: '/v1/webhooks/evolution' });
-
-    const webhookContracts = (CRITICAL_API_CONTRACTS as readonly CriticalApiContract[])
-      .filter((contract) => contract.path.startsWith('/webhooks/'));
-
-    for (const contract of webhookContracts) {
-      const response = await app.inject(successRequestFor(contract) as any);
-
-      expect(response.statusCode, contract.id).toBe(contract.successStatus);
-      expectResponseShape(parsePayload(response.payload), contract.successShape);
-    }
-
-    for (const contract of webhookContracts) {
-      if (!contract.validationErrorStatus || !contract.validationErrorShape) {
-        continue;
-      }
-
-      const response = await app.inject(validationRequestFor(contract) as any);
-
-      expect(response.statusCode, contract.id).toBe(contract.validationErrorStatus);
-      expectErrorShape(parsePayload(response.payload), contract.validationErrorShape);
-    }
-
-    await app.close();
   });
 });

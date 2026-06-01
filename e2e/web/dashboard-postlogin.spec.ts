@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { authState, MOCK_TENANT_ID } from '../fixtures/auth';
+import { authState, MOCK_TENANT_ID, mockSupabaseAuth } from '../fixtures/auth';
 
 /**
  * Smoke web · pos-login com mock de JWT em localStorage + API mockada.
@@ -25,6 +25,9 @@ test.describe('Web · dashboard pos-login (mocked)', () => {
         /* noop · localStorage indisponivel */
       }
     }, JSON.stringify(authState));
+
+    // Mock Supabase auth so getSession() returns valid session
+    await mockSupabaseAuth(page);
 
     // Mock generico de qualquer chamada /v1/* (catch-all)
     await page.route('**/v1/**', async (route) => {

@@ -12,7 +12,7 @@ import { runAxe } from '../helpers/axe';
 
 test.describe('Admin · A11y (AUD-P3-035)', () => {
   test('login publico sem violacoes critical/serious', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/admin/login');
     await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => { /* networkidle timeout is non-fatal for smoke tests */ });
 
     const { blocking } = await runAxe(page, 'admin/login');
@@ -66,7 +66,7 @@ test.describe('Admin · A11y (AUD-P3-035)', () => {
       });
     });
 
-    await page.goto('/');
+    await page.goto('/admin');
     await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => { /* networkidle timeout is non-fatal for smoke tests */ });
 
     const { blocking } = await runAxe(page, 'admin/tenants');

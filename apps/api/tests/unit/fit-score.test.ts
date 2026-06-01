@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { calculateFitScore, LeadInput, CampaignInput } from '../../src/domain/fit-score.js';
-import { Profession } from '@prisma/client';
+import { Profession } from '@prospix/shared-types';
 
 describe('Fit Score Calculation Algorithm', () => {
   const defaultTenant = {

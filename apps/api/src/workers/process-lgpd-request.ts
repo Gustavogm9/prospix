@@ -1,30 +1,30 @@
 /**
- * Worker · process-lgpd-request (AUD-P2-033 -> Resolvido)
+ * Worker — process-lgpd-request (AUD-P2-033 -> Resolvido)
  *
  * Processa solicitacoes LGPD (`LgpdRequest`) criadas via UX em PrivacyTab:
- *  - EXPORT_DATA       · gera JSON com leads/conversations/meetings/scripts do tenant
- *  - DELETE_LEAD_DATA  · anonimiza lead + apaga mensagens/eventos + insert em optouts
- *  - DELETE_TENANT_DATA · marca tenant como CHURNING (grace 7d antes de delete)
- *  - CORRECT_DATA      · marca REJECTED (requer revisao humana · operador Guilds)
- *  - CONFIRM_DATA      · marca COMPLETED com flag de confirmacao
+ *  - EXPORT_DATA       — gera JSON com leads/conversations/meetings/scripts do tenant
+ *  - DELETE_LEAD_DATA  — anonimiza lead + apaga mensagens/eventos + insert em optouts
+ *  - DELETE_TENANT_DATA — marca tenant como CHURNING (grace 7d antes de delete)
+ *  - CORRECT_DATA      — marca REJECTED (requer revisao humana — operador Guilds)
+ *  - CONFIRM_DATA      — marca COMPLETED com flag de confirmacao
  *
  * Fluxo:
  *  1. POST /v1/tenant/lgpd/requests cria registro PENDING + enfileira job
- *  2. Este worker assume · marca PROCESSING · executa · marca COMPLETED/REJECTED
+ *  2. Este worker assume — marca PROCESSING — executa — marca COMPLETED/REJECTED
  *
  * Idempotencia: jobId determinado por `lgpd-request-${id}`. Re-execucao apos
  * COMPLETED/REJECTED/CANCELED retorna sem efeito (no-op).
  *
- * NOTA: Implementacao "MVP funcional" · uploads para R2 ficam em iteracao futura
+ * NOTA: Implementacao "MVP funcional" — uploads para R2 ficam em iteracao futura
  * (export por enquanto retorna JSON inline em scope.export_data; quando R2 vier,
  * basta substituir o assemble por upload + presigned URL).
  */
 import { BaseWorker } from './_base-worker.js';
-import { prisma } from '../lib/prisma.js';
+import { dbAdmin } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 import { isR2Configured, uploadLgpdExport } from '../lib/r2-storage.js';
 import { notifyCriticalAlert } from '../lib/alert-sink.js';
-import { LgpdRequestType, LgpdRequestStatus, TenantStatus, LeadStatus, Prisma } from '@prisma/client';
+import { LgpdRequestType, LgpdRequestStatus, TenantStatus, LeadStatus } from '@prospix/shared-types';
 import type { Job } from 'bullmq';
 import { BaseJobPayload } from '@prospix/shared-types';
 
@@ -48,14 +48,17 @@ export class ProcessLgpdRequestWorker extends BaseWorker<
   override async process(job: Job<ProcessLgpdRequestPayload>): Promise<ProcessLgpdRequestResult> {
     const { lgpd_request_id, tenant_id } = job.data;
 
-    const request = await prisma.lgpdRequest.findFirst({
-      where: { id: lgpd_request_id, tenantId: tenant_id },
-    });
+    const { data: request, error: reqErr } = await dbAdmin
+      .from('lgpd_requests')
+      .select('*')
+      .eq('id', lgpd_request_id)
+      .eq('tenant_id', tenant_id)
+      .single();
 
-    if (!request) {
+    if (reqErr || !request) {
       logger.warn(
         { tenant_id, lgpd_request_id },
-        'lgpd-worker: request nao encontrado · skipping',
+        'lgpd-worker: request nao encontrado — skipping',
       );
       return { status: 'skipped', request_id: lgpd_request_id, reason: 'request not found' };
     }
@@ -63,7 +66,7 @@ export class ProcessLgpdRequestWorker extends BaseWorker<
     if (request.status !== LgpdRequestStatus.PENDING) {
       logger.info(
         { tenant_id, lgpd_request_id, current_status: request.status },
-        'lgpd-worker: request nao esta PENDING · skipping (idempotencia)',
+        'lgpd-worker: request nao esta PENDING — skipping (idempotencia)',
       );
       return {
         status: 'skipped',
@@ -73,10 +76,11 @@ export class ProcessLgpdRequestWorker extends BaseWorker<
     }
 
     // Marca PROCESSING
-    await prisma.lgpdRequest.update({
-      where: { id: lgpd_request_id },
-      data: { status: LgpdRequestStatus.PROCESSING },
-    });
+    const { error: procErr } = await dbAdmin
+      .from('lgpd_requests')
+      .update({ status: LgpdRequestStatus.PROCESSING })
+      .eq('id', lgpd_request_id);
+    if (procErr) throw procErr;
 
     logger.info(
       { tenant_id, lgpd_request_id, type: request.type },
@@ -109,15 +113,15 @@ export class ProcessLgpdRequestWorker extends BaseWorker<
         'lgpd-worker: processing failed',
       );
 
-      // Marca REJECTED com motivo · operador humano pode reprocessar manualmente
-      await prisma.lgpdRequest.update({
-        where: { id: lgpd_request_id },
-        data: {
+      // Marca REJECTED com motivo — operador humano pode reprocessar manualmente
+      await dbAdmin
+        .from('lgpd_requests')
+        .update({
           status: LgpdRequestStatus.REJECTED,
-          rejectionReason: err instanceof Error ? err.message : 'Unknown processing error',
-          processedAt: new Date(),
-        },
-      });
+          rejection_reason: err instanceof Error ? err.message : 'Unknown processing error',
+          processed_at: new Date().toISOString(),
+        })
+        .eq('id', lgpd_request_id);
 
       return {
         status: 'rejected',
@@ -127,71 +131,50 @@ export class ProcessLgpdRequestWorker extends BaseWorker<
     }
   }
 
-  // ── EXPORT_DATA ───────────────────────────────────────────────────────────
+  // — EXPORT_DATA —
   private async handleExportData(
-    request: { id: string; tenantId: string; scope: Prisma.JsonValue | null },
+    request: { id: string; tenant_id: string; scope: any },
   ): Promise<ProcessLgpdRequestResult> {
     const scope = (request.scope as { include?: string[] } | null) ?? {};
     const include = scope.include ?? ['leads', 'conversations', 'meetings', 'scripts'];
 
-    // Collect data sob tenant_id context (RLS aplicado via _base-worker)
+    // Collect data sob tenant_id context
     const exportPayload: Record<string, unknown> = { exported_at: new Date().toISOString() };
 
     if (include.includes('leads')) {
-      exportPayload.leads = await prisma.lead.findMany({
-        select: {
-          id: true,
-          name: true,
-          whatsapp: true,
-          profession: true,
-          email: true,
-          status: true,
-          fitScore: true,
-          createdAt: true,
-        },
-        take: 10000, // Capped to prevent OOM — full export via R2 streaming in future
-      });
+      const { data } = await dbAdmin
+        .from('leads')
+        .select('id, name, whatsapp, profession, email, status, fit_score, created_at')
+        .eq('tenant_id', request.tenant_id)
+        .limit(10000);
+      exportPayload.leads = data || [];
     }
 
     if (include.includes('conversations')) {
-      const conversations = await prisma.conversation.findMany({
-        select: {
-          id: true,
-          leadId: true,
-          status: true,
-          startedAt: true,
-          messageCount: true,
-        },
-        take: 10000, // Capped to prevent OOM
-      });
-      exportPayload.conversations = conversations;
+      const { data } = await dbAdmin
+        .from('conversations')
+        .select('id, lead_id, status, started_at, message_count')
+        .eq('tenant_id', request.tenant_id)
+        .limit(10000);
+      exportPayload.conversations = data || [];
     }
 
     if (include.includes('meetings')) {
-      exportPayload.meetings = await prisma.meeting.findMany({
-        select: {
-          id: true,
-          leadId: true,
-          scheduledFor: true,
-          status: true,
-          outcome: true,
-          createdAt: true,
-        },
-        take: 5000,
-      });
+      const { data } = await dbAdmin
+        .from('meetings')
+        .select('id, lead_id, scheduled_for, status, outcome, created_at')
+        .eq('tenant_id', request.tenant_id)
+        .limit(5000);
+      exportPayload.meetings = data || [];
     }
 
     if (include.includes('scripts')) {
-      exportPayload.scripts = await prisma.script.findMany({
-        select: {
-          id: true,
-          name: true,
-          category: true,
-          status: true,
-          createdAt: true,
-        },
-        take: 1000,
-      });
+      const { data } = await dbAdmin
+        .from('scripts')
+        .select('id, name, category, status, created_at')
+        .eq('tenant_id', request.tenant_id)
+        .limit(1000);
+      exportPayload.scripts = data || [];
     }
 
     const existingScope =
@@ -199,27 +182,6 @@ export class ProcessLgpdRequestWorker extends BaseWorker<
         ? (request.scope as Record<string, unknown>)
         : {};
 
-    // Se R2 configurado, faz upload + gera presigned URL com TTL 7d.
-    // Caso contrario (dev/test sem R2 creds), mantem JSON inline (MVP fallback).
-    //
-    // ┌─────────────────────────────────────────────────────────────────────┐
-    // │ ⚠️  LGPD INLINE STORAGE LIMITATION (M-9)                          │
-    // │                                                                     │
-    // │ When R2 (Cloudflare) is NOT configured (R2_ACCOUNT_ID,             │
-    // │ R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY unset), the full LGPD       │
-    // │ export payload — including PII (names, phone numbers, emails,      │
-    // │ professions, etc.) — is stored INLINE in the `lgpd_requests`       │
-    // │ table's `scope` JSON column (`scope.export_data`).                 │
-    // │                                                                     │
-    // │ This means:                                                         │
-    // │  • PII persists in the database beyond the download TTL window.    │
-    // │  • Database backups will contain exported PII snapshots.           │
-    // │  • There is no automatic expiration/cleanup of inline data.        │
-    // │                                                                     │
-    // │ For production deployments, R2 MUST be configured so that          │
-    // │ exports are uploaded to object storage with presigned URLs          │
-    // │ and a 7-day TTL, avoiding PII persistence in the DB.              │
-    // └─────────────────────────────────────────────────────────────────────┘
     let downloadUrl: string | null = null;
     let downloadExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     let exportMethod = 'inline-json-fallback';
@@ -228,7 +190,7 @@ export class ProcessLgpdRequestWorker extends BaseWorker<
     if (isR2Configured()) {
       try {
         const upload = await uploadLgpdExport({
-          tenantId: request.tenantId,
+          tenantId: request.tenant_id,
           requestId: request.id,
           payload: exportPayload,
         });
@@ -239,13 +201,12 @@ export class ProcessLgpdRequestWorker extends BaseWorker<
       } catch (uploadErr) {
         logger.error(
           {
-            tenant_id: request.tenantId,
+            tenant_id: request.tenant_id,
             lgpd_request_id: request.id,
             err: uploadErr instanceof Error ? { message: uploadErr.message } : uploadErr,
           },
-          'lgpd-worker: R2 upload failed · falling back to inline JSON',
+          'lgpd-worker: R2 upload failed — falling back to inline JSON',
         );
-        // Continua com fallback inline · nao quebra o request
       }
     }
 
@@ -257,24 +218,25 @@ export class ProcessLgpdRequestWorker extends BaseWorker<
     if (r2Key) {
       updatedScope.export_r2_key = r2Key;
     } else {
-      // Fallback · inline payload
+      // Fallback — inline payload
       updatedScope.export_data = exportPayload;
     }
 
-    await prisma.lgpdRequest.update({
-      where: { id: request.id },
-      data: {
+    const { error: updateErr } = await dbAdmin
+      .from('lgpd_requests')
+      .update({
         status: LgpdRequestStatus.COMPLETED,
-        processedAt: new Date(),
-        downloadUrl,
-        downloadExpiresAt,
-        scope: updatedScope as Prisma.InputJsonValue,
-      },
-    });
+        processed_at: new Date().toISOString(),
+        download_url: downloadUrl,
+        download_expires_at: downloadExpiresAt.toISOString(),
+        scope: updatedScope as any,
+      })
+      .eq('id', request.id);
+    if (updateErr) throw updateErr;
 
     logger.info(
       {
-        tenant_id: request.tenantId,
+        tenant_id: request.tenant_id,
         lgpd_request_id: request.id,
         leads_count: Array.isArray(exportPayload.leads) ? exportPayload.leads.length : 0,
         conversations_count: Array.isArray(exportPayload.conversations)
@@ -287,9 +249,9 @@ export class ProcessLgpdRequestWorker extends BaseWorker<
     return { status: 'completed', request_id: request.id };
   }
 
-  // ── DELETE_LEAD_DATA ──────────────────────────────────────────────────────
+  // — DELETE_LEAD_DATA —
   private async handleDeleteLeadData(
-    request: { id: string; tenantId: string; scope: Prisma.JsonValue | null },
+    request: { id: string; tenant_id: string; scope: any },
   ): Promise<ProcessLgpdRequestResult> {
     const scope = (request.scope as { lead_whatsapp?: string } | null) ?? {};
     const leadWhatsapp = scope.lead_whatsapp;
@@ -298,107 +260,135 @@ export class ProcessLgpdRequestWorker extends BaseWorker<
       throw new Error('scope.lead_whatsapp obrigatorio para DELETE_LEAD_DATA');
     }
 
-    const lead = await prisma.lead.findFirst({
-      where: { tenantId: request.tenantId, whatsapp: leadWhatsapp },
-    });
+    const { data: lead, error: leadErr } = await dbAdmin
+      .from('leads')
+      .select('*')
+      .eq('tenant_id', request.tenant_id)
+      .eq('whatsapp', leadWhatsapp)
+      .limit(1)
+      .single();
 
-    if (!lead) {
+    if (leadErr || !lead) {
       throw new Error(`Lead com whatsapp ${leadWhatsapp} nao encontrado neste tenant`);
     }
 
-    // Transacao · anonimiza + delete mensagens/eventos + insert optout
-    await prisma.$transaction(async (tx) => {
-      // Apaga mensagens (Conversations remain como soft-history mas sem mensagens)
-      await tx.message.deleteMany({
-        where: { conversation: { leadId: lead.id } },
-      });
+    // Sequential deletes (replacing $transaction)
+    // Apaga mensagens (Conversations remain como soft-history mas sem mensagens)
+    // First get conversation IDs for this lead
+    const { data: convs } = await dbAdmin
+      .from('conversations')
+      .select('id')
+      .eq('lead_id', lead.id);
+    const convIds = (convs || []).map((c: any) => c.id);
 
-      // Apaga lead_events
-      await tx.leadEvent.deleteMany({ where: { leadId: lead.id } });
+    if (convIds.length > 0) {
+      await dbAdmin
+        .from('messages')
+        .delete()
+        .in('conversation_id', convIds);
+    }
 
-      // Apaga notas
-      await tx.leadNote.deleteMany({ where: { leadId: lead.id } });
+    // Apaga lead_events
+    await dbAdmin
+      .from('lead_events')
+      .delete()
+      .eq('lead_id', lead.id);
 
-      // Apaga conversations (cascade pra messages ja foi)
-      await tx.conversation.deleteMany({ where: { leadId: lead.id } });
+    // Apaga notas
+    await dbAdmin
+      .from('lead_notes')
+      .delete()
+      .eq('lead_id', lead.id);
 
-      // Apaga meetings
-      await tx.meeting.deleteMany({ where: { leadId: lead.id } });
+    // Apaga conversations
+    await dbAdmin
+      .from('conversations')
+      .delete()
+      .eq('lead_id', lead.id);
 
-      // Anonimiza lead row (mantem ID + status pra audit, mas zera PII)
-      await tx.lead.update({
-        where: { id: lead.id },
-        data: {
-          name: '[REDACTED · LGPD]',
-          email: null,
-          metadata: Prisma.JsonNull,
-          status: LeadStatus.ARCHIVED,
-          deletedAt: new Date(),
-        },
-      });
+    // Apaga meetings
+    await dbAdmin
+      .from('meetings')
+      .delete()
+      .eq('lead_id', lead.id);
 
-      // Insert em optouts pra evitar re-abordagem
-      await tx.optout.upsert({
-        where: { tenantId_whatsapp: { tenantId: request.tenantId, whatsapp: leadWhatsapp } },
-        update: { reason: 'LGPD-delete-request', source: 'lgpd_request' },
-        create: {
-          tenantId: request.tenantId,
+    // Anonimiza lead row (mantem ID + status pra audit, mas zera PII)
+    await dbAdmin
+      .from('leads')
+      .update({
+        name: '[REDACTED — LGPD]',
+        email: null,
+        metadata: null,
+        status: LeadStatus.ARCHIVED,
+        deleted_at: new Date().toISOString(),
+      })
+      .eq('id', lead.id);
+
+    // Insert em optouts pra evitar re-abordagem
+    await dbAdmin
+      .from('optouts')
+      .upsert(
+        {
+          tenant_id: request.tenant_id,
           whatsapp: leadWhatsapp,
           reason: 'LGPD-delete-request',
           source: 'lgpd_request',
         },
-      });
-    });
+        { onConflict: 'tenant_id,whatsapp' }
+      );
 
-    await prisma.lgpdRequest.update({
-      where: { id: request.id },
-      data: { status: LgpdRequestStatus.COMPLETED, processedAt: new Date() },
-    });
+    await dbAdmin
+      .from('lgpd_requests')
+      .update({
+        status: LgpdRequestStatus.COMPLETED,
+        processed_at: new Date().toISOString(),
+      })
+      .eq('id', request.id);
 
     logger.info(
-      { tenant_id: request.tenantId, lgpd_request_id: request.id, lead_id: lead.id },
+      { tenant_id: request.tenant_id, lgpd_request_id: request.id, lead_id: lead.id },
       'lgpd-worker: DELETE_LEAD_DATA completed',
     );
 
     return { status: 'completed', request_id: request.id };
   }
 
-  // ── DELETE_TENANT_DATA ────────────────────────────────────────────────────
+  // — DELETE_TENANT_DATA —
   private async handleDeleteTenantData(request: {
     id: string;
-    tenantId: string;
+    tenant_id: string;
   }): Promise<ProcessLgpdRequestResult> {
-    // MVP · marca tenant como CHURNING e enfileira deletion definitiva
-    // apos grace period (PRD G.3 · 7 dias)
-    await prisma.tenant.update({
-      where: { id: request.tenantId },
-      data: { status: TenantStatus.CHURNING },
-    });
+    // MVP — marca tenant como CHURNING e enfileira deletion definitiva
+    // apos grace period (PRD G.3 — 7 dias)
+    await dbAdmin
+      .from('tenants')
+      .update({ status: TenantStatus.CHURNING })
+      .eq('id', request.tenant_id);
 
     const graceUntil = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-    await prisma.lgpdRequest.update({
-      where: { id: request.id },
-      data: {
+    await dbAdmin
+      .from('lgpd_requests')
+      .update({
         status: LgpdRequestStatus.COMPLETED,
-        processedAt: new Date(),
+        processed_at: new Date().toISOString(),
         scope: {
           tenant_marked_churning: true,
           grace_period_until: graceUntil.toISOString(),
-          deletion_after_grace: 'manual · operador Guilds aprova apos 7d',
-        } as Prisma.InputJsonValue,
-      },
-    });
+          deletion_after_grace: 'manual — operador Guilds aprova apos 7d',
+        },
+      })
+      .eq('id', request.id);
 
     logger.warn(
       {
-        tenant_id: request.tenantId,
+        tenant_id: request.tenant_id,
         lgpd_request_id: request.id,
         grace_until: graceUntil.toISOString(),
         alert: true,
         severity: 'critical',
         action_required: 'manual-tenant-deletion-after-grace',
       },
-      'lgpd-worker: DELETE_TENANT_DATA · tenant marked CHURNING (7d grace)',
+      'lgpd-worker: DELETE_TENANT_DATA — tenant marked CHURNING (7d grace)',
     );
 
     // Pluga Sentry/Slack quando configurado
@@ -407,70 +397,83 @@ export class ProcessLgpdRequestWorker extends BaseWorker<
         event_name: 'lgpd:tenant-churning',
         severity: 'critical',
         action_required: 'manual-tenant-deletion-after-grace',
-        tenant_id: request.tenantId,
+        tenant_id: request.tenant_id,
         lgpd_request_id: request.id,
         grace_until: graceUntil.toISOString(),
       },
-      `Tenant ${request.tenantId} solicitou exclusao LGPD · CHURNING por 7d`,
+      `Tenant ${request.tenant_id} solicitou exclusao LGPD — CHURNING por 7d`,
     );
 
     return { status: 'completed', request_id: request.id };
   }
 
-  // ── CORRECT_DATA ──────────────────────────────────────────────────────────
+  // — CORRECT_DATA —
   private async handleCorrectData(request: {
     id: string;
-    tenantId: string;
+    tenant_id: string;
   }): Promise<ProcessLgpdRequestResult> {
-    // Requer revisao humana · auto-corret nao e seguro sem contexto
-    await prisma.lgpdRequest.update({
-      where: { id: request.id },
-      data: {
+    // Requer revisao humana — auto-corret nao e seguro sem contexto
+    await dbAdmin
+      .from('lgpd_requests')
+      .update({
         status: LgpdRequestStatus.REJECTED,
-        processedAt: new Date(),
-        rejectionReason:
+        processed_at: new Date().toISOString(),
+        rejection_reason:
           'Correcao de dados requer revisao humana. Time Guilds entrara em contato em ate 15 dias uteis.',
-      },
-    });
+      })
+      .eq('id', request.id);
 
     logger.info(
-      { tenant_id: request.tenantId, lgpd_request_id: request.id },
+      { tenant_id: request.tenant_id, lgpd_request_id: request.id },
       'lgpd-worker: CORRECT_DATA escalated to human (rejected with reason)',
     );
 
     return { status: 'rejected', request_id: request.id, reason: 'requires human review' };
   }
 
-  // ── CONFIRM_DATA ──────────────────────────────────────────────────────────
+  // — CONFIRM_DATA —
   private async handleConfirmData(request: {
     id: string;
-    tenantId: string;
+    tenant_id: string;
   }): Promise<ProcessLgpdRequestResult> {
-    const counts = await prisma.$transaction([
-      prisma.lead.count(),
-      prisma.conversation.count(),
-      prisma.meeting.count(),
-      prisma.script.count(),
-    ]);
+    const { count: leadsCount } = await dbAdmin
+      .from('leads')
+      .select('*', { count: 'exact', head: true })
+      .eq('tenant_id', request.tenant_id);
 
-    await prisma.lgpdRequest.update({
-      where: { id: request.id },
-      data: {
+    const { count: convsCount } = await dbAdmin
+      .from('conversations')
+      .select('*', { count: 'exact', head: true })
+      .eq('tenant_id', request.tenant_id);
+
+    const { count: meetingsCount } = await dbAdmin
+      .from('meetings')
+      .select('*', { count: 'exact', head: true })
+      .eq('tenant_id', request.tenant_id);
+
+    const { count: scriptsCount } = await dbAdmin
+      .from('scripts')
+      .select('*', { count: 'exact', head: true })
+      .eq('tenant_id', request.tenant_id);
+
+    await dbAdmin
+      .from('lgpd_requests')
+      .update({
         status: LgpdRequestStatus.COMPLETED,
-        processedAt: new Date(),
+        processed_at: new Date().toISOString(),
         scope: {
           confirmation: 'Dados existem no Prospix',
-          tenant_id: request.tenantId,
+          tenant_id: request.tenant_id,
           counts: {
-            leads: counts[0],
-            conversations: counts[1],
-            meetings: counts[2],
-            scripts: counts[3],
+            leads: leadsCount || 0,
+            conversations: convsCount || 0,
+            meetings: meetingsCount || 0,
+            scripts: scriptsCount || 0,
           },
           confirmed_at: new Date().toISOString(),
-        } as Prisma.InputJsonValue,
-      },
-    });
+        },
+      })
+      .eq('id', request.id);
 
     return { status: 'completed', request_id: request.id };
   }

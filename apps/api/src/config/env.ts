@@ -22,11 +22,18 @@ const envSchema = z.object({
   DATABASE_POOL_MIN: z.coerce.number().default(5),
   DATABASE_POOL_MAX: z.coerce.number().default(50),
 
+  // Supabase
+  SUPABASE_URL: z.string().url().min(1, 'SUPABASE_URL is required'),
+  SUPABASE_ANON_KEY: z.string().min(1, 'SUPABASE_ANON_KEY is required'),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1, 'SUPABASE_SERVICE_ROLE_KEY is required'),
+  SUPABASE_JWT_SECRET: z.string().min(1, 'SUPABASE_JWT_SECRET is required'),
+
   REDIS_URL: z.string().url().default('redis://localhost:6379'),
   REDIS_MAX_RETRIES: z.coerce.number().default(10),
 
-  JWT_PRIVATE_KEY: z.string().min(1, 'JWT_PRIVATE_KEY is required'),
-  JWT_PUBLIC_KEY: z.string().min(1, 'JWT_PUBLIC_KEY is required'),
+  // Legacy JWT keys — optional during migration, will be removed after full Supabase Auth adoption
+  JWT_PRIVATE_KEY: z.string().optional().default(''),
+  JWT_PUBLIC_KEY: z.string().optional().default(''),
   JWT_EXPIRES_IN: z.string().default('15m'),
   REFRESH_TOKEN_EXPIRES_IN: z.string().default('30d'),
   MAGIC_LINK_TTL_SECONDS: z.coerce.number().default(600),

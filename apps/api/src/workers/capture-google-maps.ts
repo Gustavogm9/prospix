@@ -1,6 +1,6 @@
 import { Job } from 'bullmq';
 import { BaseWorker } from './_base-worker.js';
-import { prisma } from '../lib/prisma.js';
+import { dbAdmin } from '../lib/db.js';
 import { redis } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
 import { env } from '../config/env.js';
@@ -8,7 +8,7 @@ import { searchPlaces } from '../integrations/google-maps.js';
 import { getDecryptedSecrets } from '../tenant/secrets-vault.js';
 import { createTenantQueue } from '../lib/queue.js';
 import { BaseJobPayload } from '@prospix/shared-types';
-import { LeadSource, LeadStatus } from '@prisma/client';
+import { LeadSource, LeadStatus } from '@prospix/shared-types';
 import dayjs from 'dayjs';
 
 export interface CaptureJobPayload extends BaseJobPayload {
@@ -58,9 +58,6 @@ const PROFESSION_QUERY_KEYWORDS: Record<string, string[]> = {
   ],
 };
 
-// ----------- snip: flat label for display contexts
-// (currently unused but kept for future reference in lead enrichment)
-
 function sanitizeWhatsapp(phone: string | undefined): string | null {
   if (!phone) return null;
   const digits = phone.replace(/[^0-9]/g, '');
@@ -102,29 +99,30 @@ export class CaptureGoogleMapsWorker extends BaseWorker<CaptureJobPayload, Captu
 
     try {
       // 2. Load and validate active campaign
-      const campaign = await prisma.campaign.findUnique({
-        where: { id: campaignId },
-      });
+      const { data: campaign, error: campErr } = await dbAdmin
+        .from('campaigns')
+        .select('*')
+        .eq('id', campaignId)
+        .single();
 
-      if (!campaign || campaign.status !== 'ACTIVE') {
+      if (campErr || !campaign || campaign.status !== 'ACTIVE') {
         logger.warn({ campaignId, status: campaign?.status }, 'Campaign not active or not found');
         return { captured: 0, skipped: 0, queriesRun: 0, status: 'skipped', reason: 'campaign_inactive_or_not_found' };
       }
 
       // 3. Check and respect daily limit
       const todayStart = dayjs().startOf('day').toDate();
-      const countToday = await prisma.lead.count({
-        where: {
-          campaignId: campaign.id,
-          createdAt: { gte: todayStart },
-        },
-      });
+      const { count: countToday } = await dbAdmin
+        .from('leads')
+        .select('*', { count: 'exact', head: true })
+        .eq('campaign_id', campaign.id)
+        .gte('created_at', todayStart.toISOString());
 
-      const remainingLimit = Math.max(0, campaign.dailyLimit - countToday);
+      const remainingLimit = Math.max(0, campaign.daily_limit - (countToday || 0));
       const allowedToCapture = Math.min(max_captures, remainingLimit);
 
       if (allowedToCapture <= 0) {
-        logger.info({ campaignId, dailyLimit: campaign.dailyLimit, countToday }, 'Campaign daily limit reached for today. Skipping.');
+        logger.info({ campaignId, dailyLimit: campaign.daily_limit, countToday }, 'Campaign daily limit reached for today. Skipping.');
         return { captured: 0, skipped: 0, queriesRun: 0, status: 'skipped', reason: 'daily_limit_reached' };
       }
 
@@ -143,7 +141,7 @@ export class CaptureGoogleMapsWorker extends BaseWorker<CaptureJobPayload, Captu
       const queries: string[] = [];
 
       for (const keyword of keywords) {
-        for (const city of campaign.cities) {
+        for (const city of (campaign.cities || []) as string[]) {
           if (campaign.neighborhoods && campaign.neighborhoods.length > 0) {
             for (const neighborhood of campaign.neighborhoods) {
               queries.push(`${keyword} ${neighborhood} ${city}`);
@@ -188,17 +186,19 @@ export class CaptureGoogleMapsWorker extends BaseWorker<CaptureJobPayload, Captu
           .map(p => p.placeId)
           .filter((id): id is string => !!id);
 
-        const existingByWhatsapp = await prisma.lead.findMany({
-          where: { tenantId, whatsapp: { in: batchWhatsapps } },
-          select: { whatsapp: true },
-        });
-        const existingByExtId = await prisma.lead.findMany({
-          where: { tenantId, sourceExternalId: { in: batchExternalIds } },
-          select: { sourceExternalId: true },
-        });
+        const { data: existingByWhatsapp } = await dbAdmin
+          .from('leads')
+          .select('whatsapp')
+          .eq('tenant_id', tenantId)
+          .in('whatsapp', batchWhatsapps);
+        const { data: existingByExtId } = await dbAdmin
+          .from('leads')
+          .select('source_external_id')
+          .eq('tenant_id', tenantId)
+          .in('source_external_id', batchExternalIds);
 
-        const whatsappSet = new Set(existingByWhatsapp.map(l => l.whatsapp));
-        const extIdSet = new Set(existingByExtId.map(l => l.sourceExternalId));
+        const whatsappSet = new Set((existingByWhatsapp || []).map(l => l.whatsapp));
+        const extIdSet = new Set((existingByExtId || []).map(l => l.source_external_id));
 
         for (const place of places) {
           if (totalCaptured >= allowedToCapture) {
@@ -234,75 +234,97 @@ export class CaptureGoogleMapsWorker extends BaseWorker<CaptureJobPayload, Captu
             city = parts[2]?.trim() || '';
           }
 
-          // Insert Lead and Lead Event
-          await prisma.$transaction(async (tx) => {
-            const lead = await tx.lead.create({
-              data: {
-                tenantId,
-                campaignId: campaign.id,
-                source: LeadSource.GOOGLE_MAPS,
-                sourceExternalId: place.placeId,
-                sourceRawData: place as any,
-                name: place.name,
-                profession: campaign.profession,
-                whatsapp: sanitisedPhone,
-                address: {
-                  city,
-                  neighborhood,
-                  street,
-                },
-                googleRating: place.rating ? place.rating : null,
-                googleReviewsCount: place.userRatingCount ? place.userRatingCount : null,
-                status: LeadStatus.CAPTURED,
+          // Insert Lead
+          const { data: lead, error: leadErr } = await dbAdmin
+            .from('leads')
+            .insert({
+              tenant_id: tenantId,
+              campaign_id: campaign.id,
+              source: LeadSource.GOOGLE_MAPS,
+              source_external_id: place.placeId,
+              source_raw_data: place as any,
+              name: place.name,
+              profession: campaign.profession,
+              whatsapp: sanitisedPhone,
+              address: {
+                city,
+                neighborhood,
+                street,
               },
-            });
+              google_rating: place.rating ? place.rating : null,
+              google_reviews_count: place.userRatingCount ? place.userRatingCount : null,
+              status: LeadStatus.CAPTURED,
+            } as any)
+            .select()
+            .single();
 
-            await tx.leadEvent.create({
-              data: {
-                tenantId,
-                leadId: lead.id,
-                eventType: 'captured',
-                payload: {
-                  campaignId: campaign.id,
-                  query,
-                  source: 'google_maps',
-                },
+          if (leadErr) throw leadErr;
+
+          // Insert Lead Event
+          const { error: eventErr } = await dbAdmin
+            .from('lead_events')
+            .insert({
+              tenant_id: tenantId,
+              lead_id: lead.id,
+              event_type: 'captured',
+              payload: {
+                campaignId: campaign.id,
+                query,
+                source: 'google_maps',
               },
-            });
-          });
+            } as any);
+          if (eventErr) throw eventErr;
 
           totalCaptured++;
         }
       }
 
       // 7. Update Campaign totalCaptured count
-      await prisma.campaign.update({
-        where: { id: campaign.id },
-        data: {
-          totalCaptured: { increment: totalCaptured },
-        },
+      // Use rpc or raw increment since Supabase doesn't have { increment: N } syntax
+      const { error: campUpdateErr } = await dbAdmin.rpc('increment_column' as any, {
+        table_name: 'campaigns',
+        column_name: 'total_captured',
+        row_id: campaign.id,
+        amount: totalCaptured,
       });
+
+      // Fallback: if RPC doesn't exist, do a read-update
+      if (campUpdateErr) {
+        const newTotal = (campaign.total_captured || 0) + totalCaptured;
+        await dbAdmin
+          .from('campaigns')
+          .update({ total_captured: newTotal })
+          .eq('id', campaign.id);
+      }
 
       // 8. Update Tenant usage
       const periodMonth = dayjs().startOf('month').toDate();
-      await prisma.tenantUsage.upsert({
-        where: {
-          tenantId_periodMonth: {
-            tenantId,
-            periodMonth,
-          },
-        },
-        create: {
-          tenantId,
-          periodMonth,
-          googleMapsCalls,
-          leadsCapturedCount: totalCaptured,
-        },
-        update: {
-          googleMapsCalls: { increment: googleMapsCalls },
-          leadsCapturedCount: { increment: totalCaptured },
-        },
-      });
+      const { data: existingUsage } = await dbAdmin
+        .from('tenant_usage')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .eq('period_month', periodMonth.toISOString())
+        .single();
+
+      if (existingUsage) {
+        await dbAdmin
+          .from('tenant_usage')
+          .update({
+            google_maps_calls: (existingUsage.google_maps_calls || 0) + googleMapsCalls,
+            leads_captured_count: (existingUsage.leads_captured_count || 0) + totalCaptured,
+          })
+          .eq('tenant_id', tenantId)
+          .eq('period_month', periodMonth.toISOString());
+      } else {
+        await dbAdmin
+          .from('tenant_usage')
+          .insert({
+            tenant_id: tenantId,
+            period_month: periodMonth.toISOString(),
+            google_maps_calls: googleMapsCalls,
+            leads_captured_count: totalCaptured,
+          } as any);
+      }
 
       logger.info(
         { campaignId, captured: totalCaptured, skipped: totalSkipped, calls: googleMapsCalls },

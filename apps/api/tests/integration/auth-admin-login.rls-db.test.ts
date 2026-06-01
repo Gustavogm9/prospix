@@ -1,42 +1,36 @@
 import '../multi-tenant/use-restricted-db.js';
 import '../../src/config/env.js';
 import fastify from 'fastify';
-import fastifyJwt from '@fastify/jwt';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { createClient } from '@supabase/supabase-js';
 import { authRoutes } from '../../src/routes/auth/index.js';
 
 const requireDbEvidence = process.env.AUDIT_REQUIRE_DB === '1' || process.env.CI === 'true';
 
-const db = new PrismaClient({
-  datasources: {
-    db: {
-      url: process.env.DATABASE_URL,
-    },
-  },
-});
+const db = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
 let dbAvailable = true;
 let adminUserId: string | null = null;
 
 async function findSeedAdmin() {
-  return db.$transaction(async (tx) => {
-    await tx.$executeRaw`SET LOCAL ROLE guilds_admin`;
-    return tx.user.findFirst({
-      where: {
-        email: 'gustavo.macedo@guilds.com.br',
-        role: 'GUILDS_ADMIN',
-      },
-      select: { id: true },
-    });
-  });
+  const { data, error } = await db
+    .from('users')
+    .select('id')
+    .eq('email', 'gustavo.macedo@guilds.com.br')
+    .eq('role', 'GUILDS_ADMIN')
+    .limit(1)
+    .single();
+  if (error) throw error;
+  return data;
 }
 
 describe('AUD-P1-017 admin login with RLS-backed database', () => {
   beforeAll(async () => {
     try {
-      await db.$connect();
-      await db.$queryRaw`SELECT 1`;
+      // Verify connection with a simple query
+      const { error } = await db.from('users').select('id').limit(1);
+      if (error) throw error;
+
       const admin = await findSeedAdmin();
       adminUserId = admin?.id ?? null;
 
@@ -53,13 +47,9 @@ describe('AUD-P1-017 admin login with RLS-backed database', () => {
 
   afterAll(async () => {
     if (adminUserId) {
-      await db.$transaction(async (tx) => {
-        await tx.$executeRaw`SET LOCAL ROLE guilds_admin`;
-        await tx.session.deleteMany({ where: { userId: adminUserId! } });
-      });
+      await db.from('sessions').delete().eq('user_id', adminUserId!);
     }
-
-    await db.$disconnect();
+    // Supabase doesn't need explicit disconnection
   });
 
   it('creates an admin session while RLS is active for the app database user', async (context) => {
@@ -69,7 +59,6 @@ describe('AUD-P1-017 admin login with RLS-backed database', () => {
     }
 
     const app = fastify({ logger: false });
-    await app.register(fastifyJwt, { secret: 'admin-login-rls-test-secret' });
     await app.register(authRoutes, { prefix: '/v1/auth' });
     await app.ready();
 
@@ -95,10 +84,11 @@ describe('AUD-P1-017 admin login with RLS-backed database', () => {
       role: 'GUILDS_ADMIN',
     }));
 
-    const sessionCount = await db.$transaction(async (tx) => {
-      await tx.$executeRaw`SET LOCAL ROLE guilds_admin`;
-      return tx.session.count({ where: { userId: adminUserId! } });
-    });
-    expect(sessionCount).toBeGreaterThan(0);
+    const { count, error } = await db
+      .from('sessions')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', adminUserId!);
+    if (error) throw error;
+    expect(count).toBeGreaterThan(0);
   });
 });

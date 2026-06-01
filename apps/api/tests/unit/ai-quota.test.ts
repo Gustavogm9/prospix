@@ -6,24 +6,39 @@ import {
   estimateAICallCostCents,
   getAIPlanLimitCents,
 } from '../../src/ai/quota.js';
-import { prisma } from '../../src/lib/prisma.js';
+import { supabaseAdmin } from '../../src/lib/supabase.js';
 import { redis } from '../../src/lib/redis.js';
 import { getDecryptedSecrets } from '../../src/tenant/secrets-vault.js';
 
-vi.mock('../../src/lib/prisma.js', () => ({
-  prisma: {
-    tenantAIConfig: {
-      findUnique: vi.fn(),
-      create: vi.fn(),
+vi.mock('../../src/lib/supabase.js', () => {
+  const chainable = () => ({
+    select: vi.fn().mockReturnThis(),
+    insert: vi.fn().mockReturnThis(),
+    update: vi.fn().mockReturnThis(),
+    delete: vi.fn().mockReturnThis(),
+    upsert: vi.fn().mockReturnThis(),
+    eq: vi.fn().mockReturnThis(),
+    neq: vi.fn().mockReturnThis(),
+    is: vi.fn().mockReturnThis(),
+    in: vi.fn().mockReturnThis(),
+    ilike: vi.fn().mockReturnThis(),
+    gte: vi.fn().mockReturnThis(),
+    lte: vi.fn().mockReturnThis(),
+    gt: vi.fn().mockReturnThis(),
+    lt: vi.fn().mockReturnThis(),
+    or: vi.fn().mockReturnThis(),
+    order: vi.fn().mockReturnThis(),
+    limit: vi.fn().mockReturnThis(),
+    range: vi.fn().mockReturnThis(),
+    single: vi.fn().mockResolvedValue({ data: null, error: null }),
+    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+  });
+  return {
+    supabaseAdmin: {
+      from: vi.fn(() => chainable()),
     },
-    tenant: {
-      findUnique: vi.fn(),
-    },
-    tenantUsage: {
-      findUnique: vi.fn(),
-    },
-  },
-}));
+  };
+});
 
 vi.mock('../../src/lib/redis.js', () => ({
   redis: {
@@ -59,8 +74,24 @@ describe('AI quota guard', () => {
   });
 
   it('blocks an AI call when the estimated request would exceed the monthly plan limit', async () => {
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValue({ id: 'tenant-1', plan: 'STARTER' } as any);
-    vi.mocked(prisma.tenantUsage.findUnique).mockResolvedValue({ llmCostCents: 4999 } as any);
+    // Mock tenant lookup
+    vi.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
+      if (table === 'tenants') {
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          single: vi.fn().mockResolvedValue({ data: { id: 'tenant-1', plan: 'STARTER' }, error: null }),
+        } as any;
+      }
+      if (table === 'tenant_usage') {
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          single: vi.fn().mockResolvedValue({ data: { llm_cost_cents: 4999 }, error: null }),
+        } as any;
+      }
+      return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: null, error: null }) } as any;
+    });
 
     await expect(assertAIQuotaBeforeCall({
       tenantId: 'tenant-1',
@@ -72,16 +103,40 @@ describe('AI quota guard', () => {
   });
 
   it('lets AIRouter fail before loading secrets or providers when quota is exceeded', async () => {
-    vi.mocked(prisma.tenantAIConfig.findUnique).mockResolvedValue({
-      tenantId: 'tenant-1',
-      systemProvider: 'openai',
-      systemModel: 'gpt-4o-mini',
-      fallbackChain: ['openai'],
-      systemTemperature: 0.4,
-      maxOutputTokens: 4096,
-    } as any);
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValue({ id: 'tenant-1', plan: 'STARTER' } as any);
-    vi.mocked(prisma.tenantUsage.findUnique).mockResolvedValue({ llmCostCents: 4999 } as any);
+    vi.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
+      if (table === 'tenant_ai_configs') {
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          single: vi.fn().mockResolvedValue({
+            data: {
+              tenant_id: 'tenant-1',
+              system_provider: 'openai',
+              system_model: 'gpt-4o-mini',
+              fallback_chain: ['openai'],
+              system_temperature: 0.4,
+              max_output_tokens: 4096,
+            },
+            error: null,
+          }),
+        } as any;
+      }
+      if (table === 'tenants') {
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          single: vi.fn().mockResolvedValue({ data: { id: 'tenant-1', plan: 'STARTER' }, error: null }),
+        } as any;
+      }
+      if (table === 'tenant_usage') {
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          single: vi.fn().mockResolvedValue({ data: { llm_cost_cents: 4999 }, error: null }),
+        } as any;
+      }
+      return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: null, error: null }) } as any;
+    });
 
     await expect(AIRouter.call({
       tenantId: 'tenant-1',

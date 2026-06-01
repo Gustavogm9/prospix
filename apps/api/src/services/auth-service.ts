@@ -1,28 +1,17 @@
 import crypto from 'crypto';
 import { env } from '../config/env.js';
 import { redis } from '../lib/redis.js';
-import { prisma } from '../lib/prisma.js';
+import { supabaseAdmin } from '../lib/supabase.js';
 import { logger } from '../lib/logger.js';
 import { ResultHelper } from '../lib/result.js';
 import { Result } from '@prospix/shared-types';
-import { tenantContextStorage } from '../lib/tenant-context-storage.js';
-import { hashOpaqueToken } from '../lib/crypto.js';
 
-type CreatedSession = {
-  refreshToken: string;
-  accessTokenId: string;
-  expiresAt: Date;
-};
-
-type RlsBypassClient = typeof prisma;
-
-export async function withAuthRlsBypass<TResult>(
-  operation: (client: RlsBypassClient) => Promise<TResult>
-): Promise<TResult> {
-  return tenantContextStorage.run({ tenantId: null, bypassRls: true }, () =>
-    operation(prisma)
-  );
-}
+// =============================================================================
+// Auth Service — Supabase Auth
+// =============================================================================
+// Replaces custom JWT (RS256) + session table + Redis blacklisting.
+// Supabase manages sessions, tokens, and password hashing (bcrypt) natively.
+// =============================================================================
 
 /**
  * Normalizes a WhatsApp number to a clean, digit-only format.
@@ -34,6 +23,8 @@ export function normalizeWhatsappNumber(whatsapp: string): string {
 
 /**
  * Generates a magic link token, saves it in Redis, and sends a WhatsApp message via Evolution API.
+ * NOTE: Magic link via WhatsApp is disabled for now (user decision).
+ * This function is kept for potential future re-enablement.
  */
 export async function sendMagicLink(whatsapp: string): Promise<Result<{ expires_in: number }>> {
   const normalizedNumber = normalizeWhatsappNumber(whatsapp);
@@ -53,17 +44,22 @@ export async function sendMagicLink(whatsapp: string): Promise<Result<{ expires_
     });
   }
 
-  // 1. Verify if user exists (runs with DB role scoped to auth bypass)
-  const user = await withAuthRlsBypass((tx) =>
-    tx.user.findFirst({
-      where: {
-        whatsapp: {
-          contains: normalizedNumber, // match partially to tolerate country code variations
-        },
-      },
-    })
-  );
+  // 1. Verify if user exists using Supabase admin (bypasses RLS)
+  const { data: users, error: lookupError } = await supabaseAdmin
+    .from('users')
+    .select('id, name, whatsapp')
+    .ilike('whatsapp', `%${normalizedNumber}%`)
+    .limit(1);
 
+  if (lookupError || !users || users.length === 0) {
+    logger.warn({ whatsapp: normalizedNumber }, '🔑 Magic Link: User not found');
+    return ResultHelper.failure({
+      code: 'UNAUTHORIZED',
+      message: 'No user registered with this WhatsApp number',
+    });
+  }
+
+  const user = users[0];
   if (!user) {
     logger.warn({ whatsapp: normalizedNumber }, '🔑 Magic Link: User not found');
     return ResultHelper.failure({
@@ -144,129 +140,125 @@ export async function validateMagicLink(
   // 2. Consume token (single-use rule)
   await redis.del(redisKey);
 
-  // 3. Resolve user details (runs with DB role scoped to auth bypass)
-  const user = await withAuthRlsBypass((tx) =>
-    tx.user.findUnique({
-      where: { id: userId },
-      select: { id: true, tenantId: true },
-    })
-  );
+  // 3. Resolve user details using Supabase admin
+  const { data: user, error } = await supabaseAdmin
+    .from('users')
+    .select('id, tenant_id')
+    .eq('id', userId)
+    .single();
 
-  if (!user) {
+  if (error || !user) {
     return ResultHelper.failure({
       code: 'RESOURCE_NOT_FOUND',
       message: 'User no longer exists',
     });
   }
 
-  logger.info({ userId: user.id, tenantId: user.tenantId }, '🔑 Magic Link token validated successfully');
+  logger.info({ userId: user.id, tenantId: user.tenant_id }, '🔑 Magic Link token validated successfully');
 
   return ResultHelper.success({
     user_id: user.id,
-    tenant_id: user.tenantId,
+    tenant_id: user.tenant_id,
   });
 }
 
-async function createSessionRecord(
-  client: RlsBypassClient,
-  params: {
-    userId: string;
-    ipAddress?: string;
-    userAgent?: string;
-  }
-): Promise<CreatedSession> {
-  const refreshToken = crypto.randomBytes(40).toString('hex');
-  const refreshTokenHash = hashOpaqueToken(refreshToken);
-  const accessTokenId = crypto.randomUUID();
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days standard
+/**
+ * Signs in a user via Supabase Auth (email/password).
+ * Returns Supabase session tokens.
+ */
+export async function signInWithPassword(
+  email: string,
+  password: string
+): Promise<Result<{
+  accessToken: string;
+  refreshToken: string;
+  userId: string;
+  expiresAt: number;
+}>> {
+  const { data, error } = await supabaseAdmin.auth.signInWithPassword({
+    email,
+    password,
+  });
 
-  await client.session.create({
-    data: {
-      userId: params.userId,
-      refreshToken: refreshTokenHash,
-      expiresAt,
-      ipAddress: params.ipAddress,
-      userAgent: params.userAgent,
+  if (error || !data.session) {
+    logger.warn({ email, error: error?.message }, '🔑 Sign-in failed');
+    return ResultHelper.failure({
+      code: 'UNAUTHORIZED',
+      message: error?.message || 'Invalid credentials',
+    });
+  }
+
+  return ResultHelper.success({
+    accessToken: data.session.access_token,
+    refreshToken: data.session.refresh_token,
+    userId: data.user.id,
+    expiresAt: data.session.expires_at ?? 0,
+  });
+}
+
+/**
+ * Signs out a user from Supabase Auth.
+ * Supabase handles session invalidation natively — no Redis blacklisting needed.
+ */
+export async function signOut(userId: string): Promise<void> {
+  const { error } = await supabaseAdmin.auth.admin.signOut(userId);
+  if (error) {
+    logger.warn({ userId, error: error.message }, '🔑 Sign-out error (non-fatal)');
+  }
+}
+
+/**
+ * Changes a user's password in Supabase Auth.
+ */
+export async function changePassword(userId: string, newPassword: string): Promise<Result<void>> {
+  const { error } = await supabaseAdmin.auth.admin.updateUserById(userId, {
+    password: newPassword,
+  });
+
+  if (error) {
+    logger.error({ userId, error: error.message }, '❌ Password change failed');
+    return ResultHelper.failure({
+      code: 'INTERNAL_ERROR',
+      message: 'Failed to change password',
+    });
+  }
+
+  return ResultHelper.success(undefined);
+}
+
+/**
+ * Creates a user in Supabase Auth with app_metadata for role and tenant.
+ * Used during invitation redemption.
+ */
+export async function createAuthUser(params: {
+  email: string;
+  password: string;
+  tenantId: string;
+  role: string;
+  name: string;
+}): Promise<Result<{ authUserId: string }>> {
+  const { data, error } = await supabaseAdmin.auth.admin.createUser({
+    email: params.email,
+    password: params.password,
+    email_confirm: true, // Skip email verification (invitation-based signup)
+    app_metadata: {
+      tenant_id: params.tenantId,
+      role: params.role,
+    },
+    user_metadata: {
+      name: params.name,
     },
   });
 
-  return { refreshToken, accessTokenId, expiresAt };
-}
-
-/**
- * Creates a new session in the database for the user.
- */
-export async function createSession(params: {
-  userId: string;
-  ipAddress?: string;
-  userAgent?: string;
-}): Promise<CreatedSession> {
-  return withAuthRlsBypass((tx) => createSessionRecord(tx, params));
-}
-
-/**
- * Rotates a refresh token: revokes the old session and issues a new one.
- */
-export async function rotateSession(
-  oldRefreshToken: string,
-  params: { ipAddress?: string; userAgent?: string }
-): Promise<Result<{ userId: string; refreshToken: string; accessTokenId: string; expiresAt: Date }>> {
-  return withAuthRlsBypass(async (tx) => {
-    const oldRefreshTokenHash = hashOpaqueToken(oldRefreshToken);
-    const session = await tx.session.findUnique({
-      where: { refreshToken: oldRefreshTokenHash },
+  if (error) {
+    logger.error({ email: params.email, error: error.message }, '❌ Failed to create auth user');
+    return ResultHelper.failure({
+      code: 'VALIDATION_ERROR',
+      message: error.message.includes('already registered')
+        ? 'Email already registered'
+        : error.message,
     });
+  }
 
-    if (!session || session.revokedAt || session.expiresAt < new Date()) {
-      logger.warn({ refreshTokenHashPrefix: oldRefreshTokenHash.slice(0, 12) }, '🔑 Session refresh: Invalid or revoked refresh token');
-      return ResultHelper.failure({
-        code: 'UNAUTHORIZED',
-        message: 'Invalid, revoked or expired session',
-      });
-    }
-
-    // Revoke old session
-    await tx.session.update({
-      where: { id: session.id },
-      data: { revokedAt: new Date() },
-    });
-
-    // Issue new session inside the same RLS-bypass transaction.
-    const newSession = await createSessionRecord(tx, {
-      userId: session.userId,
-      ipAddress: params.ipAddress,
-      userAgent: params.userAgent,
-    });
-
-    return ResultHelper.success({
-      userId: session.userId,
-      refreshToken: newSession.refreshToken,
-      accessTokenId: newSession.accessTokenId,
-      expiresAt: newSession.expiresAt,
-    });
-  });
-}
-
-/**
- * Revokes a session, optionally revoking all user sessions.
- */
-export async function revokeSession(refreshToken: string, jti?: string): Promise<void> {
-  await withAuthRlsBypass(async (tx) => {
-    const refreshTokenHash = hashOpaqueToken(refreshToken);
-    const session = await tx.session.findUnique({
-      where: { refreshToken: refreshTokenHash },
-    });
-
-    if (session) {
-      await tx.session.update({
-        where: { id: session.id },
-        data: { revokedAt: new Date() },
-      });
-    }
-
-    // Blacklist the active JWT jti in Redis for instant invalidation
-    if (jti) {
-      await redis.set(`revoked:${jti}`, 'true', 'EX', 7 * 24 * 60 * 60); // 7 days matching JWT expiration
-    }
-  });
+  return ResultHelper.success({ authUserId: data.user.id });
 }

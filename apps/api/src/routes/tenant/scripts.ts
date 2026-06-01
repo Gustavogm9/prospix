@@ -1,5 +1,5 @@
 import { FastifyPluginAsync } from 'fastify';
-import { prisma } from '../../lib/prisma.js';
+import { getDb } from '../../lib/db.js';
 import { logger } from '../../lib/logger.js';
 
 const SCRIPT_TEMPLATES: Record<string, Record<string, { base: string; variations: { name: string; weight: number; content: string }[] }>> = {
@@ -78,13 +78,28 @@ export const scriptRoutes: FastifyPluginAsync = async (app) => {
   // GET /tenant/scripts — list all scripts
   app.get('/', async (request, reply) => {
     const tenantId = (request as any).tenantId as string;
+    const db = getDb(request);
     try {
-      const scripts = await prisma.script.findMany({
-        where: { tenantId, archivedAt: null },
-        include: { variations: { where: { active: true }, orderBy: { variantLetter: 'asc' } } },
-        orderBy: { createdAt: 'desc' },
-      });
-      return reply.send({ data: scripts });
+      // Supabase doesn't support filtered nested includes, so we fetch scripts and variations separately
+      const { data: scripts, error } = await db
+        .from('scripts')
+        .select('*, script_variations(*)')
+        .eq('tenant_id', tenantId)
+        .is('archived_at', null)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      // Filter variations client-side: only active, sorted by variant_letter
+      const result = (scripts || []).map((s: any) => ({
+        ...s,
+        variations: (s.script_variations || [])
+          .filter((v: any) => v.active)
+          .sort((a: any, b: any) => (a.variant_letter || '').localeCompare(b.variant_letter || '')),
+        script_variations: undefined,
+      }));
+
+      return reply.send({ data: result });
     } catch (err) {
       logger.error({ err }, 'Error fetching scripts');
       return reply.status(500).send({ message: 'Failed to fetch scripts' });
@@ -95,20 +110,28 @@ export const scriptRoutes: FastifyPluginAsync = async (app) => {
   app.post('/', async (request, reply) => {
     const tenantId = (request as any).tenantId as string;
     const body = request.body as any;
+    const db = getDb(request);
     try {
-      const script = await prisma.script.create({
-        data: {
-          tenantId,
+      const scriptId = crypto.randomUUID();
+      const { data: script, error } = await db
+        .from('scripts')
+        .insert({
+          id: scriptId,
+          tenant_id: tenantId,
           name: body.name || 'Novo Roteiro',
           category: body.category || 'APPROACH',
-          targetProfession: body.targetProfession || null,
-          baseMessage: body.baseMessage || '',
+          target_profession: body.targetProfession || null,
+          base_message: body.baseMessage || '',
           status: 'DRAFT',
           variables: body.variables || [],
-        },
-        include: { variations: true },
-      });
-      return reply.status(201).send({ data: script });
+          updated_at: new Date().toISOString(),
+        })
+        .select('*, script_variations(*)')
+        .single();
+
+      if (error) throw error;
+
+      return reply.status(201).send({ data: { ...script, variations: script.script_variations || [], script_variations: undefined } });
     } catch (err) {
       logger.error({ err }, 'Error creating script');
       return reply.status(500).send({ message: 'Failed to create script' });
@@ -135,45 +158,80 @@ export const scriptRoutes: FastifyPluginAsync = async (app) => {
     const tenantId = (request as any).tenantId as string;
     const { id } = request.params as { id: string };
     const body = request.body as any;
+    const db = getDb(request);
     try {
-      const existing = await prisma.script.findFirst({ where: { id, tenantId } });
+      const { data: existing, error: findErr } = await db
+        .from('scripts')
+        .select('id')
+        .eq('id', id)
+        .eq('tenant_id', tenantId)
+        .maybeSingle();
+
+      if (findErr) throw findErr;
       if (!existing) return reply.status(404).send({ message: 'Script not found' });
 
-      await prisma.script.update({
-        where: { id },
-        data: {
-          ...(body.name !== undefined && { name: body.name }),
-          ...(body.baseMessage !== undefined && { baseMessage: body.baseMessage }),
-          ...(body.status !== undefined && { status: body.status }),
-          ...(body.flow !== undefined && { flow: body.flow }),
-        },
-        include: { variations: true },
-      });
+      const updateData: {
+        updated_at: string;
+        name?: string;
+        base_message?: string;
+        status?: string;
+        flow?: unknown;
+      } = {
+        updated_at: new Date().toISOString(),
+      };
+      if (body.name !== undefined) updateData.name = body.name;
+      if (body.baseMessage !== undefined) updateData.base_message = body.baseMessage;
+      if (body.status !== undefined) updateData.status = body.status;
+      if (body.flow !== undefined) updateData.flow = body.flow;
+
+      await db
+        .from('scripts')
+        .update(updateData as any)
+        .eq('id', id);
 
       // Handle variations update if provided
       if (Array.isArray(body.variations)) {
-        // Delete old variations and create new ones
-        await prisma.scriptVariation.deleteMany({ where: { scriptId: id, tenantId } });
+        // Delete old variations
+        await db
+          .from('script_variations')
+          .delete()
+          .eq('script_id', id)
+          .eq('tenant_id', tenantId);
+
+        // Create new ones
         for (let i = 0; i < body.variations.length; i++) {
           const v = body.variations[i];
-          await prisma.scriptVariation.create({
-            data: {
-              tenantId,
-              scriptId: id,
-              variantLetter: String.fromCharCode(65 + i),
+          await db
+            .from('script_variations')
+            .insert({
+              id: crypto.randomUUID(),
+              tenant_id: tenantId,
+              script_id: id,
+              variant_letter: String.fromCharCode(65 + i),
               message: v.content || v.message || '',
               weight: (v.weight || 50) / 100,
               active: true,
-            },
-          });
+              updated_at: new Date().toISOString(),
+            });
         }
       }
 
-      const updated = await prisma.script.findUnique({
-        where: { id },
-        include: { variations: { where: { active: true } } },
-      });
-      return reply.send({ data: updated });
+      // Fetch the updated script with active variations
+      const { data: updated, error: fetchErr } = await db
+        .from('scripts')
+        .select('*, script_variations(*)')
+        .eq('id', id)
+        .single();
+
+      if (fetchErr) throw fetchErr;
+
+      const result = {
+        ...updated,
+        variations: (updated.script_variations || []).filter((v: any) => v.active),
+        script_variations: undefined,
+      };
+
+      return reply.send({ data: result });
     } catch (err) {
       logger.error({ err }, 'Error updating script');
       return reply.status(500).send({ message: 'Failed to update script' });
@@ -184,14 +242,28 @@ export const scriptRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/:id', async (request, reply) => {
     const tenantId = (request as any).tenantId as string;
     const { id } = request.params as { id: string };
+    const db = getDb(request);
     try {
-      const existing = await prisma.script.findFirst({ where: { id, tenantId } });
+      const { data: existing, error: findErr } = await db
+        .from('scripts')
+        .select('id')
+        .eq('id', id)
+        .eq('tenant_id', tenantId)
+        .maybeSingle();
+
+      if (findErr) throw findErr;
       if (!existing) return reply.status(404).send({ message: 'Script not found' });
 
-      await prisma.script.update({
-        where: { id },
-        data: { archivedAt: new Date(), status: 'ARCHIVED' },
-      });
+      const { error: updateErr } = await db
+        .from('scripts')
+        .update({
+          archived_at: new Date().toISOString(),
+          status: 'ARCHIVED',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id);
+
+      if (updateErr) throw updateErr;
       return reply.status(204).send();
     } catch (err) {
       logger.error({ err }, 'Error deleting script');

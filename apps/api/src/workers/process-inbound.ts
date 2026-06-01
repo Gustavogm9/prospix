@@ -1,6 +1,6 @@
 import { Job } from 'bullmq';
 import { BaseWorker } from './_base-worker.js';
-import { prisma } from '../lib/prisma.js';
+import { dbAdmin } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 import { redis } from '../lib/redis.js';
 import { BaseJobPayload } from '@prospix/shared-types';
@@ -10,7 +10,7 @@ import { buildSystemPrompt } from '../ai/prompt-builder.js';
 import { callAIWithGuardrails } from '../ai/guardrails.js';
 import { createTenantQueue } from '../lib/queue.js';
 import { createSendWhatsappJobId } from './send-whatsapp-job.js';
-import { LeadStatus, ConversationStatus, MessageDirection, MessageSender, MessageDeliveryStatus } from '@prisma/client';
+import { LeadStatus, ConversationStatus, MessageDirection, MessageSender, MessageDeliveryStatus } from '@prospix/shared-types';
 import { randomUUID } from 'crypto';
 import { publishRealtimeEvent } from '../lib/realtime.js';
 
@@ -31,17 +31,11 @@ export interface ProcessInboundResult {
   optout: boolean;
 }
 
-function isWhatsappMessageUniqueViolation(err: unknown): boolean {
-  const maybeError = err as { code?: string; meta?: { target?: unknown } } | null;
-  if (!maybeError || maybeError.code !== 'P2002') return false;
-
-  const target = maybeError.meta?.target;
-  if (Array.isArray(target)) {
-    return target.includes('whatsappMessageId') || target.includes('whatsapp_message_id');
-  }
-
-  return typeof target === 'string'
-    && (target.includes('whatsappMessageId') || target.includes('whatsapp_message_id'));
+function isSupabaseUniqueViolation(err: unknown): boolean {
+  const maybeError = err as { code?: string; message?: string } | null;
+  if (!maybeError) return false;
+  // Supabase/PostgREST unique violation code is 23505
+  return maybeError.code === '23505' && (maybeError.message?.includes('whatsapp_message_id') ?? false);
 }
 
 function duplicateInboundResult(): ProcessInboundResult {
@@ -80,13 +74,14 @@ export class ProcessInboundWorker extends BaseWorker<ProcessInboundPayload, Proc
 
       let inboundAlreadyPersisted = false;
       if (whatsapp_message_id) {
-        const existingInbound = await prisma.message.findUnique({
-          where: { whatsappMessageId: whatsapp_message_id },
-          select: { id: true, tenantId: true, conversationId: true },
-        });
+        const { data: existingInbound } = await dbAdmin
+          .from('messages')
+          .select('id, tenant_id, conversation_id')
+          .eq('whatsapp_message_id', whatsapp_message_id)
+          .single();
 
         if (existingInbound) {
-          if (existingInbound.tenantId === tenant_id && existingInbound.conversationId === conversation_id) {
+          if (existingInbound.tenant_id === tenant_id && existingInbound.conversation_id === conversation_id) {
             inboundAlreadyPersisted = true;
             if (isRetry) {
               logger.info(
@@ -113,57 +108,66 @@ export class ProcessInboundWorker extends BaseWorker<ProcessInboundPayload, Proc
         if (inboundAlreadyPersisted) return null;
 
         try {
-          await prisma.$transaction(async (tx) => {
-            await tx.message.create({
-              data: {
-                tenantId: tenant_id,
-                conversationId: conversation_id,
-                direction: MessageDirection.INBOUND,
-                sender: MessageSender.LEAD,
-                content: message_content,
-                whatsappMessageId: whatsapp_message_id,
-                deliveryStatus: MessageDeliveryStatus.DELIVERED,
-                intentDetected: params.intent,
-                intentConfidence: params.confidence,
-              },
-            });
+          // Insert message
+          const { error: msgErr } = await dbAdmin
+            .from('messages')
+            .insert({
+              tenant_id: tenant_id,
+              conversation_id: conversation_id,
+              direction: MessageDirection.INBOUND,
+              sender: MessageSender.LEAD,
+              content: message_content,
+              whatsapp_message_id: whatsapp_message_id,
+              delivery_status: MessageDeliveryStatus.DELIVERED,
+              intent_detected: params.intent,
+              intent_confidence: params.confidence,
+            } as any);
+          if (msgErr) throw msgErr;
 
-            await tx.conversation.update({
-              where: { id: conversation_id },
-              data: {
-                lastMessageAt: new Date(),
-                lastInboundAt: new Date(),
-                messageCount: { increment: 1 },
-              },
-            });
+          // Update conversation counters
+          const { data: conv } = await dbAdmin
+            .from('conversations')
+            .select('message_count')
+            .eq('id', conversation_id)
+            .single();
+
+          const { error: convErr } = await dbAdmin
+            .from('conversations')
+            .update({
+              last_message_at: new Date().toISOString(),
+              last_inbound_at: new Date().toISOString(),
+              message_count: (conv?.message_count || 0) + 1,
+            })
+            .eq('id', conversation_id);
+          if (convErr) throw convErr;
+
+          // Publish realtime event for inbound message
+          await publishRealtimeEvent({
+            type: 'message:created',
+            tenantId: tenant_id,
+            payload: {
+              id: 'inbound-' + Date.now(),
+              conversation_id,
+              direction: 'INBOUND',
+              sender: 'LEAD',
+              content: message_content,
+              whatsapp_message_id: whatsapp_message_id,
+              created_at: new Date().toISOString(),
+            },
           });
-
-            // Publish realtime event for inbound message
-            await publishRealtimeEvent({
-              type: 'message:created',
-              tenantId: tenant_id,
-              payload: {
-                id: 'inbound-' + Date.now(),
-                conversation_id,
-                direction: 'INBOUND',
-                sender: 'LEAD',
-                content: message_content,
-                whatsapp_message_id: whatsapp_message_id,
-                created_at: new Date().toISOString(),
-              },
-            });
           return null;
         } catch (err) {
-          if (!whatsapp_message_id || !isWhatsappMessageUniqueViolation(err)) {
+          if (!whatsapp_message_id || !isSupabaseUniqueViolation(err)) {
             throw err;
           }
 
-          const existingInbound = await prisma.message.findUnique({
-            where: { whatsappMessageId: whatsapp_message_id },
-            select: { id: true, tenantId: true, conversationId: true },
-          });
+          const { data: existingInbound } = await dbAdmin
+            .from('messages')
+            .select('id, tenant_id, conversation_id')
+            .eq('whatsapp_message_id', whatsapp_message_id)
+            .single();
 
-          if (existingInbound?.tenantId === tenant_id && existingInbound.conversationId === conversation_id) {
+          if (existingInbound?.tenant_id === tenant_id && existingInbound.conversation_id === conversation_id) {
             logger.info(
               { tenant_id, conversation_id, whatsapp_message_id },
               'process-inbound:duplicate-message-race-skipped'
@@ -176,23 +180,28 @@ export class ProcessInboundWorker extends BaseWorker<ProcessInboundPayload, Proc
       }
 
       // 1. Fetch lead
-      const lead = await prisma.lead.findUnique({
-        where: { id: lead_id },
-      });
+      const { data: lead, error: leadErr } = await dbAdmin
+        .from('leads')
+        .select('*')
+        .eq('id', lead_id)
+        .single();
 
-      if (!lead || lead.tenantId !== tenant_id) {
+      if (leadErr || !lead || lead.tenant_id !== tenant_id) {
         throw new Error(`Lead ${lead_id} not found or tenant mismatch`);
       }
 
-      // 2. Fetch conversation
-      const conversation = await prisma.conversation.findUnique({
-        where: { id: conversation_id },
-        include: { messages: true },
-      });
+      // 2. Fetch conversation with messages
+      const { data: conversation, error: convErr } = await dbAdmin
+        .from('conversations')
+        .select('*, messages(*)')
+        .eq('id', conversation_id)
+        .single();
 
-      if (!conversation || conversation.tenantId !== tenant_id) {
+      if (convErr || !conversation || conversation.tenant_id !== tenant_id) {
         throw new Error(`Conversation ${conversation_id} not found or tenant mismatch`);
       }
+
+      const conversationMessages = (conversation.messages || []) as any[];
 
       // 3. Core hard-coded opt-out check before calling AI
       const lowerMsg = message_content.toLowerCase().trim();
@@ -213,7 +222,7 @@ export class ProcessInboundWorker extends BaseWorker<ProcessInboundPayload, Proc
       const classification = await classifyIntent({
         tenantId: tenant_id,
         messageContent: message_content,
-        conversationHistory: conversation.messages.map((m) => ({
+        conversationHistory: conversationMessages.map((m: any) => ({
           sender: m.sender as 'AI' | 'USER' | 'LEAD',
           content: m.content,
         })),
@@ -233,7 +242,7 @@ export class ProcessInboundWorker extends BaseWorker<ProcessInboundPayload, Proc
       }
 
       // 5. If AI handling is disabled (manual control), we stop here
-      if (!conversation.aiHandling) {
+      if (!conversation.ai_handling) {
         logger.info({ conversation_id }, '👤 Conversation handled manually by user. Skipping AI response.');
         return { success: true, replied: false, escalated: false, optout: false };
       }
@@ -247,10 +256,10 @@ export class ProcessInboundWorker extends BaseWorker<ProcessInboundPayload, Proc
       }
 
       // Trigger B: Low confidence twice in a row
-      const previousLeadMsgs = conversation.messages.filter((m) => m.direction === MessageDirection.INBOUND);
+      const previousLeadMsgs = conversationMessages.filter((m: any) => m.direction === MessageDirection.INBOUND);
       if (previousLeadMsgs.length > 0) {
         const lastMsg = previousLeadMsgs[previousLeadMsgs.length - 1];
-        const lastConfidence = lastMsg!.intentConfidence ? Number(lastMsg!.intentConfidence) : 1.0;
+        const lastConfidence = lastMsg!.intent_confidence ? Number(lastMsg!.intent_confidence) : 1.0;
         
         if (classification.confidence < 0.4 && lastConfidence < 0.4) {
           logger.info({ conversation_id }, '🚨 Escalating to human: low confidence (< 0.4) twice in a row');
@@ -260,7 +269,7 @@ export class ProcessInboundWorker extends BaseWorker<ProcessInboundPayload, Proc
       }
 
       // Trigger C: Conversation too long (> 10 messages) without scheduling
-      if (conversation.messageCount >= 10) {
+      if (conversation.message_count >= 10) {
         logger.info({ conversation_id }, '🚨 Escalating to human: conversation too long without scheduling');
         await this.handleEscalation(tenant_id, lead, conversation, 'conversation_limit_exceeded');
         return { success: true, replied: false, escalated: true, escalationReason: 'conversation_limit_exceeded', optout: false };
@@ -286,18 +295,35 @@ export class ProcessInboundWorker extends BaseWorker<ProcessInboundPayload, Proc
 
       // 8. Generate reply using Prompt Builder + AIRouter with Guardrails
       // Resolve active owner/user
-      const user = await prisma.user.findFirst({
-        where: { tenantId: tenant_id, role: 'OWNER' },
-      });
+      const { data: user } = await dbAdmin
+        .from('users')
+        .select('*')
+        .eq('tenant_id', tenant_id)
+        .eq('role', 'OWNER')
+        .limit(1)
+        .single();
 
       if (!user) {
         throw new Error(`No OWNER user found for tenant: ${tenant_id}`);
       }
 
       // Fetch active script for Prompt Builder context
-      const script = conversation.scriptId
-        ? await prisma.script.findUnique({ where: { id: conversation.scriptId } })
-        : null;
+      let script: any = null;
+      if (conversation.script_id) {
+        const { data: scriptData } = await dbAdmin
+          .from('scripts')
+          .select('*')
+          .eq('id', conversation.script_id)
+          .single();
+        script = scriptData;
+      }
+
+      // Fetch tenant for ai_voice_profile
+      const { data: tenantData } = await dbAdmin
+        .from('tenants')
+        .select('id, name, ai_voice_profile')
+        .eq('id', tenant_id)
+        .single();
 
       const systemPrompt = buildSystemPrompt({
         user: {
@@ -306,28 +332,28 @@ export class ProcessInboundWorker extends BaseWorker<ProcessInboundPayload, Proc
         },
         tenant: {
           id: tenant_id,
-          name: lead.tenantId, // fallback
-          aiVoiceProfile: lead.tenantId ? (await prisma.tenant.findUnique({ where: { id: tenant_id } }))?.aiVoiceProfile as any : null,
+          name: tenantData?.name || tenant_id,
+          aiVoiceProfile: tenantData?.ai_voice_profile as any,
         },
         lead: {
           name: lead.name || 'Lead',
           profession: lead.profession || 'Dentista',
           address: lead.address,
-          fit_score: lead.fitScore ? Number(lead.fitScore) : undefined,
+          fit_score: lead.fit_score ? Number(lead.fit_score) : undefined,
         },
         conversation: {
-          messages: conversation.messages.map((m) => ({
+          messages: conversationMessages.map((m: any) => ({
             sender: m.sender as 'AI' | 'USER' | 'LEAD',
             content: m.content,
-            createdAt: m.createdAt,
+            createdAt: m.created_at,
           })),
         },
         script: {
           name: script?.name || 'Roteiro Padrão',
-          baseMessage: scriptResult.messageToSend || script?.baseMessage || undefined,
+          baseMessage: scriptResult.messageToSend || script?.base_message || undefined,
         },
         currentNode: {
-          id: conversation.currentNodeId || 'start',
+          id: conversation.current_node_id || 'start',
           type: 'message',
         },
       });
@@ -354,24 +380,28 @@ export class ProcessInboundWorker extends BaseWorker<ProcessInboundPayload, Proc
       }
 
       // Save outbound reply to database
-      const newMsg = await prisma.message.create({
-        data: {
-          tenantId: tenant_id,
-          conversationId: conversation_id,
+      const { data: newMsg, error: newMsgErr } = await dbAdmin
+        .from('messages')
+        .insert({
+          tenant_id: tenant_id,
+          conversation_id: conversation_id,
           direction: MessageDirection.OUTBOUND,
           sender: MessageSender.AI,
           content: aiReplyResult.message_to_send,
-          deliveryStatus: MessageDeliveryStatus.QUEUED,
-          llmModel: aiReplyResult.llmModel,
-          llmTokensInput: aiReplyResult.tokensInput,
-          llmTokensOutput: aiReplyResult.tokensOutput,
-          llmCostCents: Math.round(aiReplyResult.costCents),
-          llmLatencyMs: aiReplyResult.latencyMs,
-          scriptId: conversation.scriptId,
-          scriptVariationId: scriptResult.variationId,
-          scriptNodeId: conversation.currentNodeId,
-        },
-      });
+          delivery_status: MessageDeliveryStatus.QUEUED,
+          llm_model: aiReplyResult.llmModel,
+          llm_tokens_input: aiReplyResult.tokensInput,
+          llm_tokens_output: aiReplyResult.tokensOutput,
+          llm_cost_cents: Math.round(aiReplyResult.costCents),
+          llm_latency_ms: aiReplyResult.latencyMs,
+          script_id: conversation.script_id,
+          script_variation_id: scriptResult.variationId,
+          script_node_id: conversation.current_node_id,
+        } as any)
+        .select()
+        .single();
+
+      if (newMsgErr) throw newMsgErr;
 
       // Publish realtime event for outbound AI reply
       await publishRealtimeEvent({
@@ -388,14 +418,15 @@ export class ProcessInboundWorker extends BaseWorker<ProcessInboundPayload, Proc
       });
 
       // Update conversation counters
-      await prisma.conversation.update({
-        where: { id: conversation_id },
-        data: {
-          lastMessageAt: new Date(),
-          lastOutboundAt: new Date(),
-          messageCount: { increment: 1 },
-        },
-      });
+      const { error: convUpdateErr } = await dbAdmin
+        .from('conversations')
+        .update({
+          last_message_at: new Date().toISOString(),
+          last_outbound_at: new Date().toISOString(),
+          message_count: (conversation.message_count || 0) + 1,
+        })
+        .eq('id', conversation_id);
+      if (convUpdateErr) throw convUpdateErr;
 
       // 9. Enqueue message delivery in send-messages queue
       const sendQueue = createTenantQueue(tenant_id, 'send-messages');
@@ -419,53 +450,52 @@ export class ProcessInboundWorker extends BaseWorker<ProcessInboundPayload, Proc
   private async handleOptout(tenantId: string, lead: any, conversation: any) {
     logger.info({ lead_id: lead.id }, '🛡️ Processing opt-out action and marking tables');
     
-    // Register opt-out record
-    await prisma.optout.upsert({
-      where: {
-        tenantId_whatsapp: {
-          tenantId,
+    // Register opt-out record (upsert)
+    const { error: upsertErr } = await dbAdmin
+      .from('optouts')
+      .upsert(
+        {
+          tenant_id: tenantId,
           whatsapp: lead.whatsapp,
+          reason: 'lead_request',
+          source: 'lead_request',
         },
-      },
-      create: {
-        tenantId,
-        whatsapp: lead.whatsapp,
-        reason: 'lead_request',
-        source: 'lead_request',
-      },
-      update: {
-        reason: 'lead_request',
-        source: 'lead_request',
-      },
-    });
+        { onConflict: 'tenant_id,whatsapp' }
+      );
+    if (upsertErr) throw upsertErr;
 
     // Mark lead status as opted-out
-    await prisma.lead.update({
-      where: { id: lead.id },
-      data: { status: LeadStatus.OPTED_OUT },
-    });
+    const { error: leadErr } = await dbAdmin
+      .from('leads')
+      .update({ status: LeadStatus.OPTED_OUT })
+      .eq('id', lead.id);
+    if (leadErr) throw leadErr;
 
     // Close conversation and turn off AI handling
-    await prisma.conversation.update({
-      where: { id: conversation.id },
-      data: {
+    const { error: convErr } = await dbAdmin
+      .from('conversations')
+      .update({
         status: ConversationStatus.CLOSED,
-        aiHandling: false,
-      },
-    });
+        ai_handling: false,
+      })
+      .eq('id', conversation.id);
+    if (convErr) throw convErr;
 
     // Insert confirmation msg in DB and send it
     const optoutConfirmation = 'Seu número foi removido das nossas listas de contatos com sucesso. Você não receberá mais mensagens automáticas. Obrigado!';
-    const newMsg = await prisma.message.create({
-      data: {
-        tenantId,
-        conversationId: conversation.id,
+    const { data: newMsg, error: msgErr } = await dbAdmin
+      .from('messages')
+      .insert({
+        tenant_id: tenantId,
+        conversation_id: conversation.id,
         direction: MessageDirection.OUTBOUND,
         sender: MessageSender.AI,
         content: optoutConfirmation,
-        deliveryStatus: MessageDeliveryStatus.QUEUED,
-      },
-    });
+        delivery_status: MessageDeliveryStatus.QUEUED,
+      } as any)
+      .select()
+      .single();
+    if (msgErr) throw msgErr;
 
     // Enqueue sending
     const sendQueue = createTenantQueue(tenantId, 'send-messages');
@@ -483,32 +513,35 @@ export class ProcessInboundWorker extends BaseWorker<ProcessInboundPayload, Proc
     logger.info({ lead_id: lead.id, reason }, '🚨 Escalating conversation to human');
 
     // Update conversation
-    await prisma.conversation.update({
-      where: { id: conversation.id },
-      data: {
+    const { error: convErr } = await dbAdmin
+      .from('conversations')
+      .update({
         status: ConversationStatus.ESCALATED,
-        aiHandling: false,
-        escalatedReason: reason.substring(0, 64),
-      },
-    });
+        ai_handling: false,
+        escalated_reason: reason.substring(0, 64),
+      })
+      .eq('id', conversation.id);
+    if (convErr) throw convErr;
 
     // Update lead status
-    await prisma.lead.update({
-      where: { id: lead.id },
-      data: { status: LeadStatus.ESCALATED_HUMAN },
-    });
+    const { error: leadErr } = await dbAdmin
+      .from('leads')
+      .update({ status: LeadStatus.ESCALATED_HUMAN })
+      .eq('id', lead.id);
+    if (leadErr) throw leadErr;
 
     // Log lead event
-    await prisma.leadEvent.create({
-      data: {
-        tenantId,
-        leadId: lead.id,
-        eventType: 'lead.escalated_human',
+    const { error: eventErr } = await dbAdmin
+      .from('lead_events')
+      .insert({
+        tenant_id: tenantId,
+        lead_id: lead.id,
+        event_type: 'lead.escalated_human',
         payload: {
           conversation_id: conversation.id,
           reason,
         },
-      },
-    });
+      });
+    if (eventErr) throw eventErr;
   }
 }

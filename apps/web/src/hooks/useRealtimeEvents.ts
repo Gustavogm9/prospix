@@ -10,8 +10,8 @@
  *     onConversationUpdated: (payload) => { ... },
  *   });
  */
-import { useEffect, useRef } from 'react';
-import { useAuthStore } from '../store/auth-store';
+import { useEffect, useRef, useState } from 'react';
+import { supabase } from '../lib/supabase';
 
 interface RealtimeCallbacks {
   onMessageCreated?: (payload: Record<string, unknown>) => void;
@@ -20,7 +20,7 @@ interface RealtimeCallbacks {
   onConversationUpdated?: (payload: Record<string, unknown>) => void;
 }
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/v1';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/v1';
 
 // VITE_API_URL already includes /v1 (e.g. https://api.prospix.com.br/v1)
 // SSE endpoint is at /v1/sse/events, so we need the base without /v1
@@ -33,10 +33,25 @@ export function useRealtimeEvents(
   const callbacksRef = useRef(callbacks);
   callbacksRef.current = callbacks;
 
-  const { accessToken } = useAuthStore();
+  // Keep a reactive token that updates when the Supabase session changes
+  const [accessToken, setAccessToken] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!tenantId) return;
+    // Fetch initial token
+    supabase.auth.getSession().then(({ data }) => {
+      setAccessToken(data.session?.access_token ?? null);
+    });
+
+    // Listen for session changes (refresh, sign-out)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAccessToken(session?.access_token ?? null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!tenantId || !accessToken) return;
 
     let controller: AbortController | null = new AbortController();
     let retryTimeout: ReturnType<typeof setTimeout> | null = null;

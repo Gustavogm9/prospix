@@ -14,7 +14,7 @@
  * Cache é local ao processo. Atualização de flag pelo painel admin
  * invalida via `invalidateFeatureFlagCache(key)` (chamado pelos endpoints).
  */
-import { prisma } from './prisma.js';
+import { dbAdmin } from './db.js';
 import { logger } from './logger.js';
 
 interface CacheEntry {
@@ -43,17 +43,21 @@ export async function isFeatureEnabled(
   try {
     let resolved: boolean | null = null;
     if (tenantId) {
-      const override = await prisma.featureFlag.findUnique({
-        where: { key_tenantId: { key, tenantId } },
-        select: { enabled: true },
-      });
+      const { data: override } = await dbAdmin
+        .from('feature_flags')
+        .select('enabled')
+        .eq('key', key)
+        .eq('tenant_id', tenantId)
+        .maybeSingle();
       if (override) resolved = override.enabled;
     }
     if (resolved === null) {
-      const global = await prisma.featureFlag.findFirst({
-        where: { key, tenantId: null },
-        select: { enabled: true },
-      });
+      const { data: global } = await dbAdmin
+        .from('feature_flags')
+        .select('enabled')
+        .eq('key', key)
+        .is('tenant_id', null)
+        .maybeSingle();
       if (global) resolved = global.enabled;
     }
 

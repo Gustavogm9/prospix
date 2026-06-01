@@ -1,13 +1,13 @@
 import { Job } from 'bullmq';
 import { BaseWorker } from './_base-worker.js';
-import { prisma } from '../lib/prisma.js';
+import { dbAdmin } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 import { checkPhone } from '../integrations/evolution.js';
 import { getCnpjInfo } from '../integrations/brasilapi.js';
 import { calculateFitScore } from '../domain/fit-score.js';
 import { getDecryptedSecrets } from '../tenant/secrets-vault.js';
 import { BaseJobPayload } from '@prospix/shared-types';
-import { LeadStatus } from '@prisma/client';
+import { LeadStatus } from '@prospix/shared-types';
 import dayjs from 'dayjs';
 
 export interface EnrichLeadsPayload extends BaseJobPayload {
@@ -28,7 +28,7 @@ export class EnrichLeadsWorker extends BaseWorker<EnrichLeadsPayload, EnrichLead
   async process(job: Job<EnrichLeadsPayload>): Promise<EnrichLeadsResult> {
     const { tenant_id: tenantId, lead_ids } = job.data;
 
-    // 1. Fetch credentials for the Evolution API (optional — enrichment continues without it)
+    // 1. Fetch credentials for the Evolution API (optional - enrichment continues without it)
     const decryptedSecrets = await getDecryptedSecrets(tenantId);
 
     const baseUrl = decryptedSecrets?.evolutionBaseUrl || process.env.EVOLUTION_BASE_URL || 'https://evo.prospix.com.br';
@@ -42,34 +42,36 @@ export class EnrichLeadsWorker extends BaseWorker<EnrichLeadsPayload, EnrichLead
 
 
     // 2. Fetch the tenant
-    const tenant = await prisma.tenant.findUnique({
-      where: { id: tenantId },
-    });
+    const { data: tenant, error: tenantErr } = await dbAdmin
+      .from('tenants')
+      .select('*')
+      .eq('id', tenantId)
+      .single();
 
-    if (!tenant) {
+    if (tenantErr || !tenant) {
       logger.error({ tenantId }, 'Tenant not found');
       throw new Error(`Tenant with ID ${tenantId} not found`);
     }
 
     // 3. Load leads to process
-    let leads = [];
+    let leads: any[] = [];
     if (lead_ids && lead_ids.length > 0) {
-      leads = await prisma.lead.findMany({
-        where: {
-          id: { in: lead_ids },
-          tenantId,
-          status: LeadStatus.CAPTURED,
-        },
-      });
+      const { data } = await dbAdmin
+        .from('leads')
+        .select('*')
+        .in('id', lead_ids)
+        .eq('tenant_id', tenantId)
+        .eq('status', LeadStatus.CAPTURED);
+      leads = data || [];
     } else {
       // Fallback: load up to 100 CAPTURED leads for this tenant
-      leads = await prisma.lead.findMany({
-        where: {
-          tenantId,
-          status: LeadStatus.CAPTURED,
-        },
-        take: 100,
-      });
+      const { data } = await dbAdmin
+        .from('leads')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .eq('status', LeadStatus.CAPTURED)
+        .limit(100);
+      leads = data || [];
     }
 
     if (leads.length === 0) {
@@ -116,7 +118,7 @@ export class EnrichLeadsWorker extends BaseWorker<EnrichLeadsPayload, EnrichLead
 
         // Step B: Fetch CNPJ Info if lead is an ENTREPRENEUR and CNPJ is in metadata
         const metadata = (lead.metadata as Record<string, any>) || {};
-        let yearsOfPractice = lead.yearsOfPractice || 0;
+        let yearsOfPractice = lead.years_of_practice || 0;
         let cnpjDetails: any = null;
 
         if (lead.profession === 'ENTREPRENEUR' && metadata.cnpj) {
@@ -142,7 +144,7 @@ export class EnrichLeadsWorker extends BaseWorker<EnrichLeadsPayload, EnrichLead
               lead.name = cnpjDetails.nomeFantasia || cnpjDetails.razaoSocial;
             }
             // Infer owner/partner
-            lead.partnerOrOwner = true;
+            lead.partner_or_owner = true;
           }
         }
 
@@ -150,10 +152,13 @@ export class EnrichLeadsWorker extends BaseWorker<EnrichLeadsPayload, EnrichLead
         let minFitScore = 6.0;
         let campaign: any = null;
 
-        if (lead.campaignId) {
-          campaign = await prisma.campaign.findUnique({
-            where: { id: lead.campaignId },
-          });
+        if (lead.campaign_id) {
+          const { data: campData } = await dbAdmin
+            .from('campaigns')
+            .select('*')
+            .eq('id', lead.campaign_id)
+            .single();
+          campaign = campData;
           if (campaign?.filters) {
             const filters = campaign.filters as Record<string, any>;
             if (typeof filters.min_fit_score === 'number') {
@@ -167,48 +172,48 @@ export class EnrichLeadsWorker extends BaseWorker<EnrichLeadsPayload, EnrichLead
           profession: lead.profession,
           whatsapp: lead.whatsapp,
           whatsappValid,
-          partnerOrOwner: lead.partnerOrOwner,
+          partnerOrOwner: lead.partner_or_owner,
           yearsOfPractice,
-          googleRating: lead.googleRating ? Number(lead.googleRating) : null,
-          googleReviewsCount: lead.googleReviewsCount,
+          googleRating: lead.google_rating ? Number(lead.google_rating) : null,
+          googleReviewsCount: lead.google_reviews_count,
           address: lead.address,
           metadata,
         };
 
-        const score = calculateFitScore(fitScoreInput, campaign || { profession: lead.profession || '' }, tenant);
+        const score = calculateFitScore(fitScoreInput, campaign || { profession: lead.profession || '' }, tenant as any);
 
         // Step E: Determine final status based on fit score vs minimum threshold
         const finalStatus = score >= minFitScore ? LeadStatus.ENRICHED : LeadStatus.ARCHIVED;
 
-        // Step F: Database update in a transaction
-        await prisma.$transaction(async (tx) => {
-          await tx.lead.update({
-            where: { id: lead.id },
-            data: {
-              name: lead.name,
-              whatsappValid,
-              yearsOfPractice,
-              partnerOrOwner: lead.partnerOrOwner,
-              fitScore: score === -Infinity ? 0.0 : score, // cap -Infinity to 0 for DB display
-              status: finalStatus,
-              metadata,
-            },
-          });
+        // Step F: Database update (sequential, no transaction wrapper)
+        const { error: updateErr } = await dbAdmin
+          .from('leads')
+          .update({
+            name: lead.name,
+            whatsapp_valid: whatsappValid,
+            years_of_practice: yearsOfPractice,
+            partner_or_owner: lead.partner_or_owner,
+            fit_score: score === -Infinity ? 0.0 : score, // cap -Infinity to 0 for DB display
+            status: finalStatus,
+            metadata,
+          })
+          .eq('id', lead.id);
+        if (updateErr) throw updateErr;
 
-          await tx.leadEvent.create({
-            data: {
-              tenantId,
-              leadId: lead.id,
-              eventType: finalStatus === LeadStatus.ENRICHED ? 'enriched' : 'archived',
-              payload: {
-                fitScore: score,
-                threshold: minFitScore,
-                whatsappValid,
-                cnpjEnriched: !!cnpjDetails,
-              },
+        const { error: eventErr } = await dbAdmin
+          .from('lead_events')
+          .insert({
+            tenant_id: tenantId,
+            lead_id: lead.id,
+            event_type: finalStatus === LeadStatus.ENRICHED ? 'enriched' : 'archived',
+            payload: {
+              fitScore: score,
+              threshold: minFitScore,
+              whatsappValid,
+              cnpjEnriched: !!cnpjDetails,
             },
-          });
-        });
+          } as any);
+        if (eventErr) throw eventErr;
 
         if (finalStatus === LeadStatus.ENRICHED) {
           enrichedCount++;

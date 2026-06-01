@@ -1,6 +1,6 @@
 import { createDedicatedRedisConnection } from '../lib/redis.js';
 import { logger } from '../lib/logger.js';
-import { prisma } from '../lib/prisma.js';
+import { dbAdmin } from '../lib/db.js';
 import { createTenantQueue, getTenantQueueName, observeQueueFailures, upsertTenantJobScheduler, syncCampaignCaptureSchedule } from '../lib/queue.js';
 import type { QueueFailureObserver, TenantJobSchedule } from '../lib/queue.js';
 import { Worker } from 'bullmq';
@@ -262,26 +262,27 @@ export async function startWorkers() {
     activeWorkers.push(alertScanWorker);
 
     // 2. Fetch active tenants to trigger initial health checks
-    const tenants = await prisma.tenant.findMany({
-      where: {
-        status: 'ACTIVE',
-        deletedAt: null,
-      },
-    });
+    const { data: tenants } = await dbAdmin
+      .from('tenants')
+      .select('id')
+      .eq('status', 'ACTIVE')
+      .is('deleted_at', null);
+    const activeTenantList = tenants ?? [];
 
-    logger.info({ count: tenants.length }, `🏢 Enqueuing initial health checks for active tenants...`);
-    await scheduleRecurringTenantJobs(tenants);
+    logger.info({ count: activeTenantList.length }, `🏢 Enqueuing initial health checks for active tenants...`);
+    await scheduleRecurringTenantJobs(activeTenantList);
 
     // Schedule capture crons for all existing active campaigns with cities
-    const activeCampaigns = await prisma.campaign.findMany({
-      where: { status: 'ACTIVE' },
-      select: { id: true, tenantId: true, cities: true },
-    });
+    const { data: activeCampaigns } = await dbAdmin
+      .from('campaigns')
+      .select('id, tenant_id, cities')
+      .eq('status', 'ACTIVE');
 
-    const campaignsWithCities = activeCampaigns.filter(c => c.cities && c.cities.length > 0);
+    const campaignList = activeCampaigns ?? [];
+    const campaignsWithCities = campaignList.filter((c: any) => c.cities && (Array.isArray(c.cities) ? c.cities.length > 0 : true));
     logger.info({ count: campaignsWithCities.length }, '🗺️ Scheduling capture crons for active campaigns...');
     for (const campaign of campaignsWithCities) {
-      await syncCampaignCaptureSchedule(campaign.tenantId, campaign.id, 'ACTIVE', campaign.cities);
+      await syncCampaignCaptureSchedule(campaign.tenant_id, campaign.id, 'ACTIVE', campaign.cities as string[]);
     }
 
     // Global scheduler · alert-scan diário 08:15 BRT (após daily-digest 08:00 settle)
@@ -295,7 +296,7 @@ export async function startWorkers() {
     });
     logger.info({ pattern: '15 8 * * *', tz: SCHEDULER_TIMEZONE }, '🚨 Alert scanner scheduled daily');
 
-    for (const tenant of tenants) {
+    for (const tenant of activeTenantList) {
       const hcQueue = createTenantQueue(tenant.id, 'health-check');
       await hcQueue.add('initial-check', { tenant_id: tenant.id });
     }
@@ -303,9 +304,12 @@ export async function startWorkers() {
     // 3. Setup periodic health check scheduler (Every 5 minutes)
     healthCheckInterval = setInterval(async () => {
       try {
-        const activeTenants = await prisma.tenant.findMany({
-          where: { status: 'ACTIVE', deletedAt: null },
-        });
+        const { data: activeTenantData } = await dbAdmin
+          .from('tenants')
+          .select('id')
+          .eq('status', 'ACTIVE')
+          .is('deleted_at', null);
+        const activeTenants = activeTenantData ?? [];
 
         logger.info({ count: activeTenants.length }, '🕒 Dispatching recurrent health check jobs for tenants...');
         for (const tenant of activeTenants) {

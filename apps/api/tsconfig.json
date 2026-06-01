@@ -12,5 +12,5 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src/**/*", "tests/**/*", "prisma/seed.ts"]
+  "include": ["src/**/*", "tests/**/*"]
 }

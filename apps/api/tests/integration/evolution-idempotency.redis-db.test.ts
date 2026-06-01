@@ -2,7 +2,7 @@ import '../../src/config/env.js';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import fastify from 'fastify';
 import crypto from 'crypto';
-import { PrismaClient } from '@prisma/client';
+import { createClient } from '@supabase/supabase-js';
 import { QueueEvents, Worker } from 'bullmq';
 import { evolutionWebhookRoutes } from '../../src/routes/webhooks/evolution.js';
 import { createTenantQueue, getTenantQueueName } from '../../src/lib/queue.js';
@@ -20,13 +20,7 @@ vi.mock('../../src/ai/classifier.js', () => ({
 const requireDbEvidence = process.env.AUDIT_REQUIRE_DB === '1' || process.env.CI === 'true';
 const requireRedisEvidence = process.env.AUDIT_REQUIRE_REDIS === '1' || process.env.CI === 'true';
 
-const db = new PrismaClient({
-  datasources: {
-    db: {
-      url: process.env.DATABASE_URL,
-    },
-  },
-});
+const db = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
 let dbAvailable = true;
 let redisAvailable = true;
@@ -54,57 +48,61 @@ function waitForCompletedJob(events: QueueEvents): Promise<{ jobId: string; retu
 }
 
 async function seedWebhookFixture(seed: string) {
-  const tenant = await db.tenant.create({
-    data: {
+  const { data: tenant, error: tenantError } = await db
+    .from('tenants')
+    .insert({
       slug: `audit-evolution-${seed}`,
       name: `Audit Evolution ${seed}`,
       status: 'ACTIVE',
       plan: 'STARTER',
-      mrrCents: 0,
-      highValueAreas: [],
-    },
-  });
+      mrr_cents: 0,
+      high_value_areas: [],
+    })
+    .select()
+    .single();
+  if (tenantError) throw tenantError;
 
   const instanceName = `audit-evolution-${seed}`;
   const webhookSecret = `secret-${seed}`;
   const whatsapp = `55119${seed.replace(/\D/g, '').slice(-8).padStart(8, '0')}`;
 
-  const { lead, conversation } = await db.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT set_config('app.tenant_id', ${tenant.id}, true)`;
-
-    await tx.tenantSecret.create({
-      data: {
-        tenantId: tenant.id,
-        evolutionBaseUrl: 'https://evolution.audit.test',
-        evolutionInstanceName: instanceName,
-        evolutionWebhookSecret: webhookSecret,
-      },
+  const { error: secretError } = await db
+    .from('tenant_secrets')
+    .insert({
+      tenant_id: tenant.id,
+      evolution_base_url: 'https://evolution.audit.test',
+      evolution_instance_name: instanceName,
+      evolution_webhook_secret: webhookSecret,
     });
+  if (secretError) throw secretError;
 
-    const lead = await tx.lead.create({
-      data: {
-        tenantId: tenant.id,
-        whatsapp,
-        name: 'Lead Auditor',
-        source: 'MANUAL',
-        status: 'CONTACTED',
-      },
-    });
+  const { data: lead, error: leadError } = await db
+    .from('leads')
+    .insert({
+      tenant_id: tenant.id,
+      whatsapp,
+      name: 'Lead Auditor',
+      source: 'MANUAL',
+      status: 'CONTACTED',
+    })
+    .select()
+    .single();
+  if (leadError) throw leadError;
 
-    const conversation = await tx.conversation.create({
-      data: {
-        tenantId: tenant.id,
-        leadId: lead.id,
-        status: 'ACTIVE',
-        aiHandling: false,
-      },
-    });
-
-    return { lead, conversation };
-  });
+  const { data: conversation, error: convError } = await db
+    .from('conversations')
+    .insert({
+      tenant_id: tenant.id,
+      lead_id: lead.id,
+      status: 'ACTIVE',
+      ai_handling: false,
+    })
+    .select()
+    .single();
+  if (convError) throw convError;
 
   cleanupTasks.push(async () => {
-    await db.tenant.deleteMany({ where: { id: tenant.id } });
+    await db.from('tenants').delete().eq('id', tenant.id);
   });
 
   return { tenant, instanceName, webhookSecret, whatsapp, lead, conversation };
@@ -113,8 +111,9 @@ async function seedWebhookFixture(seed: string) {
 describe('AUD-P1-022 Evolution webhook idempotency with real DB and Redis', () => {
   beforeAll(async () => {
     try {
-      await db.$connect();
-      await db.$queryRaw`SELECT 1`;
+      // Verify connection with a simple query
+      const { error } = await db.from('tenants').select('id').limit(1);
+      if (error) throw error;
     } catch (err) {
       dbAvailable = false;
       if (requireDbEvidence) {
@@ -142,7 +141,7 @@ describe('AUD-P1-022 Evolution webhook idempotency with real DB and Redis', () =
   });
 
   afterAll(async () => {
-    await db.$disconnect();
+    // Supabase doesn't need explicit disconnection
   });
 
   it('deduplicates concurrent Evolution inbound webhooks and persists one inbound message', async (context) => {
@@ -240,30 +239,28 @@ describe('AUD-P1-022 Evolution webhook idempotency with real DB and Redis', () =
     const completedJob = await completedJobPromise;
     expect(completedJob.jobId).toBe(jobs[0]?.id);
 
-    const persistedState = await db.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT set_config('app.tenant_id', ${tenant.id}, true)`;
+    const { data: messages, error: messagesError } = await db
+      .from('messages')
+      .select('*')
+      .eq('tenant_id', tenant.id)
+      .eq('whatsapp_message_id', messageId);
+    if (messagesError) throw messagesError;
 
-      const messages = await tx.message.findMany({
-        where: {
-          tenantId: tenant.id,
-          whatsappMessageId: messageId,
-        },
-      });
-      const refreshedConversation = await tx.conversation.findUniqueOrThrow({
-        where: { id: conversation.id },
-      });
+    const { data: refreshedConversation, error: convError } = await db
+      .from('conversations')
+      .select('*')
+      .eq('id', conversation.id)
+      .single();
+    if (convError) throw convError;
 
-      return { messages, refreshedConversation };
-    });
-
-    expect(persistedState.messages).toHaveLength(1);
-    expect(persistedState.messages[0]).toMatchObject({
-      tenantId: tenant.id,
-      conversationId: conversation.id,
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      tenant_id: tenant.id,
+      conversation_id: conversation.id,
       direction: 'INBOUND',
       content: 'Oi, quero entender melhor.',
     });
-    expect(persistedState.refreshedConversation.messageCount).toBe(1);
-    expect(persistedState.refreshedConversation.lastInboundAt).toBeInstanceOf(Date);
+    expect(refreshedConversation.message_count).toBe(1);
+    expect(refreshedConversation.last_inbound_at).toBeTruthy();
   });
 });

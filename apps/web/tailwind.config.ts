@@ -3,8 +3,7 @@ import prospixPreset from '@prospix/ui/tailwind.config';
 
 const config: Config = {
   content: [
-    './index.html',
-    './src/**/*.{js,ts,jsx,tsx}',
+    './src/**/*.{js,ts,jsx,tsx,mdx}',
     '../../packages/ui/src/**/*.{js,ts,jsx,tsx}',
   ],
   presets: [prospixPreset],

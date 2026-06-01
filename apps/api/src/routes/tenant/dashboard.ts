@@ -1,8 +1,8 @@
 import { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
-import { prisma } from '../../lib/prisma.js';
+import { getDb } from '../../lib/db.js';
 import { redis } from '../../lib/redis.js';
 import { logger } from '../../lib/logger.js';
-import { MeetingStatus, LeadStatus, ConversationStatus, MeetingOutcome } from '@prisma/client';
+import { MeetingStatus, LeadStatus, ConversationStatus, MeetingOutcome } from '@prospix/shared-types';
 import { getAIPlanLimitCents } from '../../ai/quota.js';
 
 // Helper SWR function
@@ -62,12 +62,12 @@ async function withSWR<T>(
   return data;
 }
 
-function formatTime(date: Date): string {
+function formatTime(date: string): string {
   return new Intl.DateTimeFormat('pt-BR', {
     hour: '2-digit',
     minute: '2-digit',
     timeZone: 'America/Sao_Paulo',
-  }).format(date);
+  }).format(new Date(date));
 }
 
 export const dashboardRoutes: FastifyPluginAsync = async (app) => {
@@ -81,6 +81,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   // GET /v1/tenant/dashboard/today - Overview of today's operational metrics
   app.get('/today', async (req: FastifyRequest, reply: FastifyReply) => {
     const tenantId = req.tenantId!;
+    const db = getDb(req);
     const cacheKey = `swr:tenant:${tenantId}:dashboard:today`;
 
     const data = await withSWR(cacheKey, 60, async () => {
@@ -92,66 +93,57 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       const scheduledStatuses = [MeetingStatus.SCHEDULED, MeetingStatus.CONFIRMED];
 
       const [
-        meetingsToday,
-        conversationsReady,
-        pendingManualConversations,
-        needCallback,
-        newLeadsToday,
-        nextMeeting,
+        meetingsTodayRes,
+        conversationsReadyRes,
+        pendingManualRes,
+        needCallbackRes,
+        newLeadsTodayRes,
+        nextMeetingRes,
       ] = await Promise.all([
-        prisma.meeting.count({
-          where: {
-            tenantId,
-            scheduledFor: { gte: todayStart, lte: todayEnd },
-            status: { in: scheduledStatuses },
-          },
-        }),
-        prisma.conversation.count({
-          where: {
-            tenantId,
-            status: ConversationStatus.ACTIVE,
-            aiHandling: true,
-          },
-        }),
-        prisma.conversation.count({
-          where: {
-            tenantId,
-            status: { in: [ConversationStatus.PAUSED, ConversationStatus.ESCALATED] },
-            aiHandling: false,
-          },
-        }),
-        prisma.lead.count({
-          where: {
-            tenantId,
-            status: LeadStatus.CONTACTED,
-            deletedAt: null,
-          },
-        }),
-        prisma.lead.count({
-          where: {
-            tenantId,
-            createdAt: { gte: todayStart, lte: todayEnd },
-            deletedAt: null,
-          },
-        }),
-        prisma.meeting.findFirst({
-          where: {
-            tenantId,
-            scheduledFor: { gte: new Date() },
-            status: { in: scheduledStatuses },
-          },
-          orderBy: { scheduledFor: 'asc' },
-          select: { scheduledFor: true },
-        }),
+        db.from('meetings')
+          .select('*', { count: 'exact', head: true })
+          .eq('tenant_id', tenantId)
+          .gte('scheduled_for', todayStart.toISOString())
+          .lte('scheduled_for', todayEnd.toISOString())
+          .in('status', scheduledStatuses),
+        db.from('conversations')
+          .select('*', { count: 'exact', head: true })
+          .eq('tenant_id', tenantId)
+          .eq('status', ConversationStatus.ACTIVE)
+          .eq('ai_handling', true),
+        db.from('conversations')
+          .select('*', { count: 'exact', head: true })
+          .eq('tenant_id', tenantId)
+          .in('status', [ConversationStatus.PAUSED, ConversationStatus.ESCALATED])
+          .eq('ai_handling', false),
+        db.from('leads')
+          .select('*', { count: 'exact', head: true })
+          .eq('tenant_id', tenantId)
+          .eq('status', LeadStatus.CONTACTED)
+          .is('deleted_at', null),
+        db.from('leads')
+          .select('*', { count: 'exact', head: true })
+          .eq('tenant_id', tenantId)
+          .gte('created_at', todayStart.toISOString())
+          .lte('created_at', todayEnd.toISOString())
+          .is('deleted_at', null),
+        db.from('meetings')
+          .select('scheduled_for')
+          .eq('tenant_id', tenantId)
+          .gte('scheduled_for', new Date().toISOString())
+          .in('status', scheduledStatuses)
+          .order('scheduled_for', { ascending: true })
+          .limit(1)
+          .maybeSingle(),
       ]);
 
       return {
-        meetings_today: meetingsToday,
-        conversations_ready: conversationsReady,
-        pending_manual_conversations: pendingManualConversations,
-        need_callback: needCallback,
-        new_leads_today: newLeadsToday,
-        next_meeting_time: nextMeeting ? formatTime(nextMeeting.scheduledFor) : null,
+        meetings_today: meetingsTodayRes.count ?? 0,
+        conversations_ready: conversationsReadyRes.count ?? 0,
+        pending_manual_conversations: pendingManualRes.count ?? 0,
+        need_callback: needCallbackRes.count ?? 0,
+        new_leads_today: newLeadsTodayRes.count ?? 0,
+        next_meeting_time: nextMeetingRes.data ? formatTime(nextMeetingRes.data.scheduled_for) : null,
       };
     });
 
@@ -161,31 +153,37 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   // GET /v1/tenant/dashboard/funnel - CRM funnel counts and conversion rates
   app.get('/funnel', async (req: FastifyRequest, reply: FastifyReply) => {
     const tenantId = req.tenantId!;
+    const db = getDb(req);
     const { period } = req.query as { period?: string };
     const cacheKey = `swr:tenant:${tenantId}:dashboard:funnel:${period || 'all'}`;
 
     const data = await withSWR(cacheKey, 60, async () => {
       // Calculate date range based on period
-      let dateFilter: { gte?: Date } | undefined;
+      let dateFilter: string | undefined;
       if (period === 'week') {
         const d = new Date(); d.setDate(d.getDate() - 7); d.setHours(0, 0, 0, 0);
-        dateFilter = { gte: d };
+        dateFilter = d.toISOString();
       } else if (period === 'month') {
         const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0);
-        dateFilter = { gte: d };
+        dateFilter = d.toISOString();
       } else if (period === '90d') {
         const d = new Date(); d.setDate(d.getDate() - 90); d.setHours(0, 0, 0, 0);
-        dateFilter = { gte: d };
+        dateFilter = d.toISOString();
       }
 
-      // Count leads in each status
-      const leadCounts = await prisma.lead.groupBy({
-        by: ['status'],
-        where: { tenantId, ...(dateFilter && { createdAt: dateFilter }) },
-        _count: { id: true },
-      });
+      // Supabase doesn't support groupBy natively, so fetch all statuses and count in-memory
+      let query = db.from('leads')
+        .select('status')
+        .eq('tenant_id', tenantId);
 
-      const counts = {
+      if (dateFilter) {
+        query = query.gte('created_at', dateFilter);
+      }
+
+      const { data: leadRows, error } = await query;
+      if (error) throw error;
+
+      const counts: Record<string, number> = {
         CAPTURED: 0,
         ENRICHED: 0,
         NEW: 0,
@@ -198,17 +196,17 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       };
 
       let totalLeads = 0;
-      leadCounts.forEach((group) => {
-        const status = group.status as keyof typeof counts;
+      (leadRows || []).forEach((row) => {
+        const status = row.status as string;
         if (status in counts) {
-          counts[status] = group._count.id;
+          counts[status]!++;
         }
-        totalLeads += group._count.id;
+        totalLeads++;
       });
 
       // Calculate conversion rates
-      const winRate = totalLeads > 0 ? (counts.CLOSED_WON / totalLeads) * 100 : 0;
-      const qualifiedRate = totalLeads > 0 ? ((counts.QUALIFIED + counts.NEGOTIATING + counts.CLOSED_WON) / totalLeads) * 100 : 0;
+      const winRate = totalLeads > 0 ? (counts.CLOSED_WON! / totalLeads) * 100 : 0;
+      const qualifiedRate = totalLeads > 0 ? ((counts.QUALIFIED! + counts.NEGOTIATING! + counts.CLOSED_WON!) / totalLeads) * 100 : 0;
 
       return {
         stages: counts,
@@ -226,42 +224,46 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   // GET /v1/tenant/dashboard/performance - Revenue, commission and financial outcomes
   app.get('/performance', async (req: FastifyRequest, reply: FastifyReply) => {
     const tenantId = req.tenantId!;
+    const db = getDb(req);
     const { period } = req.query as { period?: string };
     const cacheKey = `swr:tenant:${tenantId}:dashboard:performance:${period || 'all'}`;
 
     const data = await withSWR(cacheKey, 60, async () => {
       // Calculate date range based on period
-      let dateFilter: { gte?: Date } = {};
+      let dateFilter: string | undefined;
       if (period === 'week') {
         const d = new Date(); d.setDate(d.getDate() - 7); d.setHours(0, 0, 0, 0);
-        dateFilter = { gte: d };
+        dateFilter = d.toISOString();
       } else if (period === 'month') {
         const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0);
-        dateFilter = { gte: d };
+        dateFilter = d.toISOString();
       } else if (period === '90d') {
         const d = new Date(); d.setDate(d.getDate() - 90); d.setHours(0, 0, 0, 0);
-        dateFilter = { gte: d };
+        dateFilter = d.toISOString();
       }
 
-      // Sum of closed meeting policy values and commissions
-      const financialAggregate = await prisma.meeting.aggregate({
-        where: {
-          tenantId,
-          outcome: MeetingOutcome.CLOSED,
-          ...(dateFilter.gte && { outcomeMarkedAt: { gte: dateFilter.gte } }),
-        },
-        _sum: {
-          policyValueCents: true,
-          commissionCents: true,
-        },
-        _count: {
-          id: true,
-        },
-      });
+      // Supabase doesn't support aggregate, so we fetch the relevant rows and compute in-memory
+      let query = db.from('meetings')
+        .select('policy_value_cents, commission_cents, id')
+        .eq('tenant_id', tenantId)
+        .eq('outcome', MeetingOutcome.CLOSED);
 
-      const totalPolicyCents = financialAggregate._sum.policyValueCents || 0;
-      const totalCommissionCents = financialAggregate._sum.commissionCents || 0;
-      const salesCount = financialAggregate._count.id;
+      if (dateFilter) {
+        query = query.gte('outcome_marked_at', dateFilter);
+      }
+
+      const { data: meetings, error } = await query;
+      if (error) throw error;
+
+      let totalPolicyCents = 0;
+      let totalCommissionCents = 0;
+      let salesCount = 0;
+
+      (meetings || []).forEach((m) => {
+        totalPolicyCents += m.policy_value_cents || 0;
+        totalCommissionCents += m.commission_cents || 0;
+        salesCount++;
+      });
 
       return {
         total_policy_cents: totalPolicyCents,
@@ -282,6 +284,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   // GET /v1/tenant/dashboard/ai-usage - LLM, maps, and WhatsApp costs aggregate
   app.get('/ai-usage', async (req: FastifyRequest, reply: FastifyReply) => {
     const tenantId = req.tenantId!;
+    const db = getDb(req);
     const cacheKey = `swr:tenant:${tenantId}:dashboard:ai-usage`;
 
     const data = await withSWR(cacheKey, 60, async () => {
@@ -290,24 +293,24 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       startOfMonth.setHours(0, 0, 0, 0);
 
       // Fetch or create monthly usage record
-      const usage = await prisma.tenantUsage.findUnique({
-        where: {
-          tenantId_periodMonth: {
-            tenantId,
-            periodMonth: startOfMonth,
-          },
-        },
-      });
+      const { data: usage } = await db
+        .from('tenant_usage')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .eq('period_month', startOfMonth.toISOString())
+        .maybeSingle();
 
-      const llmCost = usage ? Number(usage.llmCostCents) : 0;
-      const whatsappCost = usage ? Number(usage.whatsappCostCents) : 0;
-      const mapsCost = usage ? Number(usage.googleMapsCostCents) : 0;
+      const llmCost = usage ? Number(usage.llm_cost_cents) : 0;
+      const whatsappCost = usage ? Number(usage.whatsapp_cost_cents) : 0;
+      const mapsCost = usage ? Number(usage.google_maps_cost_cents) : 0;
       const totalCost = llmCost + whatsappCost + mapsCost;
 
-      const tenant = await prisma.tenant.findUnique({
-        where: { id: tenantId },
-        select: { plan: true },
-      });
+      const { data: tenant } = await db
+        .from('tenants')
+        .select('plan')
+        .eq('id', tenantId)
+        .single();
+
       const maxLimitCents = getAIPlanLimitCents(tenant?.plan);
       const limitUsedPercent = maxLimitCents > 0 ? (totalCost / maxLimitCents) * 100 : 0;
 
@@ -330,6 +333,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   // GET /v1/tenant/dashboard/weekly-captures - Lead capture counts for each of the last 7 days
   app.get('/weekly-captures', async (req: FastifyRequest, reply: FastifyReply) => {
     const tenantId = req.tenantId!;
+    const db = getDb(req);
     const cacheKey = `swr:tenant:${tenantId}:dashboard:weekly-captures`;
 
     const data = await withSWR(cacheKey, 300, async () => {
@@ -338,14 +342,14 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
       sevenDaysAgo.setHours(0, 0, 0, 0);
 
-      const leads = await prisma.lead.findMany({
-        where: {
-          tenantId,
-          deletedAt: null,
-          createdAt: { gte: sevenDaysAgo },
-        },
-        select: { createdAt: true },
-      });
+      const { data: leads, error } = await db
+        .from('leads')
+        .select('created_at')
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null)
+        .gte('created_at', sevenDaysAgo.toISOString());
+
+      if (error) throw error;
 
       // Build day-by-day counts
       const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
@@ -356,8 +360,8 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
         return { date: d, label: dayNames[d.getDay()], count: 0 };
       });
 
-      leads.forEach((lead) => {
-        const created = new Date(lead.createdAt);
+      (leads || []).forEach((lead) => {
+        const created = new Date(lead.created_at);
         created.setHours(0, 0, 0, 0);
         const match = days.find(d => d.date.getTime() === created.getTime());
         if (match) match.count++;
@@ -372,53 +376,38 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   // GET /v1/tenant/dashboard/hot-leads - Top 5 leads by fitScore
   app.get('/hot-leads', async (req: FastifyRequest, reply: FastifyReply) => {
     const tenantId = req.tenantId!;
+    const db = getDb(req);
     const cacheKey = `swr:tenant:${tenantId}:dashboard:hot-leads`;
 
     const data = await withSWR(cacheKey, 120, async () => {
-      const leads = await prisma.lead.findMany({
-        where: {
-          tenantId,
-          deletedAt: null,
-          status: { notIn: ['ARCHIVED', 'OPTED_OUT', 'CLOSED_LOST'] as any },
-          fitScore: { not: null },
-        },
-        orderBy: { fitScore: 'desc' },
-        take: 5,
-        select: {
-          id: true,
-          name: true,
-          profession: true,
-          whatsapp: true,
-          address: true,
-          fitScore: true,
-          status: true,
-          googleRating: true,
-          googleReviewsCount: true,
-          registrationNumber: true,
-          metadata: true,
-          tags: true,
-          createdAt: true,
-          contactedAt: true,
-          firstResponseAt: true,
-        },
-      });
+      const { data: leads, error } = await db
+        .from('leads')
+        .select('id, name, profession, whatsapp, address, fit_score, status, google_rating, google_reviews_count, registration_number, metadata, tags, created_at, contacted_at, first_response_at')
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null)
+        .not('status', 'in', '("ARCHIVED","OPTED_OUT","CLOSED_LOST")')
+        .not('fit_score', 'is', null)
+        .order('fit_score', { ascending: false })
+        .limit(5);
 
-      return leads.map((l) => ({
+      if (error) throw error;
+
+      return (leads || []).map((l) => ({
         id: l.id,
         name: l.name || 'Lead sem nome',
         profession: l.profession,
         whatsapp: l.whatsapp,
         city: (l.address as any)?.city || '',
-        fitScore: Number(l.fitScore) || 0,
+        fitScore: Number(l.fit_score) || 0,
         status: l.status,
-        googleRating: l.googleRating ? Number(l.googleRating) : null,
-        googleReviewsCount: l.googleReviewsCount,
-        registrationNumber: l.registrationNumber,
+        googleRating: l.google_rating ? Number(l.google_rating) : null,
+        googleReviewsCount: l.google_reviews_count,
+        registrationNumber: l.registration_number,
         metadata: l.metadata,
         tags: l.tags,
-        createdAt: l.createdAt.toISOString(),
-        contactedAt: l.contactedAt?.toISOString() || null,
-        firstResponseAt: l.firstResponseAt?.toISOString() || null,
+        createdAt: l.created_at,
+        contactedAt: l.contacted_at || null,
+        firstResponseAt: l.first_response_at || null,
       }));
     });
 

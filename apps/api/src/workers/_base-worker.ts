@@ -1,7 +1,6 @@
 import { Job } from 'bullmq';
 import { logger } from '../lib/logger.js';
 import { BaseJobPayload } from '@prospix/shared-types';
-import { tenantContextStorage } from '../lib/tenant-context-storage.js';
 
 export abstract class BaseWorker<TPayload extends BaseJobPayload, TResult> {
   abstract name: string;
@@ -14,7 +13,8 @@ export abstract class BaseWorker<TPayload extends BaseJobPayload, TResult> {
 
   /**
    * Main entry point for job execution.
-   * Auto-injects tenant_id RLS context before run and logs trace.
+   * Validates tenant_id and logs trace.
+   * Workers use dbAdmin (service_role) directly — no RLS context needed.
    */
   async run(job: Job<TPayload>): Promise<TResult> {
     const tenantId = job.data?.tenant_id;
@@ -36,11 +36,7 @@ export abstract class BaseWorker<TPayload extends BaseJobPayload, TResult> {
     );
 
     try {
-      // 1. Wrap process execution inside the tenantContextStorage context.
-      // The Prisma Client query extension detects this tenantId for tenant-scoped queries.
-      const result = await tenantContextStorage.run({ tenantId, bypassRls: false }, async () => {
-        return await this.process(job);
-      });
+      const result = await this.process(job);
       
       const durationMs = Date.now() - start;
       logger.info(

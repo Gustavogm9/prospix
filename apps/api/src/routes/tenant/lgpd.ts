@@ -1,29 +1,29 @@
 /**
- * Endpoints LGPD operacional · AUD-P2-033.
+ * Endpoints LGPD operacional — AUD-P2-033.
  *
  * Permite ao owner do tenant solicitar:
- *  - EXPORT_DATA       · portabilidade (art. 18 V)
- *  - DELETE_TENANT_DATA · exclusao do tenant inteiro (art. 18 VI)
- *  - DELETE_LEAD_DATA  · exclusao de um lead especifico (art. 18 VI)
- *  - CORRECT_DATA      · correcao (art. 18 III)
- *  - CONFIRM_DATA      · confirmacao (art. 18 I)
+ *  - EXPORT_DATA       → portabilidade (art. 18 V)
+ *  - DELETE_TENANT_DATA → exclusão do tenant inteiro (art. 18 VI)
+ *  - DELETE_LEAD_DATA  → exclusão de um lead específico (art. 18 VI)
+ *  - CORRECT_DATA      → correção (art. 18 III)
+ *  - CONFIRM_DATA      → confirmação (art. 18 I)
  *
  * Fluxo MVP:
- *  1. Owner POST /v1/tenant/lgpd/requests · cria registro com status PENDING
+ *  1. Owner POST /v1/tenant/lgpd/requests → cria registro com status PENDING
  *  2. Endpoint retorna 202 com `request_id`
  *  3. Operador Guilds (super-admin) processa manualmente em <= 15 dias
- *     (queue worker virá em iteração futura · AUD-P2-033 fix incremental)
- *  4. Quando processed, status -> COMPLETED + downloadUrl preenchido se aplicavel
+ *     (queue worker virá em iteração futura — AUD-P2-033 fix incremental)
+ *  4. Quando processed, status -> COMPLETED + downloadUrl preenchido se aplicável
  *  5. Owner GET /v1/tenant/lgpd/requests vê histórico + status
  *
  * Rate limit: 3 requests/hora por tenant (anti-abuso).
  */
 import type { FastifyPluginAsync, FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { prisma } from '../../lib/prisma.js';
+import { getDb } from '../../lib/db.js';
 import { logger } from '../../lib/logger.js';
 import { createTenantQueue } from '../../lib/queue.js';
-import { LgpdRequestType, LgpdRequestStatus, Prisma } from '@prisma/client';
+import { LgpdRequestType, LgpdRequestStatus } from '@prospix/shared-types';
 
 const createRequestSchema = z.object({
   type: z.nativeEnum(LgpdRequestType),
@@ -63,7 +63,7 @@ export const lgpdRoutes: FastifyPluginAsync = async (app) => {
 };
 
 export function registerTenantLgpdRoutes(app: FastifyInstance): void {
-  // ── GET /requests · lista requests do tenant ──────────────────────────────
+  // 🔹 GET /requests — lista requests do tenant 🔹
   app.get('/requests', async (req: FastifyRequest, reply: FastifyReply) => {
     const tenantId = (req as FastifyRequest & { tenantId?: string }).tenantId;
     if (!tenantId) {
@@ -72,28 +72,20 @@ export function registerTenantLgpdRoutes(app: FastifyInstance): void {
       });
     }
 
-    const requests = await prisma.lgpdRequest.findMany({
-      where: { tenantId },
-      orderBy: { createdAt: 'desc' },
-      take: 100,
-      select: {
-        id: true,
-        type: true,
-        status: true,
-        scope: true,
-        downloadUrl: true,
-        downloadExpiresAt: true,
-        rejectionReason: true,
-        createdAt: true,
-        processedAt: true,
-        updatedAt: true,
-      },
-    });
+    const db = getDb(req);
+    const { data: requests, error } = await db
+      .from('lgpd_requests')
+      .select('id, type, status, scope, download_url, download_expires_at, rejection_reason, created_at, processed_at, updated_at')
+      .eq('tenant_id', tenantId)
+      .order('created_at', { ascending: false })
+      .limit(100);
+
+    if (error) throw error;
 
     return reply.send({ data: requests });
   });
 
-  // ── POST /lgpd/requests · cria nova solicitacao ──────────────────────────
+  // 🔹 POST /lgpd/requests — cria nova solicitação 🔹
   app.post('/requests', {
     preHandler: [async (req, reply) => {
       if ((req as any).userRole && (req as any).userRole !== 'OWNER') {
@@ -110,6 +102,8 @@ export function registerTenantLgpdRoutes(app: FastifyInstance): void {
       });
     }
 
+    const db = getDb(req);
+
     const parsed = createRequestSchema.safeParse(req.body);
     if (!parsed.success) {
       return reply.status(422).send({
@@ -122,13 +116,15 @@ export function registerTenantLgpdRoutes(app: FastifyInstance): void {
     }
 
     // Anti-abuso: max 3 requests pendentes simultaneos por tenant
-    const pendingCount = await prisma.lgpdRequest.count({
-      where: {
-        tenantId,
-        status: { in: [LgpdRequestStatus.PENDING, LgpdRequestStatus.PROCESSING] },
-      },
-    });
-    if (pendingCount >= 3) {
+    const { count, error: countErr } = await db
+      .from('lgpd_requests')
+      .select('*', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId)
+      .in('status', [LgpdRequestStatus.PENDING, LgpdRequestStatus.PROCESSING]);
+
+    if (countErr) throw countErr;
+
+    if ((count ?? 0) >= 3) {
       return reply.status(429).send({
         error: {
           code: 'RATE_LIMITED',
@@ -137,22 +133,22 @@ export function registerTenantLgpdRoutes(app: FastifyInstance): void {
       });
     }
 
-    const request = await prisma.lgpdRequest.create({
-      data: {
-        tenantId,
-        requestedByUserId: userId,
+    const requestId = crypto.randomUUID();
+    const { data: request, error: createErr } = await db
+      .from('lgpd_requests')
+      .insert({
+        id: requestId,
+        tenant_id: tenantId,
+        requested_by_user_id: userId,
         type: parsed.data.type,
         status: LgpdRequestStatus.PENDING,
-        scope: parsed.data.scope as Prisma.InputJsonValue | undefined,
-      },
-      select: {
-        id: true,
-        type: true,
-        status: true,
-        scope: true,
-        createdAt: true,
-      },
-    });
+        scope: parsed.data.scope as any,
+        updated_at: new Date().toISOString(),
+      })
+      .select('id, type, status, scope, created_at')
+      .single();
+
+    if (createErr) throw createErr;
 
     logger.info(
       {
@@ -184,9 +180,9 @@ export function registerTenantLgpdRoutes(app: FastifyInstance): void {
           lgpd_request_id: request.id,
           err: queueErr instanceof Error ? { message: queueErr.message } : queueErr,
         },
-        'lgpd:enqueue-failed · request persists as PENDING for manual triage',
+        'lgpd:enqueue-failed — request persists as PENDING for manual triage',
       );
-      // Nao falha o request · operador pode reprocessar manualmente
+      // Nao falha o request — operador pode reprocessar manualmente
     }
 
     return reply.status(202).send({
@@ -200,7 +196,7 @@ export function registerTenantLgpdRoutes(app: FastifyInstance): void {
     });
   });
 
-  // ── GET /lgpd/requests/:id · detalhe ─────────────────────────────────────
+  // 🔹 GET /lgpd/requests/:id — detalhe 🔹
   app.get('/requests/:id', async (req: FastifyRequest, reply: FastifyReply) => {
     const tenantId = (req as FastifyRequest & { tenantId?: string }).tenantId;
     if (!tenantId) {
@@ -209,10 +205,17 @@ export function registerTenantLgpdRoutes(app: FastifyInstance): void {
       });
     }
     const { id } = req.params as { id: string };
+    const db = getDb(req);
 
-    const request = await prisma.lgpdRequest.findFirst({
-      where: { id, tenantId },
-    });
+    const { data: request, error } = await db
+      .from('lgpd_requests')
+      .select('*')
+      .eq('id', id)
+      .eq('tenant_id', tenantId)
+      .maybeSingle();
+
+    if (error) throw error;
+
     if (!request) {
       return reply.status(404).send({
         error: { code: 'RESOURCE_NOT_FOUND', message: 'Solicitacao nao encontrada' },
@@ -222,7 +225,7 @@ export function registerTenantLgpdRoutes(app: FastifyInstance): void {
     return reply.send({ data: request });
   });
 
-  // ── POST /lgpd/requests/:id/cancel · usuário cancela request pendente ────
+  // 🔹 POST /lgpd/requests/:id/cancel — usuário cancela request pendente 🔹
   app.post('/requests/:id/cancel', async (req: FastifyRequest, reply: FastifyReply) => {
     const tenantId = (req as FastifyRequest & { tenantId?: string }).tenantId;
     if (!tenantId) {
@@ -231,6 +234,7 @@ export function registerTenantLgpdRoutes(app: FastifyInstance): void {
       });
     }
     const { id } = req.params as { id: string };
+    const db = getDb(req);
 
     const parsed = cancelRequestSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
@@ -239,10 +243,15 @@ export function registerTenantLgpdRoutes(app: FastifyInstance): void {
       });
     }
 
-    const existing = await prisma.lgpdRequest.findFirst({
-      where: { id, tenantId },
-      select: { id: true, status: true },
-    });
+    const { data: existing, error: findErr } = await db
+      .from('lgpd_requests')
+      .select('id, status')
+      .eq('id', id)
+      .eq('tenant_id', tenantId)
+      .maybeSingle();
+
+    if (findErr) throw findErr;
+
     if (!existing) {
       return reply.status(404).send({
         error: { code: 'RESOURCE_NOT_FOUND', message: 'Solicitacao nao encontrada' },
@@ -257,19 +266,18 @@ export function registerTenantLgpdRoutes(app: FastifyInstance): void {
       });
     }
 
-    const updated = await prisma.lgpdRequest.update({
-      where: { id },
-      data: {
+    const { data: updated, error: updateErr } = await db
+      .from('lgpd_requests')
+      .update({
         status: LgpdRequestStatus.CANCELED,
-        rejectionReason: parsed.data.reason ?? 'Cancelado pelo usuario',
-      },
-      select: {
-        id: true,
-        status: true,
-        rejectionReason: true,
-        updatedAt: true,
-      },
-    });
+        rejection_reason: parsed.data.reason ?? 'Cancelado pelo usuario',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .select('id, status, rejection_reason, updated_at')
+      .single();
+
+    if (updateErr) throw updateErr;
 
     logger.info(
       {

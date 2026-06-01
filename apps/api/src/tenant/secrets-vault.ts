@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { env } from '../config/env.js';
-import { prisma } from '../lib/prisma.js';
+import { dbAdmin } from '../lib/db.js';
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12; // 12 bytes standard for GCM
@@ -81,11 +81,13 @@ interface DecryptedSecrets {
  * Helper to fetch tenant secrets from DB and return all values decrypted.
  */
 export async function getDecryptedSecrets(tenantId: string): Promise<DecryptedSecrets | null> {
-  const record = await prisma.tenantSecret.findUnique({
-    where: { tenantId },
-  });
+  const { data: record, error } = await dbAdmin
+    .from('tenant_secrets')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .single();
 
-  if (!record) return null;
+  if (error || !record) return null;
 
   const decryptOrNull = async (val: string | null): Promise<string | null> => {
     if (!val) return null;
@@ -93,15 +95,15 @@ export async function getDecryptedSecrets(tenantId: string): Promise<DecryptedSe
   };
 
   return {
-    evolutionBaseUrl: record.evolutionBaseUrl,
-    evolutionInstanceName: record.evolutionInstanceName,
-    evolutionApiKey: await decryptOrNull(record.evolutionApiKeyEncrypted),
-    googleOauthRefresh: await decryptOrNull(record.googleOauthRefreshEncrypted),
-    googleMapsApiKey: await decryptOrNull(record.googleMapsApiKeyEncrypted),
-    openaiApiKey: await decryptOrNull(record.openaiApiKeyEncrypted),
-    anthropicApiKey: await decryptOrNull(record.anthropicApiKeyEncrypted),
-    googleAiApiKey: await decryptOrNull(record.googleAiApiKeyEncrypted),
-    twilioAccountSid: await decryptOrNull(record.twilioAccountSidEncrypted),
-    twilioAuthToken: await decryptOrNull(record.twilioAuthTokenEncrypted),
+    evolutionBaseUrl: record.evolution_base_url,
+    evolutionInstanceName: record.evolution_instance_name,
+    evolutionApiKey: await decryptOrNull(record.evolution_api_key_encrypted),
+    googleOauthRefresh: await decryptOrNull(record.google_oauth_refresh_encrypted),
+    googleMapsApiKey: await decryptOrNull(record.google_maps_api_key_encrypted),
+    openaiApiKey: await decryptOrNull(record.openai_api_key_encrypted),
+    anthropicApiKey: await decryptOrNull(record.anthropic_api_key_encrypted),
+    googleAiApiKey: await decryptOrNull(record.google_ai_api_key_encrypted),
+    twilioAccountSid: await decryptOrNull(record.twilio_account_sid_encrypted),
+    twilioAuthToken: await decryptOrNull(record.twilio_auth_token_encrypted),
   };
 }

@@ -1,13 +1,13 @@
-const demoModeFlag = String(import.meta.env.VITE_DEMO_MODE ?? import.meta.env.VITE_ENABLE_DEMO_MOCKS ?? '').toLowerCase();
+const demoModeFlag = String(process.env.NEXT_PUBLIC_DEMO_MODE ?? '').toLowerCase();
 const wantsDemoMode =
   demoModeFlag === 'true' ||
   demoModeFlag === '1' ||
   demoModeFlag === 'demo';
 
-if (import.meta.env.PROD && wantsDemoMode) {
+if (process.env.NODE_ENV === 'production' && wantsDemoMode) {
   throw new Error('Demo/mock fallbacks cannot be enabled in production builds.');
 }
 
 export const canUseMockFallbacks =
-  import.meta.env.DEV ||
-  (!import.meta.env.PROD && wantsDemoMode);
+  process.env.NODE_ENV === 'development' ||
+  (process.env.NODE_ENV !== 'production' && wantsDemoMode);

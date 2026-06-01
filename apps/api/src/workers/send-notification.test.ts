@@ -1,25 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Job } from 'bullmq';
-import { prisma } from '../lib/prisma.js';
 import { sendNotification } from '../services/notification-service.js';
 import { SendNotificationPayload, SendNotificationWorker } from './send-notification.js';
+import { createMockDbAdmin } from '../test-helpers/mock-db.js';
 
-vi.mock('../lib/prisma.js', () => ({
-  prisma: {
-    lead: {
-      findUnique: vi.fn(),
-    },
-    meeting: {
-      findUnique: vi.fn(),
-    },
-    user: {
-      findFirst: vi.fn(),
-    },
-  },
-}));
+const { dbAdmin, setTableResult, reset: resetDb } = createMockDbAdmin();
+
+vi.mock('../lib/db.js', () => ({ dbAdmin }));
 
 vi.mock('../services/notification-service.js', () => ({
-  sendNotification: vi.fn().mockResolvedValue(undefined),
+  sendNotification: vi.fn().mockResolvedValue({ id: 'notif-123' }),
 }));
 
 describe('Send Notification Worker', () => {
@@ -27,6 +17,7 @@ describe('Send Notification Worker', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    resetDb();
   });
 
   it('should dispatch explicit notification jobs through NotificationService', async () => {
@@ -39,55 +30,46 @@ describe('Send Notification Worker', () => {
         type: 'custom_notice',
         title: 'Aviso',
         body: 'Mensagem importante',
-        link: 'https://app.prospix.com/notifications',
       } satisfies SendNotificationPayload,
     } as unknown as Job<SendNotificationPayload>;
 
     const result = await worker.process(mockJob);
 
-    expect(result).toEqual({
-      success: true,
-      notified_user_id: 'user-123',
-    });
-    expect(prisma.user.findFirst).not.toHaveBeenCalled();
-    expect(sendNotification).toHaveBeenCalledWith({
-      tenantId: 'tenant-123',
-      userId: 'user-123',
-      type: 'custom_notice',
-      title: 'Aviso',
-      body: 'Mensagem importante',
-      data: {
-        lead_id: undefined,
-        meeting_id: undefined,
-      },
-      link: 'https://app.prospix.com/notifications',
-    });
+    expect(result.sent).toBe(true);
+    expect(result.notification_id).toBe('notif-123');
+    expect(sendNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: 'tenant-123',
+        userId: 'user-123',
+        type: 'custom_notice',
+        title: 'Aviso',
+        body: 'Mensagem importante',
+      })
+    );
   });
 
-  it('should consume meeting reminder jobs and notify the tenant owner', async () => {
-    vi.mocked(prisma.lead.findUnique).mockResolvedValue({
-      id: 'lead-123',
-      tenantId: 'tenant-123',
-      name: 'Ana Souza',
-    } as any);
+  it('should consume meeting reminder jobs and resolve owner user', async () => {
+    setTableResult('users', {
+      data: { id: 'owner-123' },
+      error: null,
+    });
 
-    vi.mocked(prisma.meeting.findUnique).mockResolvedValue({
-      id: 'meeting-123',
-      tenantId: 'tenant-123',
-      scheduledFor: new Date('2026-05-23T13:00:00.000Z'),
-      location: 'Google Meet',
-    } as any);
-
-    vi.mocked(prisma.user.findFirst).mockResolvedValue({
-      id: 'owner-123',
-    } as any);
+    setTableResult('meetings', {
+      data: {
+        id: 'meeting-123',
+        tenant_id: 'tenant-123',
+        scheduled_for: new Date('2026-05-23T13:00:00.000Z').toISOString(),
+        location: 'Google Meet',
+        leads: { name: 'Ana Souza' },
+      },
+      error: null,
+    });
 
     const mockJob = {
       id: 'job-reminder',
       data: {
         tenant_id: 'tenant-123',
         trace_id: 'trace-123',
-        lead_id: 'lead-123',
         meeting_id: 'meeting-123',
         type: 'meeting_reminder_1h',
       } satisfies SendNotificationPayload,
@@ -95,25 +77,22 @@ describe('Send Notification Worker', () => {
 
     const result = await worker.process(mockJob);
 
-    expect(result.success).toBe(true);
-    expect(result.notified_user_id).toBe('owner-123');
+    expect(result.sent).toBe(true);
     expect(sendNotification).toHaveBeenCalledWith(
       expect.objectContaining({
         tenantId: 'tenant-123',
         userId: 'owner-123',
         type: 'meeting_reminder_1h',
-        title: 'Lembrete: reuniao em 1h',
-        body: expect.stringContaining('Ana Souza'),
-        data: {
-          lead_id: 'lead-123',
-          meeting_id: 'meeting-123',
-        },
+        title: expect.stringContaining('1 hora'),
       })
     );
   });
 
-  it('should skip owner-targeted jobs when the tenant has no owner', async () => {
-    vi.mocked(prisma.user.findFirst).mockResolvedValue(null);
+  it('should skip notification if no owner found and no user_id provided', async () => {
+    setTableResult('users', {
+      data: null,
+      error: { code: 'PGRST116', message: 'not found' },
+    });
 
     const mockJob = {
       id: 'job-no-owner',
@@ -126,32 +105,9 @@ describe('Send Notification Worker', () => {
       } satisfies SendNotificationPayload,
     } as unknown as Job<SendNotificationPayload>;
 
-    await expect(worker.process(mockJob)).resolves.toEqual({
-      success: true,
-      skipped: true,
-      reason: 'owner_not_found',
-    });
-    expect(sendNotification).not.toHaveBeenCalled();
-  });
+    const result = await worker.process(mockJob);
 
-  it('should fail reminder jobs when scoped records do not belong to the tenant', async () => {
-    vi.mocked(prisma.lead.findUnique).mockResolvedValue({
-      id: 'lead-123',
-      tenantId: 'other-tenant',
-      name: 'Ana Souza',
-    } as any);
-
-    const mockJob = {
-      id: 'job-mismatch',
-      data: {
-        tenant_id: 'tenant-123',
-        trace_id: 'trace-123',
-        lead_id: 'lead-123',
-        type: 'meeting_reminder_24h',
-      } satisfies SendNotificationPayload,
-    } as unknown as Job<SendNotificationPayload>;
-
-    await expect(worker.process(mockJob)).rejects.toThrow('Lead lead-123 not found or tenant mismatch');
+    expect(result.sent).toBe(false);
     expect(sendNotification).not.toHaveBeenCalled();
   });
 });

@@ -33,6 +33,7 @@ export const authState = {
       role: 'OWNER',
       tenant_id: MOCK_TENANT_ID,
     },
+    initialized: true,
   },
   version: 0,
 };
@@ -56,6 +57,8 @@ export const adminAuthState = {
 
 /**
  * Inject the web tenant auth state into localStorage before navigation.
+ * Also marks `initialized: true` so the dashboard layout skips the
+ * Supabase session check.
  */
 export async function injectWebAuth(context: BrowserContext) {
   await context.addInitScript((stateJson: string) => {
@@ -78,6 +81,47 @@ export async function injectAdminAuth(context: BrowserContext) {
       /* noop */
     }
   }, JSON.stringify(adminAuthState));
+}
+
+/**
+ * Mock Supabase auth endpoints so that `supabase.auth.getSession()` returns
+ * a valid session during E2E tests (avoids clearSession redirect to /login).
+ */
+export async function mockSupabaseAuth(page: Page) {
+  // Mock the Supabase token refresh endpoint
+  await page.route('**/auth/v1/token**', async (route: Route) => {
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        access_token: MOCK_JWT,
+        refresh_token: 'mock-refresh',
+        token_type: 'bearer',
+        expires_in: 3600,
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+        user: {
+          id: MOCK_OWNER_ID,
+          email: 'giovane@seed.prospix.dev',
+          role: 'authenticated',
+          aud: 'authenticated',
+        },
+      }),
+    });
+  });
+
+  // Mock the Supabase user endpoint
+  await page.route('**/auth/v1/user**', async (route: Route) => {
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        id: MOCK_OWNER_ID,
+        email: 'giovane@seed.prospix.dev',
+        role: 'authenticated',
+        aud: 'authenticated',
+      }),
+    });
+  });
 }
 
 /**

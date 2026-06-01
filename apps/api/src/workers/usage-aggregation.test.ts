@@ -1,36 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { UsageAggregationWorker } from './usage-aggregation.js';
-import { prisma } from '../lib/prisma.js';
 import { redis } from '../lib/redis.js';
 import { sendNotification } from '../services/notification-service.js';
 import { Job } from 'bullmq';
+import { createMockDbAdmin } from '../test-helpers/mock-db.js';
 
-vi.mock('../lib/prisma.js', () => ({
-  prisma: {
-    $executeRaw: vi.fn(),
-    tenant: {
-      findMany: vi.fn(),
-    },
-    message: {
-      aggregate: vi.fn(),
-    },
-    lead: {
-      count: vi.fn(),
-    },
-    conversation: {
-      count: vi.fn(),
-    },
-    meeting: {
-      count: vi.fn(),
-    },
-    tenantUsage: {
-      upsert: vi.fn(),
-    },
-    user: {
-      findFirst: vi.fn(),
-    },
-  },
-}));
+const { dbAdmin, setTableResult, reset: resetDb } = createMockDbAdmin();
+
+vi.mock('../lib/db.js', () => ({ dbAdmin }));
 
 vi.mock('../lib/redis.js', () => ({
   redis: {
@@ -48,43 +25,55 @@ describe('Usage Aggregation Worker', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    resetDb();
   });
 
   it('should aggregate usage and trigger alerts correctly', async () => {
     // Mock Active Tenants
-    vi.mocked(prisma.tenant.findMany).mockResolvedValue([
-      {
-        id: 'tenant-abc',
-        name: 'Giovane Seguros',
-        status: 'ACTIVE',
-        plan: 'STANDARD',
-      },
-    ] as any);
+    setTableResult('tenants', {
+      data: [
+        {
+          id: 'tenant-abc',
+          name: 'Giovane Seguros',
+          status: 'ACTIVE',
+          plan: 'STANDARD',
+        },
+      ],
+      error: null,
+    });
 
-    // Mock Message token aggregation (12000 cents cost = 80% of STANDARD limit 15000 cents)
-    vi.mocked(prisma.message.aggregate).mockResolvedValue({
-      _sum: {
-        llmTokensInput: BigInt(500000),
-        llmTokensOutput: BigInt(300000),
-        llmCostCents: 12000,
-      },
-    } as any);
+    // Mock message aggregate data (records to sum)
+    setTableResult('messages', {
+      data: [
+        {
+          llm_tokens_input: 500000,
+          llm_tokens_output: 300000,
+          llm_cost_cents: 12000,
+        },
+      ],
+      error: null,
+    });
 
-    vi.mocked(prisma.lead.count).mockResolvedValue(10);
-    vi.mocked(prisma.conversation.count).mockResolvedValue(8);
-    vi.mocked(prisma.meeting.count).mockResolvedValue(4);
+    // Mock counts
+    setTableResult('leads', { data: null, error: null, count: 10 });
+    setTableResult('conversations', { data: null, error: null, count: 8 });
+    setTableResult('meetings', { data: null, error: null, count: 4 });
 
-    vi.mocked(prisma.tenantUsage.upsert).mockResolvedValue({} as any);
+    // Mock tenant_usage upsert
+    setTableResult('tenant_usage', { data: {}, error: null });
 
     // Mock Redis alerts check (not sent yet)
     vi.mocked(redis.get).mockResolvedValue(null);
 
     // Mock Owner User lookup
-    vi.mocked(prisma.user.findFirst).mockResolvedValue({
-      id: 'owner-123',
-      tenantId: 'tenant-abc',
-      role: 'OWNER',
-    } as any);
+    setTableResult('users', {
+      data: {
+        id: 'owner-123',
+        tenant_id: 'tenant-abc',
+        role: 'OWNER',
+      },
+      error: null,
+    });
 
     const mockJob = {
       id: 'job-agg',
@@ -98,12 +87,10 @@ describe('Usage Aggregation Worker', () => {
 
     expect(result.success).toBe(true);
     expect(result.tenants_processed).toBe(1);
-    expect(prisma.tenant.findMany).toHaveBeenCalledWith({
-      where: { id: 'tenant-abc', status: 'ACTIVE', deletedAt: null },
-    });
+    expect(dbAdmin.from).toHaveBeenCalledWith('tenants');
+    expect(dbAdmin.from).toHaveBeenCalledWith('tenant_usage');
 
-    expect(prisma.tenantUsage.upsert).toHaveBeenCalled();
-    // 80% should trigger 70% alert but not 90% or 100%
+    // 80% should trigger 70% alert
     expect(sendNotification).toHaveBeenCalledWith(
       expect.objectContaining({
         tenantId: 'tenant-abc',

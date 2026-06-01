@@ -1,7 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { logger } from '../lib/logger.js';
-import { redis } from '../lib/redis.js';
-import { tenantContextStorage } from '../lib/tenant-context-storage.js';
+import { supabaseAdmin } from '../lib/supabase.js';
 
 // Extend Fastify types
 declare module 'fastify' {
@@ -21,25 +20,27 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 
 /**
  * Fastify Middleware: tenantContext
- * Verifies JWT token, checks session revocation, validates X-Tenant-Id header alignment,
- * and binds the PostgreSQL Row-Level Security (RLS) context using AsyncLocalStorage safely.
+ *
+ * Verifies Supabase JWT, extracts tenant_id + role from app_metadata,
+ * validates X-Tenant-Id header alignment, and sets request context.
+ *
+ * Replaces the old AsyncLocalStorage + Redis revocation + RS256 JWT flow.
+ * Supabase handles session management natively — no Redis blacklisting needed.
  */
 export async function tenantContext(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const url = req.url;
 
   // 1. Bypass routes that do not need authentication/tenant context
-  const isBypass = 
-    url.startsWith('/auth/') || 
+  const isBypass =
+    url.startsWith('/auth/') ||
     url.startsWith('/v1/auth/') ||
-    url.startsWith('/webhooks/') || 
+    url.startsWith('/webhooks/') ||
     url.startsWith('/v1/webhooks/') ||
     url.includes('/integrations/google/callback') ||
-    url === '/health' || 
+    url === '/health' ||
     url === '/ready';
-  
+
   if (isBypass) {
-    // Bind the rest of this Fastify request lifecycle to an explicit public context.
-    tenantContextStorage.enterWith({ tenantId: null, bypassRls: true });
     return;
   }
 
@@ -50,55 +51,52 @@ export async function tenantContext(req: FastifyRequest, reply: FastifyReply): P
     return reply.code(401).send({ error: 'Unauthorized', message: 'Missing or invalid token' });
   }
 
-  // 3. Verify JWT using Fastify JWT helper (attached by @fastify/jwt)
-  let decoded: any;
-  try {
-    decoded = await (req as any).jwtVerify();
-  } catch (err) {
-    logger.warn({ url, err }, '❌ Authentication failed: Invalid JWT token');
+  const token = authHeader.slice(7);
+
+  // 3. Verify JWT using Supabase Auth (replaces @fastify/jwt RS256 verification)
+  const { data: { user: authUser }, error } = await supabaseAdmin.auth.getUser(token);
+
+  if (error || !authUser) {
+    logger.warn({ url, error: error?.message }, '❌ Authentication failed: Invalid JWT token');
     return reply.code(401).send({ error: 'Unauthorized', message: 'Invalid or expired token' });
   }
 
-  // 4. Verify if session has been revoked in Redis
-  if (decoded.jti) {
-    const isRevoked = await redis.get(`revoked:${decoded.jti}`);
-    if (isRevoked) {
-      logger.warn({ jti: decoded.jti }, '❌ Session is revoked');
-      return reply.code(401).send({ error: 'Unauthorized', message: 'Session has been logged out or revoked' });
-    }
-  }
+  // 4. Extract tenant_id and role from app_metadata (set during user creation)
+  const appMetadata = authUser.app_metadata || {};
+  const jwtTenantId = appMetadata.tenant_id || null;
+  const jwtRole = appMetadata.role || null;
 
-  // 4b. Handle impersonation tokens
-  if (decoded.imp === true) {
+  // 4b. Handle impersonation tokens (custom claim in app_metadata)
+  if (appMetadata.imp === true) {
     // Enforce READ_ONLY mode: block mutating methods
-    if (decoded.imp_mode === 'READ_ONLY' && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
-      logger.warn({ url, method: req.method, imp_session_id: decoded.imp_session_id }, '🎭 Impersonation: blocked mutating request in READ_ONLY mode');
+    if (appMetadata.imp_mode === 'READ_ONLY' && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+      logger.warn({ url, method: req.method, imp_session_id: appMetadata.imp_session_id }, '🎭 Impersonation: blocked mutating request in READ_ONLY mode');
       return reply.code(403).send({ error: 'Forbidden', message: 'Modo somente leitura. Ações de escrita não são permitidas durante impersonificação read-only.' });
     }
 
     // Set impersonation metadata
     req.impersonation = {
-      adminId: decoded.imp_admin_id,
-      sessionId: decoded.imp_session_id,
-      mode: decoded.imp_mode,
+      adminId: appMetadata.imp_admin_id,
+      sessionId: appMetadata.imp_session_id,
+      mode: appMetadata.imp_mode,
     };
 
-    logger.info({ url, imp_admin_id: decoded.imp_admin_id, imp_mode: decoded.imp_mode }, '🎭 Impersonation request');
+    logger.info({ url, imp_admin_id: appMetadata.imp_admin_id, imp_mode: appMetadata.imp_mode }, '🎭 Impersonation request');
   }
 
   // 5. Check and sanitize X-Tenant-Id header format (Prevent injection / validate format)
   const headerTenantId = req.headers['x-tenant-id'] as string | undefined;
-  
+
   if (headerTenantId && process.env.NODE_ENV !== 'test' && !UUID_REGEX.test(headerTenantId)) {
     logger.warn({ headerTenantId }, '❌ Format failure: X-Tenant-Id header is not a valid UUID');
     return reply.code(400).send({ error: 'Bad Request', message: 'Invalid Tenant ID format' });
   }
 
   // Mismatch check (if user is not super-admin and not impersonating, tenant mismatch results in 403 Forbidden)
-  if (decoded.role !== 'GUILDS_ADMIN' && !decoded.imp) {
-    if (headerTenantId && headerTenantId !== decoded.tenant_id) {
+  if (jwtRole !== 'GUILDS_ADMIN' && !appMetadata.imp) {
+    if (headerTenantId && headerTenantId !== jwtTenantId) {
       logger.warn(
-        { headerTenantId, jwtTenantId: decoded.tenant_id },
+        { headerTenantId, jwtTenantId },
         '❌ Tenant mismatch: X-Tenant-Id header does not match JWT claim'
       );
       return reply.code(403).send({ error: 'Forbidden', message: 'Tenant mismatch' });
@@ -106,7 +104,7 @@ export async function tenantContext(req: FastifyRequest, reply: FastifyReply): P
   }
 
   // Resolve active tenant ID (can be header tenant ID or from JWT)
-  const activeTenantId = headerTenantId || decoded.tenant_id || null;
+  const activeTenantId = headerTenantId || jwtTenantId || null;
 
   if (activeTenantId && process.env.NODE_ENV !== 'test' && !UUID_REGEX.test(activeTenantId)) {
     logger.warn({ activeTenantId }, '❌ Format failure: Resolved tenant ID is not a valid UUID');
@@ -115,13 +113,6 @@ export async function tenantContext(req: FastifyRequest, reply: FastifyReply): P
 
   // 6. Inject variables to request object
   req.tenantId = activeTenantId;
-  req.userId = decoded.sub;
-  req.role = decoded.role;
-
-  // 7. Bind the rest of this Fastify request lifecycle to the tenant context.
-  tenantContextStorage.enterWith({
-    tenantId: activeTenantId,
-    userId: decoded.sub,
-    bypassRls: false,
-  });
+  req.userId = authUser.id;
+  req.role = jwtRole;
 }

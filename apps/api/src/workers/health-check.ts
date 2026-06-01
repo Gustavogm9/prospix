@@ -1,6 +1,6 @@
 import { Job } from 'bullmq';
 import { BaseWorker } from './_base-worker.js';
-import { prisma } from '../lib/prisma.js';
+import { dbAdmin } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 import { redis } from '../lib/redis.js';
 import { createEvolutionClient } from '../integrations/evolution.js';
@@ -27,11 +27,13 @@ export class HealthCheckWorker extends BaseWorker<HealthCheckPayload, HealthChec
 
     // 1. Fetch tenant secret configuration
     const decryptedSecrets = await getDecryptedSecrets(tenant_id);
-    const secretRecord = await prisma.tenantSecret.findUnique({
-      where: { tenantId: tenant_id },
-    });
+    const { data: secretRecord } = await dbAdmin
+      .from('tenant_secrets')
+      .select('*')
+      .eq('tenant_id', tenant_id)
+      .single();
 
-    if (!decryptedSecrets?.evolutionApiKey || !secretRecord?.evolutionInstanceName || !secretRecord?.evolutionBaseUrl) {
+    if (!decryptedSecrets?.evolutionApiKey || !secretRecord?.evolution_instance_name || !secretRecord?.evolution_base_url) {
       logger.warn({ tenant_id }, '⚠️ Evolution API not configured for active tenant. Skipping health check.');
       return { success: false, state: 'close', switchedProvider: false };
     }
@@ -39,9 +41,9 @@ export class HealthCheckWorker extends BaseWorker<HealthCheckPayload, HealthChec
     // 2. Fetch WhatsApp Connection State
     const client = createEvolutionClient();
     const stateResult = await client.getConnectionState({
-      instance: secretRecord.evolutionInstanceName,
+      instance: secretRecord.evolution_instance_name,
       apiKey: decryptedSecrets.evolutionApiKey,
-      baseUrl: secretRecord.evolutionBaseUrl,
+      baseUrl: secretRecord.evolution_base_url,
     });
 
     let connectionState: 'open' | 'connecting' | 'close' = 'close';
@@ -78,20 +80,22 @@ export class HealthCheckWorker extends BaseWorker<HealthCheckPayload, HealthChec
     }
 
     // 3. Monitor OpenAI Latency in last 5 minutes (Auto-healing)
+    // Supabase doesn't have aggregate, so we fetch recent messages and compute avg manually
     const fiveMinsAgo = new Date(Date.now() - 5 * 60 * 1000);
-    const avgLatencyResult = await prisma.message.aggregate({
-      where: {
-        tenantId: tenant_id,
-        createdAt: { gte: fiveMinsAgo },
-        llmModel: { startsWith: 'gpt-' }, // OpenAI models
-        llmLatencyMs: { not: null },
-      },
-      _avg: {
-        llmLatencyMs: true,
-      },
-    });
+    const { data: recentMessages } = await dbAdmin
+      .from('messages')
+      .select('llm_latency_ms')
+      .eq('tenant_id', tenant_id)
+      .gte('created_at', fiveMinsAgo.toISOString())
+      .ilike('llm_model', 'gpt-%')
+      .not('llm_latency_ms', 'is', null);
 
-    const avgOpenAiLatencyMs = avgLatencyResult._avg.llmLatencyMs || 0;
+    let avgOpenAiLatencyMs = 0;
+    if (recentMessages && recentMessages.length > 0) {
+      const totalLatency = recentMessages.reduce((sum: number, m: any) => sum + (m.llm_latency_ms || 0), 0);
+      avgOpenAiLatencyMs = totalLatency / recentMessages.length;
+    }
+
     let switchedProvider = false;
 
     if (avgOpenAiLatencyMs > 10000) { // 10 seconds average latency threshold
@@ -101,12 +105,14 @@ export class HealthCheckWorker extends BaseWorker<HealthCheckPayload, HealthChec
       );
 
       // Force system provider update to anthropic
-      await prisma.tenantAIConfig.update({
-        where: { tenantId: tenant_id },
-        data: {
-          systemProvider: 'anthropic',
-        },
-      });
+      const { error: updateErr } = await dbAdmin
+        .from('tenant_ai_configs')
+        .update({
+          system_provider: 'anthropic',
+        })
+        .eq('tenant_id', tenant_id);
+
+      if (updateErr) throw updateErr;
 
       // Clear cached AI config so AIRouter reads the updated one instantly
       const cacheKey = `tenant-ai-config:${tenant_id}`;

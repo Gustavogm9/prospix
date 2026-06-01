@@ -77,7 +77,7 @@ test.describe('Admin · dashboard pos-login (mocked)', () => {
       if (msg.type() === 'error') consoleErrors.push(msg.text());
     });
 
-    const response = await page.goto('/');
+    const response = await page.goto('/admin');
     expect(response?.status()).toBeLessThan(400);
 
     await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => { /* networkidle timeout is non-fatal for smoke tests */ });

@@ -1,0 +1,32 @@
+@import '@prospix/ui/globals.css';
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  overflow-y: auto;
+}
+
+.gradient-hero {
+  background: radial-gradient(ellipse at 30% 0%, rgba(232,152,28,0.04) 0%, transparent 50%),
+              radial-gradient(ellipse at 70% 100%, rgba(27,58,107,0.03) 0%, transparent 50%);
+}
+
+@keyframes slideIn {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-slideIn {
+  animation: slideIn 0.2s ease-out;
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.15s ease-out;
+}

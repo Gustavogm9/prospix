@@ -1,6 +1,6 @@
 import type { Config } from 'tailwindcss';
 
-declare const require: any;
+import tailwindcssAnimate from 'tailwindcss-animate';
 
 /**
  * Preset Tailwind compartilhado.
@@ -79,7 +79,7 @@ export const prospixPreset: Partial<Config> = {
       },
     },
   },
-  plugins: [require('tailwindcss-animate')],
+  plugins: [tailwindcssAnimate],
 };
 
 export default prospixPreset;

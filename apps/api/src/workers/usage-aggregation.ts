@@ -1,10 +1,10 @@
 import { Job } from 'bullmq';
 import { BaseWorker } from './_base-worker.js';
-import { prisma } from '../lib/prisma.js';
+import { dbAdmin } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 import { BaseJobPayload } from '@prospix/shared-types';
 import { redis } from '../lib/redis.js';
-import { UserRole } from '@prisma/client';
+import { UserRole } from '@prospix/shared-types';
 import { sendNotification } from '../services/notification-service.js';
 import { getAIPlanLimitCents } from '../ai/quota.js';
 
@@ -27,76 +27,91 @@ export class UsageAggregationWorker extends BaseWorker<UsageAggregationPayload, 
     startOfMonth.setDate(1);
     startOfMonth.setHours(0, 0, 0, 0);
 
-    // Scheduled jobs are tenant-scoped so BaseWorker can keep RLS active safely.
-    const tenants = await prisma.tenant.findMany({
-      where: {
-        id: job.data.tenant_id,
-        status: 'ACTIVE',
-        deletedAt: null,
-      },
-    });
+    // Scheduled jobs are tenant-scoped
+    const { data: tenants, error: tenantErr } = await dbAdmin
+      .from('tenants')
+      .select('*')
+      .eq('id', job.data.tenant_id)
+      .eq('status', 'ACTIVE')
+      .is('deleted_at', null);
 
-    logger.info({ count: tenants.length }, 'Aggregating usage for active tenants');
+    if (tenantErr) throw tenantErr;
 
-    for (const tenant of tenants) {
+    logger.info({ count: tenants?.length }, 'Aggregating usage for active tenants');
+
+    for (const tenant of tenants || []) {
       try {
         // 1. Aggregate Messages costs for the current month
-        const msgAggregation = await prisma.message.aggregate({
-          where: {
-            tenantId: tenant.id,
-            createdAt: { gte: startOfMonth },
-          },
-          _sum: {
-            llmTokensInput: true,
-            llmTokensOutput: true,
-            llmCostCents: true,
-          },
-        });
+        // Supabase doesn't have aggregate, so we fetch and sum manually
+        const { data: messages } = await dbAdmin
+          .from('messages')
+          .select('llm_tokens_input, llm_tokens_output, llm_cost_cents')
+          .eq('tenant_id', tenant.id)
+          .gte('created_at', startOfMonth.toISOString());
 
-        const inputTokens = msgAggregation._sum.llmTokensInput || BigInt(0);
-        const outputTokens = msgAggregation._sum.llmTokensOutput || BigInt(0);
-        const costCents = msgAggregation._sum.llmCostCents || 0;
+        let inputTokens = 0;
+        let outputTokens = 0;
+        let costCents = 0;
+
+        if (messages) {
+          for (const msg of messages) {
+            inputTokens += Number(msg.llm_tokens_input || 0);
+            outputTokens += Number(msg.llm_tokens_output || 0);
+            costCents += Number(msg.llm_cost_cents || 0);
+          }
+        }
 
         // Count operational metrics
-        const leadsCaptured = await prisma.lead.count({
-          where: { tenantId: tenant.id, createdAt: { gte: startOfMonth } },
-        });
+        const { count: leadsCaptured } = await dbAdmin
+          .from('leads')
+          .select('*', { count: 'exact', head: true })
+          .eq('tenant_id', tenant.id)
+          .gte('created_at', startOfMonth.toISOString());
 
-        const conversations = await prisma.conversation.count({
-          where: { tenantId: tenant.id, startedAt: { gte: startOfMonth } },
-        });
+        const { count: conversations } = await dbAdmin
+          .from('conversations')
+          .select('*', { count: 'exact', head: true })
+          .eq('tenant_id', tenant.id)
+          .gte('started_at', startOfMonth.toISOString());
 
-        const meetings = await prisma.meeting.count({
-          where: { tenantId: tenant.id, createdAt: { gte: startOfMonth } },
-        });
+        const { count: meetings } = await dbAdmin
+          .from('meetings')
+          .select('*', { count: 'exact', head: true })
+          .eq('tenant_id', tenant.id)
+          .gte('created_at', startOfMonth.toISOString());
 
         // 2. Upsert TenantUsage
-        await prisma.tenantUsage.upsert({
-          where: {
-            tenantId_periodMonth: {
-              tenantId: tenant.id,
-              periodMonth: startOfMonth,
-            },
-          },
-          create: {
-            tenantId: tenant.id,
-            periodMonth: startOfMonth,
-            llmTokensInput: inputTokens,
-            llmTokensOutput: outputTokens,
-            llmCostCents: costCents,
-            leadsCapturedCount: leadsCaptured,
-            conversationsStarted: conversations,
-            meetingsScheduled: meetings,
-          },
-          update: {
-            llmTokensInput: inputTokens,
-            llmTokensOutput: outputTokens,
-            llmCostCents: costCents,
-            leadsCapturedCount: leadsCaptured,
-            conversationsStarted: conversations,
-            meetingsScheduled: meetings,
-          },
-        });
+        const { data: existingUsage } = await dbAdmin
+          .from('tenant_usage')
+          .select('*')
+          .eq('tenant_id', tenant.id)
+          .eq('period_month', startOfMonth.toISOString())
+          .single();
+
+        const usageData = {
+          llm_tokens_input: inputTokens,
+          llm_tokens_output: outputTokens,
+          llm_cost_cents: costCents,
+          leads_captured_count: leadsCaptured || 0,
+          conversations_started: conversations || 0,
+          meetings_scheduled: meetings || 0,
+        };
+
+        if (existingUsage) {
+          await dbAdmin
+            .from('tenant_usage')
+            .update(usageData)
+            .eq('tenant_id', tenant.id)
+            .eq('period_month', startOfMonth.toISOString());
+        } else {
+          await dbAdmin
+            .from('tenant_usage')
+            .insert({
+              tenant_id: tenant.id,
+              period_month: startOfMonth.toISOString(),
+              ...usageData,
+            } as any);
+        }
 
         // 3. Threshold check & notification triggering
         const limitCents = getAIPlanLimitCents(tenant.plan);
@@ -110,9 +125,14 @@ export class UsageAggregationWorker extends BaseWorker<UsageAggregationPayload, 
 
             if (!alreadySent) {
               // Find tenant owner to send the notification
-              const owner = await prisma.user.findFirst({
-                where: { tenantId: tenant.id, role: UserRole.OWNER, deletedAt: null },
-              });
+              const { data: owner } = await dbAdmin
+                .from('users')
+                .select('id')
+                .eq('tenant_id', tenant.id)
+                .eq('role', UserRole.OWNER)
+                .is('deleted_at', null)
+                .limit(1)
+                .single();
 
               if (owner) {
                 await sendNotification({
@@ -164,7 +184,7 @@ export class UsageAggregationWorker extends BaseWorker<UsageAggregationPayload, 
 
     return {
       success: true,
-      tenants_processed: tenants.length,
+      tenants_processed: tenants?.length || 0,
     };
   }
 }

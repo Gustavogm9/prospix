@@ -1,24 +1,45 @@
+/**
+ * Auth session hardening unit tests — Supabase Auth.
+ *
+ * The old tests for createSession/rotateSession/revokeSession
+ * have been replaced. Those functions no longer exist — Supabase
+ * Auth handles session management natively.
+ *
+ * These tests verify the new Supabase Auth wrapper functions.
+ */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createSession, revokeSession, rotateSession } from '../../src/services/auth-service.js';
-import { hashOpaqueToken } from '../../src/lib/crypto.js';
-import { prisma } from '../../src/lib/prisma.js';
-import { redis } from '../../src/lib/redis.js';
 
-vi.mock('../../src/lib/prisma.js', () => ({
-  prisma: {
-    $executeRaw: vi.fn(),
-    $transaction: vi.fn((callback) => callback(prisma)),
-    session: {
-      create: vi.fn(),
-      findUnique: vi.fn(),
-      update: vi.fn(),
+// Mock Supabase client
+const mockSignInWithPassword = vi.fn();
+const mockSignOut = vi.fn();
+const mockUpdateUserById = vi.fn();
+const mockGetUser = vi.fn();
+
+vi.mock('../../src/lib/supabase.js', () => ({
+  supabaseAdmin: {
+    auth: {
+      signInWithPassword: (...args: any[]) => mockSignInWithPassword(...args),
+      getUser: (...args: any[]) => mockGetUser(...args),
+      admin: {
+        signOut: (...args: any[]) => mockSignOut(...args),
+        updateUserById: (...args: any[]) => mockUpdateUserById(...args),
+      },
     },
+    from: vi.fn(() => ({
+      select: vi.fn().mockReturnThis(),
+      ilike: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      single: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+    })),
   },
 }));
 
 vi.mock('../../src/lib/redis.js', () => ({
   redis: {
     set: vi.fn(),
+    get: vi.fn(),
+    del: vi.fn(),
   },
 }));
 
@@ -30,71 +51,85 @@ vi.mock('../../src/lib/logger.js', () => ({
   },
 }));
 
-describe('auth session hardening', () => {
+import { signInWithPassword, signOut, changePassword } from '../../src/services/auth-service.js';
+
+describe('auth Supabase integration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('stores only a hash of the refresh token and returns a separate access token id', async () => {
-    vi.mocked(prisma.session.create).mockResolvedValue({ id: 'session-1' } as any);
-
-    const session = await createSession({
-      userId: 'user-1',
-      ipAddress: '127.0.0.1',
-      userAgent: 'vitest',
+  it('signInWithPassword returns tokens on success', async () => {
+    mockSignInWithPassword.mockResolvedValue({
+      data: {
+        session: {
+          access_token: 'test-access-token',
+          refresh_token: 'test-refresh-token',
+          expires_at: Math.floor(Date.now() / 1000) + 3600,
+        },
+        user: { id: 'user-1' },
+      },
+      error: null,
     });
 
-    const storedData = vi.mocked(prisma.session.create).mock.calls[0]?.[0].data;
-
-    expect(session.refreshToken).toHaveLength(80);
-    expect(session.accessTokenId).toMatch(/^[0-9a-f-]{36}$/);
-    expect(session.accessTokenId).not.toBe(session.refreshToken);
-    expect(storedData?.refreshToken).toBe(hashOpaqueToken(session.refreshToken));
-    expect(storedData?.refreshToken).not.toBe(session.refreshToken);
-  });
-
-  it('rotates sessions by looking up the hashed refresh token and issuing a fresh access token id', async () => {
-    const oldRefreshToken = 'old-refresh-token';
-
-    vi.mocked(prisma.session.findUnique).mockResolvedValue({
-      id: 'session-old',
-      userId: 'user-1',
-      revokedAt: null,
-      expiresAt: new Date(Date.now() + 60_000),
-    } as any);
-    vi.mocked(prisma.session.update).mockResolvedValue({ id: 'session-old' } as any);
-    vi.mocked(prisma.session.create).mockResolvedValue({ id: 'session-new' } as any);
-
-    const result = await rotateSession(oldRefreshToken, {
-      ipAddress: '127.0.0.1',
-      userAgent: 'vitest',
-    });
+    const result = await signInWithPassword('test@example.com', 'password');
 
     expect(result.ok).toBe(true);
-    expect(prisma.session.findUnique).toHaveBeenCalledWith({
-      where: { refreshToken: hashOpaqueToken(oldRefreshToken) },
+    if (result.ok) {
+      expect(result.value.accessToken).toBe('test-access-token');
+      expect(result.value.refreshToken).toBe('test-refresh-token');
+      expect(result.value.userId).toBe('user-1');
+    }
+
+    expect(mockSignInWithPassword).toHaveBeenCalledWith({
+      email: 'test@example.com',
+      password: 'password',
+    });
+  });
+
+  it('signInWithPassword returns failure on invalid credentials', async () => {
+    mockSignInWithPassword.mockResolvedValue({
+      data: { session: null, user: null },
+      error: { message: 'Invalid login credentials' },
     });
 
-    if (result.ok) {
-      expect(result.value.refreshToken).toHaveLength(80);
-      expect(result.value.accessTokenId).toMatch(/^[0-9a-f-]{36}$/);
-      expect(result.value.accessTokenId).not.toBe(result.value.refreshToken);
+    const result = await signInWithPassword('bad@example.com', 'wrong');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('UNAUTHORIZED');
     }
   });
 
-  it('revokes by hashed refresh token and blacklists the active JWT jti separately', async () => {
-    vi.mocked(prisma.session.findUnique).mockResolvedValue({
-      id: 'session-1',
-      userId: 'user-1',
-    } as any);
-    vi.mocked(prisma.session.update).mockResolvedValue({ id: 'session-1' } as any);
-    vi.mocked(redis.set).mockResolvedValue('OK');
+  it('signOut calls supabase admin signOut with user ID', async () => {
+    mockSignOut.mockResolvedValue({ error: null });
 
-    await revokeSession('refresh-token-value', 'access-token-jti');
+    await signOut('user-1');
 
-    expect(prisma.session.findUnique).toHaveBeenCalledWith({
-      where: { refreshToken: hashOpaqueToken('refresh-token-value') },
+    expect(mockSignOut).toHaveBeenCalledWith('user-1');
+  });
+
+  it('changePassword updates password via supabase admin', async () => {
+    mockUpdateUserById.mockResolvedValue({ data: { user: {} }, error: null });
+
+    const result = await changePassword('user-1', 'new-password');
+
+    expect(result.ok).toBe(true);
+    expect(mockUpdateUserById).toHaveBeenCalledWith('user-1', {
+      password: 'new-password',
     });
-    expect(redis.set).toHaveBeenCalledWith('revoked:access-token-jti', 'true', 'EX', 7 * 24 * 60 * 60);
+  });
+
+  it('changePassword returns failure on supabase error', async () => {
+    mockUpdateUserById.mockResolvedValue({
+      data: null,
+      error: { message: 'Password too weak' },
+    });
+
+    const result = await changePassword('user-1', 'weak');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('INTERNAL_ERROR');
+    }
   });
 });

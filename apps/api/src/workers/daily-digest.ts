@@ -1,11 +1,11 @@
 import { Job } from 'bullmq';
 import { BaseWorker } from './_base-worker.js';
-import { prisma } from '../lib/prisma.js';
+import { dbAdmin } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 import { BaseJobPayload } from '@prospix/shared-types';
 import { createEvolutionClient } from '../integrations/evolution.js';
 import { env } from '../config/env.js';
-import { UserRole, MeetingStatus } from '@prisma/client';
+import { UserRole, MeetingStatus } from '@prospix/shared-types';
 
 export interface DailyDigestPayload extends BaseJobPayload {
   // Cron payload
@@ -21,9 +21,14 @@ export class DailyDigestWorker extends BaseWorker<DailyDigestPayload, DailyDiges
   concurrency = 1;
 
   async process(job: Job<DailyDigestPayload>): Promise<DailyDigestResult> {
-    const activeTenants = await prisma.tenant.findMany({
-      where: { id: job.data.tenant_id, status: 'ACTIVE', deletedAt: null },
-    });
+    const { data: activeTenants, error: tenantErr } = await dbAdmin
+      .from('tenants')
+      .select('*')
+      .eq('id', job.data.tenant_id)
+      .eq('status', 'ACTIVE')
+      .is('deleted_at', null);
+
+    if (tenantErr) throw tenantErr;
 
     let sentCount = 0;
     const evoClient = createEvolutionClient();
@@ -39,74 +44,74 @@ export class DailyDigestWorker extends BaseWorker<DailyDigestPayload, DailyDiges
     for (const tenant of activeTenants) {
       try {
         // 1. Fetch meetings today
-        const meetingsToday = await prisma.meeting.findMany({
-          where: {
-            tenantId: tenant.id,
-            scheduledFor: { gte: todayStart, lte: todayEnd },
-            status: { in: [MeetingStatus.SCHEDULED, MeetingStatus.CONFIRMED] },
-          },
-          include: {
-            lead: { select: { name: true } },
-          },
-          orderBy: { scheduledFor: 'asc' },
-        });
+        const { data: meetingsToday } = await dbAdmin
+          .from('meetings')
+          .select('*, leads(name)')
+          .eq('tenant_id', tenant.id)
+          .gte('scheduled_for', todayStart.toISOString())
+          .lte('scheduled_for', todayEnd.toISOString())
+          .in('status', [MeetingStatus.SCHEDULED, MeetingStatus.CONFIRMED])
+          .order('scheduled_for', { ascending: true });
 
         // 2. Fetch hot leads (fitScore >= 8.0, conversing or qualified)
-        const hotLeads = await prisma.lead.findMany({
-          where: {
-            tenantId: tenant.id,
-            fitScore: { gte: 8.0 },
-            createdAt: { gte: yesterdayNight },
-          },
-          orderBy: { fitScore: 'desc' },
-          take: 5,
-        });
+        const { data: hotLeads } = await dbAdmin
+          .from('leads')
+          .select('*')
+          .eq('tenant_id', tenant.id)
+          .gte('fit_score', 8.0)
+          .gte('created_at', yesterdayNight.toISOString())
+          .order('fit_score', { ascending: false })
+          .limit(5);
 
         // 3. Count last night captures
-        const capturesCount = await prisma.lead.count({
-          where: {
-            tenantId: tenant.id,
-            createdAt: { gte: yesterdayNight },
-          },
-        });
+        const { count: capturesCount } = await dbAdmin
+          .from('leads')
+          .select('*', { count: 'exact', head: true })
+          .eq('tenant_id', tenant.id)
+          .gte('created_at', yesterdayNight.toISOString());
 
         // 4. Build text message
+        const meetings = meetingsToday || [];
+        const leads = hotLeads || [];
+        const captures = capturesCount || 0;
+
         let text = `*PROSPIX DIGEST MATINAL ☀️*\n\n`;
         text += `Bom dia! Aqui está o resumo operacional para o tenant *${tenant.name}* hoje:\n\n`;
 
-        text += `*📅 Reuniões agendadas hoje (${meetingsToday.length}):*\n`;
-        if (meetingsToday.length === 0) {
+        text += `*📅 Reuniões agendadas hoje (${meetings.length}):*\n`;
+        if (meetings.length === 0) {
           text += `- Nenhuma reunião marcada para hoje.\n`;
         } else {
-          meetingsToday.forEach((m) => {
-            const time = new Date(m.scheduledFor).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-            text += `- ${time}h: Reunião com *${m.lead?.name || 'Cliente'}* (${m.location || 'Google Meet'})\n`;
+          meetings.forEach((m: any) => {
+            const time = new Date(m.scheduled_for).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+            text += `- ${time}h: Reunião com *${m.leads?.name || 'Cliente'}* (${m.location || 'Google Meet'})\n`;
           });
         }
         text += `\n`;
 
-        text += `*🔥 Oportunidades Quentes recentes (${hotLeads.length}):*\n`;
-        if (hotLeads.length === 0) {
+        text += `*🔥 Oportunidades Quentes recentes (${leads.length}):*\n`;
+        if (leads.length === 0) {
           text += `- Nenhuma nova oportunidade quente nas últimas 15 horas.\n`;
         } else {
-          hotLeads.forEach((hl) => {
-            text += `- *${hl.name || 'Lead s/ Nome'}* (Fit Score: ${Number(hl.fitScore).toFixed(1)})\n`;
+          leads.forEach((hl: any) => {
+            text += `- *${hl.name || 'Lead s/ Nome'}* (Fit Score: ${Number(hl.fit_score).toFixed(1)})\n`;
           });
         }
         text += `\n`;
 
-        text += `*📥 Captura da Noite Passada:*\n`;
-        text += `- *${capturesCount}* novos leads foram capturados nas últimas 15 horas!\n\n`;
+        text += `*📊 Captura da Noite Passada:*\n`;
+        text += `- *${captures}* novos leads foram capturados nas últimas 15 horas!\n\n`;
         text += `Boas vendas e bons negócios! 🚀`;
 
         // 5. Fetch Tenant Owner to send the message
-        const owner = await prisma.user.findFirst({
-          where: {
-            tenantId: tenant.id,
-            role: UserRole.OWNER,
-            deletedAt: null,
-          },
-        });
+        const { data: owner } = await dbAdmin
+          .from('users')
+          .select('id, whatsapp')
+          .eq('tenant_id', tenant.id)
+          .eq('role', UserRole.OWNER)
+          .is('deleted_at', null)
+          .limit(1)
+          .single();
 
         if (owner && owner.whatsapp) {
           // Send to the owner via Prospix master guilds instance

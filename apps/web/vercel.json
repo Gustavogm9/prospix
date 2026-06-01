@@ -1,14 +1,22 @@
 {
-  "cleanUrls": true,
-  "routes": [
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "installCommand": "pnpm install --frozen-lockfile",
+  "buildCommand": "cd ../.. && pnpm turbo run build --filter=@prospix/web...",
+  "headers": [
     {
-      "src": "^/assets/(.*)$",
-      "headers": { "cache-control": "public, max-age=31536000, immutable" },
-      "dest": "/assets/$1"
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+      ]
     },
     {
-      "src": "^/((?!assets/|favicon\\.ico|favicon\\.png|apple-touch-icon\\.png|manifest\\.json|pwa-192\\.png|pwa-512\\.png|sw\\.js).*)",
-      "dest": "/index"
+      "source": "/_next/static/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
     }
   ]
 }

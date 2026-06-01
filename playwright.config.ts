@@ -3,16 +3,12 @@ import { defineConfig, devices } from '@playwright/test';
 /**
  * Playwright config · smoke E2E do Prospix.
  *
- * Cobertura inicial: as 3 superficies publicas (landing, web /login, admin /login).
- * Smoke pos-login com mock de JWT vira em fase 2 do mesmo escopo
- * (ver docs/agents/frente-e-frontend.md "Smoke E2E").
+ * Unified app: all 3 surfaces (landing, web dashboard, admin) run on the
+ * same Next.js server at :3001.
  *
- * Cada app tem seu proprio dev server espinhado em paralelo:
- *  - landing: Next.js em :3001
- *  - web: Vite em :5173
- *  - admin: Vite em :5174
- *
- * Em CI, browsers Chromium sao instalados via `pnpm exec playwright install`.
+ * - Landing pages: / , /planos, /cases, /contato, etc.
+ * - Web dashboard: /login, /cadastro, / (protected), /conversas, etc.
+ * - Admin panel: /admin/login, /admin/ (protected), /admin/tenants, etc.
  */
 const isCI = !!process.env.CI;
 
@@ -33,57 +29,29 @@ export default defineConfig({
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: isCI ? 'retain-on-failure' : 'off',
+    baseURL: 'http://localhost:3001',
+    ...devices['Desktop Chrome'],
   },
   projects: [
     {
       name: 'landing',
       testMatch: /e2e\/landing\/.*\.spec\.ts/,
-      use: {
-        ...devices['Desktop Chrome'],
-        baseURL: 'http://localhost:3001',
-      },
     },
     {
       name: 'web',
       testMatch: /e2e\/web\/.*\.spec\.ts/,
-      use: {
-        ...devices['Desktop Chrome'],
-        baseURL: 'http://localhost:5173',
-      },
     },
     {
       name: 'admin',
       testMatch: /e2e\/admin\/.*\.spec\.ts/,
-      use: {
-        ...devices['Desktop Chrome'],
-        baseURL: 'http://localhost:5174',
-      },
     },
   ],
-  webServer: [
-    {
-      command: 'pnpm --filter @prospix/landing dev',
-      url: 'http://localhost:3001',
-      reuseExistingServer: !isCI,
-      timeout: 120_000,
-      stdout: 'ignore',
-      stderr: 'pipe',
-    },
-    {
-      command: 'pnpm --filter @prospix/web dev',
-      url: 'http://localhost:5173',
-      reuseExistingServer: !isCI,
-      timeout: 120_000,
-      stdout: 'ignore',
-      stderr: 'pipe',
-    },
-    {
-      command: 'pnpm --filter @prospix/admin dev',
-      url: 'http://localhost:5174',
-      reuseExistingServer: !isCI,
-      timeout: 120_000,
-      stdout: 'ignore',
-      stderr: 'pipe',
-    },
-  ],
+  webServer: {
+    command: 'pnpm --filter @prospix/web dev',
+    url: 'http://localhost:3001',
+    reuseExistingServer: !isCI,
+    timeout: 120_000,
+    stdout: 'ignore',
+    stderr: 'pipe',
+  },
 });

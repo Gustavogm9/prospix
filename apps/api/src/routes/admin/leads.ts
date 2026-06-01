@@ -1,20 +1,11 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { prisma } from '../../lib/prisma.js';
+import { dbAdmin } from '../../lib/db.js';
 import { logger } from '../../lib/logger.js';
-import { tenantContextStorage } from '../../lib/tenant-context-storage.js';
-
-function withAdminRole<TResult>(operation: (tx: typeof prisma) => Promise<TResult>): Promise<TResult> {
-  const store = tenantContextStorage.getStore();
-  return tenantContextStorage.run(
-    { tenantId: store?.tenantId ?? null, userId: store?.userId ?? null, bypassRls: true },
-    () => operation(prisma)
-  );
-}
 
 export function registerAdminLeadsRoutes(app: FastifyInstance) {
   // =========================================================================
-  // GET /leads — Cross-tenant lead listing
+  // GET /leads - Cross-tenant lead listing
   // =========================================================================
   const listSchema = z.object({
     tenantId: z.string().uuid().optional(),
@@ -34,48 +25,58 @@ export function registerAdminLeadsRoutes(app: FastifyInstance) {
     const { tenantId, status, source, search, limit, offset } = parsed.data;
 
     try {
-      const where: Record<string, unknown> = {};
-      if (tenantId) where.tenantId = tenantId;
-      if (status) where.status = status;
-      if (source) where.source = source;
+      let query = dbAdmin
+        .from('leads')
+        .select('id, name, whatsapp, email, status, source, profession, address, tenant_id, created_at, updated_at, tenants(id, name, slug)')
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1);
+
+      if (tenantId) query = query.eq('tenant_id', tenantId);
+      if (status) query = query.eq('status', status as any);
+      if (source) query = query.eq('source', source as any);
       if (search) {
-        where.OR = [
-          { name: { contains: search, mode: 'insensitive' } },
-          { whatsapp: { contains: search } },
-          { email: { contains: search, mode: 'insensitive' } },
-        ];
+        query = query.or(`name.ilike.%${search}%,whatsapp.ilike.%${search}%,email.ilike.%${search}%`);
       }
 
-      const [items, total] = await withAdminRole(async (tx) => {
-        return Promise.all([
-          tx.lead.findMany({
-            where,
-            select: {
-              id: true,
-              name: true,
-              whatsapp: true,
-              email: true,
-              status: true,
-              source: true,
-              profession: true,
-              address: true,
-              tenantId: true,
-              createdAt: true,
-              updatedAt: true,
-              tenant: { select: { id: true, name: true, slug: true } },
-              _count: { select: { conversations: true } },
-            },
-            orderBy: { createdAt: 'desc' },
-            take: limit,
-            skip: offset,
-          }),
-          tx.lead.count({ where }),
-        ]);
-      });
+      const { data: items, error } = await query;
+      if (error) throw error;
+
+      // Count with same filters
+      let countQuery = dbAdmin.from('leads').select('*', { count: 'exact', head: true });
+      if (tenantId) countQuery = countQuery.eq('tenant_id', tenantId);
+      if (status) countQuery = countQuery.eq('status', status as any);
+      if (source) countQuery = countQuery.eq('source', source as any);
+      if (search) {
+        countQuery = countQuery.or(`name.ilike.%${search}%,whatsapp.ilike.%${search}%,email.ilike.%${search}%`);
+      }
+
+      const { count: total, error: countErr } = await countQuery;
+      if (countErr) throw countErr;
+
+      // Get conversation counts per lead
+      const leadIds = (items ?? []).map((l: any) => l.id);
+      let convCountMap = new Map<string, number>();
+      if (leadIds.length > 0) {
+        let convCounts: any[] = [];
+        try {
+          const { data } = await dbAdmin.rpc('exec_sql' as any, {
+            query: `
+              SELECT lead_id, COUNT(id)::bigint AS cnt
+              FROM conversations
+              WHERE lead_id = ANY(ARRAY[${leadIds.map((id: string) => `'${id}'`).join(',')}]::uuid[])
+              GROUP BY lead_id
+            `,
+          });
+          convCounts = data ?? [];
+        } catch { /* ignore */ }
+        for (const c of convCounts) {
+          convCountMap.set(c.lead_id, Number(c.cnt));
+        }
+      }
 
       return reply.send({
         data: {
-          items: items.map((l) => ({
+          items: (items ?? []).map((l: any) => ({
             id: l.id,
             name: l.name,
             whatsapp: l.whatsapp,
@@ -84,23 +85,23 @@ export function registerAdminLeadsRoutes(app: FastifyInstance) {
             source: l.source,
             profession: l.profession,
             city: (l.address as any)?.city ?? null,
-            tenantId: l.tenantId,
-            tenant: l.tenant,
-            conversationCount: l._count.conversations,
-            createdAt: l.createdAt.toISOString(),
-            updatedAt: l.updatedAt.toISOString(),
+            tenantId: l.tenant_id,
+            tenant: l.tenants,
+            conversationCount: convCountMap.get(l.id) ?? 0,
+            createdAt: l.created_at,
+            updatedAt: l.updated_at,
           })),
-          pagination: { total, limit, offset, hasMore: offset + items.length < total },
+          pagination: { total: total ?? 0, limit, offset, hasMore: offset + (items?.length ?? 0) < (total ?? 0) },
         },
       });
     } catch (err) {
-      logger.error({ err }, 'admin/leads · GET list failed');
+      logger.error({ err }, 'admin/leads → GET list failed');
       return reply.code(500).send({ error: 'INTERNAL', message: 'Falha ao listar leads.' });
     }
   });
 
   // =========================================================================
-  // GET /leads/stats — Lead stats
+  // GET /leads/stats - Lead stats
   // =========================================================================
   app.get('/leads/stats', async (_req, reply) => {
     try {
@@ -109,79 +110,101 @@ export function registerAdminLeadsRoutes(app: FastifyInstance) {
       const weekStart = new Date(todayStart.getTime() - 7 * 24 * 60 * 60 * 1000);
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
-      const stats = await withAdminRole(async (tx) => {
-        const [totalAll, newToday, newWeek, newMonth, byStatus, bySource, topTenants] = await Promise.all([
-          tx.lead.count(),
-          tx.lead.count({ where: { createdAt: { gte: todayStart } } }),
-          tx.lead.count({ where: { createdAt: { gte: weekStart } } }),
-          tx.lead.count({ where: { createdAt: { gte: monthStart } } }),
-          tx.lead.groupBy({ by: ['status'], _count: { id: true } }),
-          tx.lead.groupBy({ by: ['source'], _count: { id: true } }),
-          tx.lead.groupBy({
-            by: ['tenantId'],
-            _count: { id: true },
-            orderBy: { _count: { id: 'desc' } },
-            take: 5,
-          }),
-        ]);
+      const [totalAllRes, newTodayRes, newWeekRes, newMonthRes] = await Promise.all([
+        dbAdmin.from('leads').select('*', { count: 'exact', head: true }),
+        dbAdmin.from('leads').select('*', { count: 'exact', head: true }).gte('created_at', todayStart.toISOString()),
+        dbAdmin.from('leads').select('*', { count: 'exact', head: true }).gte('created_at', weekStart.toISOString()),
+        dbAdmin.from('leads').select('*', { count: 'exact', head: true }).gte('created_at', monthStart.toISOString()),
+      ]);
 
-        const tenantIds = topTenants.map((t) => t.tenantId);
-        const tenantNames = await tx.tenant.findMany({
-          where: { id: { in: tenantIds } },
-          select: { id: true, name: true },
+      // Group by status
+      let byStatusRaw: any[] = [];
+      try {
+        const { data } = await dbAdmin.rpc('exec_sql' as any, {
+          query: `SELECT status, COUNT(id)::bigint AS cnt FROM leads GROUP BY status`,
         });
-        const nameMap = new Map(tenantNames.map((t) => [t.id, t.name]));
+        byStatusRaw = data ?? [];
+      } catch { /* ignore */ }
 
-        return {
-          totalAll,
-          newToday,
-          newWeek,
-          newMonth,
-          byStatus: Object.fromEntries(byStatus.map((s) => [s.status, s._count.id])),
-          bySource: Object.fromEntries(bySource.map((s) => [s.source, s._count.id])),
-          topTenants: topTenants.map((t) => ({
-            tenantId: t.tenantId,
-            tenantName: nameMap.get(t.tenantId) ?? 'Desconhecido',
-            count: t._count.id,
+      // Group by source
+      let bySourceRaw: any[] = [];
+      try {
+        const { data } = await dbAdmin.rpc('exec_sql' as any, {
+          query: `SELECT source, COUNT(id)::bigint AS cnt FROM leads GROUP BY source`,
+        });
+        bySourceRaw = data ?? [];
+      } catch { /* ignore */ }
+
+      // Top 5 tenants by lead count
+      let topTenantsRaw: any[] = [];
+      try {
+        const { data } = await dbAdmin.rpc('exec_sql' as any, {
+          query: `
+            SELECT l.tenant_id, COUNT(l.id)::bigint AS cnt
+            FROM leads l
+            GROUP BY l.tenant_id
+            ORDER BY cnt DESC
+            LIMIT 5
+          `,
+        });
+        topTenantsRaw = data ?? [];
+      } catch { /* ignore */ }
+
+      const tenantIds = topTenantsRaw.map((t: any) => t.tenant_id);
+      let nameMap = new Map<string, string>();
+      if (tenantIds.length > 0) {
+        const { data: tenantNames } = await dbAdmin
+          .from('tenants')
+          .select('id, name')
+          .in('id', tenantIds);
+        nameMap = new Map((tenantNames ?? []).map((t: any) => [t.id, t.name]));
+      }
+
+      return reply.send({
+        data: {
+          totalAll: totalAllRes.count ?? 0,
+          newToday: newTodayRes.count ?? 0,
+          newWeek: newWeekRes.count ?? 0,
+          newMonth: newMonthRes.count ?? 0,
+          byStatus: Object.fromEntries(byStatusRaw.map((s: any) => [s.status, Number(s.cnt)])),
+          bySource: Object.fromEntries(bySourceRaw.map((s: any) => [s.source, Number(s.cnt)])),
+          topTenants: topTenantsRaw.map((t: any) => ({
+            tenantId: t.tenant_id,
+            tenantName: nameMap.get(t.tenant_id) ?? 'Desconhecido',
+            count: Number(t.cnt),
           })),
-        };
+        },
       });
-
-      return reply.send({ data: stats });
     } catch (err) {
-      logger.error({ err }, 'admin/leads/stats · GET failed');
+      logger.error({ err }, 'admin/leads/stats → GET failed');
       return reply.code(500).send({ error: 'INTERNAL', message: 'Falha ao calcular estatísticas de leads.' });
     }
   });
 
   // =========================================================================
-  // GET /leads/export — CSV export
+  // GET /leads/export - CSV export
   // =========================================================================
   app.get('/leads/export', async (req: FastifyRequest, reply: FastifyReply) => {
     const parsed = listSchema.safeParse(req.query);
     const filters = parsed.success ? parsed.data : { limit: 5000, offset: 0 };
 
     try {
-      const where: Record<string, unknown> = {};
-      if (filters.tenantId) where.tenantId = filters.tenantId;
-      if (filters.status) where.status = filters.status;
-      if (filters.source) where.source = filters.source;
+      let query = dbAdmin
+        .from('leads')
+        .select('name, whatsapp, email, status, source, profession, address, created_at, tenants(name)')
+        .order('created_at', { ascending: false })
+        .limit(5000);
 
-      const leads = await withAdminRole((tx) =>
-        tx.lead.findMany({
-          where,
-          select: {
-            name: true, whatsapp: true, email: true, status: true, source: true, profession: true, address: true,
-            createdAt: true, tenant: { select: { name: true } },
-          },
-          orderBy: { createdAt: 'desc' },
-          take: 5000,
-        })
-      );
+      if (filters.tenantId) query = query.eq('tenant_id', filters.tenantId);
+      if (filters.status) query = query.eq('status', filters.status as any);
+      if (filters.source) query = query.eq('source', filters.source as any);
+
+      const { data: leads, error } = await query;
+      if (error) throw error;
 
       const header = 'Tenant,Nome,WhatsApp,Email,Status,Source,Profissão,Cidade,Criado em\n';
-      const rows = leads.map((l) =>
-        [l.tenant?.name, l.name, l.whatsapp, l.email, l.status, l.source, l.profession, (l.address as any)?.city, l.createdAt.toISOString()]
+      const rows = (leads ?? []).map((l: any) =>
+        [(l.tenants as any)?.name, l.name, l.whatsapp, l.email, l.status, l.source, l.profession, (l.address as any)?.city, l.created_at]
           .map((v) => `"${(v ?? '').toString().replace(/"/g, '""')}"`)
           .join(',')
       ).join('\n');
@@ -191,7 +214,7 @@ export function registerAdminLeadsRoutes(app: FastifyInstance) {
         .header('Content-Disposition', `attachment; filename="leads_export_${new Date().toISOString().slice(0, 10)}.csv"`)
         .send(header + rows);
     } catch (err) {
-      logger.error({ err }, 'admin/leads/export · GET failed');
+      logger.error({ err }, 'admin/leads/export → GET failed');
       return reply.code(500).send({ error: 'INTERNAL', message: 'Falha ao exportar leads.' });
     }
   });

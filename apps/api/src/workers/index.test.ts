@@ -11,11 +11,14 @@ vi.mock('../lib/logger.js', () => ({
   },
 }));
 
-vi.mock('../lib/prisma.js', () => ({
-  prisma: {
-    tenant: {
-      findMany: vi.fn(),
-    },
+vi.mock('../lib/supabase.js', () => ({
+  supabaseAdmin: {
+    from: vi.fn(() => ({
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      is: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+    })),
   },
 }));
 
@@ -114,9 +117,14 @@ describe('Worker registry', () => {
   it('observes failures for every registered global worker queue', async () => {
     const { observeQueueFailures } = await import('../lib/queue.js');
     const { startWorkers, workerQueueNames } = await import('./index.js');
-    const { prisma } = await import('../lib/prisma.js');
+    const { supabaseAdmin } = await import('../lib/supabase.js');
 
-    vi.mocked(prisma.tenant.findMany).mockResolvedValue([]);
+    vi.mocked(supabaseAdmin.from).mockReturnValue({
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      is: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+    } as any);
 
     await startWorkers();
 

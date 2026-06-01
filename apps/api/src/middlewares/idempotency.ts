@@ -1,5 +1,5 @@
 import { FastifyRequest, FastifyReply, FastifyPluginAsync } from 'fastify';
-import { prisma } from '../lib/prisma.js';
+import { dbAdmin } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 
 /**
@@ -22,26 +22,31 @@ export const idempotencyPlugin: FastifyPluginAsync = async (app) => {
     const tenantId = (req as any).tenantId || null;
 
     try {
-      const cached = await prisma.idempotencyKey.findUnique({
-        where: { key },
-      });
+      const { data: cached } = await dbAdmin
+        .from('idempotency_keys')
+        .select('*')
+        .eq('key', key)
+        .single();
 
       if (cached) {
         // Check if expired
-        if (cached.expiresAt < new Date()) {
+        if (new Date(cached.expires_at) < new Date()) {
           // Clean up expired key
-          await prisma.idempotencyKey.delete({ where: { key } });
-        } else if (cached.responseCache !== null) {
+          await dbAdmin
+            .from('idempotency_keys')
+            .delete()
+            .eq('key', key);
+        } else if (cached.response_cache !== null) {
           // Replay cached response
           logger.info({ key, endpoint: req.url }, '♻️ Idempotency: Replaying cached response');
           
           return reply
-            .code(cached.statusCode || 200)
+            .code(cached.status_code || 200)
             .header('X-Cache-Lookup', 'HIT - Idempotency')
-            .send(cached.responseCache);
+            .send(cached.response_cache);
         } else {
           // Pending request in progress
-          logger.warn({ key }, '⚠️ Idempotency: Request already in progress');
+          logger.warn({ key }, '⏳ Idempotency: Request already in progress');
           return reply.code(409).send({
             error: 'Conflict',
             message: 'A request with this idempotency key is already in progress.',
@@ -51,16 +56,18 @@ export const idempotencyPlugin: FastifyPluginAsync = async (app) => {
 
       // No cached key -> mark as pending
       const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h default TTL
-      await prisma.idempotencyKey.create({
-        data: {
+      const { error: insertErr } = await dbAdmin
+        .from('idempotency_keys')
+        .insert({
           key,
-          tenantId,
+          tenant_id: tenantId,
           endpoint: req.url,
-          responseCache: null as any,
-          statusCode: null,
-          expiresAt,
-        },
-      });
+          response_cache: null as any,
+          status_code: null,
+          expires_at: expiresAt.toISOString(),
+        });
+
+      if (insertErr) throw insertErr;
 
       // Attach key to request so onSend hook knows to cache it
       (req as any).idempotencyKey = key;
@@ -79,7 +86,10 @@ export const idempotencyPlugin: FastifyPluginAsync = async (app) => {
     // Do not cache transient server errors (5xx)
     if (statusCode >= 500) {
       try {
-        await prisma.idempotencyKey.delete({ where: { key } });
+        await dbAdmin
+          .from('idempotency_keys')
+          .delete()
+          .eq('key', key);
       } catch (_) {}
       return payload;
     }
@@ -96,13 +106,15 @@ export const idempotencyPlugin: FastifyPluginAsync = async (app) => {
         parsedPayload = payload;
       }
 
-      await prisma.idempotencyKey.update({
-        where: { key },
-        data: {
-          responseCache: parsedPayload ?? {},
-          statusCode,
-        },
-      });
+      const { error: updateErr } = await dbAdmin
+        .from('idempotency_keys')
+        .update({
+          response_cache: parsedPayload ?? {},
+          status_code: statusCode,
+        })
+        .eq('key', key);
+
+      if (updateErr) throw updateErr;
     } catch (err) {
       logger.error({ err, key }, '❌ Idempotency onSend cache save error');
     }

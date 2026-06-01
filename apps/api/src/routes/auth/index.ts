@@ -3,20 +3,28 @@ import { z } from 'zod';
 import {
   sendMagicLink,
   validateMagicLink,
-  createSession,
-  rotateSession,
-  revokeSession,
-  withAuthRlsBypass,
+  signInWithPassword,
+  signOut,
+  changePassword,
 } from '../../services/auth-service.js';
-import { prisma } from '../../lib/prisma.js';
+import { supabaseAdmin } from '../../lib/supabase.js';
 import { verifyInvitation, redeemInvitation } from '../../services/invitation-service.js';
-import { verifyPassword, hashPassword } from '../../lib/crypto.js';
+import { logger } from '../../lib/logger.js';
+
+// =============================================================================
+// Auth Routes — Supabase Auth
+// =============================================================================
+// All routes use Supabase Auth instead of custom JWT (RS256) + session table.
+// Login/Admin-login → Supabase signInWithPassword()
+// Refresh → REMOVED (Supabase client auto-refreshes)
+// Logout → Supabase signOut()
+// Change password → Supabase updateUserById()
+// Invitation redeem → Supabase createUser() + DB record
+// Magic link → Kept as custom (WhatsApp via Evolution API, disabled for now)
+// =============================================================================
 
 export const authRoutes: FastifyPluginAsync = async (app) => {
-  
-  // Rate limit helper: 10 requests per minute per IP for auth endpoints
-  // (We use @fastify/rate-limit if registered, otherwise implement a lightweight fallback or rely on standard plugin registration)
-  
+
   // ── 1. POST /auth/magic-link ───────────────────────────────────────────────
   const magicLinkSchema = z.object({
     whatsapp: z.string().min(8, 'WhatsApp number must be valid'),
@@ -76,42 +84,26 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
     const { user_id, tenant_id } = result.value;
 
-    // Fetch user details for the JWT payload
-    const user = await prisma.user.findUnique({
-      where: { id: user_id },
-    });
+    // Fetch user details from DB
+    const { data: user, error } = await supabaseAdmin
+      .from('users')
+      .select('id, tenant_id, name, email, role')
+      .eq('id', user_id)
+      .single();
 
-    if (!user) {
+    if (error || !user) {
       return reply.code(404).send({
         error: 'RESOURCE_NOT_FOUND',
         message: 'User no longer exists',
       });
     }
 
-    // Create session in the database
-    const ipAddress = req.ip;
-    const userAgent = req.headers['user-agent'];
-    const session = await createSession({
-      userId: user.id,
-      ipAddress,
-      userAgent,
-    });
-
-    // Create JWT
-    const payload = {
-      sub: user.id,
-      tenant_id,
-      role: user.role,
-      email: user.email,
-      name: user.name,
-      jti: session.accessTokenId,
-    };
-
-    const accessToken = app.jwt.sign(payload);
+    // Sign in via Supabase to get session tokens
+    // For magic link, we use admin.generateLink or sign in with a temporary mechanism
+    // Since magic link is currently disabled, this is a fallback
+    logger.info({ userId: user.id, tenantId: tenant_id }, '🔑 Magic Link callback: user authenticated');
 
     return reply.code(200).send({
-      access_token: accessToken,
-      refresh_token: session.refreshToken,
       user: {
         id: user.id,
         tenant_id,
@@ -122,13 +114,14 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     });
   });
 
-  // ── 3. POST /auth/refresh ──────────────────────────────────────────────────
-  const refreshSchema = z.object({
-    refresh_token: z.string().min(1, 'Refresh token is required'),
+  // ── 3. POST /auth/login ────────────────────────────────────────────────────
+  const loginSchema = z.object({
+    email: z.string().email('Invalid email address'),
+    password: z.string().min(1, 'Password is required'),
   });
 
-  app.post('/refresh', async (req: FastifyRequest, reply: FastifyReply) => {
-    const parseResult = refreshSchema.safeParse(req.body);
+  app.post('/login', async (req: FastifyRequest, reply: FastifyReply) => {
+    const parseResult = loginSchema.safeParse(req.body);
     if (!parseResult.success) {
       return reply.code(400).send({
         error: 'Validation Error',
@@ -136,57 +129,70 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
-    const { refresh_token } = parseResult.data;
-    const ipAddress = req.ip;
-    const userAgent = req.headers['user-agent'];
+    const { email, password } = parseResult.data;
 
-    const result = await rotateSession(refresh_token, { ipAddress, userAgent });
+    // Sign in via Supabase Auth
+    const signInResult = await signInWithPassword(email, password);
 
-    if (!result.ok) {
+    if (!signInResult.ok) {
       return reply.code(401).send({
-        error: result.error.code,
-        message: result.error.message,
+        error: 'UNAUTHORIZED',
+        message: 'Credenciais incorretas.',
       });
     }
 
-    const { userId, refreshToken, accessTokenId } = result.value;
+    const { accessToken, refreshToken } = signInResult.value;
 
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-    });
+    // Fetch user details + tenant from DB
+    const { data: user, error: userError } = await supabaseAdmin
+      .from('users')
+      .select('id, tenant_id, name, email, role, preferences, tenants!inner(status)')
+      .eq('email', email)
+      .in('role', ['OWNER', 'ASSISTANT'])
+      .single();
 
-    if (!user) {
-      return reply.code(404).send({
-        error: 'RESOURCE_NOT_FOUND',
-        message: 'User no longer exists',
+    if (userError || !user) {
+      return reply.code(401).send({
+        error: 'UNAUTHORIZED',
+        message: 'Corretor não encontrado ou credenciais incorretas.',
       });
     }
 
-    // Re-sign JWT
-    const payload = {
-      sub: user.id,
-      tenant_id: user.tenantId,
-      role: user.role,
-      email: user.email,
-      name: user.name,
-      jti: accessTokenId,
-    };
+    // Check if tenant is active
+    const tenant = (user as any).tenants;
+    if (tenant && tenant.status !== 'ACTIVE') {
+      return reply.code(403).send({
+        error: 'TENANT_INACTIVE',
+        message: 'Acesso bloqueado. A corretora associada não está ativa.',
+      });
+    }
 
-    const accessToken = app.jwt.sign(payload);
+    // Check must_change_password flag
+    const prefs = (user.preferences as Record<string, any>) || {};
+    const mustChangePassword = !!prefs.mustChangePassword;
 
     return reply.code(200).send({
       access_token: accessToken,
       refresh_token: refreshToken,
+      must_change_password: mustChangePassword,
+      user: {
+        id: user.id,
+        tenant_id: user.tenant_id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      },
     });
   });
 
-  // ── 4. POST /auth/logout ───────────────────────────────────────────────────
-  const logoutSchema = z.object({
-    refresh_token: z.string().min(1, 'Refresh token is required'),
+  // ── 4. POST /auth/admin-login ──────────────────────────────────────────────
+  const adminLoginSchema = z.object({
+    email: z.string().email('Invalid email address'),
+    password: z.string().min(1, 'Password is required'),
   });
 
-  app.post('/logout', async (req: FastifyRequest, reply: FastifyReply) => {
-    const parseResult = logoutSchema.safeParse(req.body);
+  app.post('/admin-login', async (req: FastifyRequest, reply: FastifyReply) => {
+    const parseResult = adminLoginSchema.safeParse(req.body);
     if (!parseResult.success) {
       return reply.code(400).send({
         error: 'Validation Error',
@@ -194,18 +200,63 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
-    const { refresh_token } = parseResult.data;
+    const { email, password } = parseResult.data;
 
-    // Optional: Get JTI from active JWT to blacklist it instantly in Redis
-    let jti: string | undefined;
-    try {
-      const decoded = await (req as any).jwtVerify();
-      jti = decoded.jti;
-    } catch (_) {
-      // Ignore if JWT is already expired/missing - proceed with database refresh token revocation
+    // Sign in via Supabase Auth
+    const signInResult = await signInWithPassword(email, password);
+
+    if (!signInResult.ok) {
+      return reply.code(401).send({
+        error: 'UNAUTHORIZED',
+        message: 'Administrador não encontrado ou credenciais incorretas.',
+      });
     }
 
-    await revokeSession(refresh_token, jti);
+    const { accessToken, refreshToken } = signInResult.value;
+
+    // Verify user is GUILDS_ADMIN
+    const { data: user, error: userError } = await supabaseAdmin
+      .from('users')
+      .select('id, name, email, role')
+      .eq('email', email)
+      .eq('role', 'GUILDS_ADMIN')
+      .single();
+
+    if (userError || !user) {
+      return reply.code(401).send({
+        error: 'UNAUTHORIZED',
+        message: 'Administrador não encontrado ou credenciais incorretas.',
+      });
+    }
+
+    return reply.code(200).send({
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      user: {
+        id: user.id,
+        tenant_id: null,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      },
+    });
+  });
+
+  // ── 5. POST /auth/logout ───────────────────────────────────────────────────
+  app.post('/logout', async (req: FastifyRequest, reply: FastifyReply) => {
+    // Extract user ID from the Supabase JWT (if valid)
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith('Bearer ')) {
+      const token = authHeader.slice(7);
+      try {
+        const { data: { user } } = await supabaseAdmin.auth.getUser(token);
+        if (user) {
+          await signOut(user.id);
+        }
+      } catch {
+        // Ignore if token is already expired — logout is still successful
+      }
+    }
 
     return reply.code(200).send({
       success: true,
@@ -213,7 +264,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     });
   });
 
-  // ── 5. POST /auth/invitations/verify ───────────────────────────────────────
+  // ── 6. POST /auth/invitations/verify ───────────────────────────────────────
   const verifyInviteSchema = z.object({
     code: z.string().regex(/^PRSPX-[A-Z0-9]{4}-[A-Z0-9]{4}$/, 'Invalid code format'),
   });
@@ -247,7 +298,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     });
   });
 
-  // ── 6. POST /auth/invitations/redeem ───────────────────────────────────────
+  // ── 7. POST /auth/invitations/redeem ───────────────────────────────────────
   const redeemInviteSchema = z.object({
     code: z.string().regex(/^PRSPX-[A-Z0-9]{4}-[A-Z0-9]{4}$/, 'Invalid code format'),
     user: z.object({
@@ -299,167 +350,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     });
   });
 
-  // ── 7. POST /auth/login ────────────────────────────────────────────────────
-  const brokerLoginSchema = z.object({
-    email: z.string().email('Invalid email address'),
-    password: z.string().min(1, 'Password is required'),
-  });
-
-  app.post('/login', async (req: FastifyRequest, reply: FastifyReply) => {
-    const parseResult = brokerLoginSchema.safeParse(req.body);
-    if (!parseResult.success) {
-      return reply.code(400).send({
-        error: 'Validation Error',
-        message: parseResult.error.errors[0]?.message,
-      });
-    }
-
-    const { email, password } = parseResult.data;
-
-    // Verify user exists and is OWNER or ASSISTANT (scoped DB-role bypass for auth only)
-    const user = await withAuthRlsBypass((tx) => tx.user.findFirst({
-      where: {
-        email,
-        role: { in: ['OWNER', 'ASSISTANT'] },
-      },
-      include: {
-        tenant: true,
-      },
-    }));
-
-    if (!user) {
-      return reply.code(401).send({
-        error: 'UNAUTHORIZED',
-        message: 'Corretor não encontrado ou credenciais incorretas.',
-      });
-    }
-
-    // Check if tenant is active
-    if (!user.tenant || user.tenant.status !== 'ACTIVE') {
-      return reply.code(403).send({
-        error: 'TENANT_INACTIVE',
-        message: 'Acesso bloqueado. A corretora associada não está ativa.',
-      });
-    }
-
-    // Verify hashed password from the database
-    if (!user.passwordHash || !verifyPassword(password, user.passwordHash)) {
-      return reply.code(401).send({
-        error: 'UNAUTHORIZED',
-        message: 'Senha incorreta.',
-      });
-    }
-
-    // Create session in the database
-    const ipAddress = req.ip;
-    const userAgent = req.headers['user-agent'];
-    const session = await createSession({
-      userId: user.id,
-      ipAddress,
-      userAgent,
-    });
-
-    // Create JWT
-    const payload = {
-      sub: user.id,
-      tenant_id: user.tenantId,
-      role: user.role,
-      email: user.email,
-      name: user.name,
-      jti: session.accessTokenId,
-    };
-
-    const accessToken = app.jwt.sign(payload);
-
-    return reply.code(200).send({
-      access_token: accessToken,
-      refresh_token: session.refreshToken,
-      must_change_password: !!(user.preferences as any)?.mustChangePassword,
-      user: {
-        id: user.id,
-        tenant_id: user.tenantId,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-      },
-    });
-  });
-
-  // ── 8. POST /auth/admin-login ──────────────────────────────────────────────
-  const adminLoginSchema = z.object({
-    email: z.string().email('Invalid email address'),
-    password: z.string().min(1, 'Password is required'),
-  });
-
-  app.post('/admin-login', async (req: FastifyRequest, reply: FastifyReply) => {
-    const parseResult = adminLoginSchema.safeParse(req.body);
-    if (!parseResult.success) {
-      return reply.code(400).send({
-        error: 'Validation Error',
-        message: parseResult.error.errors[0]?.message,
-      });
-    }
-
-    const { email, password } = parseResult.data;
-
-    // Verify user exists and is a GUILDS_ADMIN (scoped DB-role bypass for auth only)
-    const user = await withAuthRlsBypass((tx) => tx.user.findFirst({
-      where: {
-        email,
-        role: 'GUILDS_ADMIN',
-      },
-    }));
-
-    if (!user) {
-      return reply.code(401).send({
-        error: 'UNAUTHORIZED',
-        message: 'Administrador não encontrado ou credenciais incorretas.',
-      });
-    }
-
-    // Verify hashed password from the database
-    if (!user.passwordHash || !verifyPassword(password, user.passwordHash)) {
-      return reply.code(401).send({
-        error: 'UNAUTHORIZED',
-        message: 'Senha secreta administrativa incorreta.',
-      });
-    }
-
-    // Create session in the database
-    const ipAddress = req.ip;
-    const userAgent = req.headers['user-agent'];
-    const session = await createSession({
-      userId: user.id,
-      ipAddress,
-      userAgent,
-    });
-
-    // Create JWT
-    const payload = {
-      sub: user.id,
-      tenant_id: null,
-      role: user.role,
-      email: user.email,
-      name: user.name,
-      jti: session.accessTokenId,
-    };
-
-    const accessToken = app.jwt.sign(payload);
-
-    return reply.code(200).send({
-      access_token: accessToken,
-      refresh_token: session.refreshToken,
-      user: {
-        id: user.id,
-        tenant_id: null,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-      },
-    });
-  });
-
-  // ── 9. PATCH /auth/change-password ────────────────────────────────────────
+  // ── 8. PATCH /auth/change-password ────────────────────────────────────────
   const changePasswordSchema = z.object({
     current_password: z.string().min(1, 'Current password is required'),
     new_password: z.string().min(6, 'New password must be at least 6 characters'),
@@ -470,16 +361,17 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.patch('/change-password', async (req: FastifyRequest, reply: FastifyReply) => {
-    // Require valid JWT
-    try {
-      await (req as any).jwtVerify();
-    } catch (_) {
+    // Extract user from Supabase JWT
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) {
       return reply.code(401).send({ error: 'UNAUTHORIZED', message: 'Token inválido ou expirado.' });
     }
 
-    const userId = (req as any).user?.sub;
-    if (!userId) {
-      return reply.code(401).send({ error: 'UNAUTHORIZED', message: 'Usuário não identificado.' });
+    const token = authHeader.slice(7);
+    const { data: { user: authUser }, error: authError } = await supabaseAdmin.auth.getUser(token);
+
+    if (authError || !authUser) {
+      return reply.code(401).send({ error: 'UNAUTHORIZED', message: 'Token inválido ou expirado.' });
     }
 
     const parseResult = changePasswordSchema.safeParse(req.body);
@@ -492,31 +384,33 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
     const { current_password, new_password } = parseResult.data;
 
-    const user = await withAuthRlsBypass((tx) => tx.user.findUnique({
-      where: { id: userId },
-      select: { id: true, passwordHash: true, preferences: true },
-    }));
-
-    if (!user) {
-      return reply.code(404).send({ error: 'RESOURCE_NOT_FOUND', message: 'Usuário não encontrado.' });
-    }
-
-    if (!user.passwordHash || !verifyPassword(current_password, user.passwordHash)) {
+    // Verify current password by attempting to sign in
+    const verifyResult = await signInWithPassword(authUser.email!, current_password);
+    if (!verifyResult.ok) {
       return reply.code(401).send({ error: 'UNAUTHORIZED', message: 'Senha atual incorreta.' });
     }
 
-    // Hash new password and update
-    const newHash = hashPassword(new_password);
-    const prefs = (user.preferences as Record<string, any>) || {};
-    delete prefs.mustChangePassword;
+    // Update password via Supabase Admin
+    const changeResult = await changePassword(authUser.id, new_password);
+    if (!changeResult.ok) {
+      return reply.code(500).send({ error: 'INTERNAL_ERROR', message: 'Falha ao alterar senha.' });
+    }
 
-    await withAuthRlsBypass((tx) => tx.user.update({
-      where: { id: userId },
-      data: {
-        passwordHash: newHash,
-        preferences: prefs,
-      },
-    }));
+    // Clear mustChangePassword flag in DB
+    const { data: dbUser } = await supabaseAdmin
+      .from('users')
+      .select('preferences')
+      .eq('id', authUser.id)
+      .single();
+
+    if (dbUser) {
+      const prefs = (dbUser.preferences as Record<string, any>) || {};
+      delete prefs.mustChangePassword;
+      await supabaseAdmin
+        .from('users')
+        .update({ preferences: prefs })
+        .eq('id', authUser.id);
+    }
 
     return reply.code(200).send({
       success: true,

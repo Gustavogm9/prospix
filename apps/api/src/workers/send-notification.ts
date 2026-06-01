@@ -1,64 +1,23 @@
 import { Job } from 'bullmq';
-import { UserRole } from '@prisma/client';
-import { BaseJobPayload } from '@prospix/shared-types';
-import { prisma } from '../lib/prisma.js';
-import { logger } from '../lib/logger.js';
-import { sendNotification } from '../services/notification-service.js';
 import { BaseWorker } from './_base-worker.js';
+import { dbAdmin } from '../lib/db.js';
+import { logger } from '../lib/logger.js';
+import { BaseJobPayload } from '@prospix/shared-types';
+import { sendNotification } from '../services/notification-service.js';
 
 export interface SendNotificationPayload extends BaseJobPayload {
-  type: string;
   user_id?: string;
   lead_id?: string;
   meeting_id?: string;
+  type: string;
   title?: string;
   body?: string;
-  data?: Record<string, unknown>;
-  link?: string;
+  data?: Record<string, any>;
 }
 
 export interface SendNotificationResult {
-  success: boolean;
-  notified_user_id?: string;
-  skipped?: boolean;
-  reason?: string;
-}
-
-interface ReminderContext {
-  leadName?: string | null;
-  scheduledFor?: Date | null;
-  location?: string | null;
-}
-
-function formatMeetingWhen(scheduledFor?: Date | null): string {
-  if (!scheduledFor) return 'no horario agendado';
-
-  return scheduledFor.toLocaleString('pt-BR', {
-    dateStyle: 'short',
-    timeStyle: 'short',
-  });
-}
-
-function buildNotificationContent(type: string, context: ReminderContext): Pick<SendNotificationPayload, 'title' | 'body'> | null {
-  const leadName = context.leadName || 'Lead';
-  const when = formatMeetingWhen(context.scheduledFor);
-  const where = context.location ? ` em ${context.location}` : '';
-
-  if (type === 'meeting_reminder_24h') {
-    return {
-      title: 'Lembrete: reuniao em 24h',
-      body: `Voce tem uma reuniao com ${leadName} em ${when}${where}.`,
-    };
-  }
-
-  if (type === 'meeting_reminder_1h') {
-    return {
-      title: 'Lembrete: reuniao em 1h',
-      body: `Sua reuniao com ${leadName} comeca em ${when}${where}.`,
-    };
-  }
-
-  return null;
+  sent: boolean;
+  notification_id?: string;
 }
 
 export class SendNotificationWorker extends BaseWorker<SendNotificationPayload, SendNotificationResult> {
@@ -66,78 +25,103 @@ export class SendNotificationWorker extends BaseWorker<SendNotificationPayload, 
   concurrency = 10;
 
   async process(job: Job<SendNotificationPayload>): Promise<SendNotificationResult> {
-    const { tenant_id, type, lead_id, meeting_id, data, link } = job.data;
-    let { user_id, title, body } = job.data;
-    const reminderContext: ReminderContext = {};
+    const { tenant_id, user_id, lead_id, meeting_id, type, title, body, data } = job.data;
 
-    if (lead_id) {
-      const lead = await prisma.lead.findUnique({
-        where: { id: lead_id },
-        select: { id: true, tenantId: true, name: true },
-      });
+    // Resolve target user_id
+    let targetUserId = user_id;
 
-      if (!lead || lead.tenantId !== tenant_id) {
-        throw new Error(`Lead ${lead_id} not found or tenant mismatch`);
-      }
-
-      reminderContext.leadName = lead.name;
-    }
-
-    if (meeting_id) {
-      const meeting = await prisma.meeting.findUnique({
-        where: { id: meeting_id },
-        select: { id: true, tenantId: true, scheduledFor: true, location: true },
-      });
-
-      if (!meeting || meeting.tenantId !== tenant_id) {
-        throw new Error(`Meeting ${meeting_id} not found or tenant mismatch`);
-      }
-
-      reminderContext.scheduledFor = meeting.scheduledFor;
-      reminderContext.location = meeting.location;
-    }
-
-    if (!user_id) {
-      const owner = await prisma.user.findFirst({
-        where: { tenantId: tenant_id, role: UserRole.OWNER, deletedAt: null },
-        select: { id: true },
-      });
+    if (!targetUserId) {
+      // Find the OWNER of the tenant to send notification to
+      const { data: owner } = await dbAdmin
+        .from('users')
+        .select('id')
+        .eq('tenant_id', tenant_id)
+        .eq('role', 'OWNER')
+        .is('deleted_at', null)
+        .limit(1)
+        .single();
 
       if (!owner) {
-        logger.warn({ tenant_id, type }, 'No tenant owner found for notification job');
-        return { success: true, skipped: true, reason: 'owner_not_found' };
+        logger.warn({ tenant_id }, '⚠️ No OWNER user found for tenant. Cannot deliver notification.');
+        return { sent: false };
       }
-
-      user_id = owner.id;
+      targetUserId = owner.id;
     }
+
+    // Build notification title/body based on type if not provided
+    let resolvedTitle = title || '';
+    let resolvedBody = body || '';
+    const resolvedData: Record<string, any> = { ...(data || {}) };
 
     if (!title || !body) {
-      const content = buildNotificationContent(type, reminderContext);
-      title = title || content?.title;
-      body = body || content?.body;
+      switch (type) {
+        case 'meeting_reminder_24h': {
+          if (meeting_id) {
+            const { data: meeting } = await dbAdmin
+              .from('meetings')
+              .select('*, leads(name)')
+              .eq('id', meeting_id)
+              .single();
+            if (meeting) {
+              const leadName = (meeting.leads as any)?.name || 'Lead';
+              resolvedTitle = '📅 Lembrete: Reunião amanhã';
+              resolvedBody = `Você tem uma reunião com ${leadName} amanhã. Verifique os detalhes no painel.`;
+              resolvedData.meeting_id = meeting_id;
+              resolvedData.lead_name = leadName;
+            }
+          }
+          break;
+        }
+        case 'meeting_reminder_1h': {
+          if (meeting_id) {
+            const { data: meeting } = await dbAdmin
+              .from('meetings')
+              .select('*, leads(name)')
+              .eq('id', meeting_id)
+              .single();
+            if (meeting) {
+              const leadName = (meeting.leads as any)?.name || 'Lead';
+              resolvedTitle = '⏰ Reunião em 1 hora!';
+              resolvedBody = `Sua reunião com ${leadName} começa em 1 hora.`;
+              resolvedData.meeting_id = meeting_id;
+              resolvedData.lead_name = leadName;
+            }
+          }
+          break;
+        }
+        case 'lead_escalated': {
+          if (lead_id) {
+            const { data: lead } = await dbAdmin
+              .from('leads')
+              .select('name')
+              .eq('id', lead_id)
+              .single();
+            resolvedTitle = '🚨 Lead escalado para atendimento humano';
+            resolvedBody = `O lead "${lead?.name || 'Lead'}" precisa de atenção manual.`;
+            resolvedData.lead_id = lead_id;
+          }
+          break;
+        }
+        default: {
+          resolvedTitle = resolvedTitle || `Notificação: ${type}`;
+          resolvedBody = resolvedBody || 'Você tem uma nova notificação no Prospix.';
+        }
+      }
     }
 
-    if (!title || !body) {
-      throw new Error(`Notification job ${type} requires title and body`);
-    }
-
-    await sendNotification({
+    // Send notification
+    const notification = await sendNotification({
       tenantId: tenant_id,
-      userId: user_id,
+      userId: targetUserId!,
       type,
-      title,
-      body,
-      data: {
-        ...(data || {}),
-        lead_id,
-        meeting_id,
-      },
-      link,
+      title: resolvedTitle,
+      body: resolvedBody,
+      data: resolvedData,
     });
 
     return {
-      success: true,
-      notified_user_id: user_id,
+      sent: true,
+      notification_id: (notification as any)?.id,
     };
   }
 }

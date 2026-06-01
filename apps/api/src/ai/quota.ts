@@ -1,5 +1,5 @@
-import { TenantPlan } from '@prisma/client';
-import { prisma } from '../lib/prisma.js';
+import { TenantPlan } from '@prospix/shared-types';
+import { dbAdmin } from '../lib/db.js';
 
 export const AI_PLAN_LIMIT_CENTS: Record<TenantPlan, number> = {
   STARTER: 5000,
@@ -60,23 +60,21 @@ export async function assertAIQuotaBeforeCall(params: {
   now?: Date;
 }): Promise<void> {
   const periodMonth = getCurrentUsageMonth(params.now);
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: params.tenantId },
-    select: { id: true, plan: true },
-  });
+  const { data: tenant } = await dbAdmin
+    .from('tenants')
+    .select('id, plan')
+    .eq('id', params.tenantId)
+    .single();
 
   const limitCents = getAIPlanLimitCents(tenant?.plan);
-  const usage = await prisma.tenantUsage.findUnique({
-    where: {
-      tenantId_periodMonth: {
-        tenantId: params.tenantId,
-        periodMonth,
-      },
-    },
-    select: { llmCostCents: true },
-  });
+  const { data: usage } = await dbAdmin
+    .from('tenant_usage')
+    .select('llm_cost_cents')
+    .eq('tenant_id', params.tenantId)
+    .eq('period_month', periodMonth.toISOString())
+    .single();
 
-  const currentCostCents = Number(usage?.llmCostCents ?? 0);
+  const currentCostCents = Number(usage?.llm_cost_cents ?? 0);
   const estimatedCostCents = estimateAICallCostCents(params);
 
   if (currentCostCents + estimatedCostCents >= limitCents) {

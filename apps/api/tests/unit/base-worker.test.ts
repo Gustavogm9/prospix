@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { BaseWorker } from '../../src/workers/_base-worker.js';
-import { tenantContextStorage } from '../../src/lib/tenant-context-storage.js';
 import { Job } from 'bullmq';
 
 class TestConcreteWorker extends BaseWorker<{ tenant_id: string; trace_id: string; message: string }, string> {
@@ -8,11 +7,6 @@ class TestConcreteWorker extends BaseWorker<{ tenant_id: string; trace_id: strin
   concurrency = 1;
 
   async process(job: Job<{ tenant_id: string; trace_id: string; message: string }>): Promise<string> {
-    // Assert that AsyncLocalStorage RLS context is set correctly during processing
-    const store = tenantContextStorage.getStore();
-    if (!store || store.tenantId !== job.data.tenant_id) {
-      throw new Error('AsyncLocalStorage RLS context is not active in process()');
-    }
     return `processed: ${job.data.message}`;
   }
 }
@@ -31,7 +25,7 @@ describe('BaseWorker Isolation & Context', () => {
     await expect(worker.run(mockJob)).rejects.toThrow('Missing tenant_id in job payload');
   });
 
-  it('should run execution inside the tenantContextStorage context on success', async () => {
+  it('should run process() and return the result on success', async () => {
     const worker = new TestConcreteWorker();
     const mockJob = {
       id: 'job_123',
@@ -46,20 +40,13 @@ describe('BaseWorker Isolation & Context', () => {
     const result = await worker.run(mockJob);
 
     expect(result).toBe('processed: hello');
-    
-    // Assert store is cleared after worker execution
-    expect(tenantContextStorage.getStore()).toBeUndefined();
   });
 
-  it('should clear tenantContextStorage context even when process throws an error', async () => {
+  it('should propagate errors from process()', async () => {
     class BadWorker extends BaseWorker<{ tenant_id: string; trace_id: string }, never> {
       name = 'bad-worker';
       concurrency = 1;
-      async process(job: Job<{ tenant_id: string; trace_id: string }>): Promise<never> {
-        const store = tenantContextStorage.getStore();
-        if (!store || store.tenantId !== job.data.tenant_id) {
-          throw new Error('Store inactive in error test');
-        }
+      async process(_job: Job<{ tenant_id: string; trace_id: string }>): Promise<never> {
         throw new Error('Processing failed');
       }
     }
@@ -75,8 +62,5 @@ describe('BaseWorker Isolation & Context', () => {
     } as unknown as Job;
 
     await expect(worker.run(mockJob)).rejects.toThrow('Processing failed');
-    
-    // Assert store is cleared after worker execution failure
-    expect(tenantContextStorage.getStore()).toBeUndefined();
   });
 });

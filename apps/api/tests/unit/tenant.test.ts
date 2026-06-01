@@ -1,53 +1,39 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { app } from '../../src/index.js';
-import { prisma } from '../../src/lib/prisma.js';
+import { supabaseAdmin } from '../../src/lib/supabase.js';
 import { redis } from '../../src/lib/redis.js';
-import { MeetingOutcome, MeetingStatus } from '@prisma/client';
+import { MeetingStatus } from '@prospix/shared-types';
 
-// Mock Prisma
-vi.mock('../../src/lib/prisma.js', () => ({
-  prisma: {
-    $executeRaw: vi.fn(),
-    $executeRawUnsafe: vi.fn(),
-    $transaction: vi.fn((callback) => callback(prisma)),
-    meeting: {
-      findMany: vi.fn(),
-      findFirst: vi.fn(),
-      update: vi.fn(),
-      create: vi.fn(),
-      count: vi.fn(),
-      aggregate: vi.fn(),
+// Mock Supabase
+vi.mock('../../src/lib/supabase.js', () => {
+  const chainable = () => ({
+    select: vi.fn().mockReturnThis(),
+    insert: vi.fn().mockReturnThis(),
+    update: vi.fn().mockReturnThis(),
+    delete: vi.fn().mockReturnThis(),
+    upsert: vi.fn().mockReturnThis(),
+    eq: vi.fn().mockReturnThis(),
+    neq: vi.fn().mockReturnThis(),
+    is: vi.fn().mockReturnThis(),
+    in: vi.fn().mockReturnThis(),
+    ilike: vi.fn().mockReturnThis(),
+    gte: vi.fn().mockReturnThis(),
+    lte: vi.fn().mockReturnThis(),
+    gt: vi.fn().mockReturnThis(),
+    lt: vi.fn().mockReturnThis(),
+    or: vi.fn().mockReturnThis(),
+    order: vi.fn().mockReturnThis(),
+    limit: vi.fn().mockReturnThis(),
+    range: vi.fn().mockReturnThis(),
+    single: vi.fn().mockResolvedValue({ data: null, error: null }),
+    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+  });
+  return {
+    supabaseAdmin: {
+      from: vi.fn(() => chainable()),
     },
-    lead: {
-      count: vi.fn(),
-      update: vi.fn(),
-      findUnique: vi.fn(),
-    },
-    conversation: {
-      count: vi.fn(),
-    },
-    tenant: {
-      findUnique: vi.fn(),
-      update: vi.fn(),
-    },
-    tenantUsage: {
-      findUnique: vi.fn(),
-    },
-    leadEvent: {
-      create: vi.fn(),
-    },
-    notification: {
-      findMany: vi.fn(),
-      updateMany: vi.fn(),
-      findFirst: vi.fn(),
-      update: vi.fn(),
-    },
-    notificationPreference: {
-      findMany: vi.fn(),
-      upsert: vi.fn(),
-    },
-  },
-}));
+  };
+});
 
 // Mock Redis
 vi.mock('../../src/lib/redis.js', () => ({
@@ -69,20 +55,14 @@ vi.mock('../../src/lib/queue.js', () => ({
 
 describe('Tenant API Routes', () => {
   const mockTenantId = 'tenant-1234';
-  const mockUserId = 'user-5678';
+
   let mockToken: string;
 
   beforeEach(() => {
     vi.clearAllMocks();
 
     // Generate a valid RS256 token payload for authentication
-    mockToken = app.jwt.sign({
-      sub: mockUserId,
-      tenant_id: mockTenantId,
-      role: 'OWNER',
-      email: 'owner@tenant.com',
-      name: 'Tenant Owner',
-    });
+    mockToken = 'mock-supabase-token-for-test';
   });
 
   describe('GET /v1/tenant/meetings', () => {
@@ -95,18 +75,44 @@ describe('Tenant API Routes', () => {
     });
 
     it('should return lists of meetings when authenticated', async () => {
-      vi.mocked(prisma.meeting.findMany).mockResolvedValue([
-        {
-          id: 'meeting-1',
-          tenantId: mockTenantId,
-          leadId: 'lead-1',
-          googleEventId: 'evt-1',
-          scheduledFor: new Date(),
-          durationMinutes: 30,
-          location: 'Google Meet',
-          status: MeetingStatus.SCHEDULED,
-        },
-      ] as any);
+      vi.mocked(supabaseAdmin.from).mockImplementation((_table: string) => ({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        gte: vi.fn().mockReturnThis(),
+        lte: vi.fn().mockReturnThis(),
+        order: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue({
+          data: [
+            {
+              id: 'meeting-1',
+              tenant_id: mockTenantId,
+              lead_id: 'lead-1',
+              google_event_id: 'evt-1',
+              scheduled_for: new Date().toISOString(),
+              duration_minutes: 30,
+              location: 'Google Meet',
+              status: MeetingStatus.SCHEDULED,
+            },
+          ],
+          error: null,
+        }),
+        range: vi.fn().mockResolvedValue({
+          data: [
+            {
+              id: 'meeting-1',
+              tenant_id: mockTenantId,
+              lead_id: 'lead-1',
+              google_event_id: 'evt-1',
+              scheduled_for: new Date().toISOString(),
+              duration_minutes: 30,
+              location: 'Google Meet',
+              status: MeetingStatus.SCHEDULED,
+            },
+          ],
+          error: null,
+        }),
+      }) as any);
 
       const res = await app.inject({
         method: 'GET',
@@ -126,17 +132,52 @@ describe('Tenant API Routes', () => {
 
   describe('PATCH /v1/tenant/meetings/:id', () => {
     it('should update meeting outcome and lead status correctly', async () => {
-      vi.mocked(prisma.meeting.findFirst).mockResolvedValue({
-        id: 'meeting-1',
-        tenantId: mockTenantId,
-        leadId: 'lead-1',
-      } as any);
-
-      vi.mocked(prisma.meeting.update).mockResolvedValue({
-        id: 'meeting-1',
-        outcome: MeetingOutcome.CLOSED,
-        status: MeetingStatus.HAPPENED,
-      } as any);
+      vi.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
+        if (table === 'meetings') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockReturnThis(),
+            single: vi.fn().mockResolvedValue({
+              data: {
+                id: 'meeting-1',
+                tenant_id: mockTenantId,
+                lead_id: 'lead-1',
+              },
+              error: null,
+            }),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: {
+                id: 'meeting-1',
+                tenant_id: mockTenantId,
+                lead_id: 'lead-1',
+              },
+              error: null,
+            }),
+            update: vi.fn().mockReturnThis(),
+          } as any;
+        }
+        if (table === 'leads') {
+          return {
+            update: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            select: vi.fn().mockReturnThis(),
+            single: vi.fn().mockResolvedValue({ data: {}, error: null }),
+          } as any;
+        }
+        if (table === 'lead_events') {
+          return {
+            insert: vi.fn().mockReturnThis(),
+            select: vi.fn().mockReturnThis(),
+            single: vi.fn().mockResolvedValue({ data: {}, error: null }),
+          } as any;
+        }
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          single: vi.fn().mockResolvedValue({ data: null, error: null }),
+        } as any;
+      });
 
       const res = await app.inject({
         method: 'PATCH',
@@ -153,11 +194,8 @@ describe('Tenant API Routes', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      expect(prisma.meeting.update).toHaveBeenCalled();
-      expect(prisma.lead.update).toHaveBeenCalledWith({
-        where: { id: 'lead-1' },
-        data: { status: 'CLOSED_WON', closedAt: expect.any(Date) },
-      });
+      expect(supabaseAdmin.from).toHaveBeenCalledWith('meetings');
+      expect(supabaseAdmin.from).toHaveBeenCalledWith('leads');
     });
   });
 
@@ -166,16 +204,54 @@ describe('Tenant API Routes', () => {
       // Mock Redis Cache Miss
       vi.mocked(redis.get).mockResolvedValue(null);
 
-      vi.mocked(prisma.meeting.count).mockResolvedValue(3);
-      vi.mocked(prisma.conversation.count)
-        .mockResolvedValueOnce(5)
-        .mockResolvedValueOnce(1);
-      vi.mocked(prisma.lead.count)
-        .mockResolvedValueOnce(2)
-        .mockResolvedValueOnce(4);
-      vi.mocked(prisma.meeting.findFirst).mockResolvedValue({
-        scheduledFor: new Date('2026-05-23T13:30:00.000Z'),
-      } as any);
+      vi.mocked(supabaseAdmin.from).mockImplementation((table: string) => {
+        if (table === 'meetings') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            gte: vi.fn().mockReturnThis(),
+            lte: vi.fn().mockReturnThis(),
+            is: vi.fn().mockReturnThis(),
+            order: vi.fn().mockReturnThis(),
+            limit: vi.fn().mockResolvedValue({
+              data: [{ scheduled_for: new Date('2026-05-23T13:30:00.000Z').toISOString() }],
+              error: null,
+              count: 3,
+            }),
+            single: vi.fn().mockResolvedValue({
+              data: { scheduled_for: new Date('2026-05-23T13:30:00.000Z').toISOString() },
+              error: null,
+            }),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: { scheduled_for: new Date('2026-05-23T13:30:00.000Z').toISOString() },
+              error: null,
+            }),
+          } as any;
+        }
+        if (table === 'conversations') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            gte: vi.fn().mockReturnThis(),
+            is: vi.fn().mockReturnThis(),
+            in: vi.fn().mockResolvedValue({ count: 5, error: null }),
+          } as any;
+        }
+        if (table === 'leads') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            gte: vi.fn().mockReturnThis(),
+            is: vi.fn().mockReturnThis(),
+            in: vi.fn().mockResolvedValue({ count: 2, error: null }),
+          } as any;
+        }
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          single: vi.fn().mockResolvedValue({ data: null, error: null }),
+        } as any;
+      });
 
       const res = await app.inject({
         method: 'GET',

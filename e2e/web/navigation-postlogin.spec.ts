@@ -7,7 +7,7 @@
  * Mesma estrategia de mock dos outros specs pos-login.
  */
 import { test, expect } from '@playwright/test';
-import { authState } from '../fixtures/auth';
+import { authState, mockSupabaseAuth } from '../fixtures/auth';
 
 /* Auth state imported from shared fixtures (L-16) */
 
@@ -21,6 +21,9 @@ test.describe('Web · navegacao pos-login (AUD-P1-028 expansion)', () => {
       }
     }, JSON.stringify(authState));
 
+    // Mock Supabase auth so getSession() returns valid session
+    await mockSupabaseAuth(page);
+
     await page.route('**/v1/**', async (route) => {
       return route.fulfill({
         status: 200,
@@ -31,7 +34,8 @@ test.describe('Web · navegacao pos-login (AUD-P1-028 expansion)', () => {
   });
 
   test('sidebar mostra todos os items de navegacao', async ({ page }) => {
-    await page.goto('/');
+    // Navigate to a dashboard-specific route (/ resolves to landing in Next.js)
+    await page.goto('/conversas');
     await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => { /* networkidle timeout is non-fatal for smoke tests */ });
 
     // Items esperados pela sidebar (PRD secao 6.5)

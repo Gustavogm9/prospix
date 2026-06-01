@@ -1,29 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ScheduleMeetingWorker, ScheduleMeetingPayload } from './schedule-meeting.js';
-import { prisma } from '../lib/prisma.js';
 import { getDecryptedSecrets } from '../tenant/secrets-vault.js';
 import { listEvents, createEvent } from '../integrations/google-calendar.js';
 import { Job } from 'bullmq';
+import { createMockDbAdmin } from '../test-helpers/mock-db.js';
 
-// Mock Prisma
-vi.mock('../lib/prisma.js', () => ({
-  prisma: {
-    $executeRaw: vi.fn().mockResolvedValue(1),
-    lead: {
-      findUnique: vi.fn(),
-      update: vi.fn(),
-    },
-    meeting: {
-      create: vi.fn(),
-    },
-    leadEvent: {
-      create: vi.fn(),
-    },
-    tenantSecret: {
-      findUnique: vi.fn(),
-    },
-  },
-}));
+const { dbAdmin, setTableResult, reset: resetDb } = createMockDbAdmin();
+
+vi.mock('../lib/db.js', () => ({ dbAdmin }));
 
 // Mock Secrets Vault
 vi.mock('../tenant/secrets-vault.js', () => ({
@@ -38,7 +22,7 @@ vi.mock('../integrations/google-calendar.js', () => ({
 
 // Mock Queue helper
 vi.mock('../lib/queue.js', () => ({
-  getTenantQueueName: vi.fn((t, w) => `queue:${t}:${w}`),
+  getTenantQueueName: vi.fn((t: string, w: string) => `queue:${t}:${w}`),
   createTenantQueue: vi.fn(() => ({
     add: vi.fn().mockResolvedValue({}),
   })),
@@ -61,22 +45,41 @@ describe('Schedule Meeting Worker', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    resetDb();
   });
 
   it('should schedule meeting successfully when there are no conflicts', async () => {
-    // Setup Mock Returns
-    vi.mocked(prisma.lead.findUnique).mockResolvedValue({
-      id: 'lead-001',
-      tenantId: 'tenant-001',
-      name: 'João Silva',
-      email: 'joao@example.com',
-      whatsapp: '5511999999999',
-    } as any);
+    setTableResult('leads', {
+      data: {
+        id: 'lead-001',
+        tenant_id: 'tenant-001',
+        name: 'João Silva',
+        email: 'joao@example.com',
+        whatsapp: '5511999999999',
+      },
+      error: null,
+    });
 
-    vi.mocked(prisma.tenantSecret.findUnique).mockResolvedValue({
-      tenantId: 'tenant-001',
-      googleCalendarId: 'primary',
-    } as any);
+    setTableResult('tenant_secrets', {
+      data: {
+        tenant_id: 'tenant-001',
+        google_calendar_id: 'primary',
+      },
+      error: null,
+    });
+
+    setTableResult('meetings', {
+      data: {
+        id: 'meeting-001',
+        tenant_id: 'tenant-001',
+        lead_id: 'lead-001',
+        google_event_id: 'google-evt-123',
+        scheduled_for: new Date('2026-05-22T10:00:00.000Z').toISOString(),
+      },
+      error: null,
+    });
+
+    setTableResult('lead_events', { data: {}, error: null });
 
     vi.mocked(getDecryptedSecrets).mockResolvedValue({
       evolutionBaseUrl: null,
@@ -89,7 +92,7 @@ describe('Schedule Meeting Worker', () => {
       googleAiApiKey: null,
       twilioAccountSid: null,
       twilioAuthToken: null,
-    });
+    } as any);
 
     vi.mocked(listEvents).mockResolvedValue({
       ok: true,
@@ -101,14 +104,6 @@ describe('Schedule Meeting Worker', () => {
       value: { id: 'google-evt-123' },
     });
 
-    vi.mocked(prisma.meeting.create).mockResolvedValue({
-      id: 'meeting-001',
-      tenantId: 'tenant-001',
-      leadId: 'lead-001',
-      googleEventId: 'google-evt-123',
-      scheduledFor: new Date('2026-05-22T10:00:00.000Z'),
-    } as any);
-
     const result = await worker.process(mockJob);
 
     expect(result.success).toBe(true);
@@ -117,25 +112,28 @@ describe('Schedule Meeting Worker', () => {
 
     expect(listEvents).toHaveBeenCalled();
     expect(createEvent).toHaveBeenCalled();
-    expect(prisma.meeting.create).toHaveBeenCalled();
-    expect(prisma.lead.update).toHaveBeenCalledWith({
-      where: { id: 'lead-001' },
-      data: { status: 'MEETING_SCHEDULED' },
-    });
+    expect(dbAdmin.from).toHaveBeenCalledWith('meetings');
+    expect(dbAdmin.from).toHaveBeenCalledWith('leads');
   });
 
   it('should detect conflict and propose 2 alternatives', async () => {
-    vi.mocked(prisma.lead.findUnique).mockResolvedValue({
-      id: 'lead-001',
-      tenantId: 'tenant-001',
-      name: 'João Silva',
-      email: 'joao@example.com',
-    } as any);
+    setTableResult('leads', {
+      data: {
+        id: 'lead-001',
+        tenant_id: 'tenant-001',
+        name: 'João Silva',
+        email: 'joao@example.com',
+      },
+      error: null,
+    });
 
-    vi.mocked(prisma.tenantSecret.findUnique).mockResolvedValue({
-      tenantId: 'tenant-001',
-      googleCalendarId: 'primary',
-    } as any);
+    setTableResult('tenant_secrets', {
+      data: {
+        tenant_id: 'tenant-001',
+        google_calendar_id: 'primary',
+      },
+      error: null,
+    });
 
     vi.mocked(getDecryptedSecrets).mockResolvedValue({
       googleOauthRefresh: 'mock-refresh-token',

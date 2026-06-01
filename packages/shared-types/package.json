@@ -7,7 +7,7 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./prisma": "./src/prisma.ts",
+    "./enums": "./src/enums.ts",
     "./api": "./src/api.ts"
   },
   "scripts": {
@@ -18,9 +18,7 @@
     "gen:openapi": "openapi-typescript ../../docs/api/openapi.yaml -o ./src/openapi.generated.ts --immutable --root-types",
     "verify:openapi": "node ./scripts/verify-openapi.mjs"
   },
-  "dependencies": {
-    "@prisma/client": "^5.22.0"
-  },
+  "dependencies": {},
   "devDependencies": {
     "openapi-typescript": "^7.4.4",
     "typescript": "^5.7.2",

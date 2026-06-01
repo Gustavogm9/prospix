@@ -1,10 +1,10 @@
 import { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
-import { prisma } from '../lib/prisma.js';
+import { getDb, dbAdmin } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 import { createTenantQueue } from '../lib/queue.js';
 import { createSendWhatsappJobId } from '../workers/send-whatsapp-job.js';
 import { z } from 'zod';
-import { ConversationStatus, LeadStatus, MessageDirection, MessageSender, MessageDeliveryStatus, ScriptCategory, ScriptStatus } from '@prisma/client';
+import { ConversationStatus, LeadStatus, MessageDirection, MessageSender, MessageDeliveryStatus, ScriptCategory, ScriptStatus } from '@prospix/shared-types';
 import { AIRouter } from '../ai/router.js';
 
 // M-4 · Reusable Zod schema for UUID :id route params
@@ -25,21 +25,16 @@ export const tenantRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(401).send({ error: 'Unauthorized', message: 'User context is required' });
     }
 
-    const user = await prisma.user.findFirst({
-      where: {
-        id: req.userId,
-        tenantId: req.tenantId!,
-        deletedAt: null,
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        whatsapp: true,
-        susep: true,
-        role: true,
-      },
-    });
+    const db = getDb(req);
+    const { data: user, error } = await db
+      .from('users')
+      .select('id, name, email, whatsapp, susep, role')
+      .eq('id', req.userId)
+      .eq('tenant_id', req.tenantId!)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (error) throw error;
 
     if (!user) {
       return reply.code(404).send({ error: 'Not Found', message: 'User not found' });
@@ -65,45 +60,51 @@ export const tenantRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'Validation Error', message: parsed.error.errors[0]?.message });
     }
 
-    const user = await prisma.user.findFirst({
-      where: {
-        id: req.userId,
-        tenantId: req.tenantId!,
-        deletedAt: null,
-      },
-    });
+    const db = getDb(req);
+    const { data: user, error: findErr } = await db
+      .from('users')
+      .select('*')
+      .eq('id', req.userId)
+      .eq('tenant_id', req.tenantId!)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (findErr) throw findErr;
 
     if (!user) {
       return reply.code(404).send({ error: 'Not Found', message: 'User not found' });
     }
 
     if (parsed.data.email && parsed.data.email !== user.email) {
-      const emailOwner = await prisma.user.findUnique({
-        where: { email: parsed.data.email },
-        select: { id: true },
-      });
+      // Use dbAdmin for cross-tenant email uniqueness check
+      const { data: emailOwner } = await dbAdmin
+        .from('users')
+        .select('id')
+        .eq('email', parsed.data.email)
+        .maybeSingle();
 
       if (emailOwner && emailOwner.id !== user.id) {
         return reply.code(409).send({ error: 'Conflict', message: 'Email is already in use' });
       }
     }
 
-    const updated = await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        name: parsed.data.name,
-        email: parsed.data.email,
-        susep: parsed.data.susep === undefined ? undefined : parsed.data.susep || null,
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        whatsapp: true,
-        susep: true,
-        role: true,
-      },
-    });
+    const updateData: {
+      name?: string;
+      email?: string;
+      susep?: string | null;
+    } = {};
+    if (parsed.data.name !== undefined) updateData.name = parsed.data.name;
+    if (parsed.data.email !== undefined) updateData.email = parsed.data.email;
+    if (parsed.data.susep !== undefined) updateData.susep = parsed.data.susep || null;
+
+    const { data: updated, error: updateErr } = await db
+      .from('users')
+      .update(updateData)
+      .eq('id', user.id)
+      .select('id, name, email, whatsapp, susep, role')
+      .single();
+
+    if (updateErr) throw updateErr;
 
     logger.info({ tenantId: req.tenantId, userId: req.userId }, 'Tenant user profile updated');
     return reply.send({ data: updated });
@@ -122,19 +123,25 @@ export const tenantRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const { limit, cursor } = parsed.data;
+    const db = getDb(req);
 
     try {
-      const list = await prisma.conversation.findMany({
-        take: limit + 1,
-        skip: cursor ? 1 : 0,
-        cursor: cursor ? { id: cursor } : undefined,
-        where: { tenantId: req.tenantId! },
-        include: { lead: { include: { healthProfile: true } } },
-        orderBy: { lastMessageAt: 'desc' },
-      });
+      let query = db
+        .from('conversations')
+        .select('*, leads(*, health_profiles(*))')
+        .eq('tenant_id', req.tenantId!)
+        .order('last_message_at', { ascending: false })
+        .limit(limit + 1);
+
+      if (cursor) {
+        query = query.lt('id', cursor);
+      }
+
+      const { data: list, error } = await query;
+      if (error) throw error;
 
       let nextCursor: string | null = null;
-      if (list.length > limit) {
+      if (list && list.length > limit) {
         const nextItem = list.pop();
         nextCursor = nextItem!.id;
       }
@@ -159,69 +166,80 @@ export const tenantRoutes: FastifyPluginAsync = async (app) => {
 
     const tenantId = req.tenantId!;
     const { leadId } = parsed.data;
+    const db = getDb(req);
 
     try {
-      const lead = await prisma.lead.findFirst({
-        where: { id: leadId, tenantId, deletedAt: null },
-      });
+      const { data: lead, error: leadErr } = await db
+        .from('leads')
+        .select('*')
+        .eq('id', leadId)
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      if (leadErr) throw leadErr;
 
       if (!lead) {
         return reply.code(404).send({ error: 'Not Found', message: 'Lead not found' });
       }
 
-      const existing = await prisma.conversation.findFirst({
-        where: {
-          tenantId,
-          leadId,
-          status: { in: [ConversationStatus.ACTIVE, ConversationStatus.PAUSED, ConversationStatus.ESCALATED] },
-        },
-        include: { lead: true },
-        orderBy: { startedAt: 'desc' },
-      });
+      const { data: existing, error: existErr } = await db
+        .from('conversations')
+        .select('*, leads(*)')
+        .eq('tenant_id', tenantId)
+        .eq('lead_id', leadId)
+        .in('status', [ConversationStatus.ACTIVE, ConversationStatus.PAUSED, ConversationStatus.ESCALATED])
+        .order('started_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (existErr) throw existErr;
 
       if (existing) {
         return reply.code(200).send(existing);
       }
 
-      const conversation = await prisma.$transaction(async (tx) => {
-        const created = await tx.conversation.create({
-          data: {
-            tenantId,
-            leadId,
-            status: ConversationStatus.PAUSED,
-            aiHandling: false,
+      // Sequential instead of $transaction
+      const conversationId = crypto.randomUUID();
+      const { data: created, error: createErr } = await db
+        .from('conversations')
+        .insert({
+          id: conversationId,
+          tenant_id: tenantId,
+          lead_id: leadId,
+          status: ConversationStatus.PAUSED,
+          ai_handling: false,
+        })
+        .select('*, leads(*)')
+        .single();
+
+      if (createErr) throw createErr;
+
+      if (lead.status === LeadStatus.CAPTURED) {
+        await db
+          .from('leads')
+          .update({
+            status: LeadStatus.CONTACTED,
+            contacted_at: new Date().toISOString(),
+          })
+          .eq('id', leadId);
+      }
+
+      await db
+        .from('lead_events')
+        .insert({
+          tenant_id: tenantId,
+          lead_id: leadId,
+          event_type: 'conversation_started',
+          actor_id: req.userId || undefined,
+          payload: {
+            conversation_id: created.id,
+            source: 'manual',
           },
-          include: { lead: true },
         });
 
-        if (lead.status === LeadStatus.CAPTURED) {
-          await tx.lead.update({
-            where: { id: leadId },
-            data: {
-              status: LeadStatus.CONTACTED,
-              contactedAt: new Date(),
-            },
-          });
-        }
-
-        await tx.leadEvent.create({
-          data: {
-            tenantId,
-            leadId,
-            eventType: 'conversation_started',
-            actorId: req.userId || undefined,
-            payload: {
-              conversation_id: created.id,
-              source: 'manual',
-            },
-          },
-        });
-
-        return created;
-      });
-
-      logger.info({ conversationId: conversation.id, leadId }, '💬 Manual conversation created');
-      return reply.code(201).send(conversation);
+      logger.info({ conversationId: created.id, leadId }, '💬 Manual conversation created');
+      return reply.code(201).send(created);
     } catch (err) {
       req.log.error({ err }, 'Failed to create conversation');
       return reply.code(500).send({ error: 'Internal Server Error', message: 'Failed to create conversation.' });
@@ -246,18 +264,26 @@ export const tenantRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'Validation Error', message: queryParsed.error.errors[0]?.message });
     }
     const { limit, cursor } = queryParsed.data;
+    const db = getDb(req);
 
     try {
-      const list = await prisma.message.findMany({
-        take: limit + 1,
-        skip: cursor ? 1 : 0,
-        cursor: cursor ? { id: cursor } : undefined,
-        where: { tenantId: req.tenantId!, conversationId: id },
-        orderBy: { createdAt: 'asc' },
-      });
+      let query = db
+        .from('messages')
+        .select('*')
+        .eq('tenant_id', req.tenantId!)
+        .eq('conversation_id', id)
+        .order('created_at', { ascending: true })
+        .limit(limit + 1);
+
+      if (cursor) {
+        query = query.gt('id', cursor);
+      }
+
+      const { data: list, error } = await query;
+      if (error) throw error;
 
       let nextCursor: string | null = null;
-      if (list.length > limit) {
+      if (list && list.length > limit) {
         const nextItem = list.pop();
         nextCursor = nextItem!.id;
       }
@@ -286,18 +312,25 @@ export const tenantRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'Validation Error', message: parsed.error.errors[0]?.message });
     }
 
+    const db = getDb(req);
+
     try {
       // Load conversation
-      const conversation = await prisma.conversation.findUnique({
-        where: { id },
-      });
+      const { data: conversation, error: convErr } = await db
+        .from('conversations')
+        .select('*')
+        .eq('id', id)
+        .eq('tenant_id', req.tenantId!)
+        .maybeSingle();
 
-      if (!conversation || conversation.tenantId !== req.tenantId) {
+      if (convErr) throw convErr;
+
+      if (!conversation) {
         return reply.code(404).send({ error: 'Not Found', message: 'Conversation not found' });
       }
 
       // Estrita: "só se aiHandling = false"
-      if (conversation.aiHandling) {
+      if (conversation.ai_handling) {
         return reply.code(400).send({
           error: 'AI_HANDLING_ACTIVE',
           message: 'Cannot send manual messages while AI is actively handling the conversation. Turn off AI handling first.',
@@ -305,16 +338,22 @@ export const tenantRoutes: FastifyPluginAsync = async (app) => {
       }
 
       // Save message to database as USER outbound
-      const newMsg = await prisma.message.create({
-        data: {
-          tenantId: req.tenantId!,
-          conversationId: id,
+      const msgId = crypto.randomUUID();
+      const { data: newMsg, error: createErr } = await db
+        .from('messages')
+        .insert({
+          id: msgId,
+          tenant_id: req.tenantId!,
+          conversation_id: id,
           direction: MessageDirection.OUTBOUND,
           sender: MessageSender.USER,
           content: parsed.data.content,
-          deliveryStatus: MessageDeliveryStatus.QUEUED,
-        },
-      });
+          delivery_status: MessageDeliveryStatus.QUEUED,
+        })
+        .select()
+        .single();
+
+      if (createErr) throw createErr;
 
       // Enqueue sending
       const sendQueue = createTenantQueue(req.tenantId!, 'send-messages');
@@ -350,25 +389,36 @@ export const tenantRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'Validation Error', message: parsed.error.errors[0]?.message });
     }
 
-    try {
-      const conversation = await prisma.conversation.findUnique({
-        where: { id },
-      });
+    const db = getDb(req);
 
-      if (!conversation || conversation.tenantId !== req.tenantId) {
+    try {
+      const { data: conversation, error: findErr } = await db
+        .from('conversations')
+        .select('*')
+        .eq('id', id)
+        .eq('tenant_id', req.tenantId!)
+        .maybeSingle();
+
+      if (findErr) throw findErr;
+
+      if (!conversation) {
         return reply.code(404).send({ error: 'Not Found', message: 'Conversation not found' });
       }
 
       const { aiHandling } = parsed.data;
       const status = aiHandling ? ConversationStatus.ACTIVE : ConversationStatus.PAUSED;
 
-      const updated = await prisma.conversation.update({
-        where: { id },
-        data: {
-          aiHandling,
+      const { data: updated, error: updateErr } = await db
+        .from('conversations')
+        .update({
+          ai_handling: aiHandling,
           status,
-        },
-      });
+        })
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (updateErr) throw updateErr;
 
       logger.info({ conversationId: id, aiHandling, status }, '🔄 Conversation handling updated');
       return reply.code(200).send(updated);
@@ -380,13 +430,25 @@ export const tenantRoutes: FastifyPluginAsync = async (app) => {
 
   // ── 8. GET /v1/tenant/scripts ───────────────────────────────────────────────
   app.get('/scripts', async (req: FastifyRequest, reply: FastifyReply) => {
+    const db = getDb(req);
     try {
-      const list = await prisma.script.findMany({
-        where: { tenantId: req.tenantId!, archivedAt: null },
-        include: { variations: true },
-        take: 50,
-      });
-      return reply.code(200).send(list);
+      const { data: list, error } = await db
+        .from('scripts')
+        .select('*, script_variations(*)')
+        .eq('tenant_id', req.tenantId!)
+        .is('archived_at', null)
+        .limit(50);
+
+      if (error) throw error;
+
+      // Rename script_variations to variations for backward compat
+      const result = (list || []).map((s: any) => ({
+        ...s,
+        variations: s.script_variations || [],
+        script_variations: undefined,
+      }));
+
+      return reply.code(200).send(result);
     } catch (err) {
       req.log.error({ err }, 'Failed to list scripts');
       return reply.code(500).send({ error: 'Internal Server Error', message: 'Failed to fetch scripts.' });
@@ -411,19 +473,28 @@ export const tenantRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'Validation Error', message: parsed.error.errors[0]?.message });
     }
 
+    const db = getDb(req);
+
     try {
       const { name, baseMessage, variations } = parsed.data;
-      const script = await prisma.script.create({
-        data: {
-          tenantId: req.tenantId!,
+      const scriptId = crypto.randomUUID();
+      const { data: script, error } = await db
+        .from('scripts')
+        .insert({
+          id: scriptId,
+          tenant_id: req.tenantId!,
           name: name ?? 'Roteiro principal',
           category: ScriptCategory.APPROACH,
-          baseMessage,
+          base_message: baseMessage,
           variables: ['Nome', 'Empresa', 'Cidade'],
           flow: { variations },
           status: ScriptStatus.ACTIVE,
-        },
-      });
+          updated_at: new Date().toISOString(),
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
 
       logger.info({ scriptId: script.id }, '📋 Script created successfully');
       return reply.code(201).send(script);
@@ -621,31 +692,44 @@ Lembre-se de utilizar ganchos conversacionais de alto impacto. Retorne apenas o 
     }
 
     const { templateId } = parsed.data;
+    const db = getDb(req);
 
     try {
-      // Fetch Script Template
-      const template = await prisma.scriptTemplate.findUnique({
-        where: { id: templateId, active: true },
-      });
+      // Fetch Script Template (use dbAdmin since templates are global)
+      const { data: template, error: findErr } = await dbAdmin
+        .from('script_templates')
+        .select('*')
+        .eq('id', templateId)
+        .eq('active', true)
+        .maybeSingle();
+
+      if (findErr) throw findErr;
 
       if (!template) {
         return reply.code(404).send({ error: 'Not Found', message: 'Active script template not found' });
       }
 
       // Clone Script Template into a Tenant Script
-      const script = await prisma.script.create({
-        data: {
-          tenantId: req.tenantId!,
-          clonedFromTemplateId: template.id,
+      const scriptId = crypto.randomUUID();
+      const { data: script, error: createErr } = await db
+        .from('scripts')
+        .insert({
+          id: scriptId,
+          tenant_id: req.tenantId!,
+          cloned_from_template_id: template.id,
           name: `${template.name} (Clonado)`,
           category: template.category,
-          targetProfession: template.targetProfession,
-          flow: template.flowTemplate as any,
-          baseMessage: template.baseMessageTemplate,
+          target_profession: template.target_profession,
+          flow: template.flow_template as any,
+          base_message: template.base_message_template,
           variables: template.variables,
           status: ScriptStatus.DRAFT,
-        },
-      });
+          updated_at: new Date().toISOString(),
+        })
+        .select()
+        .single();
+
+      if (createErr) throw createErr;
 
       logger.info({ tenantId: req.tenantId, templateId, scriptId: script.id }, '📋 Script template cloned successfully');
       return reply.code(201).send(script);
@@ -675,21 +759,44 @@ Lembre-se de utilizar ganchos conversacionais de alto impacto. Retorne apenas o 
       return reply.code(400).send({ error: 'Validation Error', message: parsed.error.errors[0]?.message });
     }
 
-    try {
-      const script = await prisma.script.findUnique({
-        where: { id },
-      });
+    const db = getDb(req);
 
-      if (!script || script.tenantId !== req.tenantId) {
+    try {
+      const { data: script, error: findErr } = await db
+        .from('scripts')
+        .select('*')
+        .eq('id', id)
+        .eq('tenant_id', req.tenantId!)
+        .maybeSingle();
+
+      if (findErr) throw findErr;
+
+      if (!script) {
         return reply.code(404).send({ error: 'Not Found', message: 'Script not found' });
       }
 
-      const updated = await prisma.script.update({
-        where: { id },
-        data: {
-          ...parsed.data,
-        },
-      });
+      const updateData: {
+        updated_at: string;
+        name?: string;
+        status?: string;
+        flow?: Record<string, unknown>;
+        base_message?: string;
+      } = {
+        updated_at: new Date().toISOString(),
+      };
+      if (parsed.data.name !== undefined) updateData.name = parsed.data.name;
+      if (parsed.data.status !== undefined) updateData.status = parsed.data.status;
+      if (parsed.data.flow !== undefined) updateData.flow = parsed.data.flow;
+      if (parsed.data.baseMessage !== undefined) updateData.base_message = parsed.data.baseMessage;
+
+      const { data: updated, error: updateErr } = await db
+        .from('scripts')
+        .update(updateData as any)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (updateErr) throw updateErr;
 
       logger.info({ scriptId: id }, '📋 Script updated successfully');
       return reply.code(200).send(updated);
@@ -718,39 +825,67 @@ Lembre-se de utilizar ganchos conversacionais de alto impacto. Retorne apenas o 
       return reply.code(400).send({ error: 'Validation Error', message: parsed.error.errors[0]?.message });
     }
 
-    try {
-      const script = await prisma.script.findUnique({
-        where: { id },
-      });
+    const db = getDb(req);
 
-      if (!script || script.tenantId !== req.tenantId) {
+    try {
+      const { data: script, error: findErr } = await db
+        .from('scripts')
+        .select('*')
+        .eq('id', id)
+        .eq('tenant_id', req.tenantId!)
+        .maybeSingle();
+
+      if (findErr) throw findErr;
+
+      if (!script) {
         return reply.code(404).send({ error: 'Not Found', message: 'Script not found' });
       }
 
       const { variantLetter, message, weight } = parsed.data;
 
-      // Create or update variation
-      const variation = await prisma.scriptVariation.upsert({
-        where: {
-          scriptId_variantLetter: {
-            scriptId: id,
-            variantLetter,
-          },
-        },
-        create: {
-          tenantId: req.tenantId!,
-          scriptId: id,
-          variantLetter,
-          message,
-          weight,
-          active: true,
-        },
-        update: {
-          message,
-          weight,
-          active: true,
-        },
-      });
+      // Check if variation exists for this script + variantLetter
+      const { data: existing } = await db
+        .from('script_variations')
+        .select('id')
+        .eq('script_id', id)
+        .eq('variant_letter', variantLetter)
+        .maybeSingle();
+
+      let variation;
+      if (existing) {
+        const { data, error } = await db
+          .from('script_variations')
+          .update({
+            message,
+            weight,
+            active: true,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existing.id)
+          .select()
+          .single();
+
+        if (error) throw error;
+        variation = data;
+      } else {
+        const { data, error } = await db
+          .from('script_variations')
+          .insert({
+            id: crypto.randomUUID(),
+            tenant_id: req.tenantId!,
+            script_id: id,
+            variant_letter: variantLetter,
+            message,
+            weight,
+            active: true,
+            updated_at: new Date().toISOString(),
+          })
+          .select()
+          .single();
+
+        if (error) throw error;
+        variation = data;
+      }
 
       logger.info({ scriptId: id, variantLetter }, '📋 Script variation upserted successfully');
       return reply.code(201).send(variation);
@@ -768,25 +903,33 @@ Lembre-se de utilizar ganchos conversacionais de alto impacto. Retorne apenas o 
     }
     const { id } = paramsParsed.data;
 
-    try {
-      const script = await prisma.script.findUnique({
-        where: { id },
-        include: { variations: true },
-      });
+    const db = getDb(req);
 
-      if (!script || script.tenantId !== req.tenantId) {
+    try {
+      const { data: script, error: findErr } = await db
+        .from('scripts')
+        .select('*, script_variations(*)')
+        .eq('id', id)
+        .eq('tenant_id', req.tenantId!)
+        .maybeSingle();
+
+      if (findErr) throw findErr;
+
+      if (!script) {
         return reply.code(404).send({ error: 'Not Found', message: 'Script not found' });
       }
 
+      const variations = script.script_variations || [];
+
       // Generate brief preview
-      const previewMessage = script.variations.length > 0 
-        ? script.variations[0]?.message 
-        : script.baseMessage || 'Olá, tudo bem?';
+      const previewMessage = variations.length > 0 
+        ? variations[0]?.message 
+        : script.base_message || 'Olá, tudo bem?';
 
       return reply.code(200).send({
         preview: previewMessage,
         nodes_count: (script.flow as any)?.nodes?.length || 0,
-        active_variations: script.variations.filter(v => v.active).map(v => v.variantLetter),
+        active_variations: variations.filter((v: any) => v.active).map((v: any) => v.variant_letter),
       });
     } catch (err) {
       req.log.error({ err, scriptId: id }, 'Failed to test script');
@@ -801,37 +944,41 @@ Lembre-se de utilizar ganchos conversacionais de alto impacto. Retorne apenas o 
     }
     const { id } = paramsParsed.data;
 
+    const db = getDb(req);
+
     try {
       // Verify lead belongs to tenant
-      const lead = await prisma.lead.findFirst({
-        where: { id, tenantId: req.tenantId!, deletedAt: null },
-        select: { id: true },
-      });
+      const { data: lead, error: leadErr } = await db
+        .from('leads')
+        .select('id')
+        .eq('id', id)
+        .eq('tenant_id', req.tenantId!)
+        .is('deleted_at', null)
+        .maybeSingle();
+
+      if (leadErr) throw leadErr;
 
       if (!lead) {
         return reply.code(404).send({ error: 'Not Found', message: 'Lead not found' });
       }
 
-      const events = await prisma.leadEvent.findMany({
-        where: { tenantId: req.tenantId!, leadId: id },
-        orderBy: { createdAt: 'desc' },
-        take: 50,
-        select: {
-          id: true,
-          eventType: true,
-          payload: true,
-          actorId: true,
-          createdAt: true,
-        },
-      });
+      const { data: events, error: eventsErr } = await db
+        .from('lead_events')
+        .select('id, event_type, payload, actor_id, created_at')
+        .eq('tenant_id', req.tenantId!)
+        .eq('lead_id', id)
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (eventsErr) throw eventsErr;
 
       return reply.code(200).send({
-        data: events.map((e) => ({
+        data: (events || []).map((e) => ({
           id: String(e.id),
-          eventType: e.eventType,
+          eventType: e.event_type,
           payload: e.payload,
-          actorId: e.actorId,
-          createdAt: e.createdAt.toISOString(),
+          actorId: e.actor_id,
+          createdAt: e.created_at,
         })),
       });
     } catch (err) {

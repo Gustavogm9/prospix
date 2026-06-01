@@ -1,4 +1,4 @@
-import { prisma } from '../lib/prisma.js';
+import { dbAdmin } from '../lib/db.js';
 import { logger } from '../lib/logger.js';
 
 export interface ScriptNode {
@@ -55,16 +55,17 @@ export async function executeScriptStep(params: {
   const { conversationId, intent = 'unclear' } = params;
 
   // 1. Fetch conversation with script
-  const conversation = await prisma.conversation.findUnique({
-    where: { id: conversationId },
-    include: { script: true },
-  });
+  const { data: conversation, error: convErr } = await dbAdmin
+    .from('conversations')
+    .select('*, scripts(*)')
+    .eq('id', conversationId)
+    .single();
 
-  if (!conversation) {
+  if (convErr || !conversation) {
     throw new Error(`Conversation not found: ${conversationId}`);
   }
 
-  if (!conversation.scriptId || !conversation.script) {
+  if (!conversation.script_id || !conversation.scripts) {
     logger.warn({ conversationId }, '⚠️ No script attached to this conversation');
     return {
       nextNodeId: null,
@@ -75,11 +76,12 @@ export async function executeScriptStep(params: {
     };
   }
 
-  const flow = (conversation.script.flow as unknown as ScriptFlow) || { nodes: [] };
+  const script = conversation.scripts as any;
+  const flow = (script.flow as unknown as ScriptFlow) || { nodes: [] };
   const nodes = flow.nodes || [];
 
   if (nodes.length === 0) {
-    logger.warn({ scriptId: conversation.scriptId }, '⚠️ Script flow has no nodes');
+    logger.warn({ scriptId: conversation.script_id }, '⚠️ Script flow has no nodes');
     return {
       nextNodeId: null,
       messageToSend: null,
@@ -90,13 +92,13 @@ export async function executeScriptStep(params: {
   }
 
   // 2. Resolve current node ID
-  let currentNodeId = conversation.currentNodeId;
+  let currentNodeId = conversation.current_node_id;
   if (!currentNodeId) {
-    const triggerNode = nodes.find((n) => n.type === 'trigger');
+    const triggerNode = nodes.find((n: ScriptNode) => n.type === 'trigger');
     currentNodeId = triggerNode ? triggerNode.id : nodes[0]!.id;
   }
 
-  let currentNode = nodes.find((n) => n.id === currentNodeId);
+  let currentNode = nodes.find((n: ScriptNode) => n.id === currentNodeId);
   if (!currentNode) {
     logger.error({ currentNodeId }, '❌ Current node ID not found in script flow');
     return {
@@ -122,7 +124,7 @@ export async function executeScriptStep(params: {
     stepsRun++;
     logger.info(
       { conversationId, nodeId: currentNode.id, type: currentNode.type },
-      '⚙️ Processing script node'
+      '🔄 Processing script node'
     );
 
     if (currentNode.type === 'trigger') {
@@ -131,7 +133,7 @@ export async function executeScriptStep(params: {
         completed = true;
         break;
       }
-      currentNode = nodes.find((n) => n.id === nextNodeId);
+      currentNode = nodes.find((n: ScriptNode) => n.id === nextNodeId);
     } else if (currentNode.type === 'decision') {
       // Branch based on intent
       const routes = currentNode.data.routes || {};
@@ -140,28 +142,27 @@ export async function executeScriptStep(params: {
         completed = true;
         break;
       }
-      currentNode = nodes.find((n) => n.id === nextNodeId);
+      currentNode = nodes.find((n: ScriptNode) => n.id === nextNodeId);
     } else if (currentNode.type === 'action') {
       actionToExecute = currentNode.data.actionType || null;
       nextNodeId = currentNode.data.nextNodeId || null;
       if (nextNodeId) {
-        currentNode = nodes.find((n) => n.id === nextNodeId);
+        currentNode = nodes.find((n: ScriptNode) => n.id === nextNodeId);
       } else {
         completed = true;
         break;
       }
     } else if (currentNode.type === 'message') {
       // Pick variant A/B/C if there are variations in the database
-      const dbVariations = await prisma.scriptVariation.findMany({
-        where: {
-          scriptId: conversation.scriptId,
-          active: true,
-        },
-      });
+      const { data: dbVariations } = await dbAdmin
+        .from('script_variations')
+        .select('*')
+        .eq('script_id', conversation.script_id)
+        .eq('active', true);
 
-      if (dbVariations.length > 0) {
+      if (dbVariations && dbVariations.length > 0) {
         const chosen = chooseVariation(
-          dbVariations.map((v) => ({
+          dbVariations.map((v: any) => ({
             id: v.id,
             message: v.message,
             weight: Number(v.weight),
@@ -176,7 +177,7 @@ export async function executeScriptStep(params: {
 
       if (!messageToSend) {
         // Fallback to node text or baseMessage
-        messageToSend = currentNode.data.text || conversation.script.baseMessage || null;
+        messageToSend = currentNode.data.text || script.base_message || null;
       }
 
       nextNodeId = currentNode.data.nextNodeId || null;
@@ -196,12 +197,14 @@ export async function executeScriptStep(params: {
   }
 
   // 4. Persist updated node ID back to the conversation
-  await prisma.conversation.update({
-    where: { id: conversationId },
-    data: {
-      currentNodeId: nextNodeId,
-    },
-  });
+  const { error: updateErr } = await dbAdmin
+    .from('conversations')
+    .update({
+      current_node_id: nextNodeId,
+    })
+    .eq('id', conversationId);
+
+  if (updateErr) throw updateErr;
 
   return {
     nextNodeId,

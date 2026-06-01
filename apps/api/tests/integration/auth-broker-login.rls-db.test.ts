@@ -1,42 +1,36 @@
 import '../multi-tenant/use-restricted-db.js';
 import '../../src/config/env.js';
 import fastify from 'fastify';
-import fastifyJwt from '@fastify/jwt';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { createClient } from '@supabase/supabase-js';
 import { authRoutes } from '../../src/routes/auth/index.js';
 
 const requireDbEvidence = process.env.AUDIT_REQUIRE_DB === '1' || process.env.CI === 'true';
 
-const db = new PrismaClient({
-  datasources: {
-    db: {
-      url: process.env.DATABASE_URL,
-    },
-  },
-});
+const db = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
 let dbAvailable = true;
 let brokerUserId: string | null = null;
 
 async function findSeedBroker() {
-  return db.$transaction(async (tx) => {
-    await tx.$executeRaw`SET LOCAL ROLE guilds_admin`;
-    return tx.user.findFirst({
-      where: {
-        email: 'giovane@seed.prospix.dev',
-        role: 'OWNER',
-      },
-      select: { id: true },
-    });
-  });
+  const { data, error } = await db
+    .from('users')
+    .select('id')
+    .eq('email', 'giovane@seed.prospix.dev')
+    .eq('role', 'OWNER')
+    .limit(1)
+    .single();
+  if (error) throw error;
+  return data;
 }
 
 describe('AUD-P1-018 broker email/password login with RLS-backed database', () => {
   beforeAll(async () => {
     try {
-      await db.$connect();
-      await db.$queryRaw`SELECT 1`;
+      // Verify connection with a simple query
+      const { error } = await db.from('users').select('id').limit(1);
+      if (error) throw error;
+
       const broker = await findSeedBroker();
       brokerUserId = broker?.id ?? null;
 
@@ -53,13 +47,9 @@ describe('AUD-P1-018 broker email/password login with RLS-backed database', () =
 
   afterAll(async () => {
     if (brokerUserId) {
-      await db.$transaction(async (tx) => {
-        await tx.$executeRaw`SET LOCAL ROLE guilds_admin`;
-        await tx.session.deleteMany({ where: { userId: brokerUserId! } });
-      });
+      await db.from('sessions').delete().eq('user_id', brokerUserId!);
     }
-
-    await db.$disconnect();
+    // Supabase doesn't need explicit disconnection
   });
 
   it('authenticates a broker with correct email and password', async (context) => {
@@ -69,7 +59,6 @@ describe('AUD-P1-018 broker email/password login with RLS-backed database', () =
     }
 
     const app = fastify({ logger: false });
-    await app.register(fastifyJwt, { secret: 'broker-login-rls-test-secret' });
     await app.register(authRoutes, { prefix: '/v1/auth' });
     await app.ready();
 
@@ -95,11 +84,12 @@ describe('AUD-P1-018 broker email/password login with RLS-backed database', () =
       role: 'OWNER',
     }));
 
-    const sessionCount = await db.$transaction(async (tx) => {
-      await tx.$executeRaw`SET LOCAL ROLE guilds_admin`;
-      return tx.session.count({ where: { userId: brokerUserId! } });
-    });
-    expect(sessionCount).toBeGreaterThan(0);
+    const { count, error } = await db
+      .from('sessions')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', brokerUserId!);
+    if (error) throw error;
+    expect(count).toBeGreaterThan(0);
   });
 
   it('rejects authentication if the password is incorrect', async (context) => {
@@ -109,7 +99,6 @@ describe('AUD-P1-018 broker email/password login with RLS-backed database', () =
     }
 
     const app = fastify({ logger: false });
-    await app.register(fastifyJwt, { secret: 'broker-login-rls-test-secret' });
     await app.register(authRoutes, { prefix: '/v1/auth' });
     await app.ready();
 
@@ -137,7 +126,6 @@ describe('AUD-P1-018 broker email/password login with RLS-backed database', () =
     }
 
     const app = fastify({ logger: false });
-    await app.register(fastifyJwt, { secret: 'broker-login-rls-test-secret' });
     await app.register(authRoutes, { prefix: '/v1/auth' });
     await app.ready();
 
@@ -164,16 +152,13 @@ describe('AUD-P1-018 broker email/password login with RLS-backed database', () =
     }
 
     // 1. Temporarily suspend Tenant A
-    await db.$transaction(async (tx) => {
-      await tx.$executeRaw`SET LOCAL ROLE guilds_admin`;
-      await tx.tenant.update({
-        where: { id: '11111111-1111-1111-1111-111111111111' },
-        data: { status: 'SUSPENDED' },
-      });
-    });
+    const { error: suspendError } = await db
+      .from('tenants')
+      .update({ status: 'SUSPENDED' })
+      .eq('id', '11111111-1111-1111-1111-111111111111');
+    if (suspendError) throw suspendError;
 
     const app = fastify({ logger: false });
-    await app.register(fastifyJwt, { secret: 'broker-login-rls-test-secret' });
     await app.register(authRoutes, { prefix: '/v1/auth' });
     await app.ready();
 
@@ -190,13 +175,11 @@ describe('AUD-P1-018 broker email/password login with RLS-backed database', () =
     await app.close();
 
     // 3. Restore Tenant A status
-    await db.$transaction(async (tx) => {
-      await tx.$executeRaw`SET LOCAL ROLE guilds_admin`;
-      await tx.tenant.update({
-        where: { id: '11111111-1111-1111-1111-111111111111' },
-        data: { status: 'ACTIVE' },
-      });
-    });
+    const { error: restoreError } = await db
+      .from('tenants')
+      .update({ status: 'ACTIVE' })
+      .eq('id', '11111111-1111-1111-1111-111111111111');
+    if (restoreError) throw restoreError;
 
     expect(response.statusCode).toBe(403);
     const body = JSON.parse(response.payload);

@@ -1,26 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DailyDigestWorker } from './daily-digest.js';
-import { prisma } from '../lib/prisma.js';
 import { Job } from 'bullmq';
+import { createMockDbAdmin } from '../test-helpers/mock-db.js';
 
-vi.mock('../lib/prisma.js', () => ({
-  prisma: {
-    $executeRaw: vi.fn(),
-    tenant: {
-      findMany: vi.fn(),
-    },
-    meeting: {
-      findMany: vi.fn(),
-    },
-    lead: {
-      findMany: vi.fn(),
-      count: vi.fn(),
-    },
-    user: {
-      findFirst: vi.fn(),
-    },
-  },
-}));
+const { dbAdmin, setTableResult, reset: resetDb } = createMockDbAdmin();
+
+vi.mock('../lib/db.js', () => ({ dbAdmin }));
 
 const mockSendText = vi.fn().mockResolvedValue({ ok: true, value: { messageId: 'msg-123' } });
 
@@ -30,46 +15,74 @@ vi.mock('../integrations/evolution.js', () => ({
   })),
 }));
 
+vi.mock('../tenant/secrets-vault.js', () => ({
+  getDecryptedSecrets: vi.fn().mockResolvedValue({
+    evolutionApiKey: 'mock-key',
+    evolutionInstanceName: 'mock-instance',
+    evolutionBaseUrl: 'https://evo.example.com',
+  }),
+}));
+
 describe('Daily Digest Worker', () => {
   const worker = new DailyDigestWorker();
 
   beforeEach(() => {
     vi.clearAllMocks();
+    resetDb();
   });
 
   it('should compile operational digest and send to owner successfully', async () => {
-    vi.mocked(prisma.tenant.findMany).mockResolvedValue([
-      {
-        id: 'tenant-123',
-        name: 'Giovane Seguros',
-        status: 'ACTIVE',
+    setTableResult('tenants', {
+      data: [
+        {
+          id: 'tenant-123',
+          name: 'Giovane Seguros',
+          status: 'ACTIVE',
+        },
+      ],
+      error: null,
+    });
+
+    setTableResult('meetings', {
+      data: [
+        {
+          id: 'meet-1',
+          scheduled_for: new Date().toISOString(),
+          location: 'Zoom',
+          leads: { name: 'João Silva' },
+        },
+      ],
+      error: null,
+    });
+
+    setTableResult('leads', {
+      data: [
+        {
+          id: 'lead-1',
+          name: 'Amanda Santos',
+          fit_score: 9.0,
+        },
+      ],
+      error: null,
+      count: 4,
+    });
+
+    setTableResult('users', {
+      data: {
+        id: 'owner-abc',
+        whatsapp: '5511999999999',
+        role: 'OWNER',
       },
-    ] as any);
+      error: null,
+    });
 
-    vi.mocked(prisma.meeting.findMany).mockResolvedValue([
-      {
-        id: 'meet-1',
-        scheduledFor: new Date(),
-        location: 'Zoom',
-        lead: { name: 'João Silva' },
+    setTableResult('tenant_secrets', {
+      data: {
+        evolution_instance_name: 'mock-instance',
+        evolution_base_url: 'https://evo.example.com',
       },
-    ] as any);
-
-    vi.mocked(prisma.lead.findMany).mockResolvedValue([
-      {
-        id: 'lead-1',
-        name: 'Amanda Santos',
-        fitScore: 9.0,
-      },
-    ] as any);
-
-    vi.mocked(prisma.lead.count).mockResolvedValue(4);
-
-    vi.mocked(prisma.user.findFirst).mockResolvedValue({
-      id: 'owner-abc',
-      whatsapp: '5511999999999',
-      role: 'OWNER',
-    } as any);
+      error: null,
+    });
 
     const mockJob = {
       id: 'job-digest',
@@ -83,9 +96,7 @@ describe('Daily Digest Worker', () => {
 
     expect(result.success).toBe(true);
     expect(result.digests_sent).toBe(1);
-    expect(prisma.tenant.findMany).toHaveBeenCalledWith({
-      where: { id: 'tenant-123', status: 'ACTIVE', deletedAt: null },
-    });
+    expect(dbAdmin.from).toHaveBeenCalledWith('tenants');
 
     expect(mockSendText).toHaveBeenCalledWith(
       expect.objectContaining({

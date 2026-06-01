@@ -6,7 +6,7 @@
  * + roda AxeBuilder com tags WCAG 2.1 AA e falha em critical/serious.
  */
 import { test, expect } from '@playwright/test';
-import { authState } from '../fixtures/auth';
+import { authState, mockSupabaseAuth } from '../fixtures/auth';
 import { runAxe } from '../helpers/axe';
 
 /* Auth state and axe helper imported from shared fixtures (L-16, L-17) */
@@ -20,6 +20,9 @@ test.describe('Web · A11y · paginas pos-login (AUD-P3-035 cobertura completa)'
         /* noop */
       }
     }, JSON.stringify(authState));
+
+    // Mock Supabase auth so getSession() returns valid session
+    await mockSupabaseAuth(page);
 
     await page.route('**/v1/**', async (route) => {
       // catch-all com payload vazio · evita 4xx quebrar render

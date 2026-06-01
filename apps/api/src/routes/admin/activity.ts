@@ -3,13 +3,12 @@
  * Gate: requireRole(['GUILDS_ADMIN']) herdado do plugin pai.
  *
  * Endpoints:
- *  - GET /activity/logins   · lista sessões recentes com user info, IP, userAgent
- *  - GET /activity/summary  · resumo de atividade: sessões ativas, logins hoje/semana, top tenants, dormentes
+ *  - GET /activity/logins   → lista sessões recentes com user info, IP, userAgent
+ *  - GET /activity/summary  → resumo de atividade: sessões ativas, logins hoje/semana, top tenants, dormentes
  */
 import { type FastifyInstance, type FastifyRequest, type FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { type Prisma } from '@prisma/client';
-import { prisma } from '../../lib/prisma.js';
+import { dbAdmin } from '../../lib/db.js';
 import { logger } from '../../lib/logger.js';
 
 /* ------------------------------------------------------------------ */
@@ -39,55 +38,52 @@ export function registerAdminActivityRoutes(app: FastifyInstance): void {
     const { tenantId, limit, offset } = parsed.data;
 
     try {
-      const where: Prisma.SessionWhereInput = {};
+      // Build sessions query with user join
+      let query = dbAdmin
+        .from('sessions')
+        .select('*, users!inner(id, name, email, role, tenant_id, tenants(id, name, slug))')
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1);
+
       if (tenantId) {
-        where.user = { tenantId };
+        query = query.eq('users.tenant_id', tenantId);
       }
 
-      const [items, total] = await Promise.all([
-        prisma.session.findMany({
-          where,
-          orderBy: { createdAt: 'desc' },
-          take: limit,
-          skip: offset,
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                role: true,
-                tenantId: true,
-                tenant: { select: { id: true, name: true, slug: true } },
-              },
-            },
-          },
-        }),
-        prisma.session.count({ where }),
-      ]);
+      const { data: items, error } = await query;
+      if (error) throw error;
+
+      // Count total
+      let countQuery = dbAdmin
+        .from('sessions')
+        .select('*, users!inner(tenant_id)', { count: 'exact', head: true });
+      if (tenantId) {
+        countQuery = countQuery.eq('users.tenant_id', tenantId);
+      }
+      const { count: total, error: countErr } = await countQuery;
+      if (countErr) throw countErr;
 
       return reply.send({
         data: {
-          items: items.map((s) => ({
+          items: (items ?? []).map((s: any) => ({
             id: s.id,
-            userId: s.userId,
-            userName: s.user.name,
-            userEmail: s.user.email,
-            userRole: s.user.role,
-            tenantId: s.user.tenantId,
-            tenantName: s.user.tenant?.name ?? null,
-            tenantSlug: s.user.tenant?.slug ?? null,
-            ipAddress: s.ipAddress,
-            userAgent: s.userAgent,
-            expiresAt: s.expiresAt.toISOString(),
-            revokedAt: s.revokedAt?.toISOString() ?? null,
-            createdAt: s.createdAt.toISOString(),
+            userId: s.user_id,
+            userName: s.users?.name,
+            userEmail: s.users?.email,
+            userRole: s.users?.role,
+            tenantId: s.users?.tenant_id,
+            tenantName: s.users?.tenants?.name ?? null,
+            tenantSlug: s.users?.tenants?.slug ?? null,
+            ipAddress: s.ip_address,
+            userAgent: s.user_agent,
+            expiresAt: s.expires_at,
+            revokedAt: s.revoked_at ?? null,
+            createdAt: s.created_at,
           })),
-          pagination: { total, limit, offset, hasMore: offset + items.length < total },
+          pagination: { total: total ?? 0, limit, offset, hasMore: offset + (items?.length ?? 0) < (total ?? 0) },
         },
       });
     } catch (err) {
-      logger.error({ err }, 'admin/activity/logins · GET failed');
+      logger.error({ err }, 'admin/activity/logins → GET failed');
       return reply.code(500).send({ error: 'INTERNAL', message: 'Falha ao listar logins.' });
     }
   });
@@ -112,61 +108,73 @@ export function registerAdminActivityRoutes(app: FastifyInstance): void {
       // 14 days ago for dormancy
       const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
 
-      const [activeSessions, loginsToday, loginsWeek, topTenantSessions, allActiveTenants] = await Promise.all([
+      const [activeSessionsRes, loginsTodayRes, loginsWeekRes, allActiveTenantsRes] = await Promise.all([
         // Active sessions: not expired and not revoked
-        prisma.session.count({
-          where: {
-            expiresAt: { gt: now },
-            revokedAt: null,
-          },
-        }),
+        dbAdmin
+          .from('sessions')
+          .select('*', { count: 'exact', head: true })
+          .gt('expires_at', now.toISOString())
+          .is('revoked_at', null),
 
         // Logins today
-        prisma.session.count({
-          where: { createdAt: { gte: startOfToday } },
-        }),
+        dbAdmin
+          .from('sessions')
+          .select('*', { count: 'exact', head: true })
+          .gte('created_at', startOfToday.toISOString()),
 
         // Logins this week
-        prisma.session.count({
-          where: { createdAt: { gte: startOfWeek } },
-        }),
-
-        // Top 10 most active tenants by session count last 30 days
-        prisma.$queryRaw<Array<{ tenant_id: string; tenant_name: string; session_count: bigint }>>`
-          SELECT u."tenant_id" AS tenant_id, t."name" AS tenant_name, COUNT(s."id")::bigint AS session_count
-          FROM sessions s
-          JOIN users u ON s."user_id" = u."id"
-          JOIN tenants t ON u."tenant_id" = t."id"
-          WHERE s."created_at" >= ${thirtyDaysAgo}
-            AND u."tenant_id" IS NOT NULL
-          GROUP BY u."tenant_id", t."name"
-          ORDER BY session_count DESC
-          LIMIT 10
-        `,
+        dbAdmin
+          .from('sessions')
+          .select('*', { count: 'exact', head: true })
+          .gte('created_at', startOfWeek.toISOString()),
 
         // All active tenants for dormancy check
-        prisma.tenant.findMany({
-          where: { status: 'ACTIVE', deletedAt: null },
-          select: { id: true, name: true, slug: true },
-        }),
+        dbAdmin
+          .from('tenants')
+          .select('id, name, slug')
+          .eq('status', 'ACTIVE')
+          .is('deleted_at', null),
       ]);
 
+      if (activeSessionsRes.error) throw activeSessionsRes.error;
+      if (loginsTodayRes.error) throw loginsTodayRes.error;
+      if (loginsWeekRes.error) throw loginsWeekRes.error;
+      if (allActiveTenantsRes.error) throw allActiveTenantsRes.error;
+
+      const activeSessions = activeSessionsRes.count ?? 0;
+      const loginsToday = loginsTodayRes.count ?? 0;
+      const loginsWeek = loginsWeekRes.count ?? 0;
+      const allActiveTenants = allActiveTenantsRes.data ?? [];
+
+      let topTenantSessions: any[] = [];
+      try {
+        const { data: rpcResult } = await dbAdmin.rpc('exec_sql' as any, {
+          query: `
+            SELECT u.tenant_id AS tenant_id, t.name AS tenant_name, COUNT(s.id)::bigint AS session_count
+            FROM sessions s
+            JOIN users u ON s.user_id = u.id
+            JOIN tenants t ON u.tenant_id = t.id
+            WHERE s.created_at >= '${thirtyDaysAgo.toISOString()}'
+              AND u.tenant_id IS NOT NULL
+            GROUP BY u.tenant_id, t.name
+            ORDER BY session_count DESC
+            LIMIT 10
+          `,
+        });
+        topTenantSessions = rpcResult ?? [];
+      } catch { /* RPC not available, skip */ }
+
       // Dormant tenants: active tenants with no login in 14+ days
-      const tenantsWithRecentLogin = await prisma.session.findMany({
-        where: {
-          createdAt: { gte: fourteenDaysAgo },
-          user: { tenantId: { not: null } },
-        },
-        select: {
-          user: { select: { tenantId: true } },
-        },
-        distinct: ['userId'],
-      });
+      const { data: recentLoginTenants } = await dbAdmin
+        .from('sessions')
+        .select('user_id, users!inner(tenant_id)')
+        .gte('created_at', fourteenDaysAgo.toISOString())
+        .not('users.tenant_id', 'is', null);
 
       const recentTenantIds = new Set(
-        tenantsWithRecentLogin
-          .map((s) => s.user.tenantId)
-          .filter((id): id is string => id !== null),
+        (recentLoginTenants ?? [])
+          .map((s: any) => s.users?.tenant_id)
+          .filter((id: string | null): id is string => id !== null),
       );
 
       const dormantTenants = allActiveTenants.filter((t) => !recentTenantIds.has(t.id));
@@ -182,7 +190,7 @@ export function registerAdminActivityRoutes(app: FastifyInstance): void {
             slug: t.slug,
           })),
           dormantTenantsCount: dormantTenants.length,
-          topTenants: topTenantSessions.map((r) => ({
+          topTenants: (topTenantSessions ?? []).map((r: any) => ({
             tenantId: r.tenant_id,
             tenantName: r.tenant_name,
             sessionCount: Number(r.session_count),
@@ -190,7 +198,7 @@ export function registerAdminActivityRoutes(app: FastifyInstance): void {
         },
       });
     } catch (err) {
-      logger.error({ err }, 'admin/activity/summary · GET failed');
+      logger.error({ err }, 'admin/activity/summary → GET failed');
       return reply.code(500).send({ error: 'INTERNAL', message: 'Falha ao calcular resumo de atividade.' });
     }
   });

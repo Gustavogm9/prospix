@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button } from '@prospix/ui';
 import { CheckCircle2, Circle, X, ArrowRight, MessageSquare, UserPlus, FileText } from 'lucide-react';
 
@@ -85,7 +85,7 @@ export interface OnboardingChecklistProps {
 }
 
 export const OnboardingChecklist = ({ signals }: OnboardingChecklistProps) => {
-  const navigate = useNavigate();
+  const router = useRouter();
   const [state, setState] = useState<OnboardingState>(() => loadState());
 
   useEffect(() => {
@@ -194,7 +194,7 @@ export const OnboardingChecklist = ({ signals }: OnboardingChecklistProps) => {
               {!done && (
                 <div className="flex flex-col gap-1.5 shrink-0">
                   <Button
-                    onClick={() => navigate(step.ctaPath)}
+                    onClick={() => router.push(step.ctaPath)}
                     className="bg-primary hover:bg-primary-hover text-white text-[10px] font-semibold px-2.5 h-7 rounded-md flex items-center gap-1"
                   >
                     {step.ctaLabel}
