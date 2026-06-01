@@ -75,7 +75,7 @@ test.describe('Web · A11y (AUD-P3-035)', () => {
       });
     });
 
-    await page.goto('/');
+    await page.goto('/inicio');
     await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => { /* networkidle timeout is non-fatal for smoke tests */ });
 
     const { blocking } = await runAxe(page, 'web/dashboard');

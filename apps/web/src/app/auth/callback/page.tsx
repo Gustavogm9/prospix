@@ -43,7 +43,7 @@ function LoginCallbackInner() {
         );
         
         // Redirect to main panel
-        setTimeout(() => router.push('/'), 1000);
+        setTimeout(() => router.push('/inicio'), 1000);
       } catch (error: any) {
         setStatus('error');
         const message = error.response?.data?.message || 'Link m├ígico expirado, inv├ílido ou j├í utilizado.';

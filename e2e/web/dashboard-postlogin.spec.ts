@@ -134,7 +134,7 @@ test.describe('Web · dashboard pos-login (mocked)', () => {
       if (msg.type() === 'error') consoleErrors.push(msg.text());
     });
 
-    const response = await page.goto('/');
+    const response = await page.goto('/inicio');
     expect(response?.status()).toBeLessThan(400);
 
     // Espera UI logada · 4 cards do dia + funil + algum lead quente

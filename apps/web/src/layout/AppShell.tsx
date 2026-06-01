@@ -123,7 +123,7 @@ export default function AppShell({ children }: AppShellProps) {
   const menuSections: MenuSection[] = [
     {
       items: [
-        { name: 'Início', path: '/', icon: Home },
+        { name: 'Início', path: '/inicio', icon: Home },
         { name: 'Conversas', path: '/conversas', icon: MessageSquare, badge: counters?.conversations || undefined },
         { name: 'Pipeline', path: '/funil', icon: Columns, badge: counters?.pipeline || undefined },
         { name: 'Minha Agenda', path: '/agenda', icon: Calendar },

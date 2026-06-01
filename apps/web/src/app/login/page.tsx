@@ -58,7 +58,7 @@ export default function Login() {
         toast.info('Troca de Senha Obrigat├│ria', 'Por seguran├ºa, escolha uma nova senha para continuar.');
       } else {
         toast.success('Acesso Autorizado!', `Ol├í, ${user.name}! Bem-vindo(a) de volta.`);
-        navTimerRef.current = setTimeout(() => router.push('/'), 1000);
+        navTimerRef.current = setTimeout(() => router.push('/inicio'), 1000);
       }
     } catch (error: any) {
       toast.error('Erro ao entrar', error.response?.data?.message || 'E-mail ou senha incorretos. Verifique suas credenciais.');
@@ -92,7 +92,7 @@ export default function Login() {
       });
 
       toast.success('Senha Atualizada!', 'Sua nova senha foi salva. Bem-vindo(a) ao Prospix!');
-      navTimerRef.current = setTimeout(() => router.push('/'), 1000);
+      navTimerRef.current = setTimeout(() => router.push('/inicio'), 1000);
     } catch (error: any) {
       toast.error('Erro ao trocar senha', error.response?.data?.message || 'N├úo foi poss├¡vel atualizar a senha.');
     } finally {
