@@ -1,8 +1,8 @@
 /**
- * Real-time event hook using Server-Sent Events (SSE).
+ * Real-time event hook using Supabase Realtime channels.
  *
- * Replaces Supabase Realtime subscriptions with a direct SSE connection
- * to the API's /v1/sse/events endpoint.
+ * Subscribes to PostgreSQL changes on `messages` and `conversations` tables
+ * scoped to the current tenant.
  *
  * Usage:
  *   useRealtimeEvents(tenantId, {
@@ -10,8 +10,9 @@
  *     onConversationUpdated: (payload) => { ... },
  *   });
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 
 interface RealtimeCallbacks {
   onMessageCreated?: (payload: Record<string, unknown>) => void;
@@ -20,12 +21,6 @@ interface RealtimeCallbacks {
   onConversationUpdated?: (payload: Record<string, unknown>) => void;
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/v1';
-
-// VITE_API_URL already includes /v1 (e.g. https://api.prospix.com.br/v1)
-// SSE endpoint is at /v1/sse/events, so we need the base without /v1
-const API_BASE = API_URL.replace(/\/v1\/?$/, '');
-
 export function useRealtimeEvents(
   tenantId: string | null | undefined,
   callbacks: RealtimeCallbacks,
@@ -33,112 +28,85 @@ export function useRealtimeEvents(
   const callbacksRef = useRef(callbacks);
   callbacksRef.current = callbacks;
 
-  // Keep a reactive token that updates when the Supabase session changes
-  const [accessToken, setAccessToken] = useState<string | null>(null);
-
   useEffect(() => {
-    // Fetch initial token
-    supabase.auth.getSession().then(({ data }) => {
-      setAccessToken(data.session?.access_token ?? null);
-    });
+    if (!tenantId) return;
 
-    // Listen for session changes (refresh, sign-out)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setAccessToken(session?.access_token ?? null);
-    });
+    let messagesChannel: RealtimeChannel | null = null;
+    let conversationsChannel: RealtimeChannel | null = null;
 
-    return () => subscription.unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    if (!tenantId || !accessToken) return;
-
-    let controller: AbortController | null = new AbortController();
-    let retryTimeout: ReturnType<typeof setTimeout> | null = null;
-    let retryCount = 0;
-    const maxRetry = 10;
-
-    async function connect() {
-      if (!controller) return;
-
-      try {
-        const url = `${API_BASE}/v1/sse/events?tenantId=${tenantId}`;
-        const response = await fetch(url, {
-          signal: controller.signal,
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Accept': 'text/event-stream',
-          },
-        });
-
-        if (!response.ok) {
-          throw new Error(`SSE connection failed: ${response.status}`);
+    // ── Subscribe to messages table changes ──
+    messagesChannel = supabase
+      .channel(`messages:tenant:${tenantId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `tenant_id=eq.${tenantId}`,
+        },
+        (payload) => {
+          callbacksRef.current.onMessageCreated?.(payload.new as Record<string, unknown>);
+        },
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'messages',
+          filter: `tenant_id=eq.${tenantId}`,
+        },
+        (payload) => {
+          callbacksRef.current.onMessageUpdated?.(payload.new as Record<string, unknown>);
+        },
+      )
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR') {
+          console.warn('[Realtime] Messages channel error — will auto-reconnect');
         }
+      });
 
-        const reader = response.body?.getReader();
-        if (!reader) return;
-
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        retryCount = 0; // Reset on successful connection
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          let currentEvent = '';
-          for (const line of lines) {
-            if (line.startsWith('event: ')) {
-              currentEvent = line.slice(7).trim();
-            } else if (line.startsWith('data: ')) {
-              const data = line.slice(6);
-              try {
-                const payload = JSON.parse(data);
-                switch (currentEvent) {
-                  case 'message:created':
-                    callbacksRef.current.onMessageCreated?.(payload);
-                    break;
-                  case 'message:updated':
-                    callbacksRef.current.onMessageUpdated?.(payload);
-                    break;
-                  case 'conversation:created':
-                    callbacksRef.current.onConversationCreated?.(payload);
-                    break;
-                  case 'conversation:updated':
-                    callbacksRef.current.onConversationUpdated?.(payload);
-                    break;
-                }
-                currentEvent = '';
-              } catch {
-                // Not valid JSON — could be heartbeat or partial data
-              }
-            }
-          }
+    // ── Subscribe to conversations table changes ──
+    conversationsChannel = supabase
+      .channel(`conversations:tenant:${tenantId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'conversations',
+          filter: `tenant_id=eq.${tenantId}`,
+        },
+        (payload) => {
+          callbacksRef.current.onConversationCreated?.(payload.new as Record<string, unknown>);
+        },
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'conversations',
+          filter: `tenant_id=eq.${tenantId}`,
+        },
+        (payload) => {
+          callbacksRef.current.onConversationUpdated?.(payload.new as Record<string, unknown>);
+        },
+      )
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR') {
+          console.warn('[Realtime] Conversations channel error — will auto-reconnect');
         }
-      } catch (err: unknown) {
-        if ((err as Error)?.name === 'AbortError') return;
-        console.warn('[SSE] Connection lost, retrying...', err);
-      }
-
-      // Reconnect with exponential backoff
-      if (controller && retryCount < maxRetry) {
-        const delay = Math.min(1000 * Math.pow(2, retryCount), 30000);
-        retryCount++;
-        retryTimeout = setTimeout(connect, delay);
-      }
-    }
-
-    connect();
+      });
 
     return () => {
-      controller?.abort();
-      controller = null;
-      if (retryTimeout) clearTimeout(retryTimeout);
+      if (messagesChannel) {
+        supabase.removeChannel(messagesChannel);
+      }
+      if (conversationsChannel) {
+        supabase.removeChannel(conversationsChannel);
+      }
     };
-  }, [tenantId, accessToken]);
+  }, [tenantId]);
 }
