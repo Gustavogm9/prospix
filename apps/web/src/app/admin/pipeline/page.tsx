@@ -3,9 +3,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Badge } from '@prospix/ui';
 import { GitBranch, RefreshCw, Loader2, AlertCircle, TrendingUp, Users, Trophy, MessageCircle, Target, ArrowRight } from 'lucide-react';
-import { adminApiClient } from '@/lib/admin-api-client';
+import { supabaseAdmin } from '@/lib/supabase';
 import { adminTenantsQueries } from '@/lib/admin-queries';
-import { AxiosError } from 'axios';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -127,22 +126,77 @@ export default function PipelineMonitor() {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const params = new URLSearchParams();
-      if (filterTenantId) params.set('tenantId', filterTenantId);
+      const tenantFilter = filterTenantId || undefined;
 
-      const [pipelineRes, conversionRes, byTenantRes] = await Promise.all([
-        adminApiClient.get(`/admin/pipeline?${params.toString()}`),
-        adminApiClient.get(`/admin/pipeline/conversion?${params.toString()}`),
-        adminApiClient.get('/admin/pipeline/by-tenant'),
-      ]);
+      // Fetch all leads
+      let query = supabaseAdmin
+        .from('leads')
+        .select('id, status, tenant_id, tenants(name)')
+        .is('deleted_at', null);
+      if (tenantFilter) query = query.eq('tenant_id', tenantFilter);
+      const { data: allLeads, error } = await query;
+      if (error) throw error;
+      const leads = allLeads ?? [];
 
-      setPipeline(pipelineRes.data?.data ?? null);
-      setConversions(conversionRes.data?.data?.conversions ?? []);
-      setTenantBreakdown(byTenantRes.data?.data?.tenants ?? []);
+      // ── Pipeline Distribution ──
+      const statusMap: Record<string, number> = {};
+      leads.forEach((l: any) => {
+        statusMap[l.status] = (statusMap[l.status] || 0) + 1;
+      });
+
+      const total = leads.length;
+      const distribution: StatusDistribution[] = Object.entries(statusMap)
+        .map(([status, count]) => ({
+          status,
+          count,
+          percentage: total > 0 ? Math.round((count / total) * 1000) / 10 : 0,
+        }))
+        .sort((a, b) => b.count - a.count);
+
+      setPipeline({ total, distribution });
+
+      // ── Conversion Rates ──
+      const sc = (s: string) => statusMap[s] ?? 0;
+      const captured = sc('CAPTURED') + sc('ENRICHED');
+      const contacted = sc('CONTACTED');
+      const conversing = sc('CONVERSING');
+      const qualified = sc('QUALIFIED');
+      const meetingScheduled = sc('MEETING_SCHEDULED');
+      const closedWon = sc('CLOSED_WON');
+
+      const rate = (from: number, to: number) => from > 0 ? Math.round((to / from) * 1000) / 10 : 0;
+
+      const conversionRates: ConversionRate[] = [
+        { from: 'CAPTURED', to: 'CONTACTED', label: 'contact_rate', fromCount: captured, toCount: contacted, rate: rate(captured, contacted) },
+        { from: 'CONTACTED', to: 'CONVERSING', label: 'response_rate', fromCount: contacted, toCount: conversing, rate: rate(contacted, conversing) },
+        { from: 'CONVERSING', to: 'QUALIFIED', label: 'qualification_rate', fromCount: conversing, toCount: qualified, rate: rate(conversing, qualified) },
+        { from: 'QUALIFIED', to: 'MEETING_SCHEDULED', label: 'scheduling_rate', fromCount: qualified, toCount: meetingScheduled, rate: rate(qualified, meetingScheduled) },
+        { from: 'MEETING_SCHEDULED', to: 'CLOSED_WON', label: 'close_rate', fromCount: meetingScheduled, toCount: closedWon, rate: rate(meetingScheduled, closedWon) },
+        { from: 'CAPTURED', to: 'CLOSED_WON', label: 'overall', fromCount: total, toCount: closedWon, rate: rate(total, closedWon) },
+      ];
+      setConversions(conversionRates);
+
+      // ── Tenant Breakdown (always cross-tenant) ──
+      const tenantMap: Record<string, { name: string; total: number; captured: number; conversing: number; qualified: number; closedWon: number }> = {};
+      leads.forEach((l: any) => {
+        const tid = l.tenant_id;
+        const tname = (l.tenants as any)?.name ?? 'Unknown';
+        if (!tenantMap[tid]) tenantMap[tid] = { name: tname, total: 0, captured: 0, conversing: 0, qualified: 0, closedWon: 0 };
+        tenantMap[tid].total++;
+        if (l.status === 'CAPTURED' || l.status === 'ENRICHED') tenantMap[tid].captured++;
+        if (l.status === 'CONVERSING') tenantMap[tid].conversing++;
+        if (l.status === 'QUALIFIED') tenantMap[tid].qualified++;
+        if (l.status === 'CLOSED_WON') tenantMap[tid].closedWon++;
+      });
+
+      const breakdown: TenantBreakdown[] = Object.entries(tenantMap)
+        .map(([tenantId, v]) => ({ tenantId, tenantName: v.name, ...v }))
+        .sort((a, b) => b.total - a.total)
+        .slice(0, 10);
+
+      setTenantBreakdown(breakdown);
     } catch (err: unknown) {
-      const message = err instanceof AxiosError
-        ? err.response?.data?.message || 'Falha ao carregar dados do pipeline.'
-        : 'Falha ao carregar dados do pipeline.';
+      const message = err instanceof Error ? err.message : 'Falha ao carregar dados do pipeline.';
       setLoadError(message);
     } finally {
       setIsLoading(false);

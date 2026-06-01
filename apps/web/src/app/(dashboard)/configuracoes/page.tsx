@@ -5,8 +5,7 @@ import { Button, Input, Badge, toast } from '@prospix/ui';
 import { Settings as SettingsIcon, Shield, CreditCard, Key, Calendar, Phone, Loader2, CheckCircle2, AlertCircle, RefreshCw, FileText, ExternalLink, Bell } from 'lucide-react';
 import { useAuthStore } from '@/store/auth-store';
 import { profileQueries, billingQueries } from '@/lib/queries';
-import { apiClient } from '@/lib/api-client';
-import { AxiosError } from 'axios';
+import { apiFetch } from '@/lib/api-fetch';
 import { z } from 'zod';
 import PrivacyTab from './settings/PrivacyTab';
 
@@ -229,8 +228,9 @@ export default function Settings() {
   const fetchCredentialState = async () => {
     setIsCredentialsLoading(true);
     try {
-      const response = await apiClient.get('/tenant/integrations/credentials');
-      const data = response.data?.data || emptyCredentialState;
+      const res = await apiFetch('/api/integrations/credentials');
+      const json = await res.json();
+      const data = json?.data || emptyCredentialState;
       setCredentialState(data);
       setCredentialDraft((draft) => ({
         ...draft,
@@ -239,10 +239,7 @@ export default function Settings() {
       }));
     } catch (err: unknown) {
       console.error('Error loading credentials:', err);
-      const message = err instanceof AxiosError
-        ? err.response?.data?.message || 'Não foi possível carregar o estado das credenciais.'
-        : 'Não foi possível carregar o estado das credenciais.';
-      toast.error('Erro ao carregar credenciais', message);
+      toast.error('Erro ao carregar credenciais', 'Não foi possível carregar o estado das credenciais.');
     } finally {
       setIsCredentialsLoading(false);
     }
@@ -292,10 +289,15 @@ export default function Settings() {
 
     setIsCredentialsSaving(true);
     try {
-      const response = await apiClient.patch('/tenant/integrations/credentials', payload);
-      setCredentialState(response.data?.data || emptyCredentialState);
+      const res = await apiFetch('/api/integrations/credentials', {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.message || 'Erro ao salvar credenciais');
+      setCredentialState(json?.data || emptyCredentialState);
       setCredentialDraft({
-        aiProvider: response.data?.data?.aiProvider || credentialDraft.aiProvider,
+        aiProvider: json?.data?.aiProvider || credentialDraft.aiProvider,
         openaiApiKey: '',
         anthropicApiKey: '',
         googleAiApiKey: '',
@@ -306,9 +308,7 @@ export default function Settings() {
       toast.success('Credenciais salvas', 'As chaves foram criptografadas e vinculadas ao tenant.');
     } catch (err: unknown) {
       console.error('Error saving credentials:', err);
-      const message = err instanceof AxiosError
-        ? err.response?.data?.message || 'Não foi possível salvar as credenciais.'
-        : 'Não foi possível salvar as credenciais.';
+      const message = err instanceof Error ? err.message : 'Não foi possível salvar as credenciais.';
       toast.error('Erro ao salvar credenciais', message);
     } finally {
       setIsCredentialsSaving(false);
@@ -317,26 +317,24 @@ export default function Settings() {
 
   const handleGoogleConnect = async () => {
     try {
-      const response = await apiClient.get('/tenant/integrations/google/oauth');
-      if (response.data?.auth_url) {
-        window.location.href = response.data.auth_url;
+      const res = await apiFetch('/api/integrations/google/oauth');
+      const json = await res.json();
+      if (json?.auth_url) {
+        window.location.href = json.auth_url;
       } else {
         toast.error('Erro de Conexão', 'Erro ao obter link de autorização do Google Agenda.');
       }
     } catch (err: unknown) {
       console.error('Error connecting Google Calendar:', err);
-      const message = err instanceof AxiosError
-        ? err.response?.data?.message || 'Erro ao conectar ao Google Agenda.'
-        : 'Erro ao conectar ao Google Agenda.';
-      toast.error('Erro de Conexão', message);
+      toast.error('Erro de Conexão', 'Erro ao conectar ao Google Agenda.');
     }
   };
 
   const checkStatus = async (silent = false) => {
     if (!silent) setWhatsappStatus('loading');
     try {
-      const response = await apiClient.get('/tenant/integrations/whatsapp/status');
-      const data = response.data;
+      const res = await apiFetch('/api/integrations/whatsapp/status');
+      const data = await res.json();
       if (data.status === 'connected') {
         setWhatsappStatus('connected');
         setInstanceName(data.instanceName);
@@ -359,9 +357,10 @@ export default function Settings() {
     if (activeTab === 'perfil') {
       fetchProfile();
       // Fetch notification preferences from API
-      apiClient.get('/tenant/notifications/preferences')
-        .then(res => {
-          const prefs = res.data?.data ?? res.data;
+      apiFetch('/api/notifications/preferences')
+        .then(res => res.json())
+        .then(json => {
+          const prefs = json?.data ?? json;
           if (Array.isArray(prefs) && prefs.length > 0) {
             const EVENT_TYPES = ['lead_replied', 'lead_callback', 'meeting_scheduled', 'daily_summary'];
             setNotifications(prev => prev.map((n, i) => {
@@ -398,8 +397,9 @@ export default function Settings() {
     setIsGeneratingQr(true);
     setQrCode(null);
     try {
-      const response = await apiClient.post('/tenant/integrations/whatsapp/connect');
-      const data = response.data;
+      const res = await apiFetch('/api/integrations/whatsapp/connect', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.message || 'Erro ao conectar');
       setQrCode(data.qrcode);
       setInstanceName(data.instanceName);
       setIsGeneratingQr(false);
@@ -420,9 +420,7 @@ export default function Settings() {
       schedule();
     } catch (err: unknown) {
       console.error('Error generating WhatsApp QR code:', err);
-      const message = err instanceof AxiosError
-        ? err.response?.data?.message || 'Ocorreu um erro ao conectar com o servidor da Evolution API.'
-        : 'Ocorreu um erro ao conectar com o servidor da Evolution API.';
+      const message = err instanceof Error ? err.message : 'Ocorreu um erro ao conectar com o servidor da Evolution API.';
       toast.error('Erro no Gateway', message);
       setIsGeneratingQr(false);
     }
@@ -432,7 +430,7 @@ export default function Settings() {
     setWhatsappStatus('loading');
     setIsConfirmingDisconnect(false);
     try {
-      await apiClient.post('/tenant/integrations/whatsapp/disconnect');
+      await apiFetch('/api/integrations/whatsapp/disconnect', { method: 'POST' });
       setWhatsappStatus('disconnected');
       setInstanceName(null);
       setQrCode(null);
@@ -452,10 +450,13 @@ export default function Settings() {
     try {
       const eventType = EVENT_TYPES[index] || `notification_${index}`;
       const newChecked = !notifications[index]?.checked;
-      await apiClient.put('/tenant/notifications/preferences', {
-        eventType,
-        channels: ['PUSH', 'EMAIL'],
-        enabled: newChecked,
+      await apiFetch('/api/notifications/preferences', {
+        method: 'PUT',
+        body: JSON.stringify({
+          eventType,
+          channels: ['PUSH', 'EMAIL'],
+          enabled: newChecked,
+        }),
       });
     } catch (err) {
       console.error('Failed to save notification preference', err);

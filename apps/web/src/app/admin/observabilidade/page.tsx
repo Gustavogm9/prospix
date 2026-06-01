@@ -1,10 +1,9 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Badge, Button, toast } from '@prospix/ui';
 import { Activity, AlertCircle, CheckCircle2, RefreshCw, Loader2, Inbox, AlertTriangle, Zap } from 'lucide-react';
-import { adminApiClient } from '@/lib/admin-api-client';
-import { AxiosError } from 'axios';
+import { supabaseAdmin } from '@/lib/supabase';
 
 interface QueueCounts {
   waiting: number;
@@ -34,8 +33,8 @@ function formatRelative(iso: string): string {
     const date = new Date(iso);
     const diffSec = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
     if (diffSec < 5) return 'agora';
-    if (diffSec < 60) return `hÃ¡ ${diffSec}s`;
-    if (diffSec < 3600) return `hÃ¡ ${Math.round(diffSec / 60)}min`;
+    if (diffSec < 60) return `há ${diffSec}s`;
+    if (diffSec < 3600) return `há ${Math.round(diffSec / 60)}min`;
     return date.toLocaleTimeString('pt-BR');
   } catch {
     return iso;
@@ -53,12 +52,71 @@ export default function Observability() {
     setIsRefreshing(true);
     setLoadError(null);
     try {
-      const response = await adminApiClient.get('/admin/observability');
-      setData(response.data?.data || null);
+      const start = Date.now();
+
+      // Since BullMQ is being removed, build an observability snapshot
+      // from operational_alerts and system state
+      const [alertsRes, recentAlertsRes] = await Promise.all([
+        supabaseAdmin
+          .from('operational_alerts')
+          .select('id, severity, resolved_at, ack_at, created_at')
+          .order('created_at', { ascending: false })
+          .limit(500),
+        supabaseAdmin
+          .from('operational_alerts')
+          .select('id, severity, resolved_at, ack_at, title, tenant_id, tenants(name), created_at')
+          .is('resolved_at', null)
+          .order('created_at', { ascending: false })
+          .limit(100),
+      ]);
+
+      const allAlerts = alertsRes.data ?? [];
+      const unresolvedAlerts = recentAlertsRes.data ?? [];
+
+      // Categorize alerts into synthetic queue-like buckets
+      const critical = unresolvedAlerts.filter((a: any) => a.severity === 'CRITICAL');
+      const warning = unresolvedAlerts.filter((a: any) => a.severity === 'WARNING');
+      const info = unresolvedAlerts.filter((a: any) => a.severity === 'INFO');
+      const acknowledged = unresolvedAlerts.filter((a: any) => a.ack_at != null);
+      const resolvedRecent = allAlerts.filter((a: any) => a.resolved_at != null);
+
+      // Build synthetic queue snapshots from alert categories
+      const queues: QueueSnapshot[] = [];
+      if (critical.length > 0 || warning.length > 0 || info.length > 0) {
+        queues.push({
+          worker: 'alert-processor',
+          queueName: 'operational_alerts',
+          counts: {
+            waiting: unresolvedAlerts.filter((a: any) => !a.ack_at).length,
+            active: acknowledged.length,
+            completed: resolvedRecent.length,
+            failed: critical.length,
+            delayed: 0,
+          },
+          dlq: { waiting: critical.filter((a: any) => !a.ack_at).length, replayable: false },
+        });
+      }
+
+      // Check for sentry/slack env vars presence (best-effort client-side)
+      const hasSentry = typeof process !== 'undefined' && !!process.env.NEXT_PUBLIC_SENTRY_DSN;
+      const hasSlack = false; // Slack webhook is server-side only
+
+      const durationMs = Date.now() - start;
+
+      setData({
+        generatedAt: new Date().toISOString(),
+        durationMs,
+        totals: {
+          waiting: unresolvedAlerts.filter((a: any) => !a.ack_at).length,
+          active: acknowledged.length,
+          failed: critical.length,
+          dlq: critical.filter((a: any) => !a.ack_at).length,
+        },
+        queues,
+        alertSinks: { sentry: hasSentry, slack: hasSlack },
+      });
     } catch (err: unknown) {
-      const message = err instanceof AxiosError
-        ? err.response?.data?.message || 'Falha ao carregar observabilidade.'
-        : 'Falha ao carregar observabilidade.';
+      const message = err instanceof Error ? err.message : 'Falha ao carregar observabilidade.';
       setLoadError(message);
       if (!silent) toast.error('Erro de observabilidade', message);
     } finally {
@@ -86,7 +144,7 @@ export default function Observability() {
       <Card className="bg-white border-error/30 shadow-sm" data-testid="observability-error-state">
         <CardContent className="py-10 text-center">
           <AlertCircle className="w-8 h-8 text-error-text mx-auto mb-2" aria-hidden />
-          <p className="text-sm text-text font-semibold">NÃ£o foi possÃ­vel carregar a observabilidade</p>
+          <p className="text-sm text-text font-semibold">Não foi possível carregar a observabilidade</p>
           <p className="text-xs text-text-secondary mt-1">{loadError}</p>
           <Button
             onClick={() => fetchSnapshot()}
@@ -110,7 +168,7 @@ export default function Observability() {
             Observabilidade
           </h2>
           <p className="text-text-secondary text-xs mt-1">
-            Snapshot atualizado {formatRelative(data.generatedAt)} Â· refresh automÃ¡tico a cada 30s Â· {data.durationMs}ms
+            Snapshot atualizado {formatRelative(data.generatedAt)} · refresh automático a cada 30s · {data.durationMs}ms
           </p>
         </div>
         <Button
@@ -139,7 +197,7 @@ export default function Observability() {
           <CardContent className="pt-5">
             <div className="flex justify-between items-start">
               <div>
-                <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">Em execuÃ§Ã£o</span>
+                <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">Em execução</span>
                 <span className="text-2xl font-bold font-heading text-text font-mono">{data.totals.active}</span>
               </div>
               <Zap className="w-4 h-4 text-primary" aria-hidden />
@@ -174,7 +232,7 @@ export default function Observability() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base font-bold font-heading text-text">Canais de alerta</CardTitle>
           <CardDescription className="text-text-secondary text-xs">
-            Sinks configurados que recebem eventos crÃ­ticos (DLQ, churn, falhas exauridas).
+            Sinks configurados que recebem eventos críticos (DLQ, churn, falhas exauridas).
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-3 pt-2">
@@ -203,9 +261,9 @@ export default function Observability() {
 
       <Card className="bg-white border-border shadow-sm">
         <CardHeader className="pb-3">
-          <CardTitle className="text-base font-bold font-heading text-text">Filas BullMQ por worker</CardTitle>
+          <CardTitle className="text-base font-bold font-heading text-text">Alertas Operacionais (substitui filas BullMQ)</CardTitle>
           <CardDescription className="text-text-secondary text-xs">
-            DLQ replayable indica workers cuja allowlist (DLQ_REPLAYABLE_WORKERS) permite reprocessamento manual.
+            Visão baseada em alertas operacionais do banco de dados. BullMQ foi removido.
           </CardDescription>
         </CardHeader>
         <CardContent className="pt-0">
@@ -216,34 +274,42 @@ export default function Observability() {
                   <th className="text-left py-2 px-2">Worker</th>
                   <th className="text-right py-2 px-2">Aguardando</th>
                   <th className="text-right py-2 px-2">Ativo</th>
-                  <th className="text-right py-2 px-2">ConcluÃ­do</th>
+                  <th className="text-right py-2 px-2">Concluído</th>
                   <th className="text-right py-2 px-2">Falhas</th>
                   <th className="text-right py-2 px-2">DLQ</th>
                   <th className="text-center py-2 px-2">Replay</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/60">
-                {data.queues.map((q) => {
-                  const hasFailures = q.counts.failed > 0;
-                  const hasDlq = q.dlq.waiting > 0;
-                  return (
-                    <tr key={q.worker} className="hover:bg-surface-sunken/40 transition-colors">
-                      <td className="py-2 px-2 font-mono text-text">{q.worker}</td>
-                      <td className="py-2 px-2 text-right font-mono text-text-secondary">{q.counts.waiting}</td>
-                      <td className="py-2 px-2 text-right font-mono text-text-secondary">{q.counts.active}</td>
-                      <td className="py-2 px-2 text-right font-mono text-text-secondary">{q.counts.completed}</td>
-                      <td className={`py-2 px-2 text-right font-mono ${hasFailures ? 'text-error-text font-semibold' : 'text-text-secondary'}`}>{q.counts.failed}</td>
-                      <td className={`py-2 px-2 text-right font-mono ${hasDlq ? 'text-amber-700 font-semibold' : 'text-text-secondary'}`}>{q.dlq.waiting}</td>
-                      <td className="py-2 px-2 text-center">
-                        {q.dlq.replayable ? (
-                          <Badge className="bg-success-soft text-success-text border border-success/20 text-[9px] px-1.5 py-0">Sim</Badge>
-                        ) : (
-                          <Badge className="bg-surface-sunken text-text-secondary border border-border/60 text-[9px] px-1.5 py-0">NÃ£o</Badge>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
+                {data.queues.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-8 text-center text-text-secondary">
+                      Nenhum alerta operacional pendente — sistema saudável ✓
+                    </td>
+                  </tr>
+                ) : (
+                  data.queues.map((q) => {
+                    const hasFailures = q.counts.failed > 0;
+                    const hasDlq = q.dlq.waiting > 0;
+                    return (
+                      <tr key={q.worker} className="hover:bg-surface-sunken/40 transition-colors">
+                        <td className="py-2 px-2 font-mono text-text">{q.worker}</td>
+                        <td className="py-2 px-2 text-right font-mono text-text-secondary">{q.counts.waiting}</td>
+                        <td className="py-2 px-2 text-right font-mono text-text-secondary">{q.counts.active}</td>
+                        <td className="py-2 px-2 text-right font-mono text-text-secondary">{q.counts.completed}</td>
+                        <td className={`py-2 px-2 text-right font-mono ${hasFailures ? 'text-error-text font-semibold' : 'text-text-secondary'}`}>{q.counts.failed}</td>
+                        <td className={`py-2 px-2 text-right font-mono ${hasDlq ? 'text-amber-700 font-semibold' : 'text-text-secondary'}`}>{q.dlq.waiting}</td>
+                        <td className="py-2 px-2 text-center">
+                          {q.dlq.replayable ? (
+                            <Badge className="bg-success-soft text-success-text border border-success/20 text-[9px] px-1.5 py-0">Sim</Badge>
+                          ) : (
+                            <Badge className="bg-surface-sunken text-text-secondary border border-border/60 text-[9px] px-1.5 py-0">Não</Badge>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>

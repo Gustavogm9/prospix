@@ -4,8 +4,8 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Badge, Drawer, toast } from '@prospix/ui';
 import { Filter, Download, RefreshCw, User, Phone, DollarSign, MessageSquare, ChevronRight, Info } from 'lucide-react';
-import { apiClient } from '@/lib/api-client';
-import { AxiosError } from 'axios';
+import { leadsQueries, conversationsQueries } from '@/lib/queries';
+import { useAuthStore } from '@/store/auth-store';
 
 
 interface Lead {
@@ -30,18 +30,18 @@ const PROFESSION_LABELS: Record<string, string> = {
 const mapBackendLead = (lead: any): Lead => {
   const metadata = (lead.metadata || {}) as Record<string, any>;
   const address = lead.address || {};
-  const rawData = (lead.sourceRawData || {}) as Record<string, any>;
+  const rawData = (lead.source_raw_data || {}) as Record<string, any>;
 
   return {
     id: lead.id,
     name: lead.name || 'Sem nome',
     phone: lead.whatsapp || '',
     company: metadata.cnpj_info?.nomeFantasia || metadata.cnpj_info?.razaoSocial || rawData.name || lead.name || '',
-    googleRating: lead.googleRating ? `⭐ ${Number(lead.googleRating).toFixed(1)}` : '—',
-    fitScore: Number(lead.fitScore) || 0,
+    googleRating: lead.google_rating ? `⭐ ${Number(lead.google_rating).toFixed(1)}` : '—',
+    fitScore: Number(lead.fit_score) || 0,
     city: address.city || '—',
     status: lead.status || '—',
-    createdAt: lead.createdAt ? new Date(lead.createdAt).toLocaleDateString('pt-BR') : '—',
+    createdAt: lead.created_at ? new Date(lead.created_at).toLocaleDateString('pt-BR') : '—',
     profession: lead.profession ? (PROFESSION_LABELS[lead.profession] || lead.profession) : '',
   };
 };
@@ -59,6 +59,7 @@ const CATEGORY_CARDS = [
 
 export default function Leads() {
   const router = useRouter();
+  const tenantId = useAuthStore(state => state.tenantId);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -101,16 +102,17 @@ export default function Leads() {
   };
 
   const handleStartConversation = async () => {
-    if (!selectedLead) return;
+    if (!selectedLead || !tenantId) return;
     setIsStartingChat(true);
     try {
-      await apiClient.post('/tenant/conversations', { leadId: selectedLead.id });
+      const result = await conversationsQueries.create(tenantId, selectedLead.id);
+      if (result.error) throw new Error(result.error.message);
       toast.success('Conversa criada', 'O lead está pronto para atendimento manual.');
       setSelectedLead(null);
       router.push('/conversas');
     } catch (error: unknown) {
-      const message = error instanceof AxiosError
-        ? error.response?.data?.message || 'Não foi possível criar a conversa para este lead.'
+      const message = error instanceof Error
+        ? error.message || 'Não foi possível criar a conversa para este lead.'
         : 'Não foi possível criar a conversa para este lead.';
       toast.error('Erro ao iniciar conversa', message);
     } finally {
@@ -127,65 +129,51 @@ export default function Leads() {
   }, [search]);
 
   useEffect(() => {
-    const controller = new AbortController();
     const fetchLeads = async () => {
+      if (!tenantId) return;
       setIsLoading(true);
       try {
         const profMap: Record<string, string> = {
           medicos: 'DOCTOR', advogados: 'LAWYER', dentistas: 'DENTIST', empresarios: 'BUSINESS_OWNER'
         };
-        const response = await apiClient.get('/tenant/leads', {
-          signal: controller.signal,
-          params: {
-            search: debouncedSearch || undefined,
-            profession: fitFilter !== 'all' ? profMap[fitFilter] : undefined,
-            limit: 50,
-          }
+        const result = await leadsQueries.list(tenantId, {
+          search: debouncedSearch || undefined,
+          profession: (fitFilter !== 'all' ? profMap[fitFilter] : undefined) as any,
+          limit: 50,
         });
 
-        if (controller.signal.aborted) return;
-
-        if (response?.data) {
-          const list = Array.isArray(response.data) ? response.data : response.data.data;
-          const mapped = (list || []).map(mapBackendLead);
-          setLeads(mapped);
-          setNextCursor(response.data.nextCursor || null);
-        } else {
-          setLeads([]);
-        }
+        if ('error' in result && result.error) throw new Error(result.error.message);
+        const mapped = (result.data || []).map(mapBackendLead);
+        setLeads(mapped);
+        setNextCursor(null);
       } catch (err) {
-        if (controller.signal.aborted) return;
         console.error(err);
         setLeads([]);
         toast.error('Erro de Conexão', 'Não foi possível carregar os leads.');
       } finally {
-        if (!controller.signal.aborted) setIsLoading(false);
+        setIsLoading(false);
       }
     };
 
     fetchLeads();
-    return () => controller.abort();
-  }, [debouncedSearch, fitFilter]);
+  }, [debouncedSearch, fitFilter, tenantId]);
 
   const loadMore = async () => {
-    if (!nextCursor || isLoadingMore) return;
+    if (isLoadingMore || !tenantId) return;
     setIsLoadingMore(true);
     try {
       const profMap: Record<string, string> = {
         medicos: 'DOCTOR', advogados: 'LAWYER', dentistas: 'DENTIST', empresarios: 'BUSINESS_OWNER'
       };
-      const response = await apiClient.get('/tenant/leads', {
-        params: {
-          search: debouncedSearch || undefined,
-          profession: fitFilter !== 'all' ? profMap[fitFilter] : undefined,
-          limit: 50,
-          cursor: nextCursor,
-        }
+      const result = await leadsQueries.list(tenantId, {
+        search: debouncedSearch || undefined,
+        profession: (fitFilter !== 'all' ? profMap[fitFilter] : undefined) as any,
+        limit: 50,
+        cursor: nextCursor || undefined,
       });
-      const list = Array.isArray(response.data) ? response.data : response.data?.data;
-      const mapped = (list || []).map(mapBackendLead);
+      const mapped = (result.data || []).map(mapBackendLead);
       setLeads(prev => [...prev, ...mapped]);
-      setNextCursor(response.data.nextCursor || null);
+      setNextCursor(null);
     } catch (err) {
       console.error(err);
     } finally {

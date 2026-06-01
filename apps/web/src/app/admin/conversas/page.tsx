@@ -1,11 +1,10 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badge, toast } from '@prospix/ui';
 import { MessageSquare, RefreshCw, Loader2, Search, Bot, ChevronDown, ChevronUp } from 'lucide-react';
-import { adminApiClient } from '@/lib/admin-api-client';
-import { AxiosError } from 'axios';
+import { supabaseAdmin } from '@/lib/supabase';
 
 interface ConversationItem {
   id: string;
@@ -56,27 +55,135 @@ export default function Conversations() {
   const fetchConversations = async (newOffset = 0) => {
     setIsLoading(true);
     try {
-      const params = new URLSearchParams();
-      params.set('limit', String(PAGE_SIZE));
-      params.set('offset', String(newOffset));
-      if (searchTerm.trim()) params.set('search', searchTerm.trim());
-      if (filterStatus !== 'all') params.set('status', filterStatus);
-      if (filterAI !== 'all') params.set('aiHandling', filterAI);
+      // ── Build conversation query ──
+      let query = supabaseAdmin
+        .from('conversations')
+        .select('*, leads(id, name, whatsapp, email), tenants(id, name, slug)', { count: 'exact' })
+        .order('started_at', { ascending: false })
+        .range(newOffset, newOffset + PAGE_SIZE - 1);
 
-      const [convRes, statsRes] = await Promise.all([
-        adminApiClient.get(`/admin/conversations?${params.toString()}`),
-        adminApiClient.get('/admin/conversations/stats'),
-      ]);
-      
-      const payload = convRes.data?.data;
-      setItems(payload?.items ?? []);
-      setPagination(payload?.pagination ?? { total: 0, limit: PAGE_SIZE, offset: 0, hasMore: false });
-      setStats(statsRes.data?.data ?? null);
+      if (filterStatus !== 'all') query = query.eq('status', filterStatus);
+      if (filterAI === 'true') query = query.eq('ai_handling', true);
+      if (searchTerm.trim()) {
+        // Search by lead name – need to use a textSearch or filter on the joined lead
+        // Supabase doesn't support .ilike on nested joins easily, so we do a sub-query approach
+        const { data: matchingLeads } = await supabaseAdmin
+          .from('leads')
+          .select('id')
+          .or(`name.ilike.%${searchTerm.trim()}%,whatsapp.ilike.%${searchTerm.trim()}%`)
+          .limit(200);
+        const leadIds = (matchingLeads ?? []).map((l: any) => l.id);
+        if (leadIds.length === 0) {
+          setItems([]);
+          setPagination({ total: 0, limit: PAGE_SIZE, offset: 0, hasMore: false });
+          setIsLoading(false);
+          // Still fetch stats
+          await fetchStats();
+          return;
+        }
+        query = query.in('lead_id', leadIds);
+      }
+
+      const { data: convRows, count, error } = await query;
+      if (error) throw error;
+
+      // Fetch recent messages for each conversation (last 5 each)
+      const convIds = (convRows ?? []).map((c: any) => c.id);
+      let messagesMap: Record<string, any[]> = {};
+      if (convIds.length > 0) {
+        const { data: msgs } = await supabaseAdmin
+          .from('messages')
+          .select('id, conversation_id, direction, sender, content, delivery_status, created_at')
+          .in('conversation_id', convIds)
+          .order('created_at', { ascending: false })
+          .limit(convIds.length * 5);
+
+        (msgs ?? []).forEach((m: any) => {
+          if (!messagesMap[m.conversation_id]) messagesMap[m.conversation_id] = [];
+          if (messagesMap[m.conversation_id]!.length < 5) {
+            messagesMap[m.conversation_id]!.push(m);
+          }
+        });
+      }
+
+      const mapped: ConversationItem[] = (convRows ?? []).map((c: any) => ({
+        id: c.id,
+        tenantId: c.tenant_id,
+        tenant: c.tenants ? { id: c.tenants.id ?? c.tenant_id, name: c.tenants.name, slug: c.tenants.slug } : null,
+        lead: c.leads ? { id: c.leads.id ?? c.lead_id, name: c.leads.name, whatsapp: c.leads.whatsapp, email: c.leads.email } : null,
+        status: c.status,
+        aiHandlingEnabled: c.ai_handling,
+        messageCount: c.message_count,
+        lastInboundAt: c.last_inbound_at,
+        lastOutboundAt: c.last_outbound_at,
+        startedAt: c.started_at,
+        updatedAt: c.last_message_at ?? c.started_at,
+        recentMessages: (messagesMap[c.id] ?? []).reverse().map((m: any) => ({
+          id: m.id,
+          direction: m.direction,
+          sender: m.sender,
+          content: m.content,
+          deliveryStatus: m.delivery_status ?? '',
+          createdAt: m.created_at,
+        })),
+      }));
+
+      const total = count ?? 0;
+      setItems(mapped);
+      setPagination({ total, limit: PAGE_SIZE, offset: newOffset, hasMore: newOffset + PAGE_SIZE < total });
+
+      // ── Compute stats client-side ──
+      await fetchStats();
     } catch (err: unknown) {
-      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha ao carregar conversas.' : 'Falha ao carregar conversas.';
+      const message = err instanceof Error ? err.message : 'Falha ao carregar conversas.';
       toast.error('Erro', message);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const fetchStats = async () => {
+    try {
+      const { data: allConvs } = await supabaseAdmin
+        .from('conversations')
+        .select('id, status, ai_handling, tenant_id, started_at, tenants(name)');
+
+      const rows = allConvs ?? [];
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+      const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+
+      const totalToday = rows.filter((c: any) => c.started_at >= todayStart).length;
+      const totalWeek = rows.filter((c: any) => c.started_at >= weekAgo).length;
+      const totalMonth = rows.filter((c: any) => c.started_at >= monthStart).length;
+      const activeAI = rows.filter((c: any) => c.status === 'ACTIVE' && c.ai_handling).length;
+      const escalated = rows.filter((c: any) => c.status === 'ESCALATED').length;
+
+      // Top tenants
+      const tenantCounts: Record<string, { name: string; count: number }> = {};
+      rows.forEach((c: any) => {
+        const tid = c.tenant_id;
+        const tname = (c.tenants as any)?.name ?? 'Unknown';
+        if (!tenantCounts[tid]) tenantCounts[tid] = { name: tname, count: 0 };
+        tenantCounts[tid].count++;
+      });
+      const topTenants = Object.entries(tenantCounts)
+        .map(([tenantId, v]) => ({ tenantId, tenantName: v.name, count: v.count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5);
+
+      setStats({
+        totalAll: rows.length,
+        totalToday,
+        totalWeek,
+        totalMonth,
+        activeAI,
+        escalated,
+        topTenants,
+      });
+    } catch {
+      // non-blocking
     }
   };
 
@@ -98,7 +205,7 @@ export default function Conversations() {
             Monitoramento de Conversas IA
           </h2>
           <p className="text-text-secondary text-xs mt-1">
-            VisÃ£o cross-tenant de todas as conversas Â· AI handling Â· escalaÃ§Ãµes Â· qualidade
+            Visão cross-tenant de todas as conversas · AI handling · escalações · qualidade
           </p>
         </div>
         <Button onClick={() => fetchConversations(pagination.offset)} disabled={isLoading} className="bg-white hover:bg-surface-sunken text-text border border-border text-xs px-3 h-9 rounded-lg flex items-center gap-1.5">
@@ -129,7 +236,7 @@ export default function Conversations() {
           </Card>
           <Card className="bg-white shadow-sm border-border">
             <CardContent className="pt-4 pb-3">
-              <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">Total (MÃªs)</span>
+              <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">Total (Mês)</span>
               <span className="text-2xl font-bold font-heading font-mono text-text">{stats.totalMonth.toLocaleString('pt-BR')}</span>
             </CardContent>
           </Card>
@@ -169,7 +276,7 @@ export default function Conversations() {
             </div>
             <div className="flex gap-1.5">
               <Button onClick={() => setFilterAI(filterAI === 'true' ? 'all' : 'true')} className={`text-[10px] px-3 h-8 rounded-lg flex items-center gap-1 ${filterAI === 'true' ? 'bg-blue-600 text-white' : 'bg-white text-text border border-border hover:bg-surface-sunken'}`}>
-                <Bot className="w-3 h-3" /> SÃ³ IA
+                <Bot className="w-3 h-3" /> Só IA
               </Button>
             </div>
           </div>
@@ -202,9 +309,9 @@ export default function Conversations() {
                         {conv.tenant && <Link href={`/admin/tenants/${conv.tenant.id}`} className="text-[10px] font-semibold text-text hover:underline">{conv.tenant.name}</Link>}
                       </div>
                       <div className="text-xs font-semibold text-text">{conv.lead?.name ?? 'Lead sem nome'}</div>
-                      <div className="text-[10px] text-text-secondary font-mono">{conv.lead?.whatsapp ?? 'â€”'}</div>
+                      <div className="text-[10px] text-text-secondary font-mono">{conv.lead?.whatsapp ?? '—'}</div>
                       <div className="text-[10px] text-text-secondary mt-1">
-                        {conv.messageCount} msgs Â· Ãšltima atividade: {new Date(conv.updatedAt).toLocaleString('pt-BR')}
+                        {conv.messageCount} msgs · Última atividade: {new Date(conv.updatedAt).toLocaleString('pt-BR')}
                       </div>
                     </div>
                     <button onClick={() => setExpandedId(expandedId === conv.id ? null : conv.id)} className="text-text-secondary hover:text-text p-1">
@@ -214,7 +321,7 @@ export default function Conversations() {
                   
                   {expandedId === conv.id && conv.recentMessages.length > 0 && (
                     <div className="mt-3 pt-3 border-t border-border/40 space-y-2">
-                      <span className="text-[9px] text-text-secondary uppercase tracking-wider font-semibold">Ãšltimas mensagens</span>
+                      <span className="text-[9px] text-text-secondary uppercase tracking-wider font-semibold">Últimas mensagens</span>
                       {conv.recentMessages.map((msg) => (
                         <div key={msg.id} className={`flex gap-2 ${msg.direction === 'OUTBOUND' ? 'justify-end' : ''}`}>
                           <div className={`max-w-[70%] p-2 rounded-lg text-[11px] ${msg.direction === 'OUTBOUND' ? 'bg-primary/10 text-text' : 'bg-surface-sunken text-text'}`}>
@@ -236,11 +343,11 @@ export default function Conversations() {
           {pagination.total > PAGE_SIZE && (
             <div className="flex justify-between items-center mt-4 pt-3 border-t border-border">
               <span className="text-[10px] text-text-secondary">
-                {pagination.offset + 1}â€“{Math.min(pagination.offset + PAGE_SIZE, pagination.total)} de {pagination.total}
+                {pagination.offset + 1}–{Math.min(pagination.offset + PAGE_SIZE, pagination.total)} de {pagination.total}
               </span>
               <div className="flex gap-1.5">
                 <Button onClick={() => fetchConversations(Math.max(0, pagination.offset - PAGE_SIZE))} disabled={pagination.offset === 0} className="text-[10px] px-3 h-7 rounded bg-white text-text border border-border">Anterior</Button>
-                <Button onClick={() => fetchConversations(pagination.offset + PAGE_SIZE)} disabled={!pagination.hasMore} className="text-[10px] px-3 h-7 rounded bg-white text-text border border-border">PrÃ³ximo</Button>
+                <Button onClick={() => fetchConversations(pagination.offset + PAGE_SIZE)} disabled={!pagination.hasMore} className="text-[10px] px-3 h-7 rounded bg-white text-text border border-border">Próximo</Button>
               </div>
             </div>
           )}

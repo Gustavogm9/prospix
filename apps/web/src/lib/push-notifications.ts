@@ -1,4 +1,4 @@
-import { apiClient } from './api-client';
+import { apiFetch } from './api-fetch';
 
 /**
  * Request push notification permission and subscribe.
@@ -43,7 +43,10 @@ export async function subscribeToPush(): Promise<boolean> {
     }
 
     // Send subscription to backend
-    await apiClient.post('/tenant/notifications/push-subscription', subscription.toJSON());
+    await apiFetch('/api/notifications/push-subscription', {
+      method: 'POST',
+      body: JSON.stringify(subscription.toJSON()),
+    });
 
     return true;
   } catch (err) {

@@ -5,7 +5,7 @@ import { Card, Button, Badge, Input, toast } from '@prospix/ui';
 import { Clock, Phone, Mail, Calendar, X, Plus, Info } from 'lucide-react';
 import { meetingsQueries, leadsQueries } from '@/lib/queries';
 import { useAuthStore } from '@/store/auth-store';
-import { apiClient } from '@/lib/api-client';
+import { apiFetch } from '@/lib/api-fetch';
 
 interface Meeting {
   id: string;
@@ -263,7 +263,7 @@ export default function Schedule() {
         <button
           onClick={async () => {
             try {
-              await apiClient.post('/tenant/integrations/calendar/sync');
+              await apiFetch('/api/integrations/calendar/sync', { method: 'POST' });
               toast.success('Sincronizado!', 'Google Calendar atualizado com sucesso.');
               await fetchMeetings();
             } catch {

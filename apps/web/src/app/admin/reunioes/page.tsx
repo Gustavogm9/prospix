@@ -3,9 +3,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badge } from '@prospix/ui';
 import { Calendar, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, Clock, TrendingUp, UserX, DollarSign } from 'lucide-react';
-import { adminApiClient } from '@/lib/admin-api-client';
+import { supabaseAdmin } from '@/lib/supabase';
 import { adminTenantsQueries } from '@/lib/admin-queries';
-import { AxiosError } from 'axios';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -111,7 +110,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 const OUTCOME_LABELS: Record<string, string> = {
   CLOSED: 'Fechou',
-  SECOND_MEETING: '2Âª ReuniÃ£o',
+  SECOND_MEETING: '2ª Reunião',
   NOT_INTERESTED: 'Sem Interesse',
   THINKING: 'Pensando',
 };
@@ -158,20 +157,50 @@ export default function Meetings() {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const params = new URLSearchParams();
-      params.set('limit', String(PAGE_SIZE));
-      params.set('offset', String(newOffset));
-      if (filterTenantId) params.set('tenantId', filterTenantId);
-      if (filterStatus) params.set('status', filterStatus);
-      if (filterFrom) params.set('from', new Date(filterFrom).toISOString());
-      if (filterTo) params.set('to', new Date(filterTo).toISOString());
+      let query = supabaseAdmin
+        .from('meetings')
+        .select('*, tenants(id, name, slug), leads(id, name, whatsapp, profession)', { count: 'exact' })
+        .order('scheduled_for', { ascending: false })
+        .range(newOffset, newOffset + PAGE_SIZE - 1);
 
-      const response = await adminApiClient.get(`/admin/meetings?${params.toString()}`);
-      const payload = response.data?.data;
-      setItems(payload?.items ?? []);
-      setPagination(payload?.pagination ?? { total: 0, limit: PAGE_SIZE, offset: 0, hasMore: false });
+      if (filterTenantId) query = query.eq('tenant_id', filterTenantId);
+      if (filterStatus) query = query.eq('status', filterStatus);
+      if (filterFrom) query = query.gte('scheduled_for', new Date(filterFrom).toISOString());
+      if (filterTo) query = query.lte('scheduled_for', new Date(filterTo).toISOString());
+
+      const { data: meetingRows, count, error } = await query;
+      if (error) throw error;
+
+      const mapped: MeetingEntry[] = (meetingRows ?? []).map((m: any) => ({
+        id: m.id,
+        tenantId: m.tenant_id,
+        tenantName: m.tenants?.name ?? null,
+        tenantSlug: m.tenants?.slug ?? null,
+        leadId: m.lead_id,
+        leadName: m.leads?.name ?? null,
+        leadWhatsapp: m.leads?.whatsapp ?? null,
+        leadProfession: m.leads?.profession ?? null,
+        conversationId: m.conversation_id,
+        googleEventId: m.google_event_id,
+        scheduledFor: m.scheduled_for,
+        durationMinutes: m.duration_minutes,
+        location: m.location,
+        status: m.status,
+        outcome: m.outcome,
+        policyValueCents: m.policy_value_cents,
+        commissionCents: m.commission_cents,
+        notes: m.notes,
+        referralsCount: m.referrals_count,
+        outcomeMarkedAt: m.outcome_marked_at,
+        createdAt: m.created_at,
+        updatedAt: m.updated_at,
+      }));
+
+      const total = count ?? 0;
+      setItems(mapped);
+      setPagination({ total, limit: PAGE_SIZE, offset: newOffset, hasMore: newOffset + PAGE_SIZE < total });
     } catch (err: unknown) {
-      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha ao carregar reuniÃµes.' : 'Falha ao carregar reuniÃµes.';
+      const message = err instanceof Error ? err.message : 'Falha ao carregar reuniões.';
       setLoadError(message);
     } finally {
       setIsLoading(false);
@@ -181,8 +210,67 @@ export default function Meetings() {
   /* ---------- Fetch stats ---------- */
   const fetchStats = useCallback(async () => {
     try {
-      const response = await adminApiClient.get('/admin/meetings/stats');
-      setStats(response.data?.data ?? null);
+      const { data: allMeetings } = await supabaseAdmin
+        .from('meetings')
+        .select('id, status, outcome, policy_value_cents, commission_cents, tenant_id, scheduled_for, tenants(name)');
+
+      const rows = allMeetings ?? [];
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+      const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString();
+      const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+
+      const meetingsToday = rows.filter((m: any) => m.scheduled_for >= todayStart && m.scheduled_for < todayEnd).length;
+      const meetingsWeek = rows.filter((m: any) => m.scheduled_for >= weekAgo).length;
+      const meetingsMonth = rows.filter((m: any) => m.scheduled_for >= monthStart).length;
+
+      const noShowCount = rows.filter((m: any) => m.status === 'NO_SHOW').length;
+      const noShowRate = rows.length > 0 ? Math.round((noShowCount / rows.length) * 100) : 0;
+
+      // Status breakdown
+      const statusMap: Record<string, number> = {};
+      rows.forEach((m: any) => { statusMap[m.status] = (statusMap[m.status] || 0) + 1; });
+      const statusBreakdown: StatusBreakdown[] = Object.entries(statusMap).map(([status, count]) => ({ status, count }));
+
+      // Outcome breakdown
+      const outcomeMap: Record<string, number> = {};
+      rows.filter((m: any) => m.outcome).forEach((m: any) => { outcomeMap[m.outcome] = (outcomeMap[m.outcome] || 0) + 1; });
+      const outcomeBreakdown: OutcomeBreakdown[] = Object.entries(outcomeMap).map(([outcome, count]) => ({ outcome, count }));
+
+      // Revenue
+      const totalPolicyValueCents = rows
+        .filter((m: any) => m.outcome === 'CLOSED')
+        .reduce((sum: number, m: any) => sum + (m.policy_value_cents ?? 0), 0);
+      const totalCommissionCents = rows
+        .filter((m: any) => m.outcome === 'CLOSED')
+        .reduce((sum: number, m: any) => sum + (m.commission_cents ?? 0), 0);
+
+      // Top tenants
+      const tenantCounts: Record<string, { name: string; count: number }> = {};
+      rows.forEach((m: any) => {
+        const tid = m.tenant_id;
+        const tname = (m.tenants as any)?.name ?? 'Unknown';
+        if (!tenantCounts[tid]) tenantCounts[tid] = { name: tname, count: 0 };
+        tenantCounts[tid].count++;
+      });
+      const topTenants: TopTenant[] = Object.entries(tenantCounts)
+        .map(([tenantId, v]) => ({ tenantId, tenantName: v.name, meetingCount: v.count }))
+        .sort((a, b) => b.meetingCount - a.meetingCount)
+        .slice(0, 5);
+
+      setStats({
+        meetingsToday,
+        meetingsWeek,
+        meetingsMonth,
+        noShowRate,
+        noShowCount,
+        totalMeetings: rows.length,
+        statusBreakdown,
+        outcomeBreakdown,
+        revenue: { totalPolicyValueCents, totalCommissionCents },
+        topTenants,
+      });
     } catch {
       /* non-blocking; KPIs stay at previous values */
     }
@@ -211,15 +299,15 @@ export default function Meetings() {
 
   return (
     <div className="space-y-6 animate-fadeIn">
-      {/* â”€â”€ Header â”€â”€ */}
+      {/* ── Header ── */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold font-heading text-text tracking-tight flex items-center gap-2">
             <Calendar className="w-5 h-5 text-primary" aria-hidden />
-            ReuniÃµes
+            Reuniões
           </h2>
           <p className="text-text-secondary text-xs mt-1">
-            Agenda de reuniÃµes cross-tenant, estatÃ­sticas de no-show e receita projetada. AtualizaÃ§Ã£o automÃ¡tica a cada 60 s.
+            Agenda de reuniões cross-tenant, estatísticas de no-show e receita projetada. Atualização automática a cada 60 s.
           </p>
         </div>
         <div className="flex gap-2">
@@ -233,14 +321,14 @@ export default function Meetings() {
         </div>
       </div>
 
-      {/* â”€â”€ KPI Cards â”€â”€ */}
+      {/* ── KPI Cards ── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Card className="bg-white border-border shadow-sm">
           <CardContent className="pt-4 pb-3">
             <div className="flex items-start justify-between">
               <div>
-                <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">ReuniÃµes Hoje</span>
-                <span className="text-2xl font-bold font-heading font-mono text-text">{stats?.meetingsToday ?? 'â€”'}</span>
+                <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">Reuniões Hoje</span>
+                <span className="text-2xl font-bold font-heading font-mono text-text">{stats?.meetingsToday ?? '—'}</span>
               </div>
               <Calendar className="w-4 h-4 text-text-secondary opacity-80" aria-hidden />
             </div>
@@ -252,7 +340,7 @@ export default function Meetings() {
             <div className="flex items-start justify-between">
               <div>
                 <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">Semana (7d)</span>
-                <span className="text-2xl font-bold font-heading font-mono text-text">{stats?.meetingsWeek ?? 'â€”'}</span>
+                <span className="text-2xl font-bold font-heading font-mono text-text">{stats?.meetingsWeek ?? '—'}</span>
               </div>
               <Clock className="w-4 h-4 text-text-secondary opacity-80" aria-hidden />
             </div>
@@ -265,7 +353,7 @@ export default function Meetings() {
               <div>
                 <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">Taxa No-Show</span>
                 <span className={`text-2xl font-bold font-heading font-mono ${(stats?.noShowRate ?? 0) > 15 ? 'text-red-700' : 'text-text'}`}>
-                  {stats ? `${stats.noShowRate}%` : 'â€”'}
+                  {stats ? `${stats.noShowRate}%` : '—'}
                 </span>
               </div>
               <UserX className={`w-4 h-4 ${(stats?.noShowRate ?? 0) > 15 ? 'text-red-700' : 'text-text-secondary'} opacity-80`} aria-hidden />
@@ -279,7 +367,7 @@ export default function Meetings() {
               <div>
                 <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">Receita Projetada</span>
                 <span className="text-2xl font-bold font-heading font-mono text-text">
-                  {stats ? formatCurrency(stats.revenue.totalPolicyValueCents) : 'â€”'}
+                  {stats ? formatCurrency(stats.revenue.totalPolicyValueCents) : '—'}
                 </span>
               </div>
               <DollarSign className="w-4 h-4 text-text-secondary opacity-80" aria-hidden />
@@ -288,11 +376,11 @@ export default function Meetings() {
         </Card>
       </div>
 
-      {/* â”€â”€ Status Breakdown â”€â”€ */}
+      {/* ── Status Breakdown ── */}
       {stats && stats.statusBreakdown.length > 0 && (
         <Card className="bg-white border-border shadow-sm">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-bold font-heading text-text">ReuniÃµes por Status</CardTitle>
+            <CardTitle className="text-sm font-bold font-heading text-text">Reuniões por Status</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="flex flex-wrap gap-1.5">
@@ -306,13 +394,13 @@ export default function Meetings() {
         </Card>
       )}
 
-      {/* â”€â”€ Outcome Breakdown â”€â”€ */}
+      {/* ── Outcome Breakdown ── */}
       {stats && stats.outcomeBreakdown.length > 0 && (
         <Card className="bg-white border-border shadow-sm">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-bold font-heading text-text flex items-center gap-1.5">
               <TrendingUp className="w-3.5 h-3.5 text-text-secondary" aria-hidden />
-              Desfecho das ReuniÃµes
+              Desfecho das Reuniões
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -325,24 +413,24 @@ export default function Meetings() {
             </div>
             {stats.revenue.totalCommissionCents > 0 && (
               <p className="text-[11px] text-text-secondary mt-2">
-                ComissÃ£o total (fechados): <span className="font-semibold font-mono text-text">{formatCurrency(stats.revenue.totalCommissionCents)}</span>
+                Comissão total (fechados): <span className="font-semibold font-mono text-text">{formatCurrency(stats.revenue.totalCommissionCents)}</span>
               </p>
             )}
           </CardContent>
         </Card>
       )}
 
-      {/* â”€â”€ Top Tenants â”€â”€ */}
+      {/* ── Top Tenants ── */}
       {stats && stats.topTenants.length > 0 && (
         <Card className="bg-white border-border shadow-sm">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-bold font-heading text-text">Top 5 tenants por reuniÃµes</CardTitle>
+            <CardTitle className="text-sm font-bold font-heading text-text">Top 5 tenants por reuniões</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="flex flex-wrap gap-1.5">
               {stats.topTenants.map((t, idx) => (
                 <Badge key={t.tenantId} className="bg-blue-50 text-blue-700 border border-blue-200 text-[10px] px-2 py-0.5">
-                  #{idx + 1} {t.tenantName} <span className="text-blue-500 font-mono ml-1">({t.meetingCount} reuniÃµes)</span>
+                  #{idx + 1} {t.tenantName} <span className="text-blue-500 font-mono ml-1">({t.meetingCount} reuniões)</span>
                 </Badge>
               ))}
             </div>
@@ -350,7 +438,7 @@ export default function Meetings() {
         </Card>
       )}
 
-      {/* â”€â”€ Filter bar â”€â”€ */}
+      {/* ── Filter bar ── */}
       <Card className="bg-white border-border shadow-sm">
         <CardHeader className="pb-3">
           <CardTitle className="text-sm font-bold font-heading text-text">Filtros</CardTitle>
@@ -398,7 +486,7 @@ export default function Meetings() {
             </div>
 
             <div className="flex items-center gap-2">
-              <label htmlFor="filter-to" className="text-[11px] font-semibold text-text-secondary">AtÃ©:</label>
+              <label htmlFor="filter-to" className="text-[11px] font-semibold text-text-secondary">Até:</label>
               <input
                 id="filter-to"
                 type="date"
@@ -420,12 +508,12 @@ export default function Meetings() {
         </CardContent>
       </Card>
 
-      {/* â”€â”€ Meetings table â”€â”€ */}
+      {/* ── Meetings table ── */}
       <Card className="bg-white border-border shadow-sm">
         <CardHeader className="pb-3">
-          <CardTitle className="text-base font-bold font-heading text-text">ReuniÃµes</CardTitle>
+          <CardTitle className="text-base font-bold font-heading text-text">Reuniões</CardTitle>
           <CardDescription className="text-text-secondary text-xs">
-            {pagination.total.toLocaleString('pt-BR')} total Â· ordenado por data desc
+            {pagination.total.toLocaleString('pt-BR')} total · ordenado por data desc
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -441,8 +529,8 @@ export default function Meetings() {
           ) : items.length === 0 ? (
             <div className="text-center py-10">
               <Calendar className="w-6 h-6 text-text-secondary mx-auto mb-2" aria-hidden />
-              <p className="text-sm font-semibold text-text">Nenhuma reuniÃ£o encontrada.</p>
-              <p className="text-[11px] text-text-secondary mt-1">Ajuste os filtros ou aguarde novas reuniÃµes.</p>
+              <p className="text-sm font-semibold text-text">Nenhuma reunião encontrada.</p>
+              <p className="text-[11px] text-text-secondary mt-1">Ajuste os filtros ou aguarde novas reuniões.</p>
             </div>
           ) : (
             <>
@@ -454,18 +542,18 @@ export default function Meetings() {
                       <th className="text-left py-2 px-2 text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Lead</th>
                       <th className="text-left py-2 px-2 text-[10px] font-semibold text-text-secondary uppercase tracking-wider">WhatsApp</th>
                       <th className="text-left py-2 px-2 text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Data/Hora</th>
-                      <th className="text-left py-2 px-2 text-[10px] font-semibold text-text-secondary uppercase tracking-wider">DuraÃ§Ã£o</th>
+                      <th className="text-left py-2 px-2 text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Duração</th>
                       <th className="text-left py-2 px-2 text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Status</th>
                       <th className="text-left py-2 px-2 text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Outcome</th>
-                      <th className="text-right py-2 px-2 text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Valor ApÃ³lice</th>
+                      <th className="text-right py-2 px-2 text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Valor Apólice</th>
                     </tr>
                   </thead>
                   <tbody>
                     {items.map((entry) => (
                       <tr key={entry.id} className="border-b border-border/50 hover:bg-surface-sunken/30 transition-colors">
-                        <td className="py-2 px-2 font-semibold text-text whitespace-nowrap">{entry.tenantName ?? <span className="italic text-text-secondary">â€”</span>}</td>
-                        <td className="py-2 px-2 text-text whitespace-nowrap">{entry.leadName ?? <span className="italic text-text-secondary">â€”</span>}</td>
-                        <td className="py-2 px-2 text-text-secondary font-mono whitespace-nowrap">{entry.leadWhatsapp ?? 'â€”'}</td>
+                        <td className="py-2 px-2 font-semibold text-text whitespace-nowrap">{entry.tenantName ?? <span className="italic text-text-secondary">—</span>}</td>
+                        <td className="py-2 px-2 text-text whitespace-nowrap">{entry.leadName ?? <span className="italic text-text-secondary">—</span>}</td>
+                        <td className="py-2 px-2 text-text-secondary font-mono whitespace-nowrap">{entry.leadWhatsapp ?? '—'}</td>
                         <td className="py-2 px-2 text-text-secondary font-mono whitespace-nowrap">
                           {new Date(entry.scheduledFor).toLocaleString('pt-BR')}
                         </td>
@@ -476,10 +564,10 @@ export default function Meetings() {
                           </Badge>
                         </td>
                         <td className="py-2 px-2 text-text-secondary whitespace-nowrap">
-                          {entry.outcome ? (OUTCOME_LABELS[entry.outcome] ?? entry.outcome) : 'â€”'}
+                          {entry.outcome ? (OUTCOME_LABELS[entry.outcome] ?? entry.outcome) : '—'}
                         </td>
                         <td className="py-2 px-2 text-right text-text font-mono whitespace-nowrap">
-                          {entry.policyValueCents != null ? formatCurrency(entry.policyValueCents) : 'â€”'}
+                          {entry.policyValueCents != null ? formatCurrency(entry.policyValueCents) : '—'}
                         </td>
                       </tr>
                     ))}
@@ -490,7 +578,7 @@ export default function Meetings() {
               {/* Pagination */}
               <div className="flex items-center justify-between pt-4 mt-2 border-t border-border/50">
                 <span className="text-[11px] text-text-secondary">
-                  PÃ¡gina {currentPage} de {totalPages} Â· {pagination.total.toLocaleString('pt-BR')} registros
+                  Página {currentPage} de {totalPages} · {pagination.total.toLocaleString('pt-BR')} registros
                 </span>
                 <div className="flex gap-1.5">
                   <Button
@@ -505,7 +593,7 @@ export default function Meetings() {
                     disabled={!pagination.hasMore || isLoading}
                     className="bg-white hover:bg-surface-sunken text-text border border-border text-[10px] px-2.5 h-7 rounded-lg flex items-center gap-1 disabled:opacity-40"
                   >
-                    PrÃ³xima <ChevronRight className="w-3 h-3" aria-hidden />
+                    Próxima <ChevronRight className="w-3 h-3" aria-hidden />
                   </Button>
                 </div>
               </div>

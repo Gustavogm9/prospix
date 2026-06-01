@@ -3,7 +3,7 @@
 import { Suspense, useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Button, Input, toast } from '@prospix/ui';
-import { apiClient } from '@/lib/api-client';
+
 
 function SignupDetailsInner() {
   const searchParams = useSearchParams();
@@ -97,33 +97,43 @@ function SignupDetailsInner() {
     }
 
     if (!acceptTerms) {
-      toast.error('Termos de Servi├ºo', 'Voc├¬ precisa aceitar os termos de servi├ºo e a pol├¡tica de privacidade.');
+      toast.error('Termos de Serviço', 'Você precisa aceitar os termos de serviço e a política de privacidade.');
       return;
     }
 
     setIsLoading(true);
     try {
-      const response = await apiClient.post('/auth/invitations/redeem', {
-        code,
-        user: {
-          name,
-          email,
-          whatsapp: rawWhatsapp,
-          susep: susep.trim() || null,
-          city: city.trim() || null,
-          password,
-        },
-        accept_terms: acceptTerms,
+      const res = await fetch('/api/auth/invitations/redeem', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code,
+          user: {
+            name,
+            email,
+            whatsapp: rawWhatsapp,
+            susep: susep.trim() || null,
+            city: city.trim() || null,
+            password,
+          },
+          accept_terms: acceptTerms,
+        }),
       });
 
-      if (response.status === 201) {
+      if (res.status === 201 || res.ok) {
         setIsSuccess(true);
-        toast.success('Cadastro Conclu├¡do!', 'Conta criada e ativada com sucesso.');
+        toast.success('Cadastro Concluído!', 'Conta criada e ativada com sucesso.');
+      } else {
+        const json = await res.json();
+        toast.error(
+          'Erro no cadastro',
+          json?.message || 'Não foi possível concluir seu cadastro. Fale com o suporte.'
+        );
       }
     } catch (error: any) {
       toast.error(
         'Erro no cadastro',
-        error.response?.data?.message || 'N├úo foi poss├¡vel concluir seu cadastro. Fale com o suporte.'
+        'Não foi possível concluir seu cadastro. Fale com o suporte.'
       );
     } finally {
       setIsLoading(false);

@@ -17,7 +17,7 @@ import {
   ChevronUp,
   ChevronDown,
 } from 'lucide-react';
-import { adminApiClient } from '@/lib/admin-api-client';
+import { supabaseAdmin } from '@/lib/supabase';
 import { adminTenantsQueries } from '@/lib/admin-queries';
 
 /* ------------------------------------------------------------------ */
@@ -117,15 +117,202 @@ export default function Performance() {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const tenantParam = filterTenantId ? `?tenantId=${filterTenantId}` : '';
-      const [overviewRes, trendsRes, rankingRes] = await Promise.all([
-        adminApiClient.get(`/admin/performance/overview${tenantParam}`),
-        adminApiClient.get(`/admin/performance/trends${tenantParam}`),
-        adminApiClient.get(`/admin/performance/ranking?sortBy=${sortBy}&limit=10`),
-      ]);
-      setOverview(overviewRes.data?.data ?? null);
-      setTrends(trendsRes.data?.data?.trends ?? []);
-      setRanking(rankingRes.data?.data?.ranking ?? []);
+      // ── Fetch all raw data from Supabase ──
+      const tenantFilter = filterTenantId || undefined;
+
+      // Leads query
+      let leadsQuery = supabaseAdmin
+        .from('leads')
+        .select('id, status, tenant_id, created_at')
+        .is('deleted_at', null);
+      if (tenantFilter) leadsQuery = leadsQuery.eq('tenant_id', tenantFilter);
+      const { data: allLeads } = await leadsQuery;
+      const leads = allLeads ?? [];
+
+      // Meetings query
+      let meetingsQuery = supabaseAdmin
+        .from('meetings')
+        .select('id, status, outcome, policy_value_cents, commission_cents, tenant_id, lead_id');
+      if (tenantFilter) meetingsQuery = meetingsQuery.eq('tenant_id', tenantFilter);
+      const { data: allMeetings } = await meetingsQuery;
+      const meetings = allMeetings ?? [];
+
+      // Conversations query
+      let convQuery = supabaseAdmin
+        .from('conversations')
+        .select('id, status, message_count, tenant_id');
+      if (tenantFilter) convQuery = convQuery.eq('tenant_id', tenantFilter);
+      const { data: allConvs } = await convQuery;
+      const convs = allConvs ?? [];
+
+      // Campaigns
+      let campQuery = supabaseAdmin
+        .from('campaigns')
+        .select('id, status')
+        .eq('status', 'ACTIVE');
+      if (tenantFilter) campQuery = campQuery.eq('tenant_id', tenantFilter);
+      const { data: allCampaigns } = await campQuery;
+
+      // Active tenants
+      const { data: activeTenants } = await supabaseAdmin
+        .from('tenants')
+        .select('id')
+        .eq('status', 'ACTIVE');
+
+      // ── Compute Overview ──
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+      const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+
+      const leadsToday = leads.filter((l: any) => l.created_at >= todayStart).length;
+      const leadsWeek = leads.filter((l: any) => l.created_at >= weekAgo).length;
+      const leadsMonth = leads.filter((l: any) => l.created_at >= monthStart).length;
+
+      const statusCount = (s: string) => leads.filter((l: any) => l.status === s).length;
+      const captured = statusCount('CAPTURED') + statusCount('ENRICHED');
+      const contacted = statusCount('CONTACTED');
+      const conversing = statusCount('CONVERSING');
+      const qualified = statusCount('QUALIFIED');
+      const meetingScheduled = statusCount('MEETING_SCHEDULED');
+      const closedWon = statusCount('CLOSED_WON');
+
+      const meetingsHappened = meetings.filter((m: any) => m.status === 'HAPPENED').length;
+      const meetingsNoShow = meetings.filter((m: any) => m.status === 'NO_SHOW').length;
+      const meetingsClosedWon = meetings.filter((m: any) => m.outcome === 'CLOSED').length;
+      const noShowRate = meetings.length > 0 ? (meetingsNoShow / meetings.length) * 100 : 0;
+
+      const policyValueCents = meetings
+        .filter((m: any) => m.outcome === 'CLOSED')
+        .reduce((sum: number, m: any) => sum + (m.policy_value_cents ?? 0), 0);
+      const commissionCents = meetings
+        .filter((m: any) => m.outcome === 'CLOSED')
+        .reduce((sum: number, m: any) => sum + (m.commission_cents ?? 0), 0);
+
+      const escalated = convs.filter((c: any) => c.status === 'ESCALATED').length;
+      const escalationRate = convs.length > 0 ? (escalated / convs.length) * 100 : 0;
+      const avgMessages = convs.length > 0
+        ? Math.round(convs.reduce((sum: number, c: any) => sum + (c.message_count ?? 0), 0) / convs.length)
+        : 0;
+
+      const contactRate = captured > 0 ? (contacted / captured) * 100 : 0;
+      const qualificationRate = conversing > 0 ? (qualified / conversing) * 100 : 0;
+      const closeRate = meetingScheduled > 0 ? (closedWon / meetingScheduled) * 100 : 0;
+      const overallConversion = leads.length > 0 ? (closedWon / leads.length) * 100 : 0;
+
+      setOverview({
+        leads: { total: leads.length, today: leadsToday, week: leadsWeek, month: leadsMonth, captured, contacted, conversing, qualified, meetingScheduled, closedWon },
+        meetings: { total: meetings.length, happened: meetingsHappened, noShow: meetingsNoShow, closedWon: meetingsClosedWon, noShowRate: Math.round(noShowRate * 10) / 10 },
+        revenue: { policyValueCents, commissionCents },
+        conversations: { total: convs.length, escalated, escalationRate: Math.round(escalationRate * 10) / 10, avgMessages },
+        campaigns: { active: (allCampaigns ?? []).length },
+        rates: {
+          overallConversion: Math.round(overallConversion * 10) / 10,
+          contactRate: Math.round(contactRate * 10) / 10,
+          qualificationRate: Math.round(qualificationRate * 10) / 10,
+          closeRate: Math.round(closeRate * 10) / 10,
+        },
+        tenants: { active: (activeTenants ?? []).length },
+      });
+
+      // ── Compute Trends from tenant_usage ──
+      let usageQuery = supabaseAdmin
+        .from('tenant_usage')
+        .select('*')
+        .order('period_month', { ascending: true });
+      if (tenantFilter) usageQuery = usageQuery.eq('tenant_id', tenantFilter);
+      const { data: usageRows } = await usageQuery;
+
+      // Group by period
+      const periodMap: Record<string, { leads: number; convs: number; scheduled: number; closed: number; cost: number; whatsapp: number; tenants: Set<string> }> = {};
+      (usageRows ?? []).forEach((u: any) => {
+        const p = u.period_month;
+        if (!periodMap[p]) periodMap[p] = { leads: 0, convs: 0, scheduled: 0, closed: 0, cost: 0, whatsapp: 0, tenants: new Set() };
+        periodMap[p].leads += u.leads_captured_count ?? 0;
+        periodMap[p].convs += u.conversations_started ?? 0;
+        periodMap[p].scheduled += u.meetings_scheduled ?? 0;
+        periodMap[p].closed += u.meetings_closed ?? 0;
+        periodMap[p].cost += (u.llm_cost_cents ?? 0) + (u.whatsapp_cost_cents ?? 0) + (u.google_maps_cost_cents ?? 0);
+        periodMap[p].whatsapp += u.whatsapp_messages_sent ?? 0;
+        periodMap[p].tenants.add(u.tenant_id);
+      });
+
+      const trendRows: TrendRow[] = Object.entries(periodMap)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .slice(-12)
+        .map(([period, v]) => ({
+          period,
+          leadsCaptured: v.leads,
+          conversationsStarted: v.convs,
+          meetingsScheduled: v.scheduled,
+          meetingsClosed: v.closed,
+          totalCostCents: v.cost,
+          whatsappSent: v.whatsapp,
+          activeTenants: v.tenants.size,
+          conversionRate: v.leads > 0 ? Math.round((v.closed / v.leads) * 1000) / 10 : 0,
+        }));
+      setTrends(trendRows);
+
+      // ── Compute Ranking ──
+      // Group leads by tenant
+      const tenantLeadMap: Record<string, { name: string; leads: any[]; meetings: any[] }> = {};
+      leads.forEach((l: any) => {
+        if (!tenantLeadMap[l.tenant_id]) tenantLeadMap[l.tenant_id] = { name: '', leads: [], meetings: [] };
+        tenantLeadMap[l.tenant_id]!.leads.push(l);
+      });
+      meetings.forEach((m: any) => {
+        if (!tenantLeadMap[m.tenant_id]) tenantLeadMap[m.tenant_id] = { name: '', leads: [], meetings: [] };
+        tenantLeadMap[m.tenant_id]!.meetings.push(m);
+      });
+
+      // Get tenant names
+      const { data: tenantNames } = await supabaseAdmin
+        .from('tenants')
+        .select('id, name');
+      (tenantNames ?? []).forEach((t: any) => {
+        if (tenantLeadMap[t.id]) tenantLeadMap[t.id]!.name = t.name;
+      });
+
+      let rankingRows: RankingRow[] = Object.entries(tenantLeadMap)
+        .map(([tenantId, v]) => {
+          const totalLeads = v.leads.length;
+          const closedWonT = v.leads.filter((l: any) => l.status === 'CLOSED_WON').length;
+          const closedLost = v.leads.filter((l: any) => l.status === 'CLOSED_LOST').length;
+          const totalMeetingsT = v.meetings.length;
+          const meetingsHappenedT = v.meetings.filter((m: any) => m.status === 'HAPPENED').length;
+          const meetingsNoShowT = v.meetings.filter((m: any) => m.status === 'NO_SHOW').length;
+          const revenueCents = v.meetings.filter((m: any) => m.outcome === 'CLOSED').reduce((s: number, m: any) => s + (m.policy_value_cents ?? 0), 0);
+          const commissionCentsT = v.meetings.filter((m: any) => m.outcome === 'CLOSED').reduce((s: number, m: any) => s + (m.commission_cents ?? 0), 0);
+          const conversionRateT = totalLeads > 0 ? Math.round((closedWonT / totalLeads) * 1000) / 10 : 0;
+          const noShowRateT = totalMeetingsT > 0 ? Math.round((meetingsNoShowT / totalMeetingsT) * 1000) / 10 : 0;
+          return {
+            rank: 0,
+            tenantId,
+            tenantName: v.name || 'Unknown',
+            totalLeads,
+            closedWon: closedWonT,
+            closedLost,
+            totalMeetings: totalMeetingsT,
+            meetingsHappened: meetingsHappenedT,
+            meetingsNoShow: meetingsNoShowT,
+            revenueCents,
+            commissionCents: commissionCentsT,
+            conversionRate: conversionRateT,
+            noShowRate: noShowRateT,
+          };
+        })
+        .filter((r) => r.totalLeads > 0);
+
+      // Sort
+      const sortFn: Record<string, (a: RankingRow, b: RankingRow) => number> = {
+        leads: (a, b) => b.totalLeads - a.totalLeads,
+        closedWon: (a, b) => b.closedWon - a.closedWon,
+        revenue: (a, b) => b.revenueCents - a.revenueCents,
+        conversion: (a, b) => b.conversionRate - a.conversionRate,
+      };
+      rankingRows.sort(sortFn[sortBy] ?? sortFn.leads);
+      rankingRows = rankingRows.slice(0, 10).map((r, i) => ({ ...r, rank: i + 1 }));
+      setRanking(rankingRows);
     } catch {
       setLoadError('Falha ao carregar dados de performance.');
     } finally {

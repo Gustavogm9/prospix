@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Input, toast } from '@prospix/ui';
-import { apiClient } from '@/lib/api-client';
+
 
 export default function SignupCode() {
   const [code, setCode] = useState('');
@@ -58,9 +58,22 @@ export default function SignupCode() {
 
     setIsLoading(true);
     try {
-      const response = await apiClient.post('/auth/invitations/verify', { code });
+      const res = await fetch('/api/auth/invitations/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code }),
+      });
+      const json = await res.json();
       
-      const { tenant_name, role } = response.data.data;
+      if (!res.ok) {
+        const errorType = json?.error || 'unknown';
+        const message = json?.message || 'Código expirado ou inválido.';
+        const params = new URLSearchParams({ code, error: errorType, message });
+        router.push(`/cadastro/erro?${params.toString()}`);
+        return;
+      }
+
+      const { tenant_name, role } = json.data;
       toast.success(
         'Convite verificado!',
         `Bem-vindo ao workspace da ${tenant_name}.`
@@ -70,11 +83,7 @@ export default function SignupCode() {
       const params = new URLSearchParams({ code, tenantName: tenant_name, role });
       router.push(`/cadastro/detalhes?${params.toString()}`);
     } catch (error: any) {
-      const errorType = error.response?.data?.error;
-      const message = error.response?.data?.message || 'Código expirado ou inválido.';
-      
-      // Navigate to dedicated error page
-      const params = new URLSearchParams({ code, error: errorType || 'unknown', message });
+      const params = new URLSearchParams({ code, error: 'unknown', message: 'Código expirado ou inválido.' });
       router.push(`/cadastro/erro?${params.toString()}`);
     } finally {
       setIsLoading(false);

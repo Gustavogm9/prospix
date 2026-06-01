@@ -1,11 +1,10 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badge, toast } from '@prospix/ui';
 import { Contact, RefreshCw, Loader2, Search, Download } from 'lucide-react';
-import { adminApiClient } from '@/lib/admin-api-client';
-import { AxiosError } from 'axios';
+import { supabaseAdmin } from '@/lib/supabase';
 
 interface LeadItem {
   id: string;
@@ -59,26 +58,111 @@ export default function LeadManagement() {
   const fetchLeads = async (newOffset = 0) => {
     setIsLoading(true);
     try {
-      const params = new URLSearchParams();
-      params.set('limit', String(PAGE_SIZE));
-      params.set('offset', String(newOffset));
-      if (searchTerm.trim()) params.set('search', searchTerm.trim());
-      if (filterStatus !== 'all') params.set('status', filterStatus);
+      // ── Build leads query ──
+      let query = supabaseAdmin
+        .from('leads')
+        .select('*, tenants(id, name, slug)', { count: 'exact' })
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .range(newOffset, newOffset + PAGE_SIZE - 1);
 
-      const [leadsRes, statsRes] = await Promise.all([
-        adminApiClient.get(`/admin/leads?${params.toString()}`),
-        adminApiClient.get('/admin/leads/stats'),
-      ]);
+      if (filterStatus !== 'all') query = query.eq('status', filterStatus);
+      if (searchTerm.trim()) {
+        query = query.or(`name.ilike.%${searchTerm.trim()}%,whatsapp.ilike.%${searchTerm.trim()}%,email.ilike.%${searchTerm.trim()}%`);
+      }
 
-      const payload = leadsRes.data?.data;
-      setItems(payload?.items ?? []);
-      setPagination(payload?.pagination ?? { total: 0, limit: PAGE_SIZE, offset: 0, hasMore: false });
-      setStats(statsRes.data?.data ?? null);
+      const { data: leadRows, count, error } = await query;
+      if (error) throw error;
+
+      // Get conversation counts for these leads
+      const leadIds = (leadRows ?? []).map((l: any) => l.id);
+      let convCountMap: Record<string, number> = {};
+      if (leadIds.length > 0) {
+        const { data: convs } = await supabaseAdmin
+          .from('conversations')
+          .select('lead_id')
+          .in('lead_id', leadIds);
+        (convs ?? []).forEach((c: any) => {
+          convCountMap[c.lead_id] = (convCountMap[c.lead_id] || 0) + 1;
+        });
+      }
+
+      const mapped: LeadItem[] = (leadRows ?? []).map((l: any) => ({
+        id: l.id,
+        name: l.name ?? 'Sem nome',
+        whatsapp: l.whatsapp,
+        email: l.email,
+        status: l.status,
+        source: l.source,
+        profession: l.profession,
+        city: l.address?.city ?? null,
+        tenantId: l.tenant_id,
+        tenant: l.tenants ? { id: l.tenants.id ?? l.tenant_id, name: l.tenants.name, slug: l.tenants.slug } : null,
+        conversationCount: convCountMap[l.id] ?? 0,
+        createdAt: l.created_at,
+        updatedAt: l.updated_at,
+      }));
+
+      const total = count ?? 0;
+      setItems(mapped);
+      setPagination({ total, limit: PAGE_SIZE, offset: newOffset, hasMore: newOffset + PAGE_SIZE < total });
+
+      // ── Compute stats client-side ──
+      await fetchStats();
     } catch (err: unknown) {
-      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha ao carregar leads.' : 'Falha ao carregar leads.';
+      const message = err instanceof Error ? err.message : 'Falha ao carregar leads.';
       toast.error('Erro', message);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const fetchStats = async () => {
+    try {
+      const { data: allLeads } = await supabaseAdmin
+        .from('leads')
+        .select('id, status, source, tenant_id, created_at, tenants(name)')
+        .is('deleted_at', null);
+
+      const rows = allLeads ?? [];
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+      const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+
+      const newToday = rows.filter((l: any) => l.created_at >= todayStart).length;
+      const newWeek = rows.filter((l: any) => l.created_at >= weekAgo).length;
+      const newMonth = rows.filter((l: any) => l.created_at >= monthStart).length;
+
+      const byStatus: Record<string, number> = {};
+      const bySource: Record<string, number> = {};
+      const tenantCounts: Record<string, { name: string; count: number }> = {};
+
+      rows.forEach((l: any) => {
+        byStatus[l.status] = (byStatus[l.status] || 0) + 1;
+        bySource[l.source] = (bySource[l.source] || 0) + 1;
+        const tid = l.tenant_id;
+        const tname = (l.tenants as any)?.name ?? 'Unknown';
+        if (!tenantCounts[tid]) tenantCounts[tid] = { name: tname, count: 0 };
+        tenantCounts[tid].count++;
+      });
+
+      const topTenants = Object.entries(tenantCounts)
+        .map(([tenantId, v]) => ({ tenantId, tenantName: v.name, count: v.count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5);
+
+      setStats({
+        totalAll: rows.length,
+        newToday,
+        newWeek,
+        newMonth,
+        byStatus,
+        bySource,
+        topTenants,
+      });
+    } catch {
+      // non-blocking
     }
   };
 
@@ -92,10 +176,34 @@ export default function LeadManagement() {
   const handleExport = async () => {
     setExporting(true);
     try {
-      const params = new URLSearchParams();
-      if (filterStatus !== 'all') params.set('status', filterStatus);
-      const response = await adminApiClient.get(`/admin/leads/export?${params.toString()}`, { responseType: 'blob' });
-      const url = window.URL.createObjectURL(new Blob([response.data]));
+      // Generate CSV client-side from supabase data
+      let query = supabaseAdmin
+        .from('leads')
+        .select('name, whatsapp, email, status, source, profession, created_at, tenants(name)')
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .limit(10000);
+
+      if (filterStatus !== 'all') query = query.eq('status', filterStatus);
+
+      const { data: exportRows, error } = await query;
+      if (error) throw error;
+
+      const headers = ['Nome', 'WhatsApp', 'Email', 'Status', 'Fonte', 'Profissão', 'Tenant', 'Criado em'];
+      const csvRows = (exportRows ?? []).map((l: any) => [
+        l.name ?? '',
+        l.whatsapp,
+        l.email ?? '',
+        l.status,
+        l.source,
+        l.profession ?? '',
+        (l.tenants as any)?.name ?? '',
+        l.created_at,
+      ].map((v: string) => `"${String(v).replace(/"/g, '""')}"`).join(','));
+
+      const csv = [headers.join(','), ...csvRows].join('\n');
+      const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+      const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = `leads_export_${new Date().toISOString().slice(0, 10)}.csv`;
@@ -115,9 +223,9 @@ export default function LeadManagement() {
         <div>
           <h2 className="text-2xl font-bold font-heading text-text tracking-tight flex items-center gap-2">
             <Contact className="w-5 h-5 text-primary" aria-hidden />
-            GestÃ£o de Leads
+            Gestão de Leads
           </h2>
-          <p className="text-text-secondary text-xs mt-1">VisÃ£o cross-tenant de todos os leads Â· filtros Â· exportaÃ§Ã£o CSV</p>
+          <p className="text-text-secondary text-xs mt-1">Visão cross-tenant de todos os leads · filtros · exportação CSV</p>
         </div>
         <div className="flex gap-2">
           <Button onClick={() => fetchLeads(pagination.offset)} disabled={isLoading} className="bg-white hover:bg-surface-sunken text-text border border-border text-xs px-3 h-9 rounded-lg flex items-center gap-1.5">
@@ -136,7 +244,7 @@ export default function LeadManagement() {
           <Card className="bg-white shadow-sm border-border"><CardContent className="pt-4 pb-3"><span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">Total Leads</span><span className="text-2xl font-bold font-heading font-mono text-text">{stats.totalAll.toLocaleString('pt-BR')}</span></CardContent></Card>
           <Card className="bg-white shadow-sm border-border"><CardContent className="pt-4 pb-3"><span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">Novos Hoje</span><span className="text-2xl font-bold font-heading font-mono text-blue-700">{stats.newToday}</span></CardContent></Card>
           <Card className="bg-white shadow-sm border-border"><CardContent className="pt-4 pb-3"><span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">Novos (7d)</span><span className="text-2xl font-bold font-heading font-mono text-text">{stats.newWeek}</span></CardContent></Card>
-          <Card className="bg-white shadow-sm border-border"><CardContent className="pt-4 pb-3"><span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">Novos (MÃªs)</span><span className="text-2xl font-bold font-heading font-mono text-text">{stats.newMonth}</span></CardContent></Card>
+          <Card className="bg-white shadow-sm border-border"><CardContent className="pt-4 pb-3"><span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">Novos (Mês)</span><span className="text-2xl font-bold font-heading font-mono text-text">{stats.newMonth}</span></CardContent></Card>
         </div>
       )}
 
@@ -204,7 +312,7 @@ export default function LeadManagement() {
                   <th className="text-left py-2 px-2 text-text-secondary font-semibold uppercase tracking-wider text-[10px]">Tenant</th>
                   <th className="text-left py-2 px-2 text-text-secondary font-semibold uppercase tracking-wider text-[10px]">Status</th>
                   <th className="text-left py-2 px-2 text-text-secondary font-semibold uppercase tracking-wider text-[10px]">Fonte</th>
-                  <th className="text-left py-2 px-2 text-text-secondary font-semibold uppercase tracking-wider text-[10px]">ProfissÃ£o</th>
+                  <th className="text-left py-2 px-2 text-text-secondary font-semibold uppercase tracking-wider text-[10px]">Profissão</th>
                   <th className="text-left py-2 px-2 text-text-secondary font-semibold uppercase tracking-wider text-[10px]">Conversas</th>
                   <th className="text-left py-2 px-2 text-text-secondary font-semibold uppercase tracking-wider text-[10px]">Criado</th>
                 </tr></thead>
@@ -217,11 +325,11 @@ export default function LeadManagement() {
                         {lead.email && <div className="text-text-muted text-[10px]">{lead.email}</div>}
                       </td>
                       <td className="py-2.5 px-2">
-                        {lead.tenant ? <Link href={`/admin/tenants/${lead.tenant.id}`} className="text-primary hover:underline font-medium">{lead.tenant.name}</Link> : 'â€”'}
+                        {lead.tenant ? <Link href={`/admin/tenants/${lead.tenant.id}`} className="text-primary hover:underline font-medium">{lead.tenant.name}</Link> : '—'}
                       </td>
                       <td className="py-2.5 px-2"><Badge className={`text-[9px] px-1.5 py-0 border ${STATUS_STYLES[lead.status] ?? 'bg-gray-100 text-gray-600 border-gray-200'}`}>{lead.status}</Badge></td>
                       <td className="py-2.5 px-2 text-text-secondary">{lead.source}</td>
-                      <td className="py-2.5 px-2 text-text-secondary">{lead.profession ?? 'â€”'}</td>
+                      <td className="py-2.5 px-2 text-text-secondary">{lead.profession ?? '—'}</td>
                       <td className="py-2.5 px-2 text-text font-mono">{lead.conversationCount}</td>
                       <td className="py-2.5 px-2 text-text-secondary text-[10px]">{new Date(lead.createdAt).toLocaleDateString('pt-BR')}</td>
                     </tr>
@@ -233,10 +341,10 @@ export default function LeadManagement() {
 
           {pagination.total > PAGE_SIZE && (
             <div className="flex justify-between items-center mt-4 pt-3 border-t border-border">
-              <span className="text-[10px] text-text-secondary">{pagination.offset + 1}â€“{Math.min(pagination.offset + PAGE_SIZE, pagination.total)} de {pagination.total}</span>
+              <span className="text-[10px] text-text-secondary">{pagination.offset + 1}–{Math.min(pagination.offset + PAGE_SIZE, pagination.total)} de {pagination.total}</span>
               <div className="flex gap-1.5">
                 <Button onClick={() => fetchLeads(Math.max(0, pagination.offset - PAGE_SIZE))} disabled={pagination.offset === 0} className="text-[10px] px-3 h-7 rounded bg-white text-text border border-border">Anterior</Button>
-                <Button onClick={() => fetchLeads(pagination.offset + PAGE_SIZE)} disabled={!pagination.hasMore} className="text-[10px] px-3 h-7 rounded bg-white text-text border border-border">PrÃ³ximo</Button>
+                <Button onClick={() => fetchLeads(pagination.offset + PAGE_SIZE)} disabled={!pagination.hasMore} className="text-[10px] px-3 h-7 rounded bg-white text-text border border-border">Próximo</Button>
               </div>
             </div>
           )}

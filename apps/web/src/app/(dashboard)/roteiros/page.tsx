@@ -5,7 +5,7 @@ import { Button, Input, Textarea, toast, Badge } from '@prospix/ui';
 import { Play, Sparkles, MessageSquare, Plus, Save, Trash2, Wand2, X } from 'lucide-react';
 import { scriptsQueries } from '@/lib/queries';
 import { useAuthStore } from '@/store/auth-store';
-import { apiClient } from '@/lib/api-client';
+import { apiFetch } from '@/lib/api-fetch';
 
 
 interface ScriptVariation {
@@ -73,15 +73,19 @@ export default function Scripts() {
     setIsGenerating(true);
 
     try {
-      const response = await apiClient.post('/tenant/scripts/generate', {
-        niche: selectedNiche,
-        customNiche: selectedNiche === 'OTHER' ? customNiche : null,
-        product: selectedProduct,
-        customProduct: selectedProduct === 'OTHER' ? customProduct : null,
-        tone: selectedTone,
+      const res = await apiFetch('/api/scripts/generate', {
+        method: 'POST',
+        body: JSON.stringify({
+          niche: selectedNiche,
+          customNiche: selectedNiche === 'OTHER' ? customNiche : null,
+          product: selectedProduct,
+          customProduct: selectedProduct === 'OTHER' ? customProduct : null,
+          tone: selectedTone,
+        }),
       });
+      const json = await res.json();
 
-      const data = response.data?.data;
+      const data = json?.data;
       if (data) {
         setBaseMessage(data.baseMessage);
         
@@ -267,15 +271,19 @@ export default function Scripts() {
 
     setIsLoadingSim(true);
     try {
-      const response = await apiClient.post('/tenant/scripts/simulate', {
-        input: simulationInput,
-        baseMessage,
-        variations,
+      const res = await apiFetch('/api/scripts/simulate', {
+        method: 'POST',
+        body: JSON.stringify({
+          input: simulationInput,
+          baseMessage,
+          variations,
+        }),
       });
+      const json = await res.json();
 
-      if (response?.data) {
-        setSimulationResponse(response.data.reply);
-        setSimulatedVariant(response.data.variantUsed);
+      if (json) {
+        setSimulationResponse(json.reply);
+        setSimulatedVariant(json.variantUsed);
       }
       setIsLoadingSim(false);
     } catch (err: unknown) {

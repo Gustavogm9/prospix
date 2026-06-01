@@ -31,7 +31,7 @@ import {
   Smartphone,
 } from 'lucide-react';
 import { Avatar, Dropdown, DropdownItem } from '@prospix/ui';
-import { apiClient } from '../lib/api-client';
+import { apiFetch } from '../lib/api-fetch';
 
 interface AppShellCounters {
   conversations: number;
@@ -80,8 +80,9 @@ export default function AppShell({ children }: AppShellProps) {
 
     const fetchCounters = async () => {
       try {
-        const response = await apiClient.get('/tenant/dashboard/today');
-        const data = response.data?.data ?? response.data;
+        const res = await apiFetch('/api/dashboard/today');
+        const json = await res.json();
+        const data = json?.data ?? json;
 
         if (!isMounted) return;
 
@@ -108,9 +109,10 @@ export default function AppShell({ children }: AppShellProps) {
 
   const fetchNotifications = async () => {
     try {
-      const res = await apiClient.get('/tenant/notifications');
-      setNotifications(res.data?.data || []);
-      setUnreadCount(res.data?.unreadCount || 0);
+      const res = await apiFetch('/api/notifications/list');
+      const json = await res.json();
+      setNotifications(json?.data || []);
+      setUnreadCount(json?.unreadCount || 0);
     } catch {}
   };
 
@@ -404,7 +406,7 @@ export default function AppShell({ children }: AppShellProps) {
                       {unreadCount > 0 && (
                         <button
                           onClick={async () => {
-                            try { await apiClient.patch('/tenant/notifications/read-all'); fetchNotifications(); } catch {}
+                            try { await apiFetch('/api/notifications/read-all', { method: 'PATCH' }); fetchNotifications(); } catch {}
                           }}
                           className="text-[11px] font-semibold text-primary hover:underline"
                         >
@@ -418,7 +420,7 @@ export default function AppShell({ children }: AppShellProps) {
                           <div key={n.id} className={`py-2.5 px-1 cursor-pointer hover:bg-[#F9FAFB] rounded-lg transition-colors ${!n.readAt ? 'bg-[rgba(27,58,107,0.03)]' : ''}`}
                             onClick={async () => {
                               if (!n.readAt) {
-                                try { await apiClient.patch(`/tenant/notifications/${n.id}/read`); fetchNotifications(); } catch {}
+                                try { await apiFetch(`/api/notifications/${n.id}/read`, { method: 'PATCH' }); fetchNotifications(); } catch {}
                               }
                               if (n.link) router.push(n.link);
                               setIsNotificationsOpen(false);
