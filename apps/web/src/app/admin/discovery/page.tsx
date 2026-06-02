@@ -153,7 +153,7 @@ export default function Discovery() {
     setDiscoveryError(null);
     try {
       const { data: row, error } = await supabaseAdmin
-        .from('discoveries')
+        .from('tenant_discoveries')
         .select('*')
         .eq('tenant_id', id)
         .maybeSingle();
@@ -163,7 +163,7 @@ export default function Discovery() {
       if (!row) {
         // No discovery record yet — create a fresh default
         const { data: newRow, error: insertError } = await supabaseAdmin
-          .from('discoveries')
+          .from('tenant_discoveries')
           .insert({ tenant_id: id, status: 'NOT_STARTED' })
           .select('*')
           .single();
@@ -216,7 +216,7 @@ export default function Discovery() {
       };
 
       const { data: updatedRow, error } = await supabaseAdmin
-        .from('discoveries')
+        .from('tenant_discoveries')
         .update(updateData)
         .eq('tenant_id', selectedTenantId)
         .select('*')

@@ -58,7 +58,7 @@ export default function AuditLog() {
     setLoadError(null);
     try {
       let query = supabaseAdmin
-        .from('audit_logs')
+        .from('audit_log')
         .select(`
           *,
           tenants(id, name, slug),
@@ -97,7 +97,7 @@ export default function AuditLog() {
       // Fetch known actions for filter dropdown
       if (knownActions.length === 0) {
         const { data: actionsData } = await supabaseAdmin
-          .from('audit_logs')
+          .from('audit_log')
           .select('action')
           .limit(1000);
 

@@ -48,7 +48,7 @@ export default function Billing() {
     setLoadError(null);
     try {
       const { data, error } = await supabaseAdmin
-        .from('billing_records')
+        .from('tenant_billing')
         .select('*, tenants(name)')
         .in('status', ['PENDING', 'OVERDUE'])
         .order('due_at', { ascending: true });
