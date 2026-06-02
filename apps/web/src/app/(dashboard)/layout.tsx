@@ -4,7 +4,6 @@ import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/store/auth-store';
 import { supabase } from '@/lib/supabase';
-import { ToastContainer } from '@prospix/ui';
 import AppShell from '@/layout/AppShell';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -79,9 +78,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   return (
-    <>
-      <AppShell>{children}</AppShell>
-      <ToastContainer />
-    </>
+    <AppShell>{children}</AppShell>
   );
 }

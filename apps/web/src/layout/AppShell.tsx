@@ -113,7 +113,7 @@ export default function AppShell({ children }: AppShellProps) {
       const json = await res.json();
       setNotifications(json?.data || []);
       setUnreadCount(json?.unreadCount || 0);
-    } catch {}
+    } catch { /* notifications are non-critical — fail silently */ }
   };
 
   useEffect(() => {
@@ -406,7 +406,7 @@ export default function AppShell({ children }: AppShellProps) {
                       {unreadCount > 0 && (
                         <button
                           onClick={async () => {
-                            try { await apiFetch('/api/notifications/read-all', { method: 'PATCH' }); fetchNotifications(); } catch {}
+                            try { await apiFetch('/api/notifications/read-all', { method: 'PATCH' }); fetchNotifications(); } catch { /* non-blocking */ }
                           }}
                           className="text-[11px] font-semibold text-primary hover:underline"
                         >
@@ -420,7 +420,7 @@ export default function AppShell({ children }: AppShellProps) {
                           <div key={n.id} className={`py-2.5 px-1 cursor-pointer hover:bg-[#F9FAFB] rounded-lg transition-colors ${!n.readAt ? 'bg-[rgba(27,58,107,0.03)]' : ''}`}
                             onClick={async () => {
                               if (!n.readAt) {
-                                try { await apiFetch(`/api/notifications/${n.id}/read`, { method: 'PATCH' }); fetchNotifications(); } catch {}
+                                try { await apiFetch(`/api/notifications/${n.id}/read`, { method: 'PATCH' }); fetchNotifications(); } catch { /* non-blocking */ }
                               }
                               if (n.link) router.push(n.link);
                               setIsNotificationsOpen(false);

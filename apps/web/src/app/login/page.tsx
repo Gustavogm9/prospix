@@ -77,7 +77,21 @@ export default function Login() {
         navTimerRef.current = setTimeout(() => router.push('/inicio'), 1000);
       }
     } catch (error: any) {
-      toast.error('Erro ao entrar', error.message || 'E-mail ou senha incorretos. Verifique suas credenciais.');
+      const msg = error.message || '';
+      // Translate common Supabase auth errors to Portuguese
+      const translations: Record<string, string> = {
+        'Invalid login credentials': 'E-mail ou senha incorretos. Verifique suas credenciais.',
+        'Email not confirmed': 'Seu e-mail ainda não foi confirmado. Verifique sua caixa de entrada.',
+        'User not found': 'Nenhuma conta encontrada com este e-mail.',
+        'Too many requests': 'Muitas tentativas. Aguarde alguns minutos e tente novamente.',
+        'Email rate limit exceeded': 'Muitas tentativas. Aguarde alguns minutos.',
+        'Invalid email or password': 'E-mail ou senha incorretos.',
+      };
+      const friendlyMsg = Object.entries(translations).find(([key]) => 
+        msg.toLowerCase().includes(key.toLowerCase())
+      )?.[1] || msg || 'E-mail ou senha incorretos. Verifique suas credenciais.';
+      
+      toast.error('Erro ao entrar', friendlyMsg);
     } finally {
       setIsLoading(false);
     }

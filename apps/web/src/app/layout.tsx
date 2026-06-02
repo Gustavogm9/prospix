@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import { GlobalToast } from '@/components/global-toast';
 
 export const metadata: Metadata = {
   title: 'Prospix · Prospecção Inteligente no WhatsApp para Corretores de Seguros',
@@ -39,6 +40,7 @@ export default function RootLayout({
     <html lang="pt-BR">
       <body className="antialiased min-h-screen bg-bg text-text">
         {children}
+        <GlobalToast />
       </body>
     </html>
   );
