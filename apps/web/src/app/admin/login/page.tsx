@@ -84,7 +84,7 @@ export default function Login() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-zinc-950 text-zinc-50 relative overflow-hidden px-4">
-      {/* Background gradients â€” same as broker login */}
+      {/* Background gradients — same as broker login */}
       <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full bg-amber-500/10 blur-[120px] pointer-events-none" />
       <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] rounded-full bg-red-500/10 blur-[120px] pointer-events-none" />
 
@@ -95,7 +95,7 @@ export default function Login() {
           </div>
           <h2 className="text-2xl font-bold font-heading text-zinc-50">Prospix Admin</h2>
           <p className="text-xs text-zinc-400 mt-1 text-center font-mono uppercase tracking-wider">
-            Super-Admin Gate Â· Guilds
+            Super-Admin Gate · Guilds
           </p>
         </div>
 
@@ -126,7 +126,7 @@ export default function Login() {
               <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
               <Input
                 type={showPassword ? 'text' : 'password'}
-                placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
+                placeholder="••••••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full bg-zinc-950/80 border-zinc-800 text-zinc-100 pl-10 pr-10 placeholder-zinc-500 focus-visible:bg-zinc-950/80 focus:border-amber-500/50 text-sm h-12"
@@ -165,7 +165,7 @@ export default function Login() {
 
         <div className="mt-8 text-center border-t border-zinc-800 pt-4">
           <p className="text-[10px] text-zinc-400 font-mono">
-            ConexÃ£o direta com privilÃ©gios de bypass RLS PostgreSQL ativo via backend role.
+            Conexão direta com privilégios de bypass RLS PostgreSQL ativo via backend role.
           </p>
         </div>
       </div>

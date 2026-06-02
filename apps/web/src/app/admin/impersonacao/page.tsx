@@ -46,7 +46,7 @@ export default function Impersonation() {
     try {
       const res = await adminNextApi.get('/api/admin/impersonate');
       setActiveSessions(res.data?.data ?? []);
-    } catch { /* swallow */ }
+    } catch (err) { console.warn('[Impersonação] Falha ao carregar sessões ativas:', err); }
     setSessionsLoading(false);
   };
 
@@ -76,7 +76,7 @@ export default function Impersonation() {
 
   const handleStart = async () => {
     if (!selectedTenant || !selectedUser || reason.length < 5) {
-      toast.error('Erro', 'Selecione tenant, usuÃ¡rio e preencha o motivo (mÃ­n. 5 caracteres).');
+      toast.error('Erro', 'Selecione tenant, usuário e preencha o motivo (mín. 5 caracteres).');
       return;
     }
 
@@ -91,7 +91,7 @@ export default function Impersonation() {
         mode: data.mode,
         expiresAt: data.expiresAt,
       });
-      toast.success('SessÃ£o iniciada', `Impersonando ${data.targetUser.name} em ${data.targetTenant.name}`);
+      toast.success('Sessão iniciada', `Impersonando ${data.targetUser.name} em ${data.targetTenant.name}`);
       await fetchActiveSessions();
     } catch (err: unknown) {
       const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha.' : 'Falha.';
@@ -104,7 +104,7 @@ export default function Impersonation() {
   const handleEnd = async (sessionId: string) => {
     try {
       await adminNextApi.post('/api/admin/impersonate', { action: 'end', sessionId });
-      toast.success('Encerrada', 'SessÃ£o de impersonificaÃ§Ã£o encerrada.');
+      toast.success('Encerrada', 'Sessão de impersonificação encerrada.');
       await fetchActiveSessions();
     } catch (err: unknown) {
       const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha.' : 'Falha.';
@@ -125,10 +125,10 @@ export default function Impersonation() {
         <div>
           <h2 className="text-2xl font-bold font-heading text-text tracking-tight flex items-center gap-2">
             <Shield className="w-5 h-5 text-primary" aria-hidden />
-            Sistema de ImpersonificaÃ§Ã£o
+            Sistema de Impersonificação
           </h2>
           <p className="text-text-secondary text-xs mt-1">
-            Acesse o sistema como qualquer usuÃ¡rio Â· auditado Â· com controle de modo
+            Acesse o sistema como qualquer usuário · auditado · com controle de modo
           </p>
         </div>
         <Button onClick={fetchActiveSessions} disabled={sessionsLoading} className="bg-white hover:bg-surface-sunken text-text border border-border text-xs px-3 h-9 rounded-lg flex items-center gap-1.5">
@@ -140,11 +140,11 @@ export default function Impersonation() {
       <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-3">
         <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
         <div>
-          <p className="text-xs font-semibold text-amber-900">AtenÃ§Ã£o: AÃ§Ãµes auditadas</p>
+          <p className="text-xs font-semibold text-amber-900">Atenção: Ações auditadas</p>
           <p className="text-[11px] text-amber-800 mt-0.5">
-            Toda sessÃ£o de impersonificaÃ§Ã£o Ã© registrada no audit log com IP, motivo e horÃ¡rio.
-            O proprietÃ¡rio do tenant serÃ¡ notificado automaticamente.
-            SessÃµes expiram em 2 horas.
+            Toda sessão de impersonificação é registrada no audit log com IP, motivo e horário.
+            O proprietário do tenant será notificado automaticamente.
+            Sessões expiram em 2 horas.
           </p>
         </div>
       </div>
@@ -152,13 +152,13 @@ export default function Impersonation() {
       {/* Active Sessions */}
       <Card className="bg-white border-border shadow-sm">
         <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-bold font-heading text-text">SessÃµes Ativas</CardTitle>
+          <CardTitle className="text-sm font-bold font-heading text-text">Sessões Ativas</CardTitle>
         </CardHeader>
         <CardContent>
           {sessionsLoading ? (
             <div className="flex items-center justify-center py-6"><Loader2 className="w-4 h-4 animate-spin text-text-secondary" /></div>
           ) : activeSessions.length === 0 ? (
-            <p className="text-xs text-text-secondary text-center py-4">Nenhuma sessÃ£o de impersonificaÃ§Ã£o ativa.</p>
+            <p className="text-xs text-text-secondary text-center py-4">Nenhuma sessão de impersonificação ativa.</p>
           ) : (
             <div className="space-y-2">
               {activeSessions.map((s) => (
@@ -171,7 +171,7 @@ export default function Impersonation() {
                     </div>
                     <div className="text-[10px] text-text-secondary mt-1 flex items-center gap-1.5">
                       <Clock className="w-3 h-3" />
-                      Iniciada: {new Date(s.startedAt).toLocaleString('pt-BR')} Â· Expira: {new Date(s.expiresAt).toLocaleString('pt-BR')}
+                      Iniciada: {new Date(s.startedAt).toLocaleString('pt-BR')} · Expira: {new Date(s.expiresAt).toLocaleString('pt-BR')}
                     </div>
                     <div className="text-[10px] text-text-secondary mt-0.5">Motivo: {s.reason}</div>
                   </div>
@@ -188,8 +188,8 @@ export default function Impersonation() {
       {/* Start New Session */}
       <Card className="bg-white border-border shadow-sm">
         <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-bold font-heading text-text">Iniciar Nova SessÃ£o</CardTitle>
-          <CardDescription className="text-text-secondary text-xs">Selecione o tenant e o usuÃ¡rio que deseja impersonificar</CardDescription>
+          <CardTitle className="text-sm font-bold font-heading text-text">Iniciar Nova Sessão</CardTitle>
+          <CardDescription className="text-text-secondary text-xs">Selecione o tenant e o usuário que deseja impersonificar</CardDescription>
         </CardHeader>
         <CardContent>
           {impResult ? (
@@ -197,21 +197,21 @@ export default function Impersonation() {
               <div className="p-4 bg-success-soft border border-success/30 rounded-xl">
                 <div className="flex items-center gap-2 mb-2">
                   <UserCheck className="w-5 h-5 text-success-text" />
-                  <span className="text-sm font-bold text-success-text">SessÃ£o iniciada com sucesso!</span>
+                  <span className="text-sm font-bold text-success-text">Sessão iniciada com sucesso!</span>
                 </div>
                 <div className="text-xs text-text space-y-1">
                   <p><strong>Tenant:</strong> {impResult.tenant}</p>
-                  <p><strong>UsuÃ¡rio:</strong> {impResult.user}</p>
+                  <p><strong>Usuário:</strong> {impResult.user}</p>
                   <p><strong>Modo:</strong> <Badge className={`text-[9px] px-1.5 py-0 border ${impResult.mode === 'READ_ONLY' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>{impResult.mode}</Badge></p>
                   <p><strong>Expira:</strong> {new Date(impResult.expiresAt).toLocaleString('pt-BR')}</p>
                 </div>
               </div>
               <div className="flex gap-2">
                 <Button onClick={openImpersonation} className="bg-primary hover:bg-primary-hover text-white font-semibold text-xs px-4 h-10 rounded-xl flex items-center gap-1.5">
-                  <ExternalLink className="w-4 h-4" /> Abrir como UsuÃ¡rio
+                  <ExternalLink className="w-4 h-4" /> Abrir como Usuário
                 </Button>
                 <Button onClick={() => setImpResult(null)} className="bg-white hover:bg-surface-sunken text-text border border-border text-xs px-4 h-10 rounded-xl">
-                  Nova SessÃ£o
+                  Nova Sessão
                 </Button>
               </div>
             </div>
@@ -226,16 +226,16 @@ export default function Impersonation() {
                   </select>
                 </div>
                 <div>
-                  <label className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block mb-1">UsuÃ¡rio *</label>
+                  <label className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block mb-1">Usuário *</label>
                   <select value={selectedUser} onChange={(e) => setSelectedUser(e.target.value)} disabled={!selectedTenant} className="w-full h-9 px-3 text-xs rounded-lg border border-border bg-white text-text focus:outline-none focus:border-primary/50 disabled:opacity-50">
-                    <option value="">Selecione o usuÃ¡rio...</option>
-                    {users.map((u) => <option key={u.id} value={u.id}>{u.name} ({u.email}) â€” {u.role}</option>)}
+                    <option value="">Selecione o usuário...</option>
+                    {users.map((u) => <option key={u.id} value={u.id}>{u.name} ({u.email}) — {u.role}</option>)}
                   </select>
                 </div>
               </div>
               <div>
-                <label className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block mb-1">Motivo * (mÃ­n. 5 caracteres)</label>
-                <textarea value={reason} onChange={(e) => setReason(e.target.value)} className="w-full h-20 px-3 py-2 text-xs rounded-lg border border-border bg-white text-text resize-none focus:outline-none focus:border-primary/50" placeholder="Descreva o motivo da impersonificaÃ§Ã£o (ex: Investigar bug reportado pelo cliente)" />
+                <label className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block mb-1">Motivo * (mín. 5 caracteres)</label>
+                <textarea value={reason} onChange={(e) => setReason(e.target.value)} className="w-full h-20 px-3 py-2 text-xs rounded-lg border border-border bg-white text-text resize-none focus:outline-none focus:border-primary/50" placeholder="Descreva o motivo da impersonificação (ex: Investigar bug reportado pelo cliente)" />
               </div>
               <div>
                 <label className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block mb-1">Modo de Acesso</label>
@@ -245,7 +245,7 @@ export default function Impersonation() {
                     <div className={`w-3 h-3 rounded-full border-2 ${mode === 'READ_ONLY' ? 'border-primary bg-primary' : 'border-border'}`} />
                     <div>
                       <span className="text-xs font-semibold text-text block">Somente Leitura</span>
-                      <span className="text-[10px] text-text-secondary">NÃ£o pode criar, editar ou excluir dados</span>
+                      <span className="text-[10px] text-text-secondary">Não pode criar, editar ou excluir dados</span>
                     </div>
                   </label>
                   <label className={`flex items-center gap-2 p-3 rounded-xl border cursor-pointer transition-all ${mode === 'FULL_ACCESS' ? 'border-amber-500 bg-amber-50/50' : 'border-border hover:border-border/70'}`}>
@@ -253,14 +253,14 @@ export default function Impersonation() {
                     <div className={`w-3 h-3 rounded-full border-2 ${mode === 'FULL_ACCESS' ? 'border-amber-500 bg-amber-500' : 'border-border'}`} />
                     <div>
                       <span className="text-xs font-semibold text-text block">Acesso Completo</span>
-                      <span className="text-[10px] text-amber-700">Pode realizar todas as aÃ§Ãµes como o usuÃ¡rio</span>
+                      <span className="text-[10px] text-amber-700">Pode realizar todas as ações como o usuário</span>
                     </div>
                   </label>
                 </div>
               </div>
               <Button onClick={handleStart} disabled={isLoading || !selectedTenant || !selectedUser || reason.length < 5} className="bg-primary hover:bg-primary-hover text-white font-semibold text-sm px-6 h-10 rounded-xl flex items-center gap-1.5 disabled:opacity-50">
                 {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Shield className="w-4 h-4" />}
-                Iniciar ImpersonificaÃ§Ã£o
+                Iniciar Impersonificação
               </Button>
             </div>
           )}

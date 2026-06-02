@@ -103,7 +103,7 @@ export function DraftsEditor({ tenantId, onSaved }: DraftsEditorProps) {
     try {
       const obj = JSON.parse(voiceProfileText) as VoiceProfileDraft;
       return obj;
-    } catch {
+    } catch (e) { console.warn('[DraftsEditor] Voice profile JSON parse failed:', e);
       return null;
     }
   })();
@@ -113,7 +113,7 @@ export function DraftsEditor({ tenantId, onSaved }: DraftsEditorProps) {
     try {
       const obj = JSON.parse(scriptsText) as ScriptsDraft;
       return obj;
-    } catch {
+    } catch (e) { console.warn('[DraftsEditor] Scripts JSON parse failed:', e);
       return null;
     }
   })();

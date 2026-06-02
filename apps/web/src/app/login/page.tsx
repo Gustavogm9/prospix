@@ -101,11 +101,11 @@ export default function Login() {
     e.preventDefault();
 
     if (newPw.length < 6) {
-      toast.error('Senha curta', 'A nova senha deve ter no m├¡nimo 6 caracteres.');
+      toast.error('Senha curta', 'A nova senha deve ter no mínimo 6 caracteres.');
       return;
     }
     if (newPw !== confirmPw) {
-      toast.error('Senhas diferentes', 'A confirma├º├úo de senha n├úo confere.');
+      toast.error('Senhas diferentes', 'A confirmação de senha não confere.');
       return;
     }
     if (newPw === currentPw) {
@@ -160,13 +160,13 @@ export default function Login() {
           </h2>
           <p className="text-sm text-zinc-400 mt-1 text-center">
             {mustChangePassword
-              ? 'Por seguran├ºa, defina uma nova senha antes de continuar.'
-              : 'A forma mais inteligente de prospectar ap├│lices pelo WhatsApp.'}
+              ? 'Por segurança, defina uma nova senha antes de continuar.'
+              : 'A forma mais inteligente de prospectar apólices pelo WhatsApp.'}
           </p>
         </div>
 
         {!mustChangePassword ? (
-          /* ÔöÇÔöÇ LOGIN FORM ÔöÇÔöÇ */
+          /* -- LOGIN FORM -- */
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
               <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider block mb-2">
@@ -226,14 +226,14 @@ export default function Login() {
             </Button>
           </form>
         ) : (
-          /* ÔöÇÔöÇ FORCE CHANGE PASSWORD FORM ÔöÇÔöÇ */
+          /* -- FORCE CHANGE PASSWORD FORM -- */
           <form onSubmit={handleChangePassword} className="space-y-5">
             <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 mb-2">
               <p className="text-xs text-amber-300 font-medium flex items-center gap-2">
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
                 </svg>
-                Este ├® o seu primeiro acesso. Crie uma senha pessoal e segura.
+                Este é o seu primeiro acesso. Crie uma senha pessoal e segura.
               </p>
             </div>
 
@@ -244,7 +244,7 @@ export default function Login() {
               <div className="relative">
                 <Input
                   type={showNewPw ? 'text' : 'password'}
-                  placeholder="M├¡nimo 6 caracteres"
+                  placeholder="Mínimo 6 caracteres"
                   value={newPw}
                   onChange={(e) => setNewPw(e.target.value)}
                   className="w-full bg-zinc-950/80 border-zinc-800 text-zinc-100 placeholder-zinc-500 focus-visible:bg-zinc-950/80 focus:border-blue-500/50 text-base h-12 pr-10"
@@ -277,7 +277,7 @@ export default function Login() {
                 required
               />
               {confirmPw && newPw !== confirmPw && (
-                <p className="text-xs text-red-400 mt-1">As senhas n├úo conferem</p>
+                <p className="text-xs text-red-400 mt-1">As senhas não conferem</p>
               )}
             </div>
 
@@ -301,7 +301,7 @@ export default function Login() {
         {!mustChangePassword && (
           <div className="mt-8 text-center">
             <p className="text-xs text-zinc-400">
-              Ainda n├úo tem conta?{' '}
+              Ainda não tem conta?{' '}
               <button
                 onClick={() => router.push('/cadastro')}
                 className="text-blue-400 hover:text-blue-300 font-semibold"

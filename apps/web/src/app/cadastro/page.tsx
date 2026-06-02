@@ -50,8 +50,8 @@ export default function SignupCode() {
     const pattern = /^PRSPX-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
     if (!pattern.test(code)) {
       toast.error(
-        'C├│digo inv├ílido',
-        'Por favor, insira o c├│digo no formato correto: PRSPX-XXXX-XXXX.'
+        'Código inválido',
+        'Por favor, insira o código no formato correto: PRSPX-XXXX-XXXX.'
       );
       return;
     }
@@ -82,7 +82,7 @@ export default function SignupCode() {
       // Navigate to details page with verified data via query params
       const params = new URLSearchParams({ code, tenantName: tenant_name, role });
       router.push(`/cadastro/detalhes?${params.toString()}`);
-    } catch (error: any) {
+    } catch (_error: any) {
       const params = new URLSearchParams({ code, error: 'unknown', message: 'Código expirado ou inválido.' });
       router.push(`/cadastro/erro?${params.toString()}`);
     } finally {
@@ -103,14 +103,14 @@ export default function SignupCode() {
           </div>
           <h2 className="text-2xl font-bold font-heading text-text">Resgatar Convite</h2>
           <p className="text-sm text-text-secondary mt-1 text-center">
-            A Prospix ├® uma plataforma exclusiva para corretores credenciados. Digite seu c├│digo para ingressar.
+            A Prospix é uma plataforma exclusiva para corretores credenciados. Digite seu código para ingressar.
           </p>
         </div>
 
         <form onSubmit={handleVerify} className="space-y-5">
           <div>
             <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider block mb-2">
-              C├│digo de Convite Gated
+              Código de Convite Gated
             </label>
             <Input
               type="text"
@@ -134,14 +134,14 @@ export default function SignupCode() {
                 <span>Validando...</span>
               </div>
             ) : (
-              'Verificar C├│digo'
+              'Verificar Código'
             )}
           </Button>
         </form>
 
         <div className="mt-8 text-center pt-4 border-t border-border-subtle">
           <p className="text-xs text-text-muted">
-            J├í possui acesso cadastrado?{' '}
+            Já possui acesso cadastrado?{' '}
             <button
               onClick={() => router.push('/login')}
               className="text-blue-400 hover:text-blue-300 font-semibold"

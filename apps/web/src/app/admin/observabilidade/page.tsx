@@ -36,7 +36,8 @@ function formatRelative(iso: string): string {
     if (diffSec < 60) return `há ${diffSec}s`;
     if (diffSec < 3600) return `há ${Math.round(diffSec / 60)}min`;
     return date.toLocaleTimeString('pt-BR');
-  } catch {
+  } catch (e) {
+    console.warn('[Observabilidade] Falha ao formatar data relativa:', iso, e);
     return iso;
   }
 }

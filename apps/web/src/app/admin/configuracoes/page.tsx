@@ -31,22 +31,22 @@ const ENV_MODE = process.env.NODE_ENV;
 const PLANS = [
   {
     name: 'STANDARD',
-    price: 'R$ 150,00/mÃªs',
-    description: 'Plano padrÃ£o com funcionalidades essenciais para pequenas operaÃ§Ãµes.',
-    badge: 'PadrÃ£o',
+    price: 'R$ 150,00/mês',
+    description: 'Plano padrão com funcionalidades essenciais para pequenas operações.',
+    badge: 'Padrão',
     badgeClass: 'bg-blue-50 text-blue-700 border-blue-200',
   },
   {
     name: 'PREMIUM_MULTI',
-    price: 'R$ 350,00/mÃªs',
-    description: 'Multi-usuÃ¡rio com recursos avanÃ§ados de automaÃ§Ã£o e relatÃ³rios.',
+    price: 'R$ 350,00/mês',
+    description: 'Multi-usuário com recursos avançados de automação e relatórios.',
     badge: 'Premium',
     badgeClass: 'bg-amber-50 text-amber-800 border-amber-300',
   },
   {
     name: 'ENTERPRISE',
     price: 'Customizado',
-    description: 'Plano sob medida para grandes operaÃ§Ãµes com SLA dedicado.',
+    description: 'Plano sob medida para grandes operações com SLA dedicado.',
     badge: 'Enterprise',
     badgeClass: 'bg-purple-50 text-purple-700 border-purple-200',
   },
@@ -61,19 +61,19 @@ const INTEGRATIONS = [
   },
   {
     name: 'Google Calendar',
-    description: 'SincronizaÃ§Ã£o de agendamentos com calendÃ¡rios Google.',
+    description: 'Sincronização de agendamentos com calendários Google.',
     icon: Calendar,
     status: 'connected' as const,
   },
   {
     name: 'Google Maps',
-    description: 'GeocodificaÃ§Ã£o e validaÃ§Ã£o de endereÃ§os de leads.',
+    description: 'Geocodificação e validação de endereços de leads.',
     icon: MapPin,
     status: 'connected' as const,
   },
   {
     name: 'AI Providers',
-    description: 'OpenAI, Anthropic e outros provedores de inteligÃªncia artificial.',
+    description: 'OpenAI, Anthropic e outros provedores de inteligência artificial.',
     icon: Brain,
     status: 'connected' as const,
   },
@@ -88,19 +88,19 @@ const QUICK_LINKS = [
   },
   {
     name: 'Slack Channel',
-    description: 'Canal de comunicaÃ§Ã£o da equipe.',
+    description: 'Canal de comunicação da equipe.',
     icon: MessageCircle,
     url: 'https://slack.com',
   },
   {
     name: 'GitHub Repo',
-    description: 'RepositÃ³rio de cÃ³digo-fonte.',
+    description: 'Repositório de código-fonte.',
     icon: Github,
     url: 'https://github.com',
   },
   {
     name: 'API Docs',
-    description: 'DocumentaÃ§Ã£o da API REST.',
+    description: 'Documentação da API REST.',
     icon: BookOpen,
     url: `${API_URL}/docs`,
   },
@@ -136,10 +136,10 @@ export default function Settings() {
       <div>
         <h2 className="text-2xl font-bold font-heading text-text tracking-tight flex items-center gap-2">
           <SettingsIcon className="w-5 h-5 text-primary" aria-hidden />
-          ConfiguraÃ§Ãµes
+          Configurações
         </h2>
         <p className="text-text-secondary text-xs mt-1">
-          InformaÃ§Ãµes do sistema, configuraÃ§Ãµes de convites, planos e integraÃ§Ãµes.
+          Informações do sistema, configurações de convites, planos e integrações.
         </p>
       </div>
 
@@ -148,10 +148,10 @@ export default function Settings() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base font-bold font-heading text-text flex items-center gap-2">
             <Server className="w-4 h-4 text-primary" aria-hidden />
-            InformaÃ§Ãµes do Sistema
+            Informações do Sistema
           </CardTitle>
           <CardDescription className="text-text-secondary text-xs">
-            Dados do ambiente e sessÃ£o do administrador atual.
+            Dados do ambiente e sessão do administrador atual.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -166,7 +166,7 @@ export default function Settings() {
               />
               <InfoRow
                 icon={<Hash className="w-3.5 h-3.5 text-text-secondary" />}
-                label="VersÃ£o"
+                label="Versão"
                 value="v1.0.0-beta"
               />
               <InfoRow
@@ -175,7 +175,7 @@ export default function Settings() {
                 value={ENV_MODE}
                 badge={
                   ENV_MODE === 'production'
-                    ? { text: 'ProduÃ§Ã£o', className: 'bg-success-soft text-success-text border-success/30' }
+                    ? { text: 'Produção', className: 'bg-success-soft text-success-text border-success/30' }
                     : { text: ENV_MODE, className: 'bg-amber-50 text-amber-800 border-amber-300' }
                 }
               />
@@ -186,18 +186,18 @@ export default function Settings() {
               <InfoRow
                 icon={<User className="w-3.5 h-3.5 text-text-secondary" />}
                 label="Nome"
-                value={adminUser?.name || 'â€”'}
+                value={adminUser?.name || '—'}
               />
               <InfoRow
                 icon={<Mail className="w-3.5 h-3.5 text-text-secondary" />}
                 label="Email"
-                value={adminUser?.email || 'â€”'}
+                value={adminUser?.email || '—'}
                 mono
               />
               <InfoRow
                 icon={<ShieldCheck className="w-3.5 h-3.5 text-text-secondary" />}
                 label="Papel"
-                value={adminUser?.role ? ROLE_LABELS[adminUser.role] || adminUser.role : 'â€”'}
+                value={adminUser?.role ? ROLE_LABELS[adminUser.role] || adminUser.role : '—'}
                 badge={
                   adminUser?.role
                     ? { text: adminUser.role, className: 'bg-primary/10 text-primary border-primary/20' }
@@ -214,10 +214,10 @@ export default function Settings() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base font-bold font-heading text-text flex items-center gap-2">
             <Mail className="w-4 h-4 text-primary" aria-hidden />
-            ConfiguraÃ§Ãµes de Convites
+            Configurações de Convites
           </CardTitle>
           <CardDescription className="text-text-secondary text-xs">
-            ParÃ¢metros padrÃ£o para geraÃ§Ã£o de convites de usuÃ¡rio.
+            Parâmetros padrão para geração de convites de usuário.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -227,16 +227,16 @@ export default function Settings() {
               <div>
                 <p className="text-xs font-semibold text-text">TTL dos Convites</p>
                 <p className="text-[11px] text-text-secondary mt-0.5">
-                  Os convites expiram automaticamente apÃ³s <span className="font-semibold text-text">7 dias</span> da geraÃ§Ã£o.
+                  Os convites expiram automaticamente após <span className="font-semibold text-text">7 dias</span> da geração.
                 </p>
               </div>
             </div>
             <div className="flex items-start gap-3 p-3 rounded-lg bg-surface-sunken/50 border border-border">
               <Hash className="w-4 h-4 text-text-secondary mt-0.5 shrink-0" aria-hidden />
               <div>
-                <p className="text-xs font-semibold text-text">Formato do CÃ³digo</p>
+                <p className="text-xs font-semibold text-text">Formato do Código</p>
                 <p className="text-[11px] text-text-secondary mt-0.5">
-                  PadrÃ£o: <span className="font-mono font-semibold text-text">PRSPX-XXXX-XXXX</span>
+                  Padrão: <span className="font-mono font-semibold text-text">PRSPX-XXXX-XXXX</span>
                 </p>
               </div>
             </div>
@@ -251,7 +251,7 @@ export default function Settings() {
             <div>
               <CardTitle className="text-base font-bold font-heading text-text flex items-center gap-2">
                 <CreditCard className="w-4 h-4 text-primary" aria-hidden />
-                Planos DisponÃ­veis
+                Planos Disponíveis
               </CardTitle>
               <CardDescription className="text-text-secondary text-xs">
                 Planos de assinatura configurados no sistema.
@@ -282,7 +282,7 @@ export default function Settings() {
           </div>
           <p className="text-[10px] text-text-secondary mt-3 italic flex items-center gap-1">
             <Info className="w-3 h-3" aria-hidden />
-            CRUD de planos serÃ¡ implementado em breve.
+            CRUD de planos será implementado em breve.
           </p>
         </CardContent>
       </Card>
@@ -292,10 +292,10 @@ export default function Settings() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base font-bold font-heading text-text flex items-center gap-2">
             <Plug className="w-4 h-4 text-primary" aria-hidden />
-            IntegraÃ§Ãµes do Sistema
+            Integrações do Sistema
           </CardTitle>
           <CardDescription className="text-text-secondary text-xs">
-            Status das integraÃ§Ãµes externas configuradas.
+            Status das integrações externas configuradas.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -333,10 +333,10 @@ export default function Settings() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base font-bold font-heading text-text flex items-center gap-2">
             <ExternalLink className="w-4 h-4 text-primary" aria-hidden />
-            Links RÃ¡pidos
+            Links Rápidos
           </CardTitle>
           <CardDescription className="text-text-secondary text-xs">
-            Acesso rÃ¡pido a ferramentas e documentaÃ§Ã£o.
+            Acesso rápido a ferramentas e documentação.
           </CardDescription>
         </CardHeader>
         <CardContent>

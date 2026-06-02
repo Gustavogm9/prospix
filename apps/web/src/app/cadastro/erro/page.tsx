@@ -14,27 +14,27 @@ function InvitationErrorInner() {
     switch (error) {
       case 'INVITATION_USED':
         return {
-          title: 'C├│digo J├í Utilizado',
-          desc: 'Este c├│digo de convite ├║nico j├í foi resgatado para criar uma conta anteriormente.',
-          action: 'Se voc├¬ j├í concluiu seu cadastro, por favor, realize o login atrav├®s do link de acesso ou utilize a p├ígina de login.',
+          title: 'Código Já Utilizado',
+          desc: 'Este código de convite único já foi resgatado para criar uma conta anteriormente.',
+          action: 'Se você já concluiu seu cadastro, por favor, realize o login através do link de acesso ou utilize a página de login.',
         };
       case 'INVITATION_EXPIRED':
         return {
           title: 'Convite Expirado',
-          desc: 'O per├¡odo de validade deste convite gated expirou.',
-          action: 'Os convites da plataforma possuem tempo de validade estrito por quest├Áes de seguran├ºa. Entre em contato com a equipe da Guilds para solicitar um novo convite.',
+          desc: 'O período de validade deste convite gated expirou.',
+          action: 'Os convites da plataforma possuem tempo de validade estrito por questões de segurança. Entre em contato com a equipe da Guilds para solicitar um novo convite.',
         };
       case 'INVITATION_REVOKED':
         return {
           title: 'Convite Revogado',
-          desc: 'Este c├│digo de convite foi cancelado ou inativado pelo administrador.',
-          action: 'Por favor, contate o owner do workspace ou o suporte da plataforma para mais informa├º├Áes.',
+          desc: 'Este código de convite foi cancelado ou inativado pelo administrador.',
+          action: 'Por favor, contate o owner do workspace ou o suporte da plataforma para mais informações.',
         };
       default:
         return {
-          title: 'Convite Inv├ílido',
-          desc: 'N├úo encontramos nenhum convite atrelado a este c├│digo no nosso sistema.',
-          action: 'Verifique se voc├¬ digitou todos os caracteres corretamente. Lembre-se que o c├│digo deve seguir o padr├úo: PRSPX-XXXX-XXXX.',
+          title: 'Convite Inválido',
+          desc: 'Não encontramos nenhum convite atrelado a este código no nosso sistema.',
+          action: 'Verifique se você digitou todos os caracteres corretamente. Lembre-se que o código deve seguir o padrão: PRSPX-XXXX-XXXX.',
         };
     }
   };
@@ -76,7 +76,7 @@ function InvitationErrorInner() {
             onClick={() => router.push('/cadastro')}
             className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/50 font-medium h-11 rounded-xl transition-all"
           >
-            Tentar outro C├│digo
+            Tentar outro Código
           </Button>
 
           <div className="grid grid-cols-2 gap-2">

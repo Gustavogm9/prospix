@@ -79,7 +79,6 @@ function LoginCallbackInner() {
     };
 
     verifyToken();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, router, setSession]);
 
   return (
@@ -99,7 +98,7 @@ function LoginCallbackInner() {
             <div className="space-y-2">
               <h3 className="text-lg font-semibold text-zinc-100">Verificando Credenciais</h3>
               <p className="text-sm text-zinc-400">
-                Processando seu token seguro de acesso ├║nico...
+                Processando seu token seguro de acesso único...
               </p>
             </div>
           </div>
@@ -115,7 +114,7 @@ function LoginCallbackInner() {
             <div className="space-y-2">
               <h3 className="text-lg font-semibold text-zinc-100">Acesso Concedido</h3>
               <p className="text-sm text-zinc-400">
-                Sua sess├úo foi ativada. Redirecionando para o painel...
+                Sua sessão foi ativada. Redirecionando para o painel...
               </p>
             </div>
           </div>
@@ -134,7 +133,7 @@ function LoginCallbackInner() {
                 {errorMessage}
               </p>
               <p className="text-xs text-zinc-500 pt-2">
-                Redirecionando de volta ├á p├ígina de login...
+                Redirecionando de volta à página de login...
               </p>
             </div>
           </div>

@@ -99,7 +99,7 @@ export default function NewTenant() {
   const nextStep = () => {
     // Validation per step
     if (step === 1 && (!formData.name || !formData.slug)) {
-      toast.error('Campos ObrigatÃ³rios', 'Preencha o Nome da Corretora e confirme o Slug da URL.');
+      toast.error('Campos Obrigatórios', 'Preencha o Nome da Corretora e confirme o Slug da URL.');
       return;
     }
     if (step === 2 && !formData.mrrCentavos) {
@@ -107,7 +107,7 @@ export default function NewTenant() {
       return;
     }
     if (step === 3 && (!formData.ownerName || !formData.ownerEmail || !formData.ownerWhatsapp)) {
-      toast.error('Dados do Corretor Owner', 'Todos os campos de contato do owner sÃ£o obrigatÃ³rios.');
+      toast.error('Dados do Corretor Owner', 'Todos os campos de contato do owner são obrigatórios.');
       return;
     }
 
@@ -121,7 +121,7 @@ export default function NewTenant() {
   const handleCopyCode = () => {
     if (generatedCode) {
       navigator.clipboard.writeText(generatedCode);
-      toast.success('CÃ³digo Copiado!', 'O cÃ³digo de convite gated foi copiado para sua Ã¡rea de transferÃªncia.');
+      toast.success('Código Copiado!', 'O código de convite gated foi copiado para sua área de transferência.');
     }
   };
 
@@ -163,10 +163,10 @@ export default function NewTenant() {
       console.error('Error creating tenant wizard:', err);
       setGeneratedCode(null);
       const message = err instanceof AxiosError
-        ? err.response?.data?.message || err.message || 'A API nÃ£o confirmou o provisionamento. Nenhum convite foi gerado.'
+        ? err.response?.data?.message || err.message || 'A API não confirmou o provisionamento. Nenhum convite foi gerado.'
         : err instanceof Error
         ? err.message
-        : 'A API nÃ£o confirmou o provisionamento. Nenhum convite foi gerado.';
+        : 'A API não confirmou o provisionamento. Nenhum convite foi gerado.';
       toast.error(
         'Falha ao criar tenant',
         message
@@ -177,12 +177,12 @@ export default function NewTenant() {
   };
 
   const stepTitles = [
-    'IdentificaÃ§Ã£o',
+    'Identificação',
     'Financeiro e Plano',
     'Representante Owner',
-    'Roteiro PadrÃ£o',
+    'Roteiro Padrão',
     'Infraestrutura & LLM',
-    'ConclusÃ£o'
+    'Conclusão'
   ];
 
   return (
@@ -237,14 +237,14 @@ export default function NewTenant() {
               <div className="flex items-center gap-3 border-b border-border pb-4">
                 <Building className="w-5 h-5 text-primary" />
                 <div>
-                  <h3 className="text-base font-bold text-text">IdentificaÃ§Ã£o Comercial</h3>
-                  <p className="text-xs text-text-secondary">Insira a razÃ£o social ou nome fantasia da corretora.</p>
+                  <h3 className="text-base font-bold text-text">Identificação Comercial</h3>
+                  <p className="text-xs text-text-secondary">Insira a razão social ou nome fantasia da corretora.</p>
                 </div>
               </div>
 
               <div className="space-y-4">
                 <div className="space-y-2">
-                  <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Nome da Corretora / ImobiliÃ¡ria</label>
+                  <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Nome da Corretora / Imobiliária</label>
                   <Input
                     placeholder="Ex: Seguros Porto Seguro LTDA"
                     value={formData.name}
@@ -254,7 +254,7 @@ export default function NewTenant() {
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Slug da URL (SubdomÃ­nio)</label>
+                  <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Slug da URL (Subdomínio)</label>
                   <div className="relative">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-mono text-text-muted">app.prospix.com.br/</span>
                     <Input
@@ -263,7 +263,7 @@ export default function NewTenant() {
                       className="w-full bg-surface border-border text-text pl-[144px] font-mono text-xs focus:border-primary/50"
                     />
                   </div>
-                  <p className="text-2xs text-text-muted">Este serÃ¡ o identificador Ãºnico permanente do workspace.</p>
+                  <p className="text-2xs text-text-muted">Este será o identificador único permanente do workspace.</p>
                 </div>
               </div>
             </div>
@@ -289,7 +289,7 @@ export default function NewTenant() {
                     className="w-full bg-surface border-border text-text focus:border-primary/50 text-xs"
                   >
                     <option value="Start">Start (1 corretor - R$ 199,00)</option>
-                    <option value="Premium Multi">Premium Multi (AtÃ© 5 corretores - R$ 399,00)</option>
+                    <option value="Premium Multi">Premium Multi (Até 5 corretores - R$ 399,00)</option>
                     <option value="Enterprise">Enterprise (Faturamento Custom - R$ 999,00)</option>
                   </Select>
                 </div>
@@ -305,7 +305,7 @@ export default function NewTenant() {
                     />
                   </div>
                   <div className="flex items-center justify-between text-2xs text-text-muted mt-1">
-                    <span>Digite o valor total (o sistema aplica a formataÃ§Ã£o de moeda automaticamente).</span>
+                    <span>Digite o valor total (o sistema aplica a formatação de moeda automaticamente).</span>
                     <span className="font-semibold text-primary font-mono">Centavos: {formData.mrrCentavos || '0'}</span>
                   </div>
                 </div>
@@ -320,7 +320,7 @@ export default function NewTenant() {
                 <User className="w-5 h-5 text-primary" />
                 <div>
                   <h3 className="text-base font-bold text-text">Administrador / Corretor Owner</h3>
-                  <p className="text-xs text-text-secondary">Dados do criador do workspace que terÃ¡ permissÃµes OWNER totais.</p>
+                  <p className="text-xs text-text-secondary">Dados do criador do workspace que terá permissões OWNER totais.</p>
                 </div>
               </div>
 
@@ -368,15 +368,15 @@ export default function NewTenant() {
                 <FileText className="w-5 h-5 text-primary" />
                 <div>
                   <h3 className="text-base font-bold text-text">Template de Roteiro Inicial</h3>
-                  <p className="text-xs text-text-secondary">Escolha o roteiro base que serÃ¡ clonado automaticamente para este workspace.</p>
+                  <p className="text-xs text-text-secondary">Escolha o roteiro base que será clonado automaticamente para este workspace.</p>
                 </div>
               </div>
 
               <div className="space-y-3">
                 {[
-                  { id: '1', title: 'Seguro SaÃºde Empresarial B2B', desc: 'Foco em pequenas empresas, conversÃ£o direta para sÃ³cios baseada em CNPJ.', nodes: '6 nÃ³s configurados' },
-                  { id: '2', title: 'Seguro de AutomÃ³vel Simplificado', desc: 'Roteiro dinÃ¢mico focado em dados do veÃ­culo e fit score de agilidade.', nodes: '5 nÃ³s configurados' },
-                  { id: '3', title: 'Seguro de Vida e PrevidÃªncia', desc: 'Abordagem humanizada, com alta sensibilidade e inibidores de IA sob objeÃ§Ã£o.', nodes: '8 nÃ³s configurados' }
+                  { id: '1', title: 'Seguro Saúde Empresarial B2B', desc: 'Foco em pequenas empresas, conversão direta para sócios baseada em CNPJ.', nodes: '6 nós configurados' },
+                  { id: '2', title: 'Seguro de Automóvel Simplificado', desc: 'Roteiro dinâmico focado em dados do veículo e fit score de agilidade.', nodes: '5 nós configurados' },
+                  { id: '3', title: 'Seguro de Vida e Previdência', desc: 'Abordagem humanizada, com alta sensibilidade e inibidores de IA sob objeção.', nodes: '8 nós configurados' }
                 ].map((tpl) => (
                   <div
                     key={tpl.id}
@@ -407,7 +407,7 @@ export default function NewTenant() {
                 <Cpu className="w-5 h-5 text-primary" />
                 <div>
                   <h3 className="text-base font-bold text-text">Infraestrutura e chaves LLM</h3>
-                  <p className="text-xs text-text-secondary">ConfiguraÃ§Ãµes para instanciar Evolution API e Secrets Vault criptografados.</p>
+                  <p className="text-xs text-text-secondary">Configurações para instanciar Evolution API e Secrets Vault criptografados.</p>
                 </div>
               </div>
 
@@ -424,18 +424,18 @@ export default function NewTenant() {
                       className="w-full bg-surface border-border text-text pl-10 font-mono text-xs focus:border-primary/50"
                     />
                   </div>
-                  <p className="text-[9px] text-text-muted">Se deixado em branco, o tenant utilizarÃ¡ a chave global com rate limit faturado.</p>
+                  <p className="text-[9px] text-text-muted">Se deixado em branco, o tenant utilizará a chave global com rate limit faturado.</p>
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Nome da InstÃ¢ncia Evolution Whatsapp (Opcional)</label>
+                  <label className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Nome da Instância Evolution Whatsapp (Opcional)</label>
                   <Input
                     placeholder="Ex: portoseguro-whatsapp"
                     value={formData.evolutionInstance}
                     onChange={(e) => setFormData(prev => ({ ...prev, evolutionInstance: e.target.value.toLowerCase().replace(/\s+/g, '-') }))}
                     className="w-full bg-surface border-border text-text placeholder-text-muted focus:border-primary/50 text-xs"
                   />
-                  <p className="text-[9px] text-text-muted">Se omitido, a API criarÃ¡ dinamicamente uma instÃ¢ncia com base no slug do tenant.</p>
+                  <p className="text-[9px] text-text-muted">Se omitido, a API criará dinamicamente uma instância com base no slug do tenant.</p>
                 </div>
               </div>
             </div>
@@ -449,16 +449,16 @@ export default function NewTenant() {
               </div>
               
               <div className="space-y-2">
-                <h3 className="text-xl font-bold text-text">CÃ³digo de Convite Gated Criado!</h3>
+                <h3 className="text-xl font-bold text-text">Código de Convite Gated Criado!</h3>
                 <p className="text-xs text-text-secondary px-6 max-w-lg mx-auto">
-                  O workspace de <strong>{formData.name}</strong> estÃ¡ provisionado. Enviei o seguinte cÃ³digo para que o corretor finalize o onboarding e configure o WhatsApp.
+                  O workspace de <strong>{formData.name}</strong> está provisionado. Enviei o seguinte código para que o corretor finalize o onboarding e configure o WhatsApp.
                 </p>
               </div>
 
               {/* Code display card */}
               <div className="max-w-md mx-auto bg-surface-sunken border border-border rounded-2xl p-6 space-y-4">
                 <div className="space-y-1">
-                  <span className="text-[10px] text-text-muted uppercase tracking-wider font-bold">Chave de Cadastro Ãšnica</span>
+                  <span className="text-[10px] text-text-muted uppercase tracking-wider font-bold">Chave de Cadastro Única</span>
                   <div className="flex items-center justify-center gap-3">
                     <span className="text-xl font-bold font-mono tracking-widest text-primary bg-primary-soft/20 border border-primary/10 px-4 py-2 rounded-xl">
                       {generatedCode}
@@ -485,7 +485,7 @@ export default function NewTenant() {
                   </div>
                   <div className="flex items-center gap-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 text-success shrink-0" />
-                    <span>ProprietÃ¡rio: <strong className="font-mono">{formData.ownerName} ({formData.ownerWhatsapp})</strong></span>
+                    <span>Proprietário: <strong className="font-mono">{formData.ownerName} ({formData.ownerWhatsapp})</strong></span>
                   </div>
                 </div>
               </div>
@@ -563,7 +563,7 @@ export default function NewTenant() {
                 size="default"
                 className="text-xs px-5 py-2 h-9 rounded-xl font-bold flex items-center gap-1.5 hover:bg-surface-sunken"
               >
-                <span>AvanÃ§ar</span>
+                <span>Avançar</span>
                 <ChevronRight className="w-4 h-4" />
               </Button>
             )}

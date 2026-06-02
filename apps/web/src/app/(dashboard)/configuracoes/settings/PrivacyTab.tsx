@@ -157,7 +157,7 @@ export default function PrivacyTab() {
       );
       await fetchRequests();
       return true;
-    } catch (err: unknown) {
+    } catch (_err: unknown) {
       toast.error('Erro ao registrar', 'Tente novamente em instantes.');
       return false;
     } finally {

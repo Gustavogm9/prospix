@@ -28,12 +28,11 @@ function SignupDetailsInner() {
   useEffect(() => {
     if (!code || !tenantName) {
       toast.error(
-        'Acesso inv├ílido',
-        'Por favor, insira e valide um c├│digo de convite antes de preencher os dados.'
+        'Acesso inválido',
+        'Por favor, insira e valide um código de convite antes de preencher os dados.'
       );
       router.push('/cadastro');
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code, tenantName, router]);
 
   // Handle WhatsApp masking
@@ -67,22 +66,22 @@ function SignupDetailsInner() {
     e.preventDefault();
 
     if (!name.trim()) {
-      toast.error('Nome obrigat├│rio', 'Por favor, informe seu nome completo.');
+      toast.error('Nome obrigatório', 'Por favor, informe seu nome completo.');
       return;
     }
     if (!email.trim() || !email.includes('@')) {
-      toast.error('E-mail inv├ílido', 'Por favor, informe um e-mail v├ílido.');
+      toast.error('E-mail inválido', 'Por favor, informe um e-mail válido.');
       return;
     }
     
     const rawWhatsapp = getRawWhatsapp(whatsapp);
     if (rawWhatsapp.length < 12) {
-      toast.error('WhatsApp inv├ílido', 'Por favor, informe um WhatsApp v├ílido com DDI e DDD.');
+      toast.error('WhatsApp inválido', 'Por favor, informe um WhatsApp válido com DDI e DDD.');
       return;
     }
 
     if (!password) {
-      toast.error('Senha obrigat├│ria', 'Por favor, defina uma senha para sua conta.');
+      toast.error('Senha obrigatória', 'Por favor, defina uma senha para sua conta.');
       return;
     }
 
@@ -92,7 +91,7 @@ function SignupDetailsInner() {
     }
 
     if (password !== confirmPassword) {
-      toast.error('Senhas n├úo coincidem', 'A senha e a confirma├º├úo de senha est├úo diferentes.');
+      toast.error('Senhas não coincidem', 'A senha e a confirmação de senha estão diferentes.');
       return;
     }
 
@@ -130,7 +129,7 @@ function SignupDetailsInner() {
           json?.message || 'Não foi possível concluir seu cadastro. Fale com o suporte.'
         );
       }
-    } catch (error: any) {
+    } catch (_error: any) {
       toast.error(
         'Erro no cadastro',
         'Não foi possível concluir seu cadastro. Fale com o suporte.'
@@ -153,14 +152,14 @@ function SignupDetailsInner() {
           </div>
 
           <div className="space-y-2">
-            <h2 className="text-2xl font-bold font-heading text-text">Cadastro Conclu├¡do!</h2>
+            <h2 className="text-2xl font-bold font-heading text-text">Cadastro Concluído!</h2>
             <p className="text-sm text-text-secondary px-6">
-              Sua conta de <span className="text-text font-semibold">{role === 'OWNER' ? 'Propriet├írio' : 'Assistente'}</span> foi criada com sucesso no workspace da <span className="text-blue-400 font-semibold">{tenantName}</span>.
+              Sua conta de <span className="text-text font-semibold">{role === 'OWNER' ? 'Proprietário' : 'Assistente'}</span> foi criada com sucesso no workspace da <span className="text-blue-400 font-semibold">{tenantName}</span>.
             </p>
           </div>
 
           <p className="text-sm text-text-secondary bg-[var(--surface-sunken)] p-4 border border-border rounded-xl leading-relaxed">
-            Sua conta est├í ativada! Voc├¬ j├í pode fazer login utilizando seu e-mail <span className="text-text font-semibold font-mono">{email}</span> e a senha cadastrada.
+            Sua conta está ativada! Você já pode fazer login utilizando seu e-mail <span className="text-text font-semibold font-mono">{email}</span> e a senha cadastrada.
           </p>
 
           <Button
@@ -183,13 +182,13 @@ function SignupDetailsInner() {
       <div className="w-full max-w-[500px] bg-surface backdrop-blur-md border border-border p-8 rounded-2xl shadow-2xl relative z-10">
         <div className="mb-6">
           <div className="flex items-center gap-2 text-blue-400 text-xs font-mono font-semibold uppercase tracking-wider mb-2">
-            <span>Convite V├ílido</span>
+            <span>Convite Válido</span>
             <span className="h-1 w-1 rounded-full bg-blue-400" />
             <span className="text-text-muted">{code}</span>
           </div>
           <h2 className="text-xl font-bold font-heading text-text">Complete seu Cadastro</h2>
           <p className="text-xs text-text-secondary mt-1">
-            Voc├¬ est├í se juntando ├á corretora <strong className="text-text">{tenantName}</strong> como <span className="text-blue-400 font-semibold">{role === 'OWNER' ? 'Propriet├írio' : 'Assistente'}</span>.
+            Você está se juntando à corretora <strong className="text-text">{tenantName}</strong> como <span className="text-blue-400 font-semibold">{role === 'OWNER' ? 'Proprietário' : 'Assistente'}</span>.
           </p>
         </div>
 
@@ -248,7 +247,7 @@ function SignupDetailsInner() {
                 </label>
                 <Input
                   type="text"
-                  placeholder="C├│digo SUSEP"
+                  placeholder="Código SUSEP"
                   value={susep}
                   onChange={(e) => setSusep(e.target.value)}
                   className="w-full bg-[var(--surface-sunken)] border-border text-text placeholder-text-muted h-11 focus:border-blue-500/50"
@@ -263,7 +262,7 @@ function SignupDetailsInner() {
                 </label>
                 <Input
                   type="text"
-                  placeholder="Ex: S├úo Paulo - SP"
+                  placeholder="Ex: São Paulo - SP"
                   value={city}
                   onChange={(e) => setCity(e.target.value)}
                   className="w-full bg-[var(--surface-sunken)] border-border text-text placeholder-text-muted h-11 focus:border-blue-500/50"
@@ -280,7 +279,7 @@ function SignupDetailsInner() {
                 <div className="relative">
                   <Input
                     type={showPassword ? 'text' : 'password'}
-                    placeholder="M├¡n. 6 caracteres"
+                    placeholder="Mín. 6 caracteres"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="w-full bg-[var(--surface-sunken)] border-border text-text placeholder-text-muted h-11 focus:border-blue-500/50 pr-10"
@@ -341,7 +340,7 @@ function SignupDetailsInner() {
                 </a>{' '}
                 e a{' '}
                 <a href="/privacidade" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">
-                  Pol├¡tica de Privacidade
+                  Política de Privacidade
                 </a>{' '}
                 da Prospix, incluindo o tratamento de dados segundo as diretrizes da LGPD.
               </span>

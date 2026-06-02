@@ -112,7 +112,7 @@ export default function Templates() {
     try {
       const parsedNodes = JSON.parse(jsonString);
       if (!Array.isArray(parsedNodes)) {
-        throw new Error('Os nÃ³s do roteiro precisam ser um Array de objetos JSON.');
+        throw new Error('Os nós do roteiro precisam ser um Array de objetos JSON.');
       }
 
       await adminNextApi.patch(`/api/admin/templates/${selectedTemplate.id}`, {
@@ -122,10 +122,10 @@ export default function Templates() {
       setIsEditingJson(false);
       setSelectedTemplate(null);
       
-      toast.success('Estrutura Salva!', 'Os nÃ³s do template master foram compilados e atualizados.');
+      toast.success('Estrutura Salva!', 'Os nós do template master foram compilados e atualizados.');
       fetchTemplates();
     } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : 'Verifique se o JSON de grafos e nÃ³s estÃ¡ vÃ¡lido.';
+      const message = e instanceof Error ? e.message : 'Verifique se o JSON de grafos e nós está válido.';
       toast.error('Erro ao salvar', message);
     }
   };
@@ -153,7 +153,7 @@ export default function Templates() {
       fetchTemplates();
     } catch (err: unknown) {
       console.error('Error deleting template:', err);
-      toast.error('Erro ao deletar', 'NÃ£o foi possÃ­vel apagar o template.');
+      toast.error('Erro ao deletar', 'Não foi possível apagar o template.');
     } finally {
       setDeleteModalOpen(false);
       setTemplateToDelete(null);
@@ -162,7 +162,7 @@ export default function Templates() {
 
   const handleCreateNew = async () => {
     const initialNodes = [
-      { id: 'node_1', type: 'greeting', label: 'Boas vindas', messageText: 'OlÃ¡! Como posso ajudar vocÃª hoje?' }
+      { id: 'node_1', type: 'greeting', label: 'Boas vindas', messageText: 'Olá! Como posso ajudar você hoje?' }
     ];
     try {
       await adminNextApi.post('/api/admin/templates', {
@@ -173,11 +173,11 @@ export default function Templates() {
         description: 'Abordagem geral B2B pronta para clonagem.',
         variables: [],
       });
-      toast.success('Template Inicializado', 'Novo template master adicionado Ã  biblioteca de clones.');
+      toast.success('Template Inicializado', 'Novo template master adicionado à biblioteca de clones.');
       fetchTemplates();
     } catch (err: unknown) {
       console.error('Error creating template:', err);
-      toast.error('Erro ao criar', 'NÃ£o foi possÃ­vel salvar o template no servidor.');
+      toast.error('Erro ao criar', 'Não foi possível salvar o template no servidor.');
     }
   };
 
@@ -232,7 +232,7 @@ export default function Templates() {
             <div className="w-12 h-12 rounded-full bg-error-soft flex items-center justify-center mb-3">
               <AlertCircle className="w-6 h-6 text-error-text" />
             </div>
-            <div className="text-sm font-semibold text-text">NÃ£o conseguimos carregar a biblioteca</div>
+            <div className="text-sm font-semibold text-text">Não conseguimos carregar a biblioteca</div>
             <div className="text-xs text-text-secondary mt-1 max-w-md text-center px-6">{loadError}</div>
             <Button
               variant="outline"
@@ -251,7 +251,7 @@ export default function Templates() {
             </div>
             <div className="text-sm font-semibold text-text">Nenhum template master criado</div>
             <div className="text-xs text-text-secondary mt-1 max-w-md text-center px-6">
-              Templates master sÃ£o clonados por novos tenants durante o onboarding. Crie o primeiro com o botÃ£o acima.
+              Templates master são clonados por novos tenants durante o onboarding. Crie o primeiro com o botão acima.
             </div>
             <Button
               variant="outline"
@@ -279,14 +279,14 @@ export default function Templates() {
                     <CardTitle className="text-lg font-bold text-text leading-tight mt-1">{tpl.title}</CardTitle>
                   </div>
                   <Badge variant="warning" className="text-[10px] shrink-0 font-bold font-heading">
-                    {tpl.nodes.length} nÃ³s de decisÃ£o
+                    {tpl.nodes.length} nós de decisão
                   </Badge>
                 </div>
                 <CardDescription className="text-text-secondary text-xs mt-3 leading-relaxed">
                   {tpl.description}
                 </CardDescription>
                 {impacts[tpl.id] && (
-                  <div className="mt-3 flex flex-wrap gap-1.5" title="Uso atual deste template em produÃ§Ã£o">
+                  <div className="mt-3 flex flex-wrap gap-1.5" title="Uso atual deste template em produção">
                     <span className={`inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded border font-mono ${
                       (impacts[tpl.id]?.tenantsCount ?? 0) > 0 ? 'bg-amber-50 text-amber-800 border-amber-300' : 'bg-success-soft/40 text-success-text border-success/30'
                     }`}>
@@ -306,7 +306,7 @@ export default function Templates() {
               
               <CardContent className="pt-3 border-t border-border mt-4 flex items-center justify-between gap-3 bg-surface-sunken/20 rounded-b-xl">
                 <span className="text-[10px] text-text-muted font-medium font-heading">
-                  {tpl.activeVariantsCount} variaÃ§Ãµes A/B ativas por nÃ³
+                  {tpl.activeVariantsCount} variações A/B ativas por nó
                 </span>
                 
                 <div className="flex items-center gap-2">
@@ -315,7 +315,7 @@ export default function Templates() {
                     className="bg-surface hover:bg-surface-sunken text-text border border-border/80 text-[10px] px-3 py-1.5 h-8 rounded-lg font-bold flex items-center gap-1 shadow-sm transition-all"
                   >
                     <Edit3 className="w-3.5 h-3.5 text-primary" />
-                    <span>Editar NÃ³s</span>
+                    <span>Editar Nós</span>
                   </Button>
                   <Button
                     onClick={() => handleDeleteClick(tpl.id)}
@@ -365,7 +365,7 @@ export default function Templates() {
             {/* JSON Code Area */}
             <div className="flex-1 border-r border-border p-6 flex flex-col h-full bg-surface-sunken/40">
               <label className="text-[10px] text-text-secondary uppercase tracking-widest font-mono font-bold block mb-2">
-                EspecificaÃ§Ã£o de nÃ³s (Prisma JSON format)
+                Especificação de nós (Prisma JSON format)
               </label>
               <textarea
                 value={jsonString}
@@ -377,7 +377,7 @@ export default function Templates() {
             {/* Visual Node Tree Preview Side */}
             <div className="w-full md:w-[280px] p-6 bg-surface-sunken/20 overflow-y-auto h-full space-y-4">
               <h4 className="text-[10px] text-text-secondary uppercase tracking-widest font-bold font-mono">
-                VisualizaÃ§Ã£o do Grafo
+                Visualização do Grafo
               </h4>
               
               <div className="space-y-3">
@@ -413,7 +413,7 @@ export default function Templates() {
       <Modal
         isOpen={deleteModalOpen}
         onClose={() => setDeleteModalOpen(false)}
-        title="Confirmar ExclusÃ£o"
+        title="Confirmar Exclusão"
         footer={
           <div className="flex justify-end gap-2">
             <Button
@@ -439,7 +439,7 @@ export default function Templates() {
             <div>
               <p className="font-semibold text-text text-sm mb-1">Apagar Template Master?</p>
               <p className="text-text-secondary text-xs leading-relaxed">
-                Esta aÃ§Ã£o Ã© um soft-delete (template marcado como inativo). Scripts jÃ¡ clonados em tenants continuam funcionando â€” apenas novos tenants nÃ£o poderÃ£o mais clonar este fluxo durante o onboarding.
+                Esta ação é um soft-delete (template marcado como inativo). Scripts já clonados em tenants continuam funcionando — apenas novos tenants não poderão mais clonar este fluxo durante o onboarding.
               </p>
             </div>
           </div>
@@ -474,10 +474,10 @@ export default function Templates() {
                   <ul className="mt-1 text-[10px] text-text-secondary space-y-0.5 pl-3">
                     {impactPreview.tenants.slice(0, 10).map((t) => (
                       <li key={t.id} className="font-mono">
-                        Â· {t.name} <span className="opacity-60">({t.slug})</span>
+                        · {t.name} <span className="opacity-60">({t.slug})</span>
                       </li>
                     ))}
-                    {impactPreview.tenants.length > 10 && <li className="italic">â€¦e mais {impactPreview.tenants.length - 10}</li>}
+                    {impactPreview.tenants.length > 10 && <li className="italic">…e mais {impactPreview.tenants.length - 10}</li>}
                   </ul>
                 </details>
               )}
