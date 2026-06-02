@@ -5,7 +5,20 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", ".next/**", "!.next/cache/**", "build/**"]
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**", "build/**"],
+      "env": [
+        "SUPABASE_URL",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "EVOLUTION_BASE_URL",
+        "EVOLUTION_GUILDS_API_KEY",
+        "EVOLUTION_GUILDS_INSTANCE",
+        "SECRETS_ENCRYPTION_KEY",
+        "NEXT_PUBLIC_SUPABASE_URL",
+        "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+        "NEXT_PUBLIC_LOGIN_URL",
+        "NEXT_PUBLIC_WEB_URL",
+        "NEXT_PUBLIC_API_URL"
+      ]
     },
     "dev": {
       "cache": false,
