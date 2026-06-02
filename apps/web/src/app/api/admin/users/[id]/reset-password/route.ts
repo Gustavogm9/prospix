@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { randomBytes } from 'crypto';
+import { randomBytes, scryptSync } from 'crypto';
 import { requireAdmin, supabaseAdmin } from '../../../../_lib/auth';
 
 function generateTempPassword(): string {
@@ -7,9 +7,8 @@ function generateTempPassword(): string {
 }
 
 function hashPassword(password: string): string {
-  const crypto = require('crypto');
-  const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  const salt = randomBytes(16).toString('hex');
+  const hash = scryptSync(password, salt, 64).toString('hex');
   return `${salt}:${hash}`;
 }
 

@@ -89,7 +89,7 @@ export default function Conversations() {
 
       // Fetch recent messages for each conversation (last 5 each)
       const convIds = (convRows ?? []).map((c: any) => c.id);
-      let messagesMap: Record<string, any[]> = {};
+      const messagesMap: Record<string, any[]> = {};
       if (convIds.length > 0) {
         const { data: msgs } = await supabaseAdmin
           .from('messages')

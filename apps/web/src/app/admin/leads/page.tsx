@@ -76,7 +76,7 @@ export default function LeadManagement() {
 
       // Get conversation counts for these leads
       const leadIds = (leadRows ?? []).map((l: any) => l.id);
-      let convCountMap: Record<string, number> = {};
+      const convCountMap: Record<string, number> = {};
       if (leadIds.length > 0) {
         const { data: convs } = await supabaseAdmin
           .from('conversations')
