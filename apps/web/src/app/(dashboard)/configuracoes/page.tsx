@@ -524,28 +524,23 @@ export default function Settings() {
                       )}
                     </div>
                     <div>
-                      <label htmlFor="profile-email" className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">E-mail Profissional</label>
+                      <label htmlFor="profile-email" className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">E-mail de Login</label>
                       <Input
                         id="profile-email"
                         type="email"
                         value={email}
-                        onChange={(e) => {
-                          setEmail(e.target.value);
-                          if (profileErrors.email) setProfileErrors((p) => ({ ...p, email: undefined }));
-                        }}
-                        aria-invalid={!!profileErrors.email}
-                        aria-describedby={profileErrors.email ? 'profile-email-error' : undefined}
-                        className={`bg-white text-[#0F172A] placeholder-[#64748B] text-[13px] h-10 rounded-lg ${profileErrors.email ? 'border-[#D92D20] focus:border-[#D92D20]' : 'border-[#E5E7EB] focus:border-[#1B3A6B]'}`}
+                        readOnly
+                        disabled
+                        className="bg-[#F8FAFC] text-[#64748B] text-[13px] h-10 rounded-lg border-[#E5E7EB] cursor-not-allowed"
                       />
-                      {profileErrors.email && (
-                        <p id="profile-email-error" className="text-[10px] text-[#D92D20] mt-1" role="alert">{profileErrors.email}</p>
-                      )}
+                      <p className="text-[10px] text-[#94A3B8] mt-1">Este é o e-mail usado para login e não pode ser alterado por aqui.</p>
                     </div>
                     <div>
-                      <label htmlFor="profile-susep" className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Código SUSEP</label>
+                      <label htmlFor="profile-susep" className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Registro Profissional</label>
                       <Input
                         id="profile-susep"
                         value={susep}
+                        placeholder="SUSEP, OAB, CRM, CRECI… (opcional)"
                         onChange={(e) => {
                           setSusep(e.target.value);
                           if (profileErrors.susep) setProfileErrors((p) => ({ ...p, susep: undefined }));
