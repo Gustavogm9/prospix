@@ -46,6 +46,7 @@ export const FunnelChart = ({ stages, className }: FunnelChartProps) => {
 
 export interface BarChartItem {
   label: string;
+  sublabel?: string;
   value: number;
   color?: string;
 }
@@ -60,11 +61,10 @@ export const BarChart = ({ items, maxVal, className }: BarChartProps) => {
   const allValues = items.map((i) => i.value);
   const dataMax = Math.max(...allValues, 1);
   const finalMax = maxVal || dataMax;
-  const hasAnyValue = allValues.some((v) => v > 0);
 
   // Constants for better visual scaling
   const CONTAINER_HEIGHT = 192; // h-48 = 12rem = 192px
-  const MIN_BAR_PX = 28; // minimum visible bar height in px
+  const MIN_BAR_PX = 24; // minimum visible bar height in px for non-zero values
   const LABEL_AREA = 32; // space reserved for the value label above
   const USABLE_HEIGHT = CONTAINER_HEIGHT - LABEL_AREA;
 
@@ -73,7 +73,7 @@ export const BarChart = ({ items, maxVal, className }: BarChartProps) => {
       {items.map((item, idx) => {
         // Calculate bar height: ensure minimum visibility + proportional scaling
         let barHeight = 0;
-        if (item.value > 0 && hasAnyValue) {
+        if (item.value > 0) {
           const ratio = item.value / finalMax;
           // Scale between MIN_BAR_PX and USABLE_HEIGHT
           barHeight = MIN_BAR_PX + ratio * (USABLE_HEIGHT - MIN_BAR_PX);
@@ -84,29 +84,39 @@ export const BarChart = ({ items, maxVal, className }: BarChartProps) => {
             {/* Always-visible value label */}
             <div
               className="text-xs font-bold font-mono text-center transition-all duration-300"
-              style={{ color: item.color || '#1B3A6B' }}
+              style={{ color: item.value > 0 ? (item.color || '#1B3A6B') : '#94A3B8' }}
             >
               {item.value}
             </div>
             {/* Bar */}
             <div className="relative w-full flex justify-center group-hover:scale-y-[1.03] transition-transform duration-200 origin-bottom">
-              <div
-                className={cn(
-                  'w-9 sm:w-12 rounded-t-md shadow-sm transition-all duration-500 ease-out',
-                  !item.color && 'bg-primary',
-                )}
-                style={{
-                  height: `${barHeight}px`,
-                  backgroundColor: item.color || undefined,
-                  opacity: item.value > 0 ? 1 : 0.15,
-                  minHeight: item.value > 0 ? `${MIN_BAR_PX}px` : '4px',
-                }}
-              />
+              {item.value > 0 ? (
+                <div
+                  className={cn(
+                    'w-9 sm:w-12 rounded-t-md shadow-sm transition-all duration-500 ease-out',
+                    !item.color && 'bg-primary',
+                  )}
+                  style={{
+                    height: `${barHeight}px`,
+                    backgroundColor: item.color || undefined,
+                    minHeight: `${MIN_BAR_PX}px`,
+                  }}
+                />
+              ) : (
+                <div className="w-9 sm:w-12 h-[3px] rounded-full bg-[#E2E8F0]" />
+              )}
             </div>
-            {/* Day label */}
-            <span className="text-xs font-medium text-text-secondary text-center truncate w-full mt-0.5">
-              {item.label}
-            </span>
+            {/* Day label + sublabel */}
+            <div className="flex flex-col items-center mt-0.5">
+              <span className="text-xs font-semibold text-text-secondary text-center truncate w-full">
+                {item.label}
+              </span>
+              {item.sublabel && (
+                <span className="text-[10px] text-[#94A3B8] font-mono leading-tight">
+                  {item.sublabel}
+                </span>
+              )}
+            </div>
           </div>
         );
       })}

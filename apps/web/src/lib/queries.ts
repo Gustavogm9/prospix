@@ -1588,6 +1588,7 @@ export interface DashboardAiUsageData {
 
 export interface DashboardWeeklyCapturesData {
   label: string;
+  sublabel?: string;
   value: number;
 }
 
@@ -1875,42 +1876,64 @@ export const dashboardQueries = {
     };
   },
 
-  /** Weekly capture chart (last 7 days) */
-  weeklyCaptures: async (tenantId: string) => {
-    // Try RPC
-    const { data: rpcData, error: rpcErr } = await supabase.rpc('dashboard_weekly_captures', { p_tenant_id: tenantId });
-    if (!rpcErr && rpcData && Array.isArray(rpcData) && rpcData.length > 0) {
-      const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
-      return {
-        data: rpcData.map((row: any) => ({
-          label: dayNames[new Date(row.capture_date).getDay()] || '',
-          value: Number(row.cnt) || 0,
-        })) as DashboardWeeklyCapturesData[],
-        error: null,
-      };
+  /** Weekly capture chart (7-day window, offset by weeks) */
+  weeklyCaptures: async (tenantId: string, weekOffset: number = 0) => {
+    const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+    // Calculate date range based on weekOffset
+    const endDate = new Date();
+    endDate.setDate(endDate.getDate() - (weekOffset * 7));
+    endDate.setHours(23, 59, 59, 999);
+
+    const startDate = new Date(endDate);
+    startDate.setDate(startDate.getDate() - 6);
+    startDate.setHours(0, 0, 0, 0);
+
+    // Build the 7-day buckets
+    const days = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(startDate);
+      d.setDate(d.getDate() + i);
+      d.setHours(0, 0, 0, 0);
+      const dd = String(d.getDate()).padStart(2, '0');
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      return { date: d, label: dayNames[d.getDay()]!, sublabel: `${dd}/${mm}`, count: 0 };
+    });
+
+    // Period label for the header (e.g. "28/05 – 03/06")
+    const periodStart = days[0]!.sublabel;
+    const periodEnd = days[6]!.sublabel;
+    const periodLabel = `${periodStart} – ${periodEnd}`;
+
+    // Try RPC first (only for current week, offset 0)
+    if (weekOffset === 0) {
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('dashboard_weekly_captures', { p_tenant_id: tenantId });
+      if (!rpcErr && rpcData && Array.isArray(rpcData) && rpcData.length > 0) {
+        // Map RPC data to our day buckets
+        for (const row of rpcData) {
+          const rowDate = new Date(row.capture_date);
+          rowDate.setHours(0, 0, 0, 0);
+          const match = days.find((d) => d.date.getTime() === rowDate.getTime());
+          if (match) match.count = Number(row.cnt) || 0;
+        }
+
+        return {
+          data: days.map((d) => ({ label: d.label, sublabel: d.sublabel, value: d.count })),
+          periodLabel,
+          error: null,
+        };
+      }
     }
 
-    // Fallback
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
-    sevenDaysAgo.setHours(0, 0, 0, 0);
-
+    // Fallback: query leads directly
     const { data: leads, error } = await supabase
       .from('leads')
       .select('created_at')
       .eq('tenant_id', tenantId)
       .is('deleted_at', null)
-      .gte('created_at', sevenDaysAgo.toISOString());
+      .gte('created_at', startDate.toISOString())
+      .lte('created_at', endDate.toISOString());
 
-    if (error) return { data: [], error: mapError(error) };
-
-    const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
-    const days = Array.from({ length: 7 }, (_, i) => {
-      const d = new Date();
-      d.setDate(d.getDate() - (6 - i));
-      d.setHours(0, 0, 0, 0);
-      return { date: d, label: dayNames[d.getDay()]!, count: 0 };
-    });
+    if (error) return { data: [], periodLabel, error: mapError(error) };
 
     (leads || []).forEach((lead) => {
       const created = new Date(lead.created_at);
@@ -1920,7 +1943,8 @@ export const dashboardQueries = {
     });
 
     return {
-      data: days.map((d) => ({ label: d.label, value: d.count })) as DashboardWeeklyCapturesData[],
+      data: days.map((d) => ({ label: d.label, sublabel: d.sublabel, value: d.count })),
+      periodLabel,
       error: null,
     };
   },

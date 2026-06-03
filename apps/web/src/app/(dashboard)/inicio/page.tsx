@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FunnelChart, BarChart, toast } from '@prospix/ui';
-import { Calendar, MessageSquare, Phone, Search, Info, ChevronRight, Star, MapPin } from 'lucide-react';
+import { Calendar, MessageSquare, Phone, Search, Info, ChevronLeft, ChevronRight, Star, MapPin } from 'lucide-react';
 import { dashboardQueries } from '@/lib/queries';
 import { useAuthStore } from '@/store/auth-store';
 import { useRouter } from 'next/navigation';
@@ -29,7 +29,8 @@ interface DashboardStats {
   newLeadsToday: number;
   nextMeetingTime: string | null;
   funnelData: Array<{ stage: string; value: number; color: string }>;
-  weeklyPerformance: Array<{ label: string; value: number }>;
+  weeklyPerformance: Array<{ label: string; sublabel?: string; value: number }>;
+  weeklyPeriodLabel: string;
   hotLeads: HotLead[];
 }
 
@@ -72,6 +73,8 @@ export default function HomePage() {
   const tenantId = useAuthStore(state => state.tenantId);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [isLoadingWeekly, setIsLoadingWeekly] = useState(false);
 
   const onboardingSignals = useMemo(() => {
     if (!stats) return undefined;
@@ -120,9 +123,11 @@ export default function HomePage() {
           { stage: 'Fechados', value: closedTotal, color: '#039855' },
         ] : [];
 
+        const weeklyResult = weeklyRes.status === 'fulfilled' && !weeklyRes.value.error ? weeklyRes.value : null;
         const weeklyPerformance: DashboardStats['weeklyPerformance'] = Array.isArray(weeklyRaw) 
-          ? weeklyRaw.map((d: any) => ({ label: d.label as string, value: d.value as number }))
+          ? weeklyRaw.map((d: any) => ({ label: d.label as string, sublabel: d.sublabel as string | undefined, value: d.value as number }))
           : [];
+        const weeklyPeriodLabel = (weeklyResult as any)?.periodLabel || '';
 
         const hotLeads: DashboardStats['hotLeads'] = (Array.isArray(hotLeadsRaw) ? hotLeadsRaw : [])
           .slice(0, 5)
@@ -148,6 +153,7 @@ export default function HomePage() {
           nextMeetingTime: todayData?.next_meeting_time ?? null,
           funnelData,
           weeklyPerformance,
+          weeklyPeriodLabel,
           hotLeads,
         });
       } catch (err) {
@@ -163,6 +169,33 @@ export default function HomePage() {
     fetchDashboardData();
     return () => { cancelled = true; };
   }, [tenantId]);
+
+  // Fetch weekly data with offset
+  const fetchWeeklyData = useCallback(async (offset: number) => {
+    if (!tenantId) return;
+    setIsLoadingWeekly(true);
+    try {
+      const res = await dashboardQueries.weeklyCaptures(tenantId, offset);
+      if (!res.error && res.data) {
+        setStats((prev) => prev ? {
+          ...prev,
+          weeklyPerformance: res.data.map((d: any) => ({ label: d.label, sublabel: d.sublabel, value: d.value })),
+          weeklyPeriodLabel: (res as any).periodLabel || '',
+        } : prev);
+      }
+    } catch (err) {
+      console.error('Error fetching weekly data', err);
+    } finally {
+      setIsLoadingWeekly(false);
+    }
+  }, [tenantId]);
+
+  const handleWeekChange = useCallback((direction: 'prev' | 'next') => {
+    const newOffset = direction === 'prev' ? weekOffset + 1 : Math.max(0, weekOffset - 1);
+    if (direction === 'next' && weekOffset === 0) return;
+    setWeekOffset(newOffset);
+    fetchWeeklyData(newOffset);
+  }, [weekOffset, fetchWeeklyData]);
 
   if (isLoading || !stats) {
     return (
@@ -423,12 +456,38 @@ export default function HomePage() {
 
       {/* ═══ Weekly Performance ═══ */}
       <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
-        <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
-          <div className="text-[14px] font-semibold text-[#0F172A]">Novas Leads na Semana</div>
-          <div className="text-[11px] text-[#64748B] mt-0.5">Distribuição diária de captação pelo Google Maps.</div>
+        <div className="px-5 py-3.5 border-b border-[#EEF0F3] flex items-center justify-between">
+          <div>
+            <div className="text-[14px] font-semibold text-[#0F172A]">Novas Leads na Semana</div>
+            <div className="text-[11px] text-[#64748B] mt-0.5">Distribuição diária de captação pelo Google Maps.</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handleWeekChange('prev')}
+              className="w-7 h-7 rounded-lg bg-[#F1F3F6] text-[#64748B] flex items-center justify-center hover:bg-[#1B3A6B] hover:text-white transition-all"
+              title="Semana anterior"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <span className="text-[11px] font-semibold text-[#475569] font-mono min-w-[100px] text-center">
+              {stats.weeklyPeriodLabel || ''}
+            </span>
+            <button
+              onClick={() => handleWeekChange('next')}
+              disabled={weekOffset === 0}
+              className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${
+                weekOffset === 0
+                  ? 'bg-[#F1F3F6] text-[#CBD5E1] cursor-not-allowed'
+                  : 'bg-[#F1F3F6] text-[#64748B] hover:bg-[#1B3A6B] hover:text-white'
+              }`}
+              title="Próxima semana"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
         </div>
-        <div className="py-6 flex items-end justify-center min-h-[200px]">
-          <div className="w-full max-w-[400px] px-5">
+        <div className={`py-6 flex items-end justify-center min-h-[200px] transition-opacity duration-200 ${isLoadingWeekly ? 'opacity-40' : ''}`}>
+          <div className="w-full max-w-[500px] px-5">
             <BarChart items={stats.weeklyPerformance} />
           </div>
         </div>
