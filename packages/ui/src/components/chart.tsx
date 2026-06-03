@@ -62,53 +62,41 @@ export const BarChart = ({ items, maxVal, className }: BarChartProps) => {
   const dataMax = Math.max(...allValues, 1);
   const finalMax = maxVal || dataMax;
 
-  // Constants for better visual scaling
-  const CONTAINER_HEIGHT = 192; // h-48 = 12rem = 192px
-  const MIN_BAR_PX = 24; // minimum visible bar height in px for non-zero values
-  const LABEL_AREA = 32; // space reserved for the value label above
-  const USABLE_HEIGHT = CONTAINER_HEIGHT - LABEL_AREA;
-
   return (
-    <div className={cn('flex items-end justify-between gap-3 h-48 w-full pt-6 pb-2 px-4 border-b border-border', className)}>
+    <div className={cn('flex items-end justify-between gap-3 w-full h-full', className)}>
       {items.map((item, idx) => {
-        // Calculate bar height: ensure minimum visibility + proportional scaling
-        let barHeight = 0;
-        if (item.value > 0) {
-          const ratio = item.value / finalMax;
-          // Scale between MIN_BAR_PX and USABLE_HEIGHT
-          barHeight = MIN_BAR_PX + ratio * (USABLE_HEIGHT - MIN_BAR_PX);
-        }
+        // Calculate height as percentage (min 15% for non-zero, max 100%)
+        const pct = item.value > 0 ? Math.max(15, (item.value / finalMax) * 100) : 0;
 
         return (
-          <div key={idx} className="flex flex-col items-center gap-1 group flex-1 h-full justify-end">
-            {/* Always-visible value label */}
+          <div key={idx} className="flex flex-col items-center flex-1 h-full min-w-0">
+            {/* Value label - fixed area */}
             <div
-              className="text-xs font-bold font-mono text-center transition-all duration-300"
+              className="text-[11px] font-bold font-mono text-center shrink-0 mb-1"
               style={{ color: item.value > 0 ? (item.color || '#1B3A6B') : '#94A3B8' }}
             >
               {item.value}
             </div>
-            {/* Bar */}
-            <div className="relative w-full flex justify-center group-hover:scale-y-[1.03] transition-transform duration-200 origin-bottom">
+            {/* Bar area - grows to fill remaining space */}
+            <div className="flex-1 w-full flex items-end justify-center overflow-hidden min-h-0">
               {item.value > 0 ? (
                 <div
                   className={cn(
-                    'w-9 sm:w-12 rounded-t-md shadow-sm transition-all duration-500 ease-out',
+                    'w-8 sm:w-10 rounded-t-md shadow-sm transition-all duration-500 ease-out',
                     !item.color && 'bg-primary',
                   )}
                   style={{
-                    height: `${barHeight}px`,
+                    height: `${pct}%`,
                     backgroundColor: item.color || undefined,
-                    minHeight: `${MIN_BAR_PX}px`,
                   }}
                 />
               ) : (
-                <div className="w-9 sm:w-12 h-[3px] rounded-full bg-[#E2E8F0]" />
+                <div className="w-8 sm:w-10 h-[3px] rounded-full bg-[#E2E8F0] mb-0" />
               )}
             </div>
-            {/* Day label + sublabel */}
-            <div className="flex flex-col items-center mt-0.5">
-              <span className="text-xs font-semibold text-text-secondary text-center truncate w-full">
+            {/* Day label + sublabel - fixed area */}
+            <div className="flex flex-col items-center shrink-0 mt-1.5 border-t border-[#EEF0F3] pt-1 w-full">
+              <span className="text-[11px] font-semibold text-[#475569] text-center truncate w-full leading-tight">
                 {item.label}
               </span>
               {item.sublabel && (

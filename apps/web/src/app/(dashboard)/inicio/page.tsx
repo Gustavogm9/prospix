@@ -486,8 +486,8 @@ export default function HomePage() {
             </button>
           </div>
         </div>
-        <div className={`py-6 flex items-end justify-center min-h-[200px] transition-opacity duration-200 ${isLoadingWeekly ? 'opacity-40' : ''}`}>
-          <div className="w-full max-w-[500px] px-5">
+        <div className={`px-5 py-4 transition-opacity duration-200 ${isLoadingWeekly ? 'opacity-40' : ''}`}>
+          <div className="w-full max-w-[520px] mx-auto h-[200px]">
             <BarChart items={stats.weeklyPerformance} />
           </div>
         </div>
