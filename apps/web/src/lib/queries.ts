@@ -467,7 +467,7 @@ export const campaignsQueries = {
         hour_window_start: campaignData.hourWindowStart ?? 9,
         hour_window_end: campaignData.hourWindowEnd ?? 18,
         active_script_id: campaignData.activeScriptId,
-        filters: (campaignData.filters || { min_fit_score: 6.0 }) as any,
+        filters: (campaignData.filters || { min_fit_score: 3 }) as any,
         status: 'DRAFT' as const,
         updated_at: new Date().toISOString(),
       })

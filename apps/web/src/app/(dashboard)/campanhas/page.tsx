@@ -1,6 +1,6 @@
 'use client';
 
-import { Target, Plus, Pause, Edit2, Copy, Play, Loader2, Info, X, Trash2 } from 'lucide-react';
+import { Target, Plus, Pause, Edit2, Copy, Play, Loader2, Info, X, Trash2, ChevronDown } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { campaignsQueries } from '@/lib/queries';
 import { useAuthStore } from '@/store/auth-store';
@@ -36,8 +36,19 @@ export default function Campaigns() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null);
+  const [icpOpen, setIcpOpen] = useState(false);
   const [newCamp, setNewCamp] = useState({
     name: '', profession: 'DOCTOR', cities: '', dailyLimit: '20', hourStart: '8', hourEnd: '18',
+    icpMinScore: '3',
+    icpWeightProfession: '3',
+    icpWeightWhatsapp: '2',
+    icpWeightOwner: '2',
+    icpWeightArea: '1',
+    icpWeightCnpjYears: '1',
+    icpWeightGoogle: '1',
+    icpHighValueAreas: '',
+    icpMinGoogleRating: '4',
+    icpMinReviews: '5',
   });
 
   const fetchCampaigns = async () => {
@@ -105,6 +116,7 @@ export default function Campaigns() {
         dailyLimit: camp.dailyLimit,
         hourWindowStart: camp.hourWindowStart,
         hourWindowEnd: camp.hourWindowEnd,
+        filters: camp.filters,
       });
       if (result.error) throw new Error(result.error.message);
       toast.success('Campanha duplicada');
@@ -115,6 +127,8 @@ export default function Campaigns() {
 
   const handleEdit = (camp: Campaign) => {
     setEditingCampaign(camp);
+    const f = camp.filters || {} as any;
+    const w = f.weights || {};
     setNewCamp({
       name: camp.name,
       profession: camp.profession,
@@ -122,7 +136,18 @@ export default function Campaigns() {
       dailyLimit: String(camp.dailyLimit),
       hourStart: String(camp.hourWindowStart),
       hourEnd: String(camp.hourWindowEnd),
+      icpMinScore: String(f.min_fit_score ?? 3),
+      icpWeightProfession: String(w.profession_match ?? 3),
+      icpWeightWhatsapp: String(w.whatsapp_valid ?? 2),
+      icpWeightOwner: String(w.is_owner ?? 2),
+      icpWeightArea: String(w.high_value_area ?? 1),
+      icpWeightCnpjYears: String(w.cnpj_years ?? 1),
+      icpWeightGoogle: String(w.google_reputation ?? 1),
+      icpHighValueAreas: (f.high_value_areas || []).join(', '),
+      icpMinGoogleRating: String(f.min_google_rating ?? 4),
+      icpMinReviews: String(f.min_reviews ?? 5),
     });
+    setIcpOpen(true);
     setIsCreateOpen(true);
   };
 
@@ -151,6 +176,20 @@ export default function Campaigns() {
       dailyLimit: Number(newCamp.dailyLimit) || 20,
       hourWindowStart: Number(newCamp.hourStart) || 8,
       hourWindowEnd: Number(newCamp.hourEnd) || 18,
+      filters: {
+        min_fit_score: Number(newCamp.icpMinScore) || 3,
+        weights: {
+          profession_match: Number(newCamp.icpWeightProfession) || 3,
+          whatsapp_valid: Number(newCamp.icpWeightWhatsapp) || 2,
+          is_owner: Number(newCamp.icpWeightOwner) || 2,
+          high_value_area: Number(newCamp.icpWeightArea) || 1,
+          cnpj_years: Number(newCamp.icpWeightCnpjYears) || 1,
+          google_reputation: Number(newCamp.icpWeightGoogle) || 1,
+        },
+        high_value_areas: newCamp.icpHighValueAreas.split(',').map(s => s.trim()).filter(Boolean),
+        min_google_rating: Number(newCamp.icpMinGoogleRating) || 4,
+        min_reviews: Number(newCamp.icpMinReviews) || 5,
+      },
     };
     try {
       if (editingCampaign) {
@@ -164,7 +203,8 @@ export default function Campaigns() {
       }
       setIsCreateOpen(false);
       setEditingCampaign(null);
-      setNewCamp({ name: '', profession: 'DOCTOR', cities: '', dailyLimit: '20', hourStart: '8', hourEnd: '18' });
+      setNewCamp({ name: '', profession: 'DOCTOR', cities: '', dailyLimit: '20', hourStart: '8', hourEnd: '18', icpMinScore: '3', icpWeightProfession: '3', icpWeightWhatsapp: '2', icpWeightOwner: '2', icpWeightArea: '1', icpWeightCnpjYears: '1', icpWeightGoogle: '1', icpHighValueAreas: '', icpMinGoogleRating: '4', icpMinReviews: '5' });
+      setIcpOpen(false);
       await fetchCampaigns();
     } catch (err) {
       console.error(err);
@@ -374,6 +414,120 @@ export default function Campaigns() {
                 <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">Fim</label>
                 <input type="number" min="0" max="23" value={newCamp.hourEnd} onChange={e => setNewCamp(p => ({...p, hourEnd: e.target.value}))} className="w-full h-9 px-3 rounded-lg bg-[#F9FAFB] border border-[#E5E7EB] text-[13px] focus:border-[#1B3A6B] outline-none" />
               </div>
+            </div>
+
+            {/* ICP Section */}
+            <div className="border border-[#E5E7EB] rounded-xl overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setIcpOpen(!icpOpen)}
+                className="w-full flex items-center justify-between px-4 py-3 bg-gradient-to-r from-[rgba(27,58,107,0.03)] to-[rgba(232,152,28,0.04)] hover:from-[rgba(27,58,107,0.06)] hover:to-[rgba(232,152,28,0.08)] transition-all"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-[14px]">⚡</span>
+                  <span className="text-[12px] font-semibold text-[#0F172A]">Perfil de Cliente Ideal (ICP)</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#ECFDF3] text-[#027A48] font-medium">Novo</span>
+                </div>
+                <ChevronDown className={`w-4 h-4 text-[#64748B] transition-transform ${icpOpen ? 'rotate-180' : ''}`} />
+              </button>
+
+              {icpOpen && (
+                <div className="px-4 py-3 space-y-3.5 border-t border-[#EEF0F3] bg-[#FAFBFC]">
+                  {/* Min Fit Score Slider */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider">Score mínimo para aceitar lead</label>
+                      <span className="text-[13px] font-bold text-[#1B3A6B] font-mono bg-[rgba(27,58,107,0.08)] px-2 py-0.5 rounded">{newCamp.icpMinScore}</span>
+                    </div>
+                    <input
+                      type="range" min="0" max="10" step="1"
+                      value={newCamp.icpMinScore}
+                      onChange={e => setNewCamp(p => ({...p, icpMinScore: e.target.value}))}
+                      className="w-full h-2 rounded-full appearance-none cursor-pointer accent-[#1B3A6B] bg-[#E5E7EB]"
+                    />
+                    <div className="flex justify-between text-[9px] text-[#94A3B8] mt-0.5">
+                      <span>0 — aceita todos</span>
+                      <span>10 — muito restritivo</span>
+                    </div>
+                    <p className="text-[10px] text-[#64748B] mt-1">Leads com score abaixo deste valor serão arquivados automaticamente.</p>
+                  </div>
+
+                  {/* Score Weights */}
+                  <div>
+                    <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-2">Pesos dos critérios de avaliação</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        { key: 'icpWeightProfession', label: 'Profissão bate', icon: '🎯', tip: 'Profissão do lead = profissão da campanha' },
+                        { key: 'icpWeightWhatsapp', label: 'WhatsApp válido', icon: '📱', tip: 'Lead tem WhatsApp ativo e verificado' },
+                        { key: 'icpWeightOwner', label: 'Sócio/proprietário', icon: '👤', tip: 'Lead é dono ou sócio do negócio' },
+                        { key: 'icpWeightArea', label: 'Bairro premium', icon: '📍', tip: 'Lead está em bairro de alto valor' },
+                        { key: 'icpWeightCnpjYears', label: 'Tempo de atuação', icon: '📅', tip: 'Anos desde abertura do CNPJ (máx 5+)' },
+                        { key: 'icpWeightGoogle', label: 'Reputação Google', icon: '⭐', tip: 'Rating ≥ 4.5 com 10+ avaliações' },
+                      ].map(({ key, label, icon, tip }) => (
+                        <div key={key} className="flex items-center gap-2 bg-white rounded-lg border border-[#E5E7EB] px-2.5 py-2" title={tip}>
+                          <span className="text-[13px]">{icon}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-[10.5px] font-medium text-[#0F172A] truncate">{label}</div>
+                          </div>
+                          <input
+                            type="number" min="0" max="5" step="1"
+                            value={(newCamp as any)[key]}
+                            onChange={e => setNewCamp(p => ({...p, [key]: e.target.value}))}
+                            className="w-10 h-7 text-center rounded bg-[#F9FAFB] border border-[#E5E7EB] text-[12px] font-bold text-[#1B3A6B] focus:border-[#1B3A6B] outline-none"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    {(() => {
+                      const maxScore = Number(newCamp.icpWeightProfession) + Number(newCamp.icpWeightWhatsapp) + Number(newCamp.icpWeightOwner) + Number(newCamp.icpWeightArea) + Number(newCamp.icpWeightCnpjYears) + Number(newCamp.icpWeightGoogle);
+                      const minScore = Number(newCamp.icpMinScore);
+                      const pct = maxScore > 0 ? Math.round((minScore / maxScore) * 100) : 0;
+                      return (
+                        <div className="mt-2 flex items-center gap-2">
+                          <div className="flex-1 h-2 bg-[#E5E7EB] rounded-full overflow-hidden">
+                            <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(100, pct)}%`, background: pct > 80 ? '#D92D20' : pct > 50 ? '#E8981C' : '#027A48' }} />
+                          </div>
+                          <span className="text-[10px] font-mono text-[#64748B] whitespace-nowrap">mín {minScore} / máx {maxScore}</span>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  {/* High Value Areas */}
+                  <div>
+                    <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">Bairros de alto valor (opcional)</label>
+                    <input
+                      value={newCamp.icpHighValueAreas}
+                      onChange={e => setNewCamp(p => ({...p, icpHighValueAreas: e.target.value}))}
+                      placeholder="Centro, Jardim Paulista, Vila Nova"
+                      className="w-full h-8 px-3 rounded-lg bg-white border border-[#E5E7EB] text-[12px] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none"
+                    />
+                    <p className="text-[10px] text-[#64748B] mt-0.5">Leads nesses bairros ganham pontos extras. Separe por vírgula.</p>
+                  </div>
+
+                  {/* Google Reputation Config */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">Rating mínimo Google</label>
+                      <input
+                        type="number" min="0" max="5" step="0.5"
+                        value={newCamp.icpMinGoogleRating}
+                        onChange={e => setNewCamp(p => ({...p, icpMinGoogleRating: e.target.value}))}
+                        className="w-full h-8 px-3 rounded-lg bg-white border border-[#E5E7EB] text-[12px] focus:border-[#1B3A6B] outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">Avaliações mínimas</label>
+                      <input
+                        type="number" min="0" max="100"
+                        value={newCamp.icpMinReviews}
+                        onChange={e => setNewCamp(p => ({...p, icpMinReviews: e.target.value}))}
+                        className="w-full h-8 px-3 rounded-lg bg-white border border-[#E5E7EB] text-[12px] focus:border-[#1B3A6B] outline-none"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
             <button type="submit" disabled={isCreating} className="w-full h-10 rounded-lg text-[13px] font-semibold bg-[#1B3A6B] text-white hover:bg-[#142C52] transition-all disabled:opacity-50 flex items-center justify-center gap-2">
               {isCreating ? <Loader2 className="w-4 h-4 animate-spin" /> : editingCampaign ? <Edit2 className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
