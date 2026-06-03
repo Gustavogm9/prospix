@@ -29,11 +29,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
     supabase.auth.getSession().then(({ data }) => {
       if (!data.session) {
-        clearSession();
+        // Don't call clearSession() here — it resets `initialized` to false,
+        // creating a loop. Just clear user data directly without signOut.
+        useAuthStore.setState({ tenantId: null, user: null });
       }
       setInitialized(true);
+    }).catch(() => {
+      // If getSession fails (network error, etc.), still mark initialized
+      // so the layout can redirect to /login instead of showing spinner forever.
+      setInitialized(true);
     });
-  }, [hasHydrated, initialized, clearSession, setInitialized]);
+  }, [hasHydrated, initialized, setInitialized]);
 
   // Listen for Supabase auth state changes (e.g. token refresh, sign-out)
   useEffect(() => {
@@ -56,10 +62,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // Redirect to login if not authorized after hydration + session check
   useEffect(() => {
     if (hasHydrated && initialized && !isAuthorized) {
-      clearSession();
       router.replace('/login');
     }
-  }, [hasHydrated, initialized, isAuthorized, clearSession, router]);
+  }, [hasHydrated, initialized, isAuthorized, router]);
 
   // Show loading while hydrating or checking session
   if (!hasHydrated || !initialized) {
