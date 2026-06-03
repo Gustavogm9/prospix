@@ -29,6 +29,7 @@ interface Conversation {
   initials?: string;
   avatarColor?: string;
   profession?: string;
+  professionKey?: string;
   tagType?: 'success' | 'live' | 'warning' | 'info';
   tagLabel?: string;
   whenLabel?: string;
@@ -53,6 +54,18 @@ interface Conversation {
       riskCategory: string | null;
       estimatedPremiumMinCents: number | null;
       estimatedPremiumMaxCents: number | null;
+    } | null;
+    cnpjInfo?: {
+      cnpj: string;
+      razaoSocial: string;
+      nomeFantasia?: string;
+      situacaoCadastral: string;
+      dataInicioAtividade?: string;
+      cnaeFiscal?: string;
+      uf?: string;
+      municipio?: string;
+      bairro?: string;
+      qsa?: Array<{ nome: string; qual?: string }>;
     } | null;
   };
 }
@@ -96,6 +109,11 @@ export default function Conversations() {
   const [outcomeCommission, setOutcomeCommission] = useState('');
   const [drawerTab, setDrawerTab] = useState<'chat' | 'info' | 'health' | 'history'>('chat');
   const [leadEvents, setLeadEvents] = useState<Array<{ id: string; eventType: string; payload: any; createdAt: string }>>([]);
+  const [viewMode, setViewMode] = useState<'table' | 'kanban'>('table');
+  const [professionFilter, setProfessionFilter] = useState('all');
+  const [sortBy, setSortBy] = useState<'temperature' | 'recent' | 'name' | 'score'>('temperature');
+  const [showProfDropdown, setShowProfDropdown] = useState(false);
+  const [showSortDropdown, setShowSortDropdown] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Helper to map DB Conversation to Web Frontend UI type
@@ -133,8 +151,16 @@ export default function Conversations() {
       initials: getInitials(name),
       avatarColor: getAvatarColor(idx),
       profession: professionLabel,
-      tagType: conv.ai_handling ? 'live' : undefined,
-      tagLabel: conv.ai_handling ? 'IA respondendo' : undefined,
+      professionKey: lead.profession || '',
+      ...(() => {
+        const isWaiting = !conv.ai_handling && (
+          conv.status === 'ESCALATED' ||
+          (conv.last_inbound_at && (!conv.last_outbound_at || new Date(conv.last_inbound_at) > new Date(conv.last_outbound_at)))
+        );
+        if (conv.ai_handling) return { tagType: 'live' as const, tagLabel: 'IA respondendo' };
+        if (isWaiting) return { tagType: 'warning' as const, tagLabel: 'Aguardando você' };
+        return { tagType: undefined, tagLabel: undefined };
+      })(),
       whenLabel: conv.last_message_at 
         ? new Date(conv.last_message_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) 
         : new Date(conv.started_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
@@ -161,6 +187,21 @@ export default function Conversations() {
           riskCategory: hp.risk_category,
           estimatedPremiumMinCents: hp.estimated_premium_min_cents,
           estimatedPremiumMaxCents: hp.estimated_premium_max_cents,
+        } : null,
+        cnpjInfo: metadata.cnpj_info ? {
+          cnpj: metadata.cnpj_info.cnpj || '',
+          razaoSocial: metadata.cnpj_info.razaoSocial || metadata.cnpj_info.razao_social || '',
+          nomeFantasia: metadata.cnpj_info.nomeFantasia || metadata.cnpj_info.nome_fantasia || undefined,
+          situacaoCadastral: metadata.cnpj_info.situacaoCadastral || (metadata.cnpj_info.situacao_cadastral === 2 ? 'ATIVA' : metadata.cnpj_info.situacao_cadastral) || 'ATIVA',
+          dataInicioAtividade: metadata.cnpj_info.dataInicioAtividade || metadata.cnpj_info.data_inicio_atividade || undefined,
+          cnaeFiscal: metadata.cnpj_info.cnaeFiscal || metadata.cnpj_info.cnae_fiscal || undefined,
+          uf: metadata.cnpj_info.uf || undefined,
+          municipio: metadata.cnpj_info.municipio || undefined,
+          bairro: metadata.cnpj_info.bairro || undefined,
+          qsa: (metadata.cnpj_info.qsa || []).map((partner: any) => ({
+            nome: partner.nome_socio || partner.nome || '',
+            qual: partner.qualificacao_socio_descricao || partner.qual || '',
+          })),
         } : null,
       }
     };
@@ -413,21 +454,39 @@ export default function Conversations() {
     }
   };
 
-  // Computed counts for toolbar (real data only, zero is real)
+  // Computed counts for toolbar
   const totalCount = conversations.length;
   const hotCount = conversations.filter(c => c.fitScore >= 9.0).length;
   const waitCount = conversations.filter(c => c.tagType === 'warning' || c.unread).length;
   const scheduledCount = conversations.filter(c => c.tagType === 'success').length;
+  const liveCount = conversations.filter(c => c.aiHandling).length;
 
-  // Filtered conversations
-  const filteredConversations = conversations.filter(c => {
-    switch (activeFilter) {
-      case 'hot': return c.fitScore >= 9.0;
-      case 'wait': return c.tagType === 'warning' || c.unread;
-      case 'scheduled': return c.tagType === 'success';
-      default: return true;
-    }
-  });
+  // Filtered + sorted conversations
+  const sortedConversations = conversations
+    .filter(c => {
+      const matchesTab = (() => {
+        switch (activeFilter) {
+          case 'hot': return c.fitScore >= 9.0;
+          case 'wait': return c.tagType === 'warning' || c.unread;
+          case 'scheduled': return c.tagType === 'success';
+          default: return true;
+        }
+      })();
+      const matchesProf = professionFilter === 'all' || c.professionKey === professionFilter;
+      return matchesTab && matchesProf;
+    })
+    .sort((a, b) => {
+      switch (sortBy) {
+        case 'temperature':
+        case 'score':
+          return b.fitScore - a.fitScore;
+        case 'name':
+          return a.leadName.localeCompare(b.leadName, 'pt-BR');
+        case 'recent':
+        default:
+          return 0; // Already sorted by last_message_at from DB
+      }
+    });
 
   const handleSelectConv = (conv: Conversation) => {
     setSelectedConv(conv);
@@ -546,28 +605,87 @@ export default function Conversations() {
         {/* Divider */}
         <div className="w-px h-5 bg-[#E5E7EB] mx-1" />
 
-        <button
-          onClick={() => toast.info('Filtro de profissão', 'Em breve!')}
-          className="h-8 px-[11px] rounded-md text-xs font-medium text-[#475569] bg-transparent border border-[#E5E7EB] hover:bg-[#F1F3F6] hover:text-[#0F172A] inline-flex items-center gap-1.5 transition-all"
-        >
-          <Filter className="w-[13px] h-[13px]" />
-          Profissão
-        </button>
-        <button
-          onClick={() => toast.info('Ordenação', 'Ordenado por Fit Score')}
-          className="h-8 px-[11px] rounded-md text-xs font-medium text-[#475569] bg-transparent border border-[#E5E7EB] hover:bg-[#F1F3F6] hover:text-[#0F172A] inline-flex items-center gap-1.5 transition-all"
-        >
-          <ArrowUpDown className="w-[13px] h-[13px]" />
-          Ordenar
-        </button>
+        {/* Profession filter dropdown */}
+        <div className="relative">
+          <button
+            onClick={(e) => { e.stopPropagation(); setShowProfDropdown(v => !v); setShowSortDropdown(false); }}
+            className={`h-8 px-[11px] rounded-md text-xs font-medium border inline-flex items-center gap-1.5 transition-all ${
+              professionFilter !== 'all'
+                ? 'bg-[#1B3A6B] text-white border-[#1B3A6B]'
+                : 'text-[#475569] bg-transparent border-[#E5E7EB] hover:bg-[#F1F3F6] hover:text-[#0F172A]'
+            }`}
+          >
+            <Filter className="w-[13px] h-[13px]" />
+            {professionFilter === 'all' ? 'Profissão' : (PROFESSION_LABELS[professionFilter] || professionFilter)}
+            {professionFilter !== 'all' && (
+              <span onClick={(e) => { e.stopPropagation(); setProfessionFilter('all'); }} className="ml-0.5 hover:opacity-60 cursor-pointer">✕</span>
+            )}
+          </button>
+          {showProfDropdown && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setShowProfDropdown(false)} />
+              <div className="absolute top-full left-0 mt-1 bg-white border border-[#E5E7EB] rounded-lg shadow-lg z-20 min-w-[180px] py-1 animate-fadeIn">
+                <button onClick={() => { setProfessionFilter('all'); setShowProfDropdown(false); }}
+                  className={`w-full text-left px-3 py-2 text-xs hover:bg-[#F1F3F6] transition-colors ${professionFilter === 'all' ? 'text-[#1B3A6B] font-semibold bg-[rgba(27,58,107,0.04)]' : 'text-[#475569]'}`}>
+                  Todas as profissões
+                </button>
+                {Object.entries(PROFESSION_LABELS).map(([key, label]) => (
+                  <button key={key} onClick={() => { setProfessionFilter(key); setShowProfDropdown(false); }}
+                    className={`w-full text-left px-3 py-2 text-xs hover:bg-[#F1F3F6] transition-colors ${professionFilter === key ? 'text-[#1B3A6B] font-semibold bg-[rgba(27,58,107,0.04)]' : 'text-[#475569]'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Sort dropdown */}
+        <div className="relative">
+          <button
+            onClick={(e) => { e.stopPropagation(); setShowSortDropdown(v => !v); setShowProfDropdown(false); }}
+            className="h-8 px-[11px] rounded-md text-xs font-medium text-[#475569] bg-transparent border border-[#E5E7EB] hover:bg-[#F1F3F6] hover:text-[#0F172A] inline-flex items-center gap-1.5 transition-all"
+          >
+            <ArrowUpDown className="w-[13px] h-[13px]" />
+            {sortBy === 'temperature' ? 'Temperatura' : sortBy === 'recent' ? 'Recentes' : sortBy === 'name' ? 'Nome A-Z' : 'Fit Score'}
+          </button>
+          {showSortDropdown && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setShowSortDropdown(false)} />
+              <div className="absolute top-full left-0 mt-1 bg-white border border-[#E5E7EB] rounded-lg shadow-lg z-20 min-w-[170px] py-1 animate-fadeIn">
+                {[
+                  { key: 'temperature', label: '🔥 Temperatura' },
+                  { key: 'recent', label: '🕐 Mais recentes' },
+                  { key: 'name', label: '🔤 Nome A-Z' },
+                  { key: 'score', label: '📊 Fit Score' },
+                ].map(opt => (
+                  <button key={opt.key} onClick={() => { setSortBy(opt.key as any); setShowSortDropdown(false); }}
+                    className={`w-full text-left px-3 py-2 text-xs hover:bg-[#F1F3F6] transition-colors ${sortBy === opt.key ? 'text-[#1B3A6B] font-semibold bg-[rgba(27,58,107,0.04)]' : 'text-[#475569]'}`}>
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
 
         {/* View toggle */}
         <div className="flex bg-[#F1F3F6] rounded-md p-[2px] ml-auto">
-          <button className="h-7 px-[11px] text-xs font-medium rounded text-[#1B3A6B] bg-white shadow-sm inline-flex items-center gap-[5px]">
+          <button
+            onClick={() => setViewMode('table')}
+            className={`h-7 px-[11px] text-xs font-medium rounded inline-flex items-center gap-[5px] transition-all ${
+              viewMode === 'table' ? 'text-[#1B3A6B] bg-white shadow-sm' : 'text-[#475569] hover:text-[#0F172A]'
+            }`}
+          >
             <LayoutList className="w-[13px] h-[13px]" />
             Tabela
           </button>
-          <button className="h-7 px-[11px] text-xs font-medium rounded text-[#475569] inline-flex items-center gap-[5px]">
+          <button
+            onClick={() => setViewMode('kanban')}
+            className={`h-7 px-[11px] text-xs font-medium rounded inline-flex items-center gap-[5px] transition-all ${
+              viewMode === 'kanban' ? 'text-[#1B3A6B] bg-white shadow-sm' : 'text-[#475569] hover:text-[#0F172A]'
+            }`}
+          >
             <Columns3 className="w-[13px] h-[13px]" />
             Kanban
           </button>
@@ -575,7 +693,7 @@ export default function Conversations() {
       </div>
 
       {/* ── Panel with lead rows ────────────────────────────────────────── */}
-      <div className="bg-white border border-[#E5E7EB] rounded-xl overflow-hidden shadow-sm">
+      <div className={`bg-white border border-[#E5E7EB] rounded-xl overflow-hidden shadow-sm ${viewMode !== 'table' ? 'hidden' : ''}`}>
         {/* Panel header */}
         <div className="px-[18px] py-[14px] border-b border-[#EEF0F3] flex items-center justify-between gap-[10px]">
           <div>
@@ -583,25 +701,25 @@ export default function Conversations() {
               Todas as conversas ativas
             </div>
             <div className="text-[11.5px] text-[#64748B] mt-[3px]">
-              {filteredConversations.length} leads em diálogo · ordenadas por temperatura
+              {sortedConversations.length} leads em diálogo · ordenadas por {sortBy === 'temperature' ? 'temperatura' : sortBy === 'recent' ? 'data' : sortBy === 'name' ? 'nome' : 'score'}
             </div>
           </div>
           <span className="text-[10.5px] font-semibold px-2 py-[2px] rounded-[10px] bg-[rgba(232,152,28,0.14)] text-[#A56B0A] inline-flex items-center gap-[5px]">
             <span className="w-[5px] h-[5px] rounded-full bg-[#E8981C] animate-pulse" />
-            {filteredConversations.length} ao vivo
+            {liveCount} ao vivo
           </span>
         </div>
 
         {/* Lead rows */}
         <div>
-          {filteredConversations.length === 0 ? (
+          {sortedConversations.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center space-y-3">
               <MessageSquare className="w-12 h-12 text-[#64748B]/40" />
               <p className="text-sm text-[#475569] font-medium">Nenhuma conversa encontrada</p>
               <p className="text-xs text-[#64748B]">Ajuste os filtros ou aguarde novas conversas.</p>
             </div>
           ) : (
-            filteredConversations.map((conv, idx) => (
+            sortedConversations.map((conv, idx) => (
               <div
                 key={conv.id}
                 onClick={() => handleSelectConv(conv)}
@@ -656,6 +774,57 @@ export default function Conversations() {
           )}
         </div>
       </div>
+
+      {/* ── Kanban View ──────────────────────────────────────────────────── */}
+      {viewMode === 'kanban' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+          {[
+            { key: 'live', label: '🤖 IA Respondendo', bg: 'rgba(232,152,28,0.06)', accent: '#E8981C', items: sortedConversations.filter(c => c.tagType === 'live') },
+            { key: 'warning', label: '⚠️ Aguardando Você', bg: 'rgba(181,71,8,0.04)', accent: '#B54708', items: sortedConversations.filter(c => c.tagType === 'warning') },
+            { key: 'success', label: '📅 Agendadas', bg: 'rgba(2,122,72,0.04)', accent: '#027A48', items: sortedConversations.filter(c => c.tagType === 'success') },
+            { key: 'other', label: '💬 Em Diálogo', bg: 'rgba(27,58,107,0.03)', accent: '#1B3A6B', items: sortedConversations.filter(c => !c.tagType) },
+          ].map(col => (
+            <div key={col.key} className="rounded-xl p-3 min-h-[200px] border border-[#E5E7EB]" style={{ background: col.bg }}>
+              <div className="flex items-center gap-2 mb-3 px-1">
+                <div className="w-1 h-4 rounded-full" style={{ background: col.accent }} />
+                <span className="text-[11.5px] font-semibold text-[#0F172A]">{col.label}</span>
+                <span className="text-[10px] bg-white border border-[#E5E7EB] rounded-full h-[18px] min-w-[18px] px-1.5 inline-flex items-center justify-center text-[#475569] font-semibold">{col.items.length}</span>
+              </div>
+              <div className="space-y-2">
+                {col.items.map(conv => (
+                  <div
+                    key={conv.id}
+                    onClick={() => handleSelectConv(conv)}
+                    className={`bg-white rounded-lg border p-3 cursor-pointer hover:shadow-md transition-all ${
+                      selectedConv?.id === conv.id ? 'border-[#1B3A6B] shadow-md' : 'border-[#E5E7EB] hover:border-[#1B3A6B]/30'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <div className="w-7 h-7 rounded-full text-white flex items-center justify-center text-[10px] font-bold shrink-0" style={{ backgroundColor: conv.avatarColor }}>
+                        {conv.initials}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[12px] font-semibold text-[#0F172A] truncate">{conv.leadName}</div>
+                        <div className="text-[10px] text-[#475569] truncate">{conv.profession || conv.details.company || ''}</div>
+                      </div>
+                      <div className={`text-[11px] font-bold font-mono shrink-0 ${conv.fitScore >= 8 ? 'text-[#039855]' : conv.fitScore >= 5 ? 'text-[#A56B0A]' : 'text-[#64748B]'}`}>
+                        {conv.fitScore}
+                      </div>
+                    </div>
+                    <div className="text-[10.5px] text-[#475569] italic truncate">{conv.lastMessage}</div>
+                    <div className="text-[9px] text-[#94A3B8] font-mono mt-1">{conv.whenLabel || conv.timestamp}</div>
+                  </div>
+                ))}
+                {col.items.length === 0 && (
+                  <div className="text-center py-8 text-[11px] text-[#94A3B8]">
+                    Nenhuma conversa
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* ── Lead Detail Drawer ──────────────────────────────────────────── */}
       {selectedConv && (

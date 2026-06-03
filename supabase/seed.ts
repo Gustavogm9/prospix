@@ -158,25 +158,165 @@ async function main() {
     // 5. Generate Leads
     const leadCount = tenantKey === 'A' ? SEED_LEAD_COUNT.tenantA : SEED_LEAD_COUNT.tenantB;
     const leadsData = [];
+    const healthProfilesData = [];
+    const conversationsData = [];
+    const messagesData = [];
+
     for (let i = 1; i <= leadCount; i++) {
       const isA = tenantKey === 'A';
       const whatsapp = isA ? `+5517999991${i.toString().padStart(3, '0')}` : `+5511999992${i.toString().padStart(3, '0')}`;
+      const status = i % 5 === 0 ? 'CONVERSING' : i % 8 === 0 ? 'MEETING_SCHEDULED' : 'CAPTURED';
+      const leadId = crypto.randomUUID();
+      
+      const hasCnpj = i % 3 === 0;
+      const metadata = hasCnpj ? {
+        cnpj_info: {
+          cnpj: `12345678000${i.toString().padStart(3, '0')}`,
+          razaoSocial: `EMPRESA EXEMPLO ${i} LTDA`,
+          nomeFantasia: `NOME FANTASIA ${i}`,
+          situacaoCadastral: 'ATIVA',
+          dataInicioAtividade: `2018-0${(i % 9) + 1}-10`,
+          cnaeFiscal: '6911701',
+          uf: 'SP',
+          municipio: 'SAO JOSE DO RIO PRETO',
+          bairro: 'Redentora',
+          qsa: [
+            { nome: `Socio Administrador ${i}`, qual: 'Sócio-Administrador' },
+            { nome: `Socio Cotista ${i}`, qual: 'Sócio' }
+          ]
+        }
+      } : {};
+
       leadsData.push({
+        id: leadId,
         tenant_id: tenant.id,
         campaign_id: campaign!.id,
         source: 'GOOGLE_MAPS',
-        name: `Lead ${tenantKey} #${i}`,
+        name: isA && i === 5 ? 'Dra. Roberta Castellani' : isA && i === 8 ? 'Dr. Rodrigo Maluf' : `Lead ${tenantKey} #${i}`,
         whatsapp,
-        status: i % 5 === 0 ? 'CONVERSING' : i % 8 === 0 ? 'MEETING_SCHEDULED' : 'CAPTURED',
-        fit_score: 5.0 + (i % 5),
+        status,
+        fit_score: 5.0 + (i % 5) + (i % 2 === 0 ? 0.4 : 0.8),
+        metadata: metadata as any,
+        profession: i % 2 === 0 ? 'LAWYER' : 'DOCTOR',
       });
+
+      // Health profile for conversing/scheduled leads
+      if (status === 'CONVERSING' || status === 'MEETING_SCHEDULED') {
+        healthProfilesData.push({
+          tenant_id: tenant.id,
+          lead_id: leadId,
+          smoker: i % 4 === 0,
+          physical_activity: i % 3 === 0 ? 'Não pratica' : 'Sim · musculação 3x/semana',
+          weight_kg: 70 + (i % 20),
+          height_cm: 165 + (i % 20),
+          bmi_calculated: 22.5 + (i % 5),
+          pre_existing_diseases: i % 5 === 0 ? 'Hipertensão leve' : 'Não declarada',
+          continuous_medication: i % 5 === 0 ? 'Losartana 50mg' : 'Não',
+          recent_surgery: i % 6 === 0,
+          family_history: {
+            father: i % 2 === 0 ? 'Hipertensão · 73 anos' : 'Sem doença declarada',
+            mother: 'Sem doença declarada',
+            siblings: 'Sem doença declarada'
+          } as any,
+          risk_category: i % 4 === 0 ? 'medium' : 'low',
+          estimated_premium_min_cents: 45000 + (i % 10) * 1000,
+          estimated_premium_max_cents: 65000 + (i % 10) * 1000,
+          updated_at: new Date().toISOString(),
+          collected_at: new Date().toISOString()
+        });
+
+        // Seed active conversation
+        const conversationId = crypto.randomUUID();
+        conversationsData.push({
+          id: conversationId,
+          tenant_id: tenant.id,
+          lead_id: leadId,
+          status: 'ACTIVE',
+          ai_handling: status === 'CONVERSING',
+          started_at: new Date(Date.now() - 3600000).toISOString(),
+          last_message_at: new Date().toISOString(),
+          last_message: 'Olá, gostaria de saber mais sobre a simulação.',
+        });
+
+        // Seed conversational messages
+        messagesData.push(
+          {
+            id: crypto.randomUUID(),
+            tenant_id: tenant.id,
+            conversation_id: conversationId,
+            direction: 'INBOUND' as const,
+            sender: 'USER' as const, // lead
+            content: 'Olá! Vi seu contato.',
+            delivery_status: 'DELIVERED' as const,
+            created_at: new Date(Date.now() - 3000 * 1000).toISOString(),
+          },
+          {
+            id: crypto.randomUUID(),
+            tenant_id: tenant.id,
+            conversation_id: conversationId,
+            direction: 'OUTBOUND' as const,
+            sender: 'AI' as const,
+            content: 'Olá! Como posso ajudar você hoje com seguros de vida e previdência?',
+            delivery_status: 'DELIVERED' as const,
+            created_at: new Date(Date.now() - 2500 * 1000).toISOString(),
+          },
+          {
+            id: crypto.randomUUID(),
+            tenant_id: tenant.id,
+            conversation_id: conversationId,
+            direction: 'INBOUND' as const,
+            sender: 'USER' as const,
+            content: 'Gostaria de uma cotação de seguro de vida.',
+            delivery_status: 'DELIVERED' as const,
+            created_at: new Date(Date.now() - 2000 * 1000).toISOString(),
+          },
+          {
+            id: crypto.randomUUID(),
+            tenant_id: tenant.id,
+            conversation_id: conversationId,
+            direction: 'OUTBOUND' as const,
+            sender: 'AI' as const,
+            content: 'Perfeito! Para fazermos uma simulação precisa da MetLife, você poderia me informar se é fumante?',
+            delivery_status: 'DELIVERED' as const,
+            created_at: new Date(Date.now() - 1500 * 1000).toISOString(),
+          },
+          {
+            id: crypto.randomUUID(),
+            tenant_id: tenant.id,
+            conversation_id: conversationId,
+            direction: 'INBOUND' as const,
+            sender: 'USER' as const,
+            content: 'Não sou fumante.',
+            delivery_status: 'DELIVERED' as const,
+            created_at: new Date(Date.now() - 1000 * 1000).toISOString(),
+          }
+        );
+      }
     }
 
-    // Insert in batches of 100
+    // Insert leads in batches of 100
     for (let i = 0; i < leadsData.length; i += 100) {
       const batch = leadsData.slice(i, i + 100);
       const { error: leadErr } = await db.from('leads').insert(batch);
       if (leadErr) throw new Error(`Lead insertion failed: ${leadErr.message}`);
+    }
+
+    // Insert health profiles
+    if (healthProfilesData.length > 0) {
+      const { error: hpErr } = await db.from('health_profiles').insert(healthProfilesData);
+      if (hpErr) throw new Error(`Health profile insertion failed: ${hpErr.message}`);
+    }
+
+    // Insert conversations
+    if (conversationsData.length > 0) {
+      const { error: convErr } = await db.from('conversations').insert(conversationsData);
+      if (convErr) throw new Error(`Conversation insertion failed: ${convErr.message}`);
+    }
+
+    // Insert messages
+    if (messagesData.length > 0) {
+      const { error: msgErr } = await db.from('messages').insert(messagesData);
+      if (msgErr) throw new Error(`Message insertion failed: ${msgErr.message}`);
     }
   }
 
