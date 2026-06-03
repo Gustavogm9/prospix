@@ -93,7 +93,7 @@ export default function HomePage() {
       const emptyStats: DashboardStats = {
         todayMeetings: 0, pendingConversations: 0, pendingManualConversations: 0,
         needsAttention: 0, newLeadsToday: 0, nextMeetingTime: null,
-        funnelData: [], weeklyPerformance: [], hotLeads: [],
+        funnelData: [], weeklyPerformance: [], weeklyPeriodLabel: '', hotLeads: [],
       };
 
       try {
