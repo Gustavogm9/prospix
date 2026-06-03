@@ -22,19 +22,102 @@ const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 
+// ── Seed-safe tenant IDs (only these can be deleted by seed) ────────────────
+const SEED_SAFE_TENANT_IDS = [
+  '11111111-1111-1111-1111-111111111111', // Seed tenant A
+  '22222222-2222-2222-2222-222222222222', // Seed tenant B
+];
+
+// ── Seed-safe SUPABASE_URL allowlist (NEVER add production URLs here) ───────
+const SEED_SAFE_URLS = [
+  'http://localhost:54321', // local Supabase
+  'http://127.0.0.1:54321',
+];
+
 function assertSeedIsAllowed() {
   const nodeEnv = process.env.NODE_ENV || 'development';
   if (nodeEnv === 'production' || nodeEnv === 'staging') {
-    throw new Error(`Refusing to seed a ${nodeEnv} database.`);
+    throw new Error(`🚫 REFUSED: Cannot seed a ${nodeEnv} database.`);
   }
 
   if (process.env.ALLOW_DESTRUCTIVE_SEED !== '1') {
-    throw new Error('Refusing to seed without ALLOW_DESTRUCTIVE_SEED=1. This script truncates application tables.');
+    throw new Error('🚫 REFUSED: Requires ALLOW_DESTRUCTIVE_SEED=1. This script truncates application tables.');
   }
 
   if (!process.env.SEED_ADMIN_PASSWORD || process.env.SEED_ADMIN_PASSWORD.length < 12) {
-    throw new Error('SEED_ADMIN_PASSWORD with at least 12 characters is required.');
+    throw new Error('🚫 REFUSED: SEED_ADMIN_PASSWORD with at least 12 characters is required.');
   }
+}
+
+/**
+ * CRITICAL: Checks if the target database contains real (non-seed) data.
+ * If real tenants, users, or leads exist, REFUSE to proceed.
+ */
+async function assertNoRealData() {
+  console.log('🛡️  Checking for real (non-seed) data in target database...');
+
+  // Check 1: Verify SUPABASE_URL is in allowlist OR force explicit override
+  const url = process.env.SUPABASE_URL || '';
+  const isLocalUrl = SEED_SAFE_URLS.some(safe => url.startsWith(safe));
+  if (!isLocalUrl) {
+    console.warn(`⚠️  WARNING: SUPABASE_URL (${url}) is NOT a local development URL.`);
+    if (process.env.SEED_FORCE_REMOTE !== 'YES_I_KNOW_THIS_WILL_DELETE_ALL_DATA') {
+      throw new Error(
+        `🚫 REFUSED: SUPABASE_URL "${url}" looks like a remote/production database.\n` +
+        `   If you REALLY want to seed this remote database, set:\n` +
+        `   SEED_FORCE_REMOTE=YES_I_KNOW_THIS_WILL_DELETE_ALL_DATA\n` +
+        `   ⚠️  THIS WILL PERMANENTLY DELETE ALL DATA IN THE DATABASE.`
+      );
+    }
+    console.warn('⚠️  SEED_FORCE_REMOTE override detected. Proceeding with remote database...');
+  }
+
+  // Check 2: Look for non-seed tenants
+  const { data: tenants } = await db.from('tenants').select('id, name, slug');
+  const realTenants = (tenants || []).filter(t => !SEED_SAFE_TENANT_IDS.includes(t.id));
+  if (realTenants.length > 0) {
+    console.error('🚫 REAL TENANTS DETECTED:');
+    realTenants.forEach(t => console.error(`   - ${t.name} (${t.id})`));
+    throw new Error(
+      `🚫 REFUSED: Found ${realTenants.length} real (non-seed) tenant(s) in the database.\n` +
+      `   This database contains PRODUCTION DATA that would be permanently destroyed.\n` +
+      `   Seed is ONLY safe on empty databases or databases with seed-only data.\n` +
+      `   Real tenants: ${realTenants.map(t => t.name).join(', ')}`
+    );
+  }
+
+  // Check 3: Look for non-seed users (users with emails not matching seed patterns)
+  const { data: users } = await db.from('users').select('id, email, tenant_id');
+  const seedEmails = ['giovane@seed.prospix.dev', 'roberta@seed.prospix.dev', 'gustavo.macedo@guilds.com.br'];
+  const realUsers = (users || []).filter(u => 
+    !seedEmails.includes(u.email) && 
+    (u.tenant_id === null || SEED_SAFE_TENANT_IDS.includes(u.tenant_id))
+  );
+  // Also check: users pointing to non-seed tenants
+  const usersWithRealTenants = (users || []).filter(u => 
+    u.tenant_id && !SEED_SAFE_TENANT_IDS.includes(u.tenant_id)
+  );
+  if (usersWithRealTenants.length > 0) {
+    console.error('🚫 USERS WITH REAL TENANTS DETECTED:');
+    usersWithRealTenants.forEach(u => console.error(`   - ${u.email} (tenant=${u.tenant_id})`));
+    throw new Error(
+      `🚫 REFUSED: Found ${usersWithRealTenants.length} user(s) linked to real tenants.\n` +
+      `   This database contains PRODUCTION DATA.`
+    );
+  }
+
+  // Check 4: Count leads to show what would be destroyed
+  const { count: leadCount } = await db.from('leads').select('id', { count: 'exact', head: true });
+  const { count: convoCount } = await db.from('conversations').select('id', { count: 'exact', head: true });
+  const { count: msgCount } = await db.from('messages').select('id', { count: 'exact', head: true });
+
+  console.log('🛡️  Pre-seed data summary:');
+  console.log(`   Tenants: ${tenants?.length || 0} (all seed-safe)`);
+  console.log(`   Users: ${users?.length || 0}`);
+  console.log(`   Leads: ${leadCount || 0}`);
+  console.log(`   Conversations: ${convoCount || 0}`);
+  console.log(`   Messages: ${msgCount || 0}`);
+  console.log('🛡️  No real data detected. Safe to proceed with seed.');
 }
 
 async function main() {
@@ -42,20 +125,28 @@ async function main() {
 
   console.log('🌱 Start seeding database via Supabase...');
 
-  // 1. Clear existing data safely via REST deletes (respecting FK constraints)
-  console.log('🧹 Clearing existing database tables in cascade order...');
+  // ── CRITICAL: Check for real data before ANY destructive operation ─────────
+  await assertNoRealData();
+
+  // 1. Clear existing SEED data safely (only seed-safe tenant data)
+  console.log('🧹 Clearing seed-safe database tables in cascade order...');
   try {
-    await db.from('messages').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-    await db.from('conversations').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-    await db.from('health_profiles').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-    await db.from('leads').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-    await db.from('campaigns').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-    await db.from('scripts').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-    await db.from('users').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-    await db.from('tenant_secrets').delete().neq('tenant_id', '00000000-0000-0000-0000-000000000000');
-    await db.from('tenant_ai_configs').delete().neq('tenant_id', '00000000-0000-0000-0000-000000000000');
-    await db.from('tenants').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-    console.log('🧹 Database tables cleared successfully');
+    // Delete only data belonging to seed tenants
+    for (const tenantId of SEED_SAFE_TENANT_IDS) {
+      await db.from('messages').delete().eq('tenant_id', tenantId);
+      await db.from('conversations').delete().eq('tenant_id', tenantId);
+      await db.from('health_profiles').delete().eq('tenant_id', tenantId);
+      await db.from('leads').delete().eq('tenant_id', tenantId);
+      await db.from('campaigns').delete().eq('tenant_id', tenantId);
+      await db.from('scripts').delete().eq('tenant_id', tenantId);
+      await db.from('users').delete().eq('tenant_id', tenantId);
+      await db.from('tenant_secrets').delete().eq('tenant_id', tenantId);
+      await db.from('tenant_ai_configs').delete().eq('tenant_id', tenantId);
+      await db.from('tenants').delete().eq('id', tenantId);
+    }
+    // Also clean up seed admin users (no tenant)
+    await db.from('users').delete().eq('email', 'gustavo.macedo@guilds.com.br');
+    console.log('🧹 Seed-safe tables cleared successfully (real data preserved)');
   } catch (cleanErr: any) {
     console.warn('⚠️ Warning while cleaning tables, trying to proceed anyway:', cleanErr.message);
   }
@@ -104,33 +195,9 @@ async function main() {
     { ...SEED_USERS.ownerA, password: rawSeedPassword },
     { ...SEED_USERS.ownerB, password: rawSeedPassword },
     { ...SEED_USERS.guildsAdmin, password: rawSeedPassword, tenantId: null },
-    {
-      id: '69017c5e-6ae2-4871-8a3d-fffe0fee4206',
-      tenantId: SEED_TENANTS.A.id,
-      role: 'OWNER',
-      name: 'Giovane Rodrigues',
-      email: 'giovanerodrigues1234@gmail.com',
-      whatsapp: '+5511999999999',
-      password: rawSeedPassword,
-    },
-    {
-      id: '11111111-1111-1111-1111-111111111111',
-      tenantId: null,
-      role: 'GUILDS_ADMIN',
-      name: 'Admin Prospix',
-      email: 'admin@prospix.com',
-      whatsapp: '+5511988880001',
-      password: 'ProspixAdmin2026!',
-    },
-    {
-      id: '33333333-3333-3333-3333-333333333333',
-      tenantId: SEED_TENANTS.A.id,
-      role: 'OWNER',
-      name: 'Corretor Prospix',
-      email: 'corretor@prospix.com',
-      whatsapp: '+5511988880002',
-      password: 'CorretorProspix2026!',
-    },
+    // NOTE: Real production users (giovanerodrigues1234@gmail.com, admin@prospix.com, 
+    // corretor@prospix.com) are NOT created by seed. They exist only in production
+    // and must NEVER be overwritten by seed data.
   ];
 
   for (const u of usersToCreate) {
