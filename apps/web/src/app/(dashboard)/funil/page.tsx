@@ -13,9 +13,11 @@ interface LeadCard {
   phone: string;
   company: string;
   profession: string;
+  rawProfession: string;
   fitScore: number;
   stage: 'capturado' | 'contatado' | 'qualificado' | 'agendado' | 'negociacao' | 'fechado';
   when: string;
+  createdAt: string;
   tags: string[];
 }
 
@@ -58,16 +60,22 @@ const mapBackendLeadToCard = (lead: any): LeadCard => {
   const metadata = (lead.metadata || {}) as Record<string, any>;
   const rawData = (lead.source_raw_data || {}) as Record<string, any>;
   const stage = STATUS_TO_STAGE[lead.status] || 'capturado';
+  const tags: string[] = [];
+  if (Number(lead.fit_score) >= 9) tags.push('🔥 Quente');
+  if (lead.status === 'MEETING_SCHEDULED') tags.push('✓ Agendada');
+  if (lead.first_response_at) tags.push('💬 Respondeu');
   return {
     id: lead.id,
     name: lead.name || 'Sem nome',
     phone: lead.whatsapp || '',
     company: metadata.cnpj_info?.nomeFantasia || metadata.cnpj_info?.razaoSocial || rawData.name || lead.name || '',
     profession: lead.profession ? (PROFESSION_LABELS_PIPE[lead.profession] || lead.profession) : '',
+    rawProfession: lead.profession || '',
     fitScore: Number(lead.fit_score) || 0,
     stage,
     when: lead.created_at ? new Date(lead.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '',
-    tags: [],
+    createdAt: lead.created_at || '',
+    tags,
   };
 };
 
@@ -190,7 +198,18 @@ export default function PipelinePage() {
       {/* Kanban board */}
       <div className="flex-1 flex gap-3 overflow-x-auto pb-4 items-stretch select-none snap-x snap-mandatory scroll-pl-2.5">
         {COLUMNS.map((column) => {
-          const columnLeads = leads.filter(l => l.stage === column.id);
+          const filteredLeads = leads.filter(l => {
+            if (filter === 'semana') {
+              const sevenDaysAgo = new Date();
+              sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+              return l.createdAt && new Date(l.createdAt) >= sevenDaysAgo;
+            }
+            if (filter === 'medicos') return l.rawProfession === 'DOCTOR';
+            if (filter === 'advogados') return l.rawProfession === 'LAWYER';
+            if (filter === 'empresarios') return l.rawProfession === 'ENTREPRENEUR';
+            return true;
+          });
+          const columnLeads = filteredLeads.filter(l => l.stage === column.id);
           const count = columnLeads.length;
           const isWarning = column.id === 'agendado';
 

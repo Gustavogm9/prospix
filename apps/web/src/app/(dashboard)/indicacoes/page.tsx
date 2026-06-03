@@ -45,11 +45,24 @@ export default function Referrals() {
         const result = await referralsQueries.get(user.id);
         
         if (result.data) {
-          // Basic referral info from the users table
-          // Stats come from the referrals system (currently basic)
-          setStats({ totalClicks: 0, totalSignups: 0, conversionRate: 0 });
-          setRewardTier('bronze');
-          setReferrals([]);
+          const partnerCode = result.data.partner_code || refCode;
+
+          // Fetch actual referred users
+          const referredResult = await referralsQueries.listReferred(partnerCode);
+          const referred = referredResult.data || [];
+
+          const totalSignups = referred.length;
+          const conversionRate = totalSignups > 0 ? Math.round((totalSignups / Math.max(totalSignups, 1)) * 100) : 0;
+
+          setStats({ totalClicks: 0, totalSignups, conversionRate });
+          setRewardTier(totalSignups >= 20 ? 'gold' : totalSignups >= 10 ? 'silver' : 'bronze');
+          setReferrals(referred.map((u: any) => ({
+            id: u.id,
+            name: u.name || 'Sem nome',
+            status: 'QUALIFIED',
+            phone: u.whatsapp || '',
+            createdAt: u.created_at ? new Date(u.created_at).toLocaleDateString('pt-BR') : '—',
+          })));
         }
       } catch (err) {
         console.error('Failed to fetch referrals', err);

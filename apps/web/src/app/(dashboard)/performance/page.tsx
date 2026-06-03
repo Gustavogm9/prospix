@@ -35,8 +35,8 @@ export default function Performance() {
       setLoading(true);
       try {
         const [perfRes, funnelRes] = await Promise.all([
-          dashboardQueries.performance(tenantId),
-          dashboardQueries.funnel(tenantId),
+          dashboardQueries.performance(tenantId, period),
+          dashboardQueries.funnel(tenantId, period),
         ]);
         setPerfData(perfRes.data ?? null);
         setFunnelData(funnelRes.data ?? null);

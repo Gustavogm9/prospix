@@ -69,13 +69,17 @@ export default function Leads() {
   const [isStartingChat, setIsStartingChat] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [cachedCounts, setCachedCounts] = useState<{ total: number; medicos: number; advogados: number; dentistas: number; empresarios: number } | null>(null);
 
-  const categoryCounts = {
-    medicos: leads.filter(l => /méd|doctor|cardio|ortop|derm|pediat|cirurg|ginec/i.test(l.profession || '')).length,
-    advogados: leads.filter(l => /advog|lawyer|oab/i.test(l.profession || '')).length,
-    dentistas: leads.filter(l => /dent|cro|odont/i.test(l.profession || '')).length,
-    empresarios: leads.filter(l => /empres|business|filial|loja|com[eé]rc/i.test(l.profession || '')).length,
-  };
+  const computeCounts = (list: Lead[]) => ({
+    total: list.length,
+    medicos: list.filter(l => /méd|doctor|cardio|ortop|derm|pediat|cirurg|ginec/i.test(l.profession || '')).length,
+    advogados: list.filter(l => /advog|lawyer|oab/i.test(l.profession || '')).length,
+    dentistas: list.filter(l => /dent|cro|odont/i.test(l.profession || '')).length,
+    empresarios: list.filter(l => /empres|business|filial|loja|com[eé]rc/i.test(l.profession || '')).length,
+  });
+
+  const categoryCounts = cachedCounts ?? computeCounts(leads);
 
   const handleExportCsv = () => {
     if (leads.length === 0) {
@@ -145,6 +149,9 @@ export default function Leads() {
         if ('error' in result && result.error) throw new Error(result.error.message);
         const mapped = (result.data || []).map(mapBackendLead);
         setLeads(mapped);
+        if (fitFilter === 'all' && !debouncedSearch) {
+          setCachedCounts(computeCounts(mapped));
+        }
         setNextCursor(null);
       } catch (err) {
         console.error(err);
@@ -193,14 +200,14 @@ export default function Leads() {
 
       {/* Toolbar */}
       <div className="bg-white border border-[#E5E7EB] rounded-lg p-2.5 flex items-center gap-2 flex-wrap shadow-sm">
-        <button onClick={() => setFitFilter('all')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${fitFilter === 'all' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Todos · {leads.length}</button>
+        <button onClick={() => setFitFilter('all')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${fitFilter === 'all' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Todos · {categoryCounts.total}</button>
         <button onClick={() => setFitFilter('medicos')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${fitFilter === 'medicos' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Médicos · {categoryCounts.medicos}</button>
         <button onClick={() => setFitFilter('advogados')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${fitFilter === 'advogados' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Advogados · {categoryCounts.advogados}</button>
         <button onClick={() => setFitFilter('dentistas')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${fitFilter === 'dentistas' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Dentistas · {categoryCounts.dentistas}</button>
         <button onClick={() => setFitFilter('empresarios')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${fitFilter === 'empresarios' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Empresários · {categoryCounts.empresarios}</button>
         <div className="w-px h-6 bg-[#E5E7EB] mx-1" />
-        <button className="h-8 px-3 rounded-md text-[12px] font-medium text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6] flex items-center gap-1.5">
-          <Filter className="w-3 h-3" /> Filtros (3)
+        <button onClick={() => toast.info('Filtros avançados', 'Em breve você poderá filtrar por cidade, fit score, status e mais.')} className="h-8 px-3 rounded-md text-[12px] font-medium text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6] flex items-center gap-1.5">
+          <Filter className="w-3 h-3" /> Filtros{(fitFilter !== 'all' || debouncedSearch) ? ` (${(fitFilter !== 'all' ? 1 : 0) + (debouncedSearch ? 1 : 0)})` : ''}
         </button>
         <button onClick={handleExportCsv} className="h-8 px-3 rounded-md text-[12px] font-medium text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6] flex items-center gap-1.5">
           <Download className="w-3 h-3" /> Exportar CSV

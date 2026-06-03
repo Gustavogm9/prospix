@@ -1014,6 +1014,59 @@ export default function Conversations() {
                   </dd>
                 </div>
 
+                {selectedConv.details.cnpjInfo && (
+                  <>
+                    <h4 className="text-[11px] uppercase tracking-wider text-[#64748B] font-semibold mb-2 mt-4">
+                      Dados de Enriquecimento (CNPJ)
+                    </h4>
+                    <div className="bg-white p-[12px_14px] rounded-lg border border-[#E5E7EB] grid grid-cols-1 sm:grid-cols-[130px_1fr] gap-x-3 gap-y-[5px] text-[12.5px] mb-4">
+                      <dt className="text-[#64748B]">CNPJ</dt>
+                      <dd className="text-[#0F172A] font-semibold font-mono">{selectedConv.details.cnpjInfo.cnpj}</dd>
+                      <dt className="text-[#64748B]">Razão Social</dt>
+                      <dd className="text-[#0F172A] font-medium">{selectedConv.details.cnpjInfo.razaoSocial}</dd>
+                      {selectedConv.details.cnpjInfo.nomeFantasia && (
+                        <>
+                          <dt className="text-[#64748B]">Nome Fantasia</dt>
+                          <dd className="text-[#0F172A] font-medium">{selectedConv.details.cnpjInfo.nomeFantasia}</dd>
+                        </>
+                      )}
+                      <dt className="text-[#64748B]">Situação Cadastral</dt>
+                      <dd className="text-[#0F172A] font-medium">
+                        <span className="text-[#039855] font-semibold bg-[#ECFDF3] px-1.5 py-0.5 rounded text-[11px]">
+                          {selectedConv.details.cnpjInfo.situacaoCadastral}
+                        </span>
+                      </dd>
+                      {selectedConv.details.cnpjInfo.dataInicioAtividade && (
+                        <>
+                          <dt className="text-[#64748B]">Data de Abertura</dt>
+                          <dd className="text-[#0F172A] font-medium">
+                            {new Date(selectedConv.details.cnpjInfo.dataInicioAtividade).toLocaleDateString('pt-BR')} ({Math.floor((Date.now() - new Date(selectedConv.details.cnpjInfo.dataInicioAtividade).getTime()) / (365 * 24 * 60 * 60 * 1000))} anos de atuação)
+                          </dd>
+                        </>
+                      )}
+                      {selectedConv.details.cnpjInfo.cnaeFiscal && (
+                        <>
+                          <dt className="text-[#64748B]">CNAE Principal</dt>
+                          <dd className="text-[#0F172A] font-medium font-mono">{selectedConv.details.cnpjInfo.cnaeFiscal}</dd>
+                        </>
+                      )}
+                      {selectedConv.details.cnpjInfo.qsa && selectedConv.details.cnpjInfo.qsa.length > 0 && (
+                        <>
+                          <dt className="text-[#64748B]">Sócios (QSA)</dt>
+                          <dd className="text-[#0F172A] font-medium space-y-1.5 mt-0.5">
+                            {selectedConv.details.cnpjInfo.qsa.map((socio, idx) => (
+                              <div key={idx} className="bg-slate-50 border border-slate-100 p-1.5 rounded text-[11.5px] leading-relaxed">
+                                <span className="font-semibold block text-slate-800">{socio.nome}</span>
+                                <span className="text-[10px] text-slate-400 block font-semibold uppercase tracking-wide">{socio.qual}</span>
+                              </div>
+                            ))}
+                          </dd>
+                        </>
+                      )}
+                    </div>
+                  </>
+                )}
+
                 <h4 className="text-[11px] uppercase tracking-wider text-[#64748B] font-semibold mb-2 mt-4">
                   Prioridade
                 </h4>

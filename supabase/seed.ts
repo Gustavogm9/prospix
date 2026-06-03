@@ -6,7 +6,10 @@
  * scripts, and leads.
  */
 import { createClient } from '@supabase/supabase-js';
-import { SEED_TENANTS, SEED_USERS, SEED_LEAD_COUNT } from '@prospix/mocks';
+import dotenv from 'dotenv';
+import { SEED_TENANTS, SEED_USERS, SEED_LEAD_COUNT } from '../packages/mocks/src/index.js';
+
+dotenv.config();
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;

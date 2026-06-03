@@ -1471,6 +1471,19 @@ export const referralsQueries = {
     return { data, error: null };
   },
 
+  /** List users who signed up via a partner code */
+  listReferred: async (partnerCode: string) => {
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, name, whatsapp, created_at')
+      .eq('partner_brand', partnerCode)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false });
+
+    if (error) return { data: [], error: mapError(error) };
+    return { data: data ?? [], error: null };
+  },
+
   /** Register a partner code for the user */
   registerCode: async (userId: string, partnerCode: string, partnerBrand?: string) => {
     const { data, error } = await supabase

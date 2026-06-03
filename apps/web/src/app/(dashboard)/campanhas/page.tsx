@@ -362,7 +362,7 @@ export default function Campaigns() {
         })}
 
         {/* Create new card */}
-        <div className="bg-white border-2 border-dashed border-[#D0D5DD] rounded-xl p-8 flex flex-col items-center justify-center cursor-pointer transition-all hover:border-[#1B3A6B] hover:bg-[rgba(27,58,107,0.04)] text-[#64748B] hover:text-[#1B3A6B] min-h-[220px]">
+        <div onClick={() => setIsCreateOpen(true)} className="bg-white border-2 border-dashed border-[#D0D5DD] rounded-xl p-8 flex flex-col items-center justify-center cursor-pointer transition-all hover:border-[#1B3A6B] hover:bg-[rgba(27,58,107,0.04)] text-[#64748B] hover:text-[#1B3A6B] min-h-[220px]">
           <Plus className="w-9 h-9 mb-2" />
           <h4 className="text-[14px] font-semibold text-[#0F172A]">Criar nova campanha</h4>
           <p className="text-[12px] text-[#64748B] mt-1">Escolha profissão, cidade, volume e roteiro</p>
