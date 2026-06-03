@@ -42,17 +42,28 @@ async function main() {
 
   console.log('🌱 Start seeding database via Supabase...');
 
-  // 1. Clear existing data safely via RPC (TRUNCATE CASCADE)
-  const { error: truncErr } = await db.rpc('truncate_seed_tables' as any);
-  if (truncErr) {
-    console.warn('⚠️ truncate_seed_tables RPC not found, skipping truncation. You may need to create it.');
-  } else {
-    console.log('🧹 Database truncated');
+  // 1. Clear existing data safely via REST deletes (respecting FK constraints)
+  console.log('🧹 Clearing existing database tables in cascade order...');
+  try {
+    await db.from('messages').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    await db.from('conversations').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    await db.from('health_profiles').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    await db.from('leads').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    await db.from('campaigns').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    await db.from('scripts').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    await db.from('users').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    await db.from('tenant_secrets').delete().neq('tenant_id', '00000000-0000-0000-0000-000000000000');
+    await db.from('tenant_ai_configs').delete().neq('tenant_id', '00000000-0000-0000-0000-000000000000');
+    await db.from('tenants').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    console.log('🧹 Database tables cleared successfully');
+  } catch (cleanErr: any) {
+    console.warn('⚠️ Warning while cleaning tables, trying to proceed anyway:', cleanErr.message);
   }
 
   // 2. Create Tenants
   for (const tenantKey of ['A', 'B'] as const) {
     const data = SEED_TENANTS[tenantKey];
+    const nowStr = new Date().toISOString();
     const { error } = await db.from('tenants').insert({
       id: data.id,
       slug: data.slug,
@@ -61,6 +72,8 @@ async function main() {
       plan: data.plan,
       segment: data.segment,
       mrr_cents: 15000,
+      created_at: nowStr,
+      updated_at: nowStr,
     });
     if (error) throw new Error(`Failed to create tenant ${tenantKey}: ${error.message}`);
 
@@ -68,6 +81,8 @@ async function main() {
     await db.from('tenant_secrets').insert({
       tenant_id: data.id,
       evolution_instance_name: `tenant_${data.slug.replace('-dev', '')}`,
+      created_at: nowStr,
+      updated_at: nowStr,
     });
 
     // Create Tenant AI Config
@@ -76,6 +91,8 @@ async function main() {
       system_model: 'gpt-4o-mini',
       classifier_model: 'gpt-4o-mini',
       guardrail_model: 'gpt-4o-mini',
+      created_at: nowStr,
+      updated_at: nowStr,
     });
   }
   console.log('🏢 Tenants, secrets and AI configs created');
@@ -121,6 +138,7 @@ async function main() {
     }
 
     // Create in DB
+    const nowStr = new Date().toISOString();
     const { error: dbError } = await db.from('users').insert({
       id: u.id,
       tenant_id: u.tenantId,
@@ -128,6 +146,8 @@ async function main() {
       name: u.name,
       email: u.email,
       whatsapp: u.whatsapp,
+      created_at: nowStr,
+      updated_at: nowStr,
     });
     if (dbError) {
       console.warn(`⚠️ DB user creation warning for ${u.email}: ${dbError.message}`);
@@ -140,22 +160,31 @@ async function main() {
   for (const tenantKey of ['A', 'B'] as const) {
     const tenant = SEED_TENANTS[tenantKey];
 
-    const { data: script, error: scriptErr } = await db.from('scripts').insert({
+    const nowStr = new Date().toISOString();
+    const scriptId = crypto.randomUUID();
+    const { error: scriptErr } = await db.from('scripts').insert({
+      id: scriptId,
       tenant_id: tenant.id,
       name: `Roteiro Padrão - ${tenant.name}`,
       category: 'APPROACH',
       status: 'ACTIVE',
       base_message: 'Olá {{name}}, tudo bem? Vi seu contato no Google Maps e gostaria de apresentar nossos serviços.',
-    }).select('id').single();
+      created_at: nowStr,
+      updated_at: nowStr,
+    });
     if (scriptErr) throw new Error(`Script creation failed: ${scriptErr.message}`);
 
-    const { data: campaign, error: campErr } = await db.from('campaigns').insert({
+    const campaignId = crypto.randomUUID();
+    const { error: campErr } = await db.from('campaigns').insert({
+      id: campaignId,
       tenant_id: tenant.id,
       name: `Campanha Inicial - ${tenant.name}`,
       profession: 'DOCTOR',
       status: 'ACTIVE',
-      active_script_id: script!.id,
-    }).select('id').single();
+      active_script_id: scriptId,
+      created_at: nowStr,
+      updated_at: nowStr,
+    });
     if (campErr) throw new Error(`Campaign creation failed: ${campErr.message}`);
 
     // 5. Generate Leads
@@ -190,10 +219,11 @@ async function main() {
         }
       } : {};
 
+      const nowStr = new Date().toISOString();
       leadsData.push({
         id: leadId,
         tenant_id: tenant.id,
-        campaign_id: campaign!.id,
+        campaign_id: campaignId,
         source: 'GOOGLE_MAPS',
         name: isA && i === 5 ? 'Dra. Roberta Castellani' : isA && i === 8 ? 'Dr. Rodrigo Maluf' : `Lead ${tenantKey} #${i}`,
         whatsapp,
@@ -201,6 +231,8 @@ async function main() {
         fit_score: 5.0 + (i % 5) + (i % 2 === 0 ? 0.4 : 0.8),
         metadata: metadata as any,
         profession: i % 2 === 0 ? 'LAWYER' : 'DOCTOR',
+        created_at: nowStr,
+        updated_at: nowStr,
       });
 
       // Health profile for conversing/scheduled leads
@@ -224,8 +256,8 @@ async function main() {
           risk_category: i % 4 === 0 ? 'medium' : 'low',
           estimated_premium_min_cents: 45000 + (i % 10) * 1000,
           estimated_premium_max_cents: 65000 + (i % 10) * 1000,
-          updated_at: new Date().toISOString(),
-          collected_at: new Date().toISOString()
+          updated_at: nowStr,
+          collected_at: nowStr
         });
 
         // Seed active conversation
@@ -237,8 +269,7 @@ async function main() {
           status: 'ACTIVE',
           ai_handling: status === 'CONVERSING',
           started_at: new Date(Date.now() - 3600000).toISOString(),
-          last_message_at: new Date().toISOString(),
-          last_message: 'Olá, gostaria de saber mais sobre a simulação.',
+          last_message_at: nowStr,
         });
 
         // Seed conversational messages
