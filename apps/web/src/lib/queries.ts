@@ -722,7 +722,7 @@ export const conversationsQueries = {
     // Check for existing active conversation
     const { data: existing } = await supabase
       .from('conversations')
-      .select('*, leads(*)')
+      .select('*, leads(*, health_profiles(*))')
       .eq('tenant_id', tenantId)
       .eq('lead_id', leadId)
       .in('status', ['ACTIVE', 'PAUSED', 'ESCALATED'] as ConversationStatus[])
@@ -742,7 +742,7 @@ export const conversationsQueries = {
         status: 'PAUSED' as const,
         ai_handling: false,
       })
-      .select('*, leads(*)')
+      .select('*, leads(*, health_profiles(*))')
       .single();
 
     if (createErr) return { data: null, error: mapError(createErr) };
