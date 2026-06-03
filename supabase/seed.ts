@@ -105,6 +105,15 @@ async function main() {
     { ...SEED_USERS.ownerB, password: rawSeedPassword },
     { ...SEED_USERS.guildsAdmin, password: rawSeedPassword, tenantId: null },
     {
+      id: '69017c5e-6ae2-4871-8a3d-fffe0fee4206',
+      tenantId: SEED_TENANTS.A.id,
+      role: 'OWNER',
+      name: 'Giovane Rodrigues',
+      email: 'giovanerodrigues1234@gmail.com',
+      whatsapp: '+5511999999999',
+      password: rawSeedPassword,
+    },
+    {
       id: '11111111-1111-1111-1111-111111111111',
       tenantId: null,
       role: 'GUILDS_ADMIN',
