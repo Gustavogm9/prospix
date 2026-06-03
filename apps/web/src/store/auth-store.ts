@@ -57,10 +57,16 @@ export const useAuthStore = create<AuthState>()(
             .from('users')
             .select('id, tenant_id, name, email, role')
             .eq('id', session.user.id)
-            .single();
+            .maybeSingle();
 
           if (error || !userData) {
-            set({ initialized: true });
+            // Force clear session if user does not exist in the public table (e.g. after DB reset)
+            supabase.auth.signOut().catch(() => {});
+            set({
+              tenantId: null,
+              user: null,
+              initialized: true,
+            });
             return;
           }
 

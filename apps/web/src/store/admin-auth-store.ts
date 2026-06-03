@@ -52,10 +52,15 @@ export const useAdminAuthStore = create<AdminAuthState>()(
             .from('users')
             .select('id, name, email, role')
             .eq('id', session.user.id)
-            .single();
+            .maybeSingle();
 
           if (error || !userData) {
-            set({ initialized: true });
+            // Force clear session if admin user does not exist in the public table (e.g. after DB reset)
+            supabase.auth.signOut().catch(() => {});
+            set({
+              adminUser: null,
+              initialized: true,
+            });
             return;
           }
 
