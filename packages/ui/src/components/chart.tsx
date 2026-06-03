@@ -57,26 +57,56 @@ export interface BarChartProps {
 }
 
 export const BarChart = ({ items, maxVal, className }: BarChartProps) => {
-  const defaultMax = Math.max(...items.map((i) => i.value), 1);
-  const finalMax = maxVal || defaultMax;
+  const allValues = items.map((i) => i.value);
+  const dataMax = Math.max(...allValues, 1);
+  const finalMax = maxVal || dataMax;
+  const hasAnyValue = allValues.some((v) => v > 0);
+
+  // Constants for better visual scaling
+  const CONTAINER_HEIGHT = 192; // h-48 = 12rem = 192px
+  const MIN_BAR_PX = 28; // minimum visible bar height in px
+  const LABEL_AREA = 32; // space reserved for the value label above
+  const USABLE_HEIGHT = CONTAINER_HEIGHT - LABEL_AREA;
 
   return (
-    <div className={cn('flex items-end justify-between gap-2 h-48 w-full pt-6 pb-2 px-4 border-b border-border', className)}>
+    <div className={cn('flex items-end justify-between gap-3 h-48 w-full pt-6 pb-2 px-4 border-b border-border', className)}>
       {items.map((item, idx) => {
-        const heightPercent = `${(item.value / finalMax) * 100}%`;
+        // Calculate bar height: ensure minimum visibility + proportional scaling
+        let barHeight = 0;
+        if (item.value > 0 && hasAnyValue) {
+          const ratio = item.value / finalMax;
+          // Scale between MIN_BAR_PX and USABLE_HEIGHT
+          barHeight = MIN_BAR_PX + ratio * (USABLE_HEIGHT - MIN_BAR_PX);
+        }
+
         return (
-          <div key={idx} className="flex flex-col items-center gap-2 group flex-1 h-full justify-end">
-            <div className="relative w-full flex justify-center group-hover:scale-y-105 transition-transform duration-200">
-              {/* Tooltip on hover */}
-              <div className="absolute bottom-full mb-1 bg-text text-surface text-2xs font-semibold font-mono px-2 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none shadow z-10">
-                {item.value}
-              </div>
+          <div key={idx} className="flex flex-col items-center gap-1 group flex-1 h-full justify-end">
+            {/* Always-visible value label */}
+            <div
+              className="text-xs font-bold font-mono text-center transition-all duration-300"
+              style={{ color: item.color || '#1B3A6B' }}
+            >
+              {item.value}
+            </div>
+            {/* Bar */}
+            <div className="relative w-full flex justify-center group-hover:scale-y-[1.03] transition-transform duration-200 origin-bottom">
               <div
-                className={cn('w-8 sm:w-12 rounded-t shadow-sm transition-all', !item.color && 'bg-primary')}
-                style={{ height: heightPercent, backgroundColor: item.color || undefined, minHeight: item.value > 0 ? '4px' : '0px' }}
+                className={cn(
+                  'w-9 sm:w-12 rounded-t-md shadow-sm transition-all duration-500 ease-out',
+                  !item.color && 'bg-primary',
+                )}
+                style={{
+                  height: `${barHeight}px`,
+                  backgroundColor: item.color || undefined,
+                  opacity: item.value > 0 ? 1 : 0.15,
+                  minHeight: item.value > 0 ? `${MIN_BAR_PX}px` : '4px',
+                }}
               />
             </div>
-            <span className="text-2xs text-text-secondary text-center truncate w-full">{item.label}</span>
+            {/* Day label */}
+            <span className="text-xs font-medium text-text-secondary text-center truncate w-full mt-0.5">
+              {item.label}
+            </span>
           </div>
         );
       })}
