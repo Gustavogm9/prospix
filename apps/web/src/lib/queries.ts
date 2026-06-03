@@ -1556,6 +1556,7 @@ export interface DashboardTodayData {
 export interface DashboardFunnelData {
   stages: Record<string, number>;
   total_leads: number;
+  whatsapp_valid_count?: number;
   metrics: {
     win_rate_percent: number;
     qualified_rate_percent: number;
@@ -1703,6 +1704,25 @@ export const dashboardQueries = {
   funnel: async (tenantId: string, period?: 'week' | 'month' | '90d') => {
     // Try RPC
     const { data: rpcData, error: rpcErr } = await supabase.rpc('dashboard_funnel', { p_tenant_id: tenantId });
+    
+    // Also fetch whatsapp_valid count
+    let wvQuery = supabase
+      .from('leads')
+      .select('*', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId)
+      .eq('whatsapp_valid', true)
+      .is('deleted_at', null);
+
+    let dateFilter: string | undefined;
+    if (period === 'week') { const d = new Date(); d.setDate(d.getDate() - 7); d.setHours(0, 0, 0, 0); dateFilter = d.toISOString(); }
+    else if (period === 'month') { const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); dateFilter = d.toISOString(); }
+    else if (period === '90d') { const d = new Date(); d.setDate(d.getDate() - 90); d.setHours(0, 0, 0, 0); dateFilter = d.toISOString(); }
+
+    if (dateFilter) {
+      wvQuery = wvQuery.gte('created_at', dateFilter);
+    }
+    const { count: whatsappValidCount } = await wvQuery;
+
     if (!rpcErr && rpcData && Array.isArray(rpcData) && rpcData.length > 0) {
       const stages: Record<string, number> = {};
       let totalLeads = 0;
@@ -1717,6 +1737,7 @@ export const dashboardQueries = {
         data: {
           stages,
           total_leads: totalLeads,
+          whatsapp_valid_count: whatsappValidCount || 0,
           metrics: {
             win_rate_percent: Number(winRate.toFixed(1)),
             qualified_rate_percent: Number(qualifiedRate.toFixed(1)),
@@ -1727,12 +1748,7 @@ export const dashboardQueries = {
     }
 
     // Fallback
-    let dateFilter: string | undefined;
-    if (period === 'week') { const d = new Date(); d.setDate(d.getDate() - 7); d.setHours(0, 0, 0, 0); dateFilter = d.toISOString(); }
-    else if (period === 'month') { const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); dateFilter = d.toISOString(); }
-    else if (period === '90d') { const d = new Date(); d.setDate(d.getDate() - 90); d.setHours(0, 0, 0, 0); dateFilter = d.toISOString(); }
-
-    let query = supabase.from('leads').select('status').eq('tenant_id', tenantId);
+    let query = supabase.from('leads').select('status, whatsapp_valid').eq('tenant_id', tenantId);
     if (dateFilter) query = query.gte('created_at', dateFilter);
 
     const { data: leadRows, error } = await query;
@@ -1740,10 +1756,14 @@ export const dashboardQueries = {
 
     const counts: Record<string, number> = {};
     let totalLeads = 0;
+    let fallbackWhatsappValidCount = 0;
     (leadRows || []).forEach((row) => {
       const status = row.status as string;
       counts[status] = (counts[status] || 0) + 1;
       totalLeads++;
+      if (row.whatsapp_valid) {
+        fallbackWhatsappValidCount++;
+      }
     });
 
     const winRate = totalLeads > 0 ? ((counts['CLOSED_WON'] || 0) / totalLeads) * 100 : 0;
@@ -1753,6 +1773,7 @@ export const dashboardQueries = {
       data: {
         stages: counts,
         total_leads: totalLeads,
+        whatsapp_valid_count: fallbackWhatsappValidCount,
         metrics: {
           win_rate_percent: Number(winRate.toFixed(1)),
           qualified_rate_percent: Number(qualifiedRate.toFixed(1)),

@@ -111,16 +111,38 @@ export default function HomePage() {
         const weeklyRaw = weeklyRes.status === 'fulfilled' && !weeklyRes.value.error ? weeklyRes.value.data : [];
         const hotLeadsRaw = hotLeadsRes.status === 'fulfilled' && !hotLeadsRes.value.error ? hotLeadsRes.value.data : [];
 
-        const capturedTotal = (funnelRaw?.stages?.CAPTURED || 0) + (funnelRaw?.stages?.ENRICHED || 0) + (funnelRaw?.stages?.NEW || 0);
-        const contactedTotal = (funnelRaw?.stages?.CONTACTED || 0) + (funnelRaw?.stages?.CONVERSING || 0) + (funnelRaw?.stages?.NO_RESPONSE || 0);
-        const qualifiedTotal = (funnelRaw?.stages?.QUALIFIED || 0) + (funnelRaw?.stages?.MEETING_SCHEDULED || 0);
-        const closedTotal = funnelRaw?.stages?.CLOSED_WON || 0;
+        const rawStages = funnelRaw?.stages || {};
+        const totalLeads = Object.values(rawStages).reduce((a: number, b: any) => a + Number(b), 0);
+        const whatsappValid = funnelRaw?.whatsapp_valid_count || 0;
+        
+        // Mensagem enviada: status is anything other than CAPTURED, ENRICHED, NEW
+        const uncontacted = (rawStages.CAPTURED || 0) + (rawStages.ENRICHED || 0) + (rawStages.NEW || 0);
+        const contactedTotal = Math.max(0, totalLeads - uncontacted);
+        
+        // Respondeu: Conversing, qualified, meeting_scheduled, closed_won, escalated_human, and not_interested
+        const respondedTotal = (rawStages.CONVERSING || 0) + 
+                             (rawStages.QUALIFIED || 0) + 
+                             (rawStages.MEETING_SCHEDULED || 0) + 
+                             (rawStages.CLOSED_WON || 0) + 
+                             (rawStages.ESCALATED_HUMAN || 0) + 
+                             (rawStages.NOT_INTERESTED || 0);
+
+        // Conversa qualificada: qualified, meeting_scheduled, closed_won
+        const qualifiedTotal = (rawStages.QUALIFIED || 0) + 
+                             (rawStages.MEETING_SCHEDULED || 0) + 
+                             (rawStages.CLOSED_WON || 0);
+                             
+        // Reunião agendada: meeting_scheduled, closed_won
+        const scheduledTotal = (rawStages.MEETING_SCHEDULED || 0) + 
+                             (rawStages.CLOSED_WON || 0);
 
         const funnelData: DashboardStats['funnelData'] = funnelRaw?.stages ? [
-          { stage: 'Capturados', value: capturedTotal, color: '#1B3A6B' },
-          { stage: 'Contatados', value: contactedTotal, color: '#3b82f6' },
-          { stage: 'Qualificados', value: qualifiedTotal, color: '#E8981C' },
-          { stage: 'Fechados', value: closedTotal, color: '#039855' },
+          { stage: 'Capturados', value: totalLeads, color: '#1B3A6B' },
+          { stage: 'WhatsApp válido', value: whatsappValid, color: '#2C5282' },
+          { stage: 'Mensagem enviada', value: contactedTotal, color: '#64748B' },
+          { stage: 'Respondeu', value: respondedTotal, color: '#E8981C' },
+          { stage: 'Conversa qualificada', value: qualifiedTotal, color: '#F59E0B' },
+          { stage: 'Reunião agendada', value: scheduledTotal, color: '#039855' },
         ] : [];
 
         const weeklyResult = weeklyRes.status === 'fulfilled' && !weeklyRes.value.error ? weeklyRes.value : null;
@@ -352,143 +374,144 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* ═══ Hot Leads + Funnel (two-column) ═══ */}
-      <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-4">
-        {/* Hot Leads panel */}
-        <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-[#EEF0F3] flex items-center justify-between">
-            <div>
-              <div className="text-[14px] font-semibold text-[#0F172A]">Leads mais promissores</div>
-              <div className="text-[11px] text-[#64748B] mt-0.5">Top {stats.hotLeads.length} por fit score · clique para ver detalhes</div>
-            </div>
-            <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-[rgba(27,58,107,0.08)] text-[#1B3A6B] flex items-center gap-1.5">
-              🎯 {stats.hotLeads.length} leads
-            </span>
+      {/* ═══ Hot Leads panel (Full Width) ═══ */}
+      <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
+        <div className="px-5 py-3.5 border-b border-[#EEF0F3] flex items-center justify-between">
+          <div>
+            <div className="text-[14px] font-semibold text-[#0F172A]">Leads mais promissores</div>
+            <div className="text-[11px] text-[#64748B] mt-0.5">Top {stats.hotLeads.length} por fit score · clique para ver detalhes</div>
           </div>
-
-          {stats.hotLeads.length > 0 ? (
-            stats.hotLeads.map((lead, i) => {
-              const statusInfo = STATUS_LABELS[lead.status] || STATUS_LABELS.CAPTURED;
-              const profLabel = lead.profession ? PROFESSION_LABELS[lead.profession] || lead.profession : null;
-              return (
-                <div
-                  key={lead.id}
-                  className="px-5 py-3 border-b border-[#EEF0F3] flex items-center gap-3 cursor-pointer transition-all hover:bg-[rgba(27,58,107,0.04)] border-l-[3px] border-l-transparent hover:border-l-[#1B3A6B]"
-                  onClick={() => router.push('/leads')}
-                >
-                  <div
-                    className="w-9 h-9 rounded-full flex items-center justify-center text-white text-[12px] font-bold shrink-0"
-                    style={{ background: AVATAR_COLORS[i % AVATAR_COLORS.length] }}
-                  >{getInitials(lead.name)}</div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[13px] font-semibold text-[#0F172A] flex items-center gap-2 flex-wrap">
-                      {lead.name}
-                      <span className={`text-[10.5px] font-semibold px-1.5 py-0.5 rounded-full ${statusInfo?.cls ?? ''}`}>{statusInfo?.label ?? lead.status}</span>
-                    </div>
-                    <div className="text-[11.5px] text-[#475569] flex items-center gap-2 flex-wrap">
-                      {profLabel && <span>{profLabel}</span>}
-                      {profLabel && lead.city && <span className="text-[#CBD5E1]">·</span>}
-                      {lead.city && (
-                        <span className="flex items-center gap-0.5">
-                          <MapPin className="w-3 h-3" />
-                          {lead.city}
-                        </span>
-                      )}
-                      {lead.googleRating && (
-                        <>
-                          <span className="text-[#CBD5E1]">·</span>
-                          <span className="flex items-center gap-0.5 text-[#E8981C]">
-                            <Star className="w-3 h-3 fill-[#E8981C]" />
-                            {lead.googleRating}
-                          </span>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0 min-w-[60px]">
-                    <div className={`text-[13px] font-bold font-mono ${
-                      lead.fitScore >= 7 ? 'text-[#039855]' : lead.fitScore >= 5 ? 'text-[#A56B0A]' : 'text-[#64748B]'
-                    }`}>Fit {lead.fitScore}</div>
-                    <div className="text-[10px] text-[#64748B] mt-0.5">
-                      {new Date(lead.createdAt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}
-                    </div>
-                  </div>
-                  <div className="w-8 h-8 flex items-center justify-center rounded-lg bg-[#F1F3F6] text-[#64748B] shrink-0 hover:bg-[#1B3A6B] hover:text-white transition-all">
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </div>
-                </div>
-              );
-            })
-          ) : (
-            <div className="px-5 py-8 text-center text-[12.5px] text-[#64748B]">
-              Nenhum lead encontrado. Crie uma campanha para começar a capturar.
-            </div>
-          )}
-
-          <div className="px-5 py-3 text-center bg-[#F1F3F6] border-t border-[#EEF0F3]">
-            <button onClick={() => router.push('/leads')} className="text-[12.5px] font-semibold text-[#1B3A6B]">
-              Ver todos os {totalCaptured} leads →
-            </button>
-          </div>
+          <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-[rgba(27,58,107,0.08)] text-[#1B3A6B] flex items-center gap-1.5">
+            🎯 {stats.hotLeads.length} leads
+          </span>
         </div>
 
+        {stats.hotLeads.length > 0 ? (
+          stats.hotLeads.map((lead, i) => {
+            const statusInfo = STATUS_LABELS[lead.status] || STATUS_LABELS.CAPTURED;
+            const profLabel = lead.profession ? PROFESSION_LABELS[lead.profession] || lead.profession : null;
+            return (
+              <div
+                key={lead.id}
+                className="px-5 py-3 border-b border-[#EEF0F3] flex items-center gap-3 cursor-pointer transition-all hover:bg-[rgba(27,58,107,0.04)] border-l-[3px] border-l-transparent hover:border-l-[#1B3A6B]"
+                onClick={() => router.push('/leads')}
+              >
+                <div
+                  className="w-9 h-9 rounded-full flex items-center justify-center text-white text-[12px] font-bold shrink-0"
+                  style={{ background: AVATAR_COLORS[i % AVATAR_COLORS.length] }}
+                >{getInitials(lead.name)}</div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[13px] font-semibold text-[#0F172A] flex items-center gap-2 flex-wrap">
+                    {lead.name}
+                    <span className={`text-[10.5px] font-semibold px-1.5 py-0.5 rounded-full ${statusInfo?.cls ?? ''}`}>{statusInfo?.label ?? lead.status}</span>
+                  </div>
+                  <div className="text-[11.5px] text-[#475569] flex items-center gap-2 flex-wrap">
+                    {profLabel && <span>{profLabel}</span>}
+                    {profLabel && lead.city && <span className="text-[#CBD5E1]">·</span>}
+                    {lead.city && (
+                      <span className="flex items-center gap-0.5">
+                        <MapPin className="w-3 h-3" />
+                        {lead.city}
+                      </span>
+                    )}
+                    {lead.googleRating && (
+                      <>
+                        <span className="text-[#CBD5E1]">·</span>
+                        <span className="flex items-center gap-0.5 text-[#E8981C]">
+                          <Star className="w-3 h-3 fill-[#E8981C]" />
+                          {lead.googleRating}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <div className="text-right shrink-0 min-w-[60px]">
+                  <div className={`text-[13px] font-bold font-mono ${
+                    lead.fitScore >= 7 ? 'text-[#039855]' : lead.fitScore >= 5 ? 'text-[#A56B0A]' : 'text-[#64748B]'
+                  }`}>Fit {lead.fitScore}</div>
+                  <div className="text-[10px] text-[#64748B] mt-0.5">
+                    {new Date(lead.createdAt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}
+                  </div>
+                </div>
+                <div className="w-8 h-8 flex items-center justify-center rounded-lg bg-[#F1F3F6] text-[#64748B] shrink-0 hover:bg-[#1B3A6B] hover:text-white transition-all">
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </div>
+              </div>
+            );
+          })
+        ) : (
+          <div className="px-5 py-8 text-center text-[12.5px] text-[#64748B]">
+            Nenhum lead encontrado. Crie uma campanha para começar a capturar.
+          </div>
+        )}
+
+        <div className="px-5 py-3 text-center bg-[#F1F3F6] border-t border-[#EEF0F3]">
+          <button onClick={() => router.push('/leads')} className="text-[12.5px] font-semibold text-[#1B3A6B]">
+            Ver todos os {totalCaptured} leads →
+          </button>
+        </div>
+      </div>
+
+      {/* ═══ Funil do Mês & Weekly Performance (split grid) ═══ */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Funnel panel */}
-        <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
+        <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden flex flex-col justify-between">
           <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
             <div className="text-[14px] font-semibold text-[#0F172A]">Funil do mês</div>
             <div className="text-[11px] text-[#64748B] mt-0.5">
-              A cada {totalCaptured && stats.todayMeetings ? Math.round(totalCaptured / Math.max(stats.todayMeetings, 1)) : '—'} contatos → 1 reunião
+              A cada {totalCaptured && stats.funnelData?.[5]?.value ? Math.round(totalCaptured / Math.max(stats.funnelData[5].value, 1)) : '—'} contatos → 1 reunião
             </div>
           </div>
-          <div className="p-5 flex items-center justify-center min-h-[240px]">
-            <div className="w-full max-w-[300px]">
+          <div className="p-5 flex-1 flex items-center justify-center min-h-[220px]">
+            <div className="w-full">
               <FunnelChart
                 stages={stats.funnelData.map((item, _idx, arr) => ({
                   label: item.stage,
                   count: item.value,
-                  percentage: arr[0]?.value ? Math.round((item.value / arr[0].value) * 100) : 0
+                  percentage: arr[0]?.value ? Math.round((item.value / arr[0].value) * 100) : 0,
+                  color: item.color
                 }))}
               />
             </div>
           </div>
         </div>
-      </div>
 
-      {/* ═══ Weekly Performance ═══ */}
-      <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
-        <div className="px-5 py-3.5 border-b border-[#EEF0F3] flex items-center justify-between">
-          <div>
-            <div className="text-[14px] font-semibold text-[#0F172A]">Novas Leads na Semana</div>
-            <div className="text-[11px] text-[#64748B] mt-0.5">Distribuição diária de captação pelo Google Maps.</div>
+        {/* Weekly Performance */}
+        <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden flex flex-col justify-between">
+          <div className="px-5 py-3.5 border-b border-[#EEF0F3] flex items-center justify-between">
+            <div>
+              <div className="text-[14px] font-semibold text-[#0F172A]">Novas Leads na Semana</div>
+              <div className="text-[11px] text-[#64748B] mt-0.5">Distribuição diária de captação pelo Google Maps.</div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => handleWeekChange('prev')}
+                className="w-7 h-7 rounded-lg bg-[#F1F3F6] text-[#64748B] flex items-center justify-center hover:bg-[#1B3A6B] hover:text-white transition-all"
+                title="Semana anterior"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="text-[11px] font-semibold text-[#475569] font-mono min-w-[100px] text-center">
+                {stats.weeklyPeriodLabel || ''}
+              </span>
+              <button
+                onClick={() => handleWeekChange('next')}
+                disabled={weekOffset === 0}
+                className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${
+                  weekOffset === 0
+                    ? 'bg-[#F1F3F6] text-[#CBD5E1] cursor-not-allowed'
+                    : 'bg-[#F1F3F6] text-[#64748B] hover:bg-[#1B3A6B] hover:text-white'
+                }`}
+                title="Próxima semana"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => handleWeekChange('prev')}
-              className="w-7 h-7 rounded-lg bg-[#F1F3F6] text-[#64748B] flex items-center justify-center hover:bg-[#1B3A6B] hover:text-white transition-all"
-              title="Semana anterior"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <span className="text-[11px] font-semibold text-[#475569] font-mono min-w-[100px] text-center">
-              {stats.weeklyPeriodLabel || ''}
-            </span>
-            <button
-              onClick={() => handleWeekChange('next')}
-              disabled={weekOffset === 0}
-              className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${
-                weekOffset === 0
-                  ? 'bg-[#F1F3F6] text-[#CBD5E1] cursor-not-allowed'
-                  : 'bg-[#F1F3F6] text-[#64748B] hover:bg-[#1B3A6B] hover:text-white'
-              }`}
-              title="Próxima semana"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-        <div className={`px-5 py-4 transition-opacity duration-200 ${isLoadingWeekly ? 'opacity-40' : ''}`}>
-          <div className="w-full max-w-[520px] mx-auto h-[200px]">
-            <BarChart items={stats.weeklyPerformance} />
+          <div className={`px-5 py-4 flex-1 flex items-center justify-center transition-opacity duration-200 ${isLoadingWeekly ? 'opacity-40' : ''}`}>
+            <div className="w-full h-[200px]">
+              <BarChart items={stats.weeklyPerformance} />
+            </div>
           </div>
         </div>
       </div>
