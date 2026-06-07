@@ -533,6 +533,7 @@ export const campaignsQueries = {
     hourWindowEnd?: number;
     activeScriptId?: string;
     filters?: Record<string, unknown>;
+    searchTags?: string[];
   }) => {
     const { data, error } = await supabase
       .from('campaigns')
@@ -548,9 +549,10 @@ export const campaignsQueries = {
         hour_window_end: campaignData.hourWindowEnd ?? 18,
         active_script_id: campaignData.activeScriptId,
         filters: (campaignData.filters || { min_fit_score: 3 }) as any,
+        search_tags: campaignData.searchTags || [],
         status: 'DRAFT' as const,
         updated_at: new Date().toISOString(),
-      })
+      } as any)
       .select()
       .single();
 
@@ -569,8 +571,8 @@ export const campaignsQueries = {
     hourWindowEnd?: number;
     activeScriptId?: string;
     filters?: Record<string, unknown>;
+    searchTags?: string[];
   }) => {
-    // Verify campaign exists and isn't archived
     const { data: campaign, error: findErr } = await supabase
       .from('campaigns')
       .select('*')
@@ -582,22 +584,25 @@ export const campaignsQueries = {
     if (!campaign) return { data: null, error: { message: 'Campaign not found', code: 'NOT_FOUND' } };
     if (campaign.status === 'ARCHIVED') return { data: null, error: { message: 'Cannot update an archived campaign', code: 'BAD_REQUEST' } };
 
+    const updatePayload: any = {
+      updated_at: new Date().toISOString(),
+    };
+    if (updateData.name !== undefined) updatePayload.name = updateData.name;
+    if (updateData.profession !== undefined) updatePayload.profession = updateData.profession;
+    if (updateData.cities !== undefined) updatePayload.cities = updateData.cities;
+    if (updateData.neighborhoods !== undefined) updatePayload.neighborhoods = updateData.neighborhoods;
+    if (updateData.dailyLimit !== undefined) updatePayload.daily_limit = updateData.dailyLimit;
+    if (updateData.hourWindowStart !== undefined) updatePayload.hour_window_start = updateData.hourWindowStart;
+    if (updateData.hourWindowEnd !== undefined) updatePayload.hour_window_end = updateData.hourWindowEnd;
+    if (updateData.activeScriptId !== undefined) updatePayload.active_script_id = updateData.activeScriptId;
+    if (updateData.searchTags !== undefined) updatePayload.search_tags = updateData.searchTags;
+    if (updateData.filters) {
+      updatePayload.filters = { ...(campaign.filters as any || {}), ...updateData.filters };
+    }
+
     const { data, error } = await supabase
       .from('campaigns')
-      .update({
-        name: updateData.name,
-        profession: updateData.profession,
-        cities: updateData.cities,
-        neighborhoods: updateData.neighborhoods,
-        daily_limit: updateData.dailyLimit,
-        hour_window_start: updateData.hourWindowStart,
-        hour_window_end: updateData.hourWindowEnd,
-        active_script_id: updateData.activeScriptId,
-        filters: updateData.filters
-          ? ({ ...(campaign.filters as any || {}), ...updateData.filters } as any)
-          : undefined,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq('id', id)
       .select()
       .single();
@@ -654,6 +659,135 @@ export const campaignsQueries = {
       .from('campaigns')
       .update({ status: 'ARCHIVED' as const, archived_at: now, updated_at: now })
       .eq('id', id)
+      .eq('tenant_id', tenantId);
+
+    if (error) return { success: false, error: mapError(error) };
+    return { success: true, error: null };
+  },
+
+  /** Get campaign limits for tenant based on plan + add-ons */
+  getLimit: async (tenantId: string) => {
+    // Get tenant plan
+    const { data: tenant } = await supabase
+      .from('tenants')
+      .select('plan')
+      .eq('id', tenantId)
+      .maybeSingle();
+
+    const plan = (tenant?.plan as string) || 'STARTER';
+
+    // Get plan limits
+    const { data: limits } = await supabase
+      .from('plan_limits' as any)
+      .select('*')
+      .eq('plan', plan)
+      .maybeSingle();
+
+    // Get extra campaign add-ons
+    const { data: addons } = await supabase
+      .from('tenant_addons' as any)
+      .select('quantity')
+      .eq('tenant_id', tenantId)
+      .eq('addon_type', 'extra_campaign')
+      .eq('active', true);
+
+    const extraCampaigns = (addons || []).reduce((sum: number, a: any) => sum + (a.quantity || 0), 0);
+    const maxActive = ((limits as any)?.max_active_campaigns ?? 1) + extraCampaigns;
+
+    // Count current active campaigns
+    const { count } = await supabase
+      .from('campaigns')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId)
+      .eq('status', 'ACTIVE');
+
+    const currentActive = count ?? 0;
+
+    return {
+      plan,
+      maxActive,
+      currentActive,
+      canCreate: currentActive < maxActive,
+      extraCampaigns,
+      planLimits: limits as any,
+    };
+  },
+
+  /** Get campaign stats — KPIs and funnel */
+  getStats: async (tenantId: string, campaignId: string) => {
+    const buildCount = (status: string) =>
+      supabase.from('leads').select('id', { count: 'exact', head: true })
+        .eq('tenant_id', tenantId).eq('campaign_id', campaignId).eq('status', status).is('deleted_at', null);
+
+    const [captured, enriched, contacted, inConversation, meetingScheduled, won, lost, total] = await Promise.all([
+      buildCount('CAPTURED'),
+      buildCount('ENRICHED'),
+      buildCount('CONTACTED'),
+      buildCount('IN_CONVERSATION'),
+      buildCount('MEETING_SCHEDULED'),
+      buildCount('WON'),
+      buildCount('LOST'),
+      supabase.from('leads').select('id', { count: 'exact', head: true })
+        .eq('tenant_id', tenantId).eq('campaign_id', campaignId).is('deleted_at', null),
+    ]);
+
+    return {
+      total: total.count ?? 0,
+      CAPTURED: captured.count ?? 0,
+      ENRICHED: enriched.count ?? 0,
+      CONTACTED: contacted.count ?? 0,
+      IN_CONVERSATION: inConversation.count ?? 0,
+      MEETING_SCHEDULED: meetingScheduled.count ?? 0,
+      WON: won.count ?? 0,
+      LOST: lost.count ?? 0,
+    };
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TENANT ADD-ONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export const tenantAddonsQueries = {
+  /** List active add-ons for tenant */
+  list: async (tenantId: string) => {
+    const { data, error } = await supabase
+      .from('tenant_addons' as any)
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .eq('active', true)
+      .order('purchased_at', { ascending: false });
+
+    if (error) return { data: [], error: mapError(error) };
+    return { data: data ?? [], error: null };
+  },
+
+  /** Purchase an add-on */
+  purchase: async (tenantId: string, addonType: 'extra_campaign' | 'extra_leads_100', quantity = 1) => {
+    const prices: Record<string, number> = { extra_campaign: 4990, extra_leads_100: 2990 };
+    const { data, error } = await supabase
+      .from('tenant_addons' as any)
+      .insert({
+        id: crypto.randomUUID(),
+        tenant_id: tenantId,
+        addon_type: addonType,
+        quantity,
+        price_cents: (prices[addonType] ?? 0) * quantity,
+        active: true,
+      } as any)
+      .select()
+      .single();
+
+    if (error) return { data: null, error: mapError(error) };
+    return { data, error: null };
+  },
+
+  /** Cancel an add-on */
+  cancel: async (tenantId: string, addonId: string) => {
+    const { error } = await supabase
+      .from('tenant_addons' as any)
+      .update({ active: false, cancelled_at: new Date().toISOString() } as any)
+      .eq('id', addonId)
       .eq('tenant_id', tenantId);
 
     if (error) return { success: false, error: mapError(error) };

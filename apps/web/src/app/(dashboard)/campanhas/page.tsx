@@ -1,8 +1,9 @@
 'use client';
 
-import { Target, Plus, Pause, Edit2, Copy, Play, Loader2, Info, X, Trash2, ChevronDown } from 'lucide-react';
+import { Target, Plus, Pause, Edit2, Copy, Play, Loader2, Info, X, Trash2, ChevronDown, Lock, Zap, Tag, ChevronRight } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { campaignsQueries } from '@/lib/queries';
+import { useRouter } from 'next/navigation';
+import { campaignsQueries, tenantAddonsQueries } from '@/lib/queries';
 import { useAuthStore } from '@/store/auth-store';
 import { toast } from '@prospix/ui';
 
@@ -18,17 +19,87 @@ interface Campaign {
   status: 'ACTIVE' | 'PAUSED' | 'DRAFT' | 'ARCHIVED';
   createdAt: string;
   filters?: Record<string, any>;
+  searchTags?: string[];
 }
 
+interface CampaignLimit {
+  plan: string;
+  maxActive: number;
+  currentActive: number;
+  canCreate: boolean;
+}
+
+// ── Segment System (replaces rigid profession) ─────────────────────────────
+const SEGMENTS = [
+  {
+    id: 'health',
+    label: 'Profissionais de Saúde',
+    icon: '🏥',
+    profession: 'DOCTOR',
+    suggestedTags: ['médicos', 'clínica médica', 'consultório médico', 'especialista', 'CRM'],
+  },
+  {
+    id: 'dental',
+    label: 'Odontologia',
+    icon: '🦷',
+    profession: 'DENTIST',
+    suggestedTags: ['dentista', 'clínica odontológica', 'consultório dentário', 'ortodontista', 'CRO'],
+  },
+  {
+    id: 'legal',
+    label: 'Advogados e Jurídico',
+    icon: '⚖️',
+    profession: 'LAWYER',
+    suggestedTags: ['advogado', 'escritório de advocacia', 'assessoria jurídica', 'OAB'],
+  },
+  {
+    id: 'business',
+    label: 'Empresários e Comércio',
+    icon: '🏢',
+    profession: 'ENTREPRENEUR',
+    suggestedTags: ['empresa', 'comércio', 'loja', 'empreendedor', 'MEI'],
+  },
+  {
+    id: 'engineering',
+    label: 'Engenharia e Arquitetura',
+    icon: '🏗️',
+    profession: 'ENGINEER',
+    suggestedTags: ['engenheiro', 'escritório de engenharia', 'construtora', 'arquiteto', 'CREA'],
+  },
+  {
+    id: 'accounting',
+    label: 'Contabilidade',
+    icon: '📊',
+    profession: 'ACCOUNTANT',
+    suggestedTags: ['contador', 'escritório de contabilidade', 'CRC', 'assessoria contábil'],
+  },
+  {
+    id: 'custom',
+    label: 'Personalizado',
+    icon: '🎯',
+    profession: 'OTHER',
+    suggestedTags: [],
+  },
+];
+
 const PROF_ICON: Record<string, string> = {
-  DOCTOR: '🏥', LAWYER: '⚖️', DENTIST: '🦷', BUSINESS_OWNER: '🏢', OTHER: '📋',
+  DOCTOR: '🏥', LAWYER: '⚖️', DENTIST: '🦷', ENTREPRENEUR: '🏢', ENGINEER: '🏗️',
+  ARCHITECT: '🏗️', ACCOUNTANT: '📊', OTHER: '🎯',
+  BUSINESS_OWNER: '🏢', // legacy fallback
 };
 const PROF_LABEL: Record<string, string> = {
-  DOCTOR: 'Médicos', LAWYER: 'Advogados', DENTIST: 'Dentistas', BUSINESS_OWNER: 'Empresários', OTHER: 'Outros',
+  DOCTOR: 'Saúde', LAWYER: 'Jurídico', DENTIST: 'Odontologia', ENTREPRENEUR: 'Empresários',
+  ENGINEER: 'Engenharia', ARCHITECT: 'Arquitetura', ACCOUNTANT: 'Contabilidade', OTHER: 'Personalizado',
+  BUSINESS_OWNER: 'Empresários',
 };
+
+const PLAN_LABELS: Record<string, string> = { STARTER: 'Starter', STANDARD: 'Standard', PREMIUM: 'Premium' };
+
+const DEFAULT_SEGMENT = { id: 'custom', label: 'Personalizado', icon: '🎯', profession: 'OTHER', suggestedTags: [] as string[] };
 
 export default function Campaigns() {
   const tenantId = useAuthStore(state => state.tenantId);
+  const router = useRouter();
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'ACTIVE' | 'PAUSED' | 'DRAFT'>('all');
@@ -37,49 +108,54 @@ export default function Campaigns() {
   const [isCreating, setIsCreating] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null);
   const [icpOpen, setIcpOpen] = useState(false);
+  const [campaignLimit, setCampaignLimit] = useState<CampaignLimit | null>(null);
+  const [showAddonModal, setShowAddonModal] = useState(false);
+  const [purchasingAddon, setPurchasingAddon] = useState(false);
+
+  // Form state
+  const [selectedSegment, setSelectedSegment] = useState('health');
+  const [searchTags, setSearchTags] = useState<string[]>([]);
+  const [tagInput, setTagInput] = useState('');
   const [newCamp, setNewCamp] = useState({
-    name: '', profession: 'DOCTOR', cities: '', dailyLimit: '20', hourStart: '8', hourEnd: '18',
+    name: '', cities: '', dailyLimit: '20', hourStart: '8', hourEnd: '18',
     icpMinScore: '3',
-    icpWeightProfession: '3',
-    icpWeightWhatsapp: '2',
-    icpWeightOwner: '2',
-    icpWeightArea: '1',
-    icpWeightCnpjYears: '1',
-    icpWeightGoogle: '1',
-    icpHighValueAreas: '',
-    icpMinGoogleRating: '4',
-    icpMinReviews: '5',
+    icpWeightProfession: '3', icpWeightWhatsapp: '2', icpWeightOwner: '2',
+    icpWeightArea: '1', icpWeightCnpjYears: '1', icpWeightGoogle: '1',
+    icpHighValueAreas: '', icpMinGoogleRating: '4', icpMinReviews: '5',
   });
 
+  // ── Data fetching ──────────────────────────────────────────────────────
   const fetchCampaigns = async () => {
     if (!tenantId) return;
     try {
       const result = await campaignsQueries.list(tenantId);
       if (result.error) throw new Error(result.error.message);
       setCampaigns((result.data || []).map((c: any) => ({
-        id: c.id,
-        name: c.name,
-        profession: c.profession,
-        cities: c.cities || [],
-        neighborhoods: c.neighborhoods || [],
-        dailyLimit: c.daily_limit,
-        hourWindowStart: c.hour_window_start,
-        hourWindowEnd: c.hour_window_end,
-        status: c.status,
-        createdAt: c.created_at,
-        filters: c.filters,
+        id: c.id, name: c.name, profession: c.profession,
+        cities: c.cities || [], neighborhoods: c.neighborhoods || [],
+        dailyLimit: c.daily_limit, hourWindowStart: c.hour_window_start,
+        hourWindowEnd: c.hour_window_end, status: c.status,
+        createdAt: c.created_at, filters: c.filters,
+        searchTags: c.search_tags || [],
       })));
     } catch (err) {
       console.error('Failed to fetch campaigns', err);
       toast.error('Erro ao carregar', 'Não foi possível carregar as campanhas.');
       setCampaigns([]);
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
 
-  useEffect(() => { fetchCampaigns(); }, [tenantId]);
+  const fetchLimit = async () => {
+    if (!tenantId) return;
+    try {
+      const limit = await campaignsQueries.getLimit(tenantId);
+      setCampaignLimit(limit);
+    } catch (err) { console.error(err); }
+  };
 
+  useEffect(() => { fetchCampaigns(); fetchLimit(); }, [tenantId]);
+
+  // ── Handlers ───────────────────────────────────────────────────────────
   const handlePause = async (id: string) => {
     if (!tenantId) return;
     setActionLoading(id);
@@ -87,19 +163,25 @@ export default function Campaigns() {
       const result = await campaignsQueries.pause(tenantId, id);
       if (result.error) throw new Error(result.error.message);
       toast.success('Campanha pausada');
-      await fetchCampaigns();
+      await fetchCampaigns(); await fetchLimit();
     } catch (err) { console.error(err); toast.error('Erro', 'Não foi possível pausar a campanha.'); }
     setActionLoading(null);
   };
 
   const handleResume = async (id: string) => {
     if (!tenantId) return;
+    // Check limit before resuming
+    if (campaignLimit && !campaignLimit.canCreate) {
+      toast.error('Limite atingido', `Seu plano ${PLAN_LABELS[campaignLimit.plan]} permite ${campaignLimit.maxActive} campanhas ativas.`);
+      setShowAddonModal(true);
+      return;
+    }
     setActionLoading(id);
     try {
       const result = await campaignsQueries.resume(tenantId, id);
       if (result.error) throw new Error(result.error.message);
       toast.success('Campanha ativada');
-      await fetchCampaigns();
+      await fetchCampaigns(); await fetchLimit();
     } catch (err) { console.error(err); toast.error('Erro', 'Não foi possível ativar a campanha.'); }
     setActionLoading(null);
   };
@@ -117,6 +199,7 @@ export default function Campaigns() {
         hourWindowStart: camp.hourWindowStart,
         hourWindowEnd: camp.hourWindowEnd,
         filters: camp.filters,
+        searchTags: camp.searchTags || [],
       });
       if (result.error) throw new Error(result.error.message);
       toast.success('Campanha duplicada');
@@ -129,9 +212,11 @@ export default function Campaigns() {
     setEditingCampaign(camp);
     const f = camp.filters || {} as any;
     const w = f.weights || {};
+    const seg = SEGMENTS.find(s => s.profession === camp.profession) ?? DEFAULT_SEGMENT;
+    setSelectedSegment(seg.id);
+    setSearchTags(camp.searchTags || seg.suggestedTags);
     setNewCamp({
       name: camp.name,
-      profession: camp.profession,
       cities: camp.cities?.join(', ') || '',
       dailyLimit: String(camp.dailyLimit),
       hourStart: String(camp.hourWindowStart),
@@ -159,23 +244,59 @@ export default function Campaigns() {
       const result = await campaignsQueries.delete(tenantId, camp.id);
       if (result.error) throw new Error(result.error.message);
       toast.success('Campanha excluída');
-      await fetchCampaigns();
+      await fetchCampaigns(); await fetchLimit();
     } catch (err) { console.error(err); toast.error('Erro', 'Não foi possível excluir a campanha.'); }
     setActionLoading(null);
   };
+
+  const handleOpenCreate = () => {
+    if (campaignLimit && !campaignLimit.canCreate) {
+      setShowAddonModal(true);
+      return;
+    }
+    resetForm();
+    setIsCreateOpen(true);
+  };
+
+  const resetForm = () => {
+    setEditingCampaign(null);
+    setSelectedSegment('health');
+    setSearchTags(DEFAULT_SEGMENT.suggestedTags);
+    setTagInput('');
+    setNewCamp({ name: '', cities: '', dailyLimit: '20', hourStart: '8', hourEnd: '18', icpMinScore: '3', icpWeightProfession: '3', icpWeightWhatsapp: '2', icpWeightOwner: '2', icpWeightArea: '1', icpWeightCnpjYears: '1', icpWeightGoogle: '1', icpHighValueAreas: '', icpMinGoogleRating: '4', icpMinReviews: '5' });
+    setIcpOpen(false);
+  };
+
+  const handleSegmentChange = (segId: string) => {
+    setSelectedSegment(segId);
+    const seg = SEGMENTS.find(s => s.id === segId) ?? DEFAULT_SEGMENT;
+    setSearchTags(seg.suggestedTags);
+  };
+
+  const addTag = () => {
+    const tag = tagInput.trim().toLowerCase();
+    if (tag && !searchTags.includes(tag)) {
+      setSearchTags(prev => [...prev, tag]);
+    }
+    setTagInput('');
+  };
+
+  const removeTag = (tag: string) => setSearchTags(prev => prev.filter(t => t !== tag));
 
   const handleCreateOrEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCamp.name.trim()) { toast.error('Nome obrigatório', 'Dê um nome à campanha.'); return; }
     if (!tenantId) return;
     setIsCreating(true);
+    const segment = SEGMENTS.find(s => s.id === selectedSegment) ?? DEFAULT_SEGMENT;
     const payload = {
       name: newCamp.name.trim(),
-      profession: newCamp.profession as any,
+      profession: segment.profession as any,
       cities: newCamp.cities.split(',').map(c => c.trim()).filter(Boolean),
       dailyLimit: Number(newCamp.dailyLimit) || 20,
       hourWindowStart: Number(newCamp.hourStart) || 8,
       hourWindowEnd: Number(newCamp.hourEnd) || 18,
+      searchTags,
       filters: {
         min_fit_score: Number(newCamp.icpMinScore) || 3,
         weights: {
@@ -202,27 +323,34 @@ export default function Campaigns() {
         toast.success('Campanha criada!', 'Ela começará a capturar leads automaticamente.');
       }
       setIsCreateOpen(false);
-      setEditingCampaign(null);
-      setNewCamp({ name: '', profession: 'DOCTOR', cities: '', dailyLimit: '20', hourStart: '8', hourEnd: '18', icpMinScore: '3', icpWeightProfession: '3', icpWeightWhatsapp: '2', icpWeightOwner: '2', icpWeightArea: '1', icpWeightCnpjYears: '1', icpWeightGoogle: '1', icpHighValueAreas: '', icpMinGoogleRating: '4', icpMinReviews: '5' });
-      setIcpOpen(false);
+      resetForm();
       await fetchCampaigns();
+      await fetchLimit();
     } catch (err) {
       console.error(err);
       toast.error('Erro', editingCampaign ? 'Não foi possível atualizar a campanha.' : 'Não foi possível criar a campanha.');
-    } finally {
-      setIsCreating(false);
-    }
+    } finally { setIsCreating(false); }
   };
 
+  const handlePurchaseAddon = async () => {
+    if (!tenantId) return;
+    setPurchasingAddon(true);
+    try {
+      const result = await tenantAddonsQueries.purchase(tenantId, 'extra_campaign');
+      if (result.error) throw new Error(result.error.message);
+      toast.success('Add-on adquirido!', '+1 campanha ativa liberada.');
+      setShowAddonModal(false);
+      await fetchLimit();
+    } catch (err) { console.error(err); toast.error('Erro', 'Não foi possível adquirir o add-on.'); }
+    finally { setPurchasingAddon(false); }
+  };
+
+  // ── Computed ───────────────────────────────────────────────────────────
   const filtered = filter === 'all' ? campaigns : campaigns.filter(c => c.status === filter);
   const activeCount = campaigns.filter(c => c.status === 'ACTIVE').length;
   const pausedCount = campaigns.filter(c => c.status === 'PAUSED').length;
   const draftCount = campaigns.filter(c => c.status === 'DRAFT').length;
-
-  const fmtDate = (iso: string) => {
-    const d = new Date(iso);
-    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }).replace('.', '');
-  };
+  const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }).replace('.', '');
 
   if (loading) {
     return (
@@ -241,18 +369,39 @@ export default function Campaigns() {
       {/* Info banner */}
       <div className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-[rgba(27,58,107,0.04)] to-[rgba(232,152,28,0.06)] border border-[rgba(27,58,107,0.08)] rounded-xl text-[12.5px] text-[#0F172A]">
         <Target className="w-4 h-4 text-[#1B3A6B] shrink-0" />
-        <div><strong>Suas campanhas de prospecção ativa.</strong> Cada campanha busca profissionais por especialidade + cidade e dispara a IA via WhatsApp.</div>
+        <div><strong>Suas campanhas de prospecção ativa.</strong> Cada campanha busca leads por segmento + tags + cidade e dispara a IA via WhatsApp.</div>
       </div>
+
+      {/* Plan limit banner */}
+      {campaignLimit && (
+        <div className={`flex items-center justify-between px-4 py-2.5 rounded-lg border text-[12px] ${
+          campaignLimit.canCreate
+            ? 'bg-[#ECFDF3] border-[#A7F3D0] text-[#027A48]'
+            : 'bg-[#FFF8F0] border-[#FDE68A] text-[#B8740E]'
+        }`}>
+          <div className="flex items-center gap-2">
+            {campaignLimit.canCreate ? <Info className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+            <span>
+              Plano <strong>{PLAN_LABELS[campaignLimit.plan]}</strong>: {campaignLimit.currentActive}/{campaignLimit.maxActive} campanhas ativas
+              {!campaignLimit.canCreate && ' — limite atingido'}
+            </span>
+          </div>
+          {!campaignLimit.canCreate && (
+            <button onClick={() => setShowAddonModal(true)} className="text-[11px] font-semibold px-2.5 py-1 rounded-md bg-[#1B3A6B] text-white hover:bg-[#142C52] transition-all flex items-center gap-1">
+              <Zap className="w-3 h-3" /> Comprar +1 campanha
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Toolbar */}
       <div className="bg-white border border-[#E5E7EB] rounded-lg p-2.5 flex items-center gap-2 flex-wrap shadow-sm">
-        <button onClick={() => setFilter('all')} className={`h-8 min-h-[44px] sm:min-h-0 px-3 rounded-md text-[12px] font-medium ${filter === 'all' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Todas · {campaigns.length}</button>
-        <button onClick={() => setFilter('ACTIVE')} className={`h-8 min-h-[44px] sm:min-h-0 px-3 rounded-md text-[12px] font-medium ${filter === 'ACTIVE' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Ativas · {activeCount}</button>
-        <button onClick={() => setFilter('PAUSED')} className={`h-8 min-h-[44px] sm:min-h-0 px-3 rounded-md text-[12px] font-medium ${filter === 'PAUSED' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Pausadas · {pausedCount}</button>
-        <button onClick={() => setFilter('DRAFT')} className={`h-8 min-h-[44px] sm:min-h-0 px-3 rounded-md text-[12px] font-medium ${filter === 'DRAFT' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Rascunhos · {draftCount}</button>
-        <button onClick={() => setIsCreateOpen(true)} className="h-8 px-3.5 rounded-md text-[12px] font-semibold bg-[#1B3A6B] text-white ml-auto flex items-center gap-1.5 hover:bg-[#142C52] transition-all shadow-sm">
-          <Plus className="w-3.5 h-3.5" />
-          Nova campanha
+        <button onClick={() => setFilter('all')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${filter === 'all' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Todas · {campaigns.length}</button>
+        <button onClick={() => setFilter('ACTIVE')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${filter === 'ACTIVE' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Ativas · {activeCount}</button>
+        <button onClick={() => setFilter('PAUSED')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${filter === 'PAUSED' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Pausadas · {pausedCount}</button>
+        <button onClick={() => setFilter('DRAFT')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${filter === 'DRAFT' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Rascunhos · {draftCount}</button>
+        <button onClick={handleOpenCreate} className="h-8 px-3.5 rounded-md text-[12px] font-semibold bg-[#1B3A6B] text-white ml-auto flex items-center gap-1.5 hover:bg-[#142C52] transition-all shadow-sm">
+          <Plus className="w-3.5 h-3.5" /> Nova campanha
         </button>
       </div>
 
@@ -264,36 +413,40 @@ export default function Campaigns() {
           const icon = PROF_ICON[camp.profession] || '📋';
 
           return (
-            <div key={camp.id} className={`bg-white border border-[#E5E7EB] rounded-xl overflow-hidden shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md hover:border-[#1B3A6B] cursor-pointer ${isPaused ? 'opacity-75' : ''}`}>
+            <div
+              key={camp.id}
+              onClick={() => router.push(`/campanhas/${camp.id}`)}
+              className={`bg-white border border-[#E5E7EB] rounded-xl overflow-hidden shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md hover:border-[#1B3A6B] cursor-pointer ${isPaused ? 'opacity-75' : ''}`}
+            >
               {/* Header */}
               <div className="px-4 py-3.5 border-b border-[#EEF0F3] flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-[rgba(27,58,107,0.08)] text-[#1B3A6B] flex items-center justify-center text-lg shrink-0">
-                    {icon}
-                  </div>
+                  <div className="w-10 h-10 rounded-lg bg-[rgba(27,58,107,0.08)] text-[#1B3A6B] flex items-center justify-center text-lg shrink-0">{icon}</div>
                   <div>
                     <div className="text-[14px] font-semibold text-[#0F172A]">{camp.name}</div>
                     <div className="text-[11px] text-[#64748B]">Criada em {fmtDate(camp.createdAt)}</div>
                   </div>
                 </div>
-                {isActive ? (
-                  <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[#ECFDF3] text-[#027A48] flex items-center gap-1.5">
-                    <span className="w-[5px] h-[5px] rounded-full bg-[#039855] animate-pulse" />
-                    Ativa
-                  </span>
-                ) : isPaused ? (
-                  <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[#FFFAEB] text-[#B54708]">Pausada</span>
-                ) : (
-                  <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[#F1F3F6] text-[#475569]">Rascunho</span>
-                )}
+                <div className="flex items-center gap-2">
+                  {isActive ? (
+                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[#ECFDF3] text-[#027A48] flex items-center gap-1.5">
+                      <span className="w-[5px] h-[5px] rounded-full bg-[#039855] animate-pulse" />
+                      Ativa
+                    </span>
+                  ) : isPaused ? (
+                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[#FFFAEB] text-[#B54708]">Pausada</span>
+                  ) : (
+                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[#F1F3F6] text-[#475569]">Rascunho</span>
+                  )}
+                  <ChevronRight className="w-4 h-4 text-[#CBD5E1]" />
+                </div>
               </div>
 
               {/* Body */}
               <div className="p-4">
-                {/* Metrics */}
-                <div className="grid grid-cols-3 gap-3 mb-3.5 pb-3.5 border-b border-[#EEF0F3]">
+                <div className="grid grid-cols-3 gap-3 mb-3 pb-3 border-b border-[#EEF0F3]">
                   <div>
-                    <div className="text-[10px] uppercase tracking-wider text-[#64748B] font-semibold">Profissão</div>
+                    <div className="text-[10px] uppercase tracking-wider text-[#64748B] font-semibold">Segmento</div>
                     <div className="text-[13px] font-semibold text-[#0F172A] mt-0.5">{PROF_LABEL[camp.profession] || camp.profession}</div>
                   </div>
                   <div>
@@ -306,53 +459,39 @@ export default function Campaigns() {
                   </div>
                 </div>
 
-                {/* Schedule info */}
-                <div className="text-[11.5px] text-[#64748B] mt-1">
-                  📍 {camp.cities?.join(', ')} {camp.neighborhoods?.length ? `· ${camp.neighborhoods.join(', ')}` : ''} · ⏰ {camp.hourWindowStart}h–{camp.hourWindowEnd}h
+                {/* Tags preview */}
+                {camp.searchTags && camp.searchTags.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mb-3">
+                    {camp.searchTags.slice(0, 4).map(tag => (
+                      <span key={tag} className="text-[10px] px-2 py-0.5 rounded-full bg-[rgba(27,58,107,0.06)] text-[#1B3A6B] font-medium border border-[rgba(27,58,107,0.1)]">{tag}</span>
+                    ))}
+                    {camp.searchTags.length > 4 && <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#F1F3F6] text-[#64748B]">+{camp.searchTags.length - 4}</span>}
+                  </div>
+                )}
+
+                {/* Schedule */}
+                <div className="text-[11.5px] text-[#64748B]">
+                  📍 {camp.cities?.join(', ')} · ⏰ {camp.hourWindowStart}h–{camp.hourWindowEnd}h
                 </div>
 
                 {/* Actions */}
                 <div className="flex gap-2 mt-3.5">
                   {isActive ? (
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); handlePause(camp.id); }}
-                      disabled={actionLoading === camp.id}
-                      className="flex-1 h-8 rounded-lg text-[12px] font-semibold bg-[#F1F3F6] text-[#0F172A] flex items-center justify-center gap-1.5 hover:bg-[#E5E7EB] transition-all disabled:opacity-50"
-                    >
-                      {actionLoading === camp.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Pause className="w-3.5 h-3.5" />}
-                      Pausar
+                    <button onClick={(e) => { e.stopPropagation(); handlePause(camp.id); }} disabled={actionLoading === camp.id} className="flex-1 h-8 rounded-lg text-[12px] font-semibold bg-[#F1F3F6] text-[#0F172A] flex items-center justify-center gap-1.5 hover:bg-[#E5E7EB] transition-all disabled:opacity-50">
+                      {actionLoading === camp.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Pause className="w-3.5 h-3.5" />} Pausar
                     </button>
                   ) : (
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); handleResume(camp.id); }}
-                      disabled={actionLoading === camp.id}
-                      className="flex-1 h-8 rounded-lg text-[12px] font-semibold bg-[#ECFDF3] text-[#027A48] flex items-center justify-center gap-1.5 hover:bg-[#D1FAE5] transition-all disabled:opacity-50"
-                    >
-                      {actionLoading === camp.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-                      Ativar
+                    <button onClick={(e) => { e.stopPropagation(); handleResume(camp.id); }} disabled={actionLoading === camp.id} className="flex-1 h-8 rounded-lg text-[12px] font-semibold bg-[#ECFDF3] text-[#027A48] flex items-center justify-center gap-1.5 hover:bg-[#D1FAE5] transition-all disabled:opacity-50">
+                      {actionLoading === camp.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />} Ativar
                     </button>
                   )}
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); handleDuplicate(camp); }}
-                    disabled={actionLoading === camp.id}
-                    className="flex-1 h-8 rounded-lg text-[12px] font-semibold bg-[#F1F3F6] text-[#0F172A] flex items-center justify-center gap-1.5 hover:bg-[#E5E7EB] transition-all disabled:opacity-50"
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                    Duplicar
+                  <button onClick={(e) => { e.stopPropagation(); handleDuplicate(camp); }} disabled={actionLoading === camp.id} className="flex-1 h-8 rounded-lg text-[12px] font-semibold bg-[#F1F3F6] text-[#0F172A] flex items-center justify-center gap-1.5 hover:bg-[#E5E7EB] transition-all disabled:opacity-50">
+                    <Copy className="w-3.5 h-3.5" /> Duplicar
                   </button>
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); handleEdit(camp); }}
-                    className="flex-1 h-8 rounded-lg text-[12px] font-semibold bg-[#1B3A6B] text-white flex items-center justify-center gap-1.5 hover:bg-[#142C52] transition-all"
-                  >
-                    <Edit2 className="w-3.5 h-3.5" />
-                    Editar
+                  <button onClick={(e) => { e.stopPropagation(); handleEdit(camp); }} className="flex-1 h-8 rounded-lg text-[12px] font-semibold bg-[#1B3A6B] text-white flex items-center justify-center gap-1.5 hover:bg-[#142C52] transition-all">
+                    <Edit2 className="w-3.5 h-3.5" /> Editar
                   </button>
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); handleDelete(camp); }}
-                    disabled={actionLoading === camp.id}
-                    className="h-8 w-8 rounded-lg text-[12px] font-semibold bg-[#FEF3F2] text-[#D92D20] flex items-center justify-center hover:bg-[#FEE4E2] transition-all disabled:opacity-50 shrink-0"
-                    title="Excluir campanha"
-                  >
+                  <button onClick={(e) => { e.stopPropagation(); handleDelete(camp); }} disabled={actionLoading === camp.id} className="h-8 w-8 rounded-lg text-[12px] font-semibold bg-[#FEF3F2] text-[#D92D20] flex items-center justify-center hover:bg-[#FEE4E2] transition-all disabled:opacity-50 shrink-0" title="Excluir campanha">
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
@@ -362,46 +501,94 @@ export default function Campaigns() {
         })}
 
         {/* Create new card */}
-        <div onClick={() => setIsCreateOpen(true)} className="bg-white border-2 border-dashed border-[#D0D5DD] rounded-xl p-8 flex flex-col items-center justify-center cursor-pointer transition-all hover:border-[#1B3A6B] hover:bg-[rgba(27,58,107,0.04)] text-[#64748B] hover:text-[#1B3A6B] min-h-[220px]">
+        <div onClick={handleOpenCreate} className="bg-white border-2 border-dashed border-[#D0D5DD] rounded-xl p-8 flex flex-col items-center justify-center cursor-pointer transition-all hover:border-[#1B3A6B] hover:bg-[rgba(27,58,107,0.04)] text-[#64748B] hover:text-[#1B3A6B] min-h-[220px]">
           <Plus className="w-9 h-9 mb-2" />
           <h4 className="text-[14px] font-semibold text-[#0F172A]">Criar nova campanha</h4>
-          <p className="text-[12px] text-[#64748B] mt-1">Escolha profissão, cidade, volume e roteiro</p>
+          <p className="text-[12px] text-[#64748B] mt-1">Defina segmento, tags de busca, cidades e volume</p>
         </div>
       </div>
 
       {campaigns.length === 0 && !loading && (
         <div className="flex items-center gap-2 px-4 py-3 bg-[rgba(27,58,107,0.04)] rounded-lg text-[12px] text-[#475569]">
           <Info className="w-4 h-4 text-[#1B3A6B] shrink-0" />
-          Nenhuma campanha criada ainda. Clique em "Nova campanha" para começar a prospectar.
+          Nenhuma campanha criada ainda. Clique em &quot;Nova campanha&quot; para começar a prospectar.
         </div>
       )}
-      {/* Create Campaign Modal */}
+
+      {/* ═══ Create/Edit Modal ═══ */}
       {isCreateOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => { setIsCreateOpen(false); setEditingCampaign(null); }}>
-          <form onSubmit={handleCreateOrEdit} onClick={e => e.stopPropagation()} className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4 animate-fadeIn">
+          <form onSubmit={handleCreateOrEdit} onClick={e => e.stopPropagation()} className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 space-y-4 animate-fadeIn">
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-[16px] font-bold text-[#0F172A]">{editingCampaign ? 'Editar Campanha' : 'Nova Campanha'}</h3>
               <button type="button" onClick={() => { setIsCreateOpen(false); setEditingCampaign(null); }} className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-[#F1F3F6] text-[#64748B]"><X className="w-4 h-4" /></button>
             </div>
+
+            {/* Name */}
             <div>
               <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">Nome da campanha</label>
-              <input value={newCamp.name} onChange={e => setNewCamp(p => ({...p, name: e.target.value}))} placeholder="Ex: Médicos SJRP" className="w-full h-9 px-3 rounded-lg bg-[#F9FAFB] border border-[#E5E7EB] text-[13px] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none" autoFocus />
+              <input value={newCamp.name} onChange={e => setNewCamp(p => ({...p, name: e.target.value}))} placeholder="Ex: Prospecção Advogados SJRP" className="w-full h-9 px-3 rounded-lg bg-[#F9FAFB] border border-[#E5E7EB] text-[13px] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none" autoFocus />
             </div>
+
+            {/* Segment (replaces profession) */}
             <div>
-              <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">Profissão alvo</label>
-              <select value={newCamp.profession} onChange={e => setNewCamp(p => ({...p, profession: e.target.value}))} className="w-full h-9 px-3 rounded-lg bg-[#F9FAFB] border border-[#E5E7EB] text-[13px] focus:border-[#1B3A6B] outline-none">
-                <option value="DOCTOR">Médicos</option>
-                <option value="LAWYER">Advogados</option>
-                <option value="DENTIST">Dentistas</option>
-                <option value="BUSINESS_OWNER">Empresários</option>
-                <option value="OTHER">Outros</option>
-              </select>
+              <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-1.5">Segmento alvo</label>
+              <div className="grid grid-cols-2 gap-2">
+                {SEGMENTS.map(seg => (
+                  <button
+                    key={seg.id}
+                    type="button"
+                    onClick={() => handleSegmentChange(seg.id)}
+                    className={`p-2.5 rounded-lg border text-left transition-all flex items-center gap-2.5 ${
+                      selectedSegment === seg.id
+                        ? 'border-[#1B3A6B] bg-[rgba(27,58,107,0.04)] ring-1 ring-[#1B3A6B]/20'
+                        : 'border-[#E5E7EB] hover:border-[#1B3A6B] hover:bg-[#F9FAFB]'
+                    }`}
+                  >
+                    <span className="text-[16px]">{seg.icon}</span>
+                    <span className="text-[11.5px] font-medium text-[#0F172A]">{seg.label}</span>
+                  </button>
+                ))}
+              </div>
             </div>
+
+            {/* Search Tags */}
+            <div>
+              <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider flex items-center gap-1.5 mb-1.5">
+                <Tag className="w-3 h-3" /> Tags de busca (Google Maps)
+              </label>
+              <div className="flex flex-wrap gap-1.5 mb-2 min-h-[28px] p-2 bg-[#F9FAFB] border border-[#E5E7EB] rounded-lg">
+                {searchTags.map(tag => (
+                  <span key={tag} className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-[#1B3A6B] text-white font-medium">
+                    {tag}
+                    <button type="button" onClick={() => removeTag(tag)} className="hover:text-red-200 transition-colors"><X className="w-2.5 h-2.5" /></button>
+                  </span>
+                ))}
+                {searchTags.length === 0 && <span className="text-[11px] text-[#94A3B8]">Nenhuma tag adicionada</span>}
+              </div>
+              <div className="flex gap-2">
+                <input
+                  value={tagInput}
+                  onChange={e => setTagInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } }}
+                  placeholder="Adicionar tag personalizada..."
+                  className="flex-1 h-8 px-3 rounded-lg bg-white border border-[#E5E7EB] text-[12px] focus:border-[#1B3A6B] outline-none"
+                />
+                <button type="button" onClick={addTag} className="h-8 px-3 rounded-lg text-[11px] font-semibold bg-[#F1F3F6] text-[#475569] border border-[#E5E7EB] hover:bg-[#E5E7EB] transition-all">
+                  <Plus className="w-3 h-3" />
+                </button>
+              </div>
+              <p className="text-[10px] text-[#64748B] mt-1">Cada tag vira uma busca separada no Google Maps. Ex: &quot;advogados&quot;, &quot;escritório de advocacia&quot;</p>
+            </div>
+
+            {/* Cities */}
             <div>
               <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">Cidades (separadas por vírgula)</label>
               <input value={newCamp.cities} onChange={e => setNewCamp(p => ({...p, cities: e.target.value}))} placeholder="São José do Rio Preto, Votuporanga" className="w-full h-9 px-3 rounded-lg bg-[#F9FAFB] border border-[#E5E7EB] text-[13px] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none" />
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+
+            {/* Volume */}
+            <div className="grid grid-cols-3 gap-3">
               <div>
                 <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">Leads/dia</label>
                 <input type="number" value={newCamp.dailyLimit} onChange={e => setNewCamp(p => ({...p, dailyLimit: e.target.value}))} className="w-full h-9 px-3 rounded-lg bg-[#F9FAFB] border border-[#E5E7EB] text-[13px] focus:border-[#1B3A6B] outline-none" />
@@ -418,122 +605,103 @@ export default function Campaigns() {
 
             {/* ICP Section */}
             <div className="border border-[#E5E7EB] rounded-xl overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setIcpOpen(!icpOpen)}
-                className="w-full flex items-center justify-between px-4 py-3 bg-gradient-to-r from-[rgba(27,58,107,0.03)] to-[rgba(232,152,28,0.04)] hover:from-[rgba(27,58,107,0.06)] hover:to-[rgba(232,152,28,0.08)] transition-all"
-              >
+              <button type="button" onClick={() => setIcpOpen(!icpOpen)} className="w-full flex items-center justify-between px-4 py-3 bg-gradient-to-r from-[rgba(27,58,107,0.03)] to-[rgba(232,152,28,0.04)] hover:from-[rgba(27,58,107,0.06)] hover:to-[rgba(232,152,28,0.08)] transition-all">
                 <div className="flex items-center gap-2">
                   <span className="text-[14px]">⚡</span>
                   <span className="text-[12px] font-semibold text-[#0F172A]">Perfil de Cliente Ideal (ICP)</span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#ECFDF3] text-[#027A48] font-medium">Novo</span>
                 </div>
                 <ChevronDown className={`w-4 h-4 text-[#64748B] transition-transform ${icpOpen ? 'rotate-180' : ''}`} />
               </button>
-
               {icpOpen && (
                 <div className="px-4 py-3 space-y-3.5 border-t border-[#EEF0F3] bg-[#FAFBFC]">
-                  {/* Min Fit Score Slider */}
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
-                      <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider">Score mínimo para aceitar lead</label>
+                      <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider">Score mínimo</label>
                       <span className="text-[13px] font-bold text-[#1B3A6B] font-mono bg-[rgba(27,58,107,0.08)] px-2 py-0.5 rounded">{newCamp.icpMinScore}</span>
                     </div>
-                    <input
-                      type="range" min="0" max="10" step="1"
-                      value={newCamp.icpMinScore}
-                      onChange={e => setNewCamp(p => ({...p, icpMinScore: e.target.value}))}
-                      className="w-full h-2 rounded-full appearance-none cursor-pointer accent-[#1B3A6B] bg-[#E5E7EB]"
-                    />
-                    <div className="flex justify-between text-[9px] text-[#94A3B8] mt-0.5">
-                      <span>0 — aceita todos</span>
-                      <span>10 — muito restritivo</span>
-                    </div>
-                    <p className="text-[10px] text-[#64748B] mt-1">Leads com score abaixo deste valor serão arquivados automaticamente.</p>
+                    <input type="range" min="0" max="10" step="1" value={newCamp.icpMinScore} onChange={e => setNewCamp(p => ({...p, icpMinScore: e.target.value}))} className="w-full h-2 rounded-full appearance-none cursor-pointer accent-[#1B3A6B] bg-[#E5E7EB]" />
+                    <div className="flex justify-between text-[9px] text-[#94A3B8] mt-0.5"><span>0 — aceita todos</span><span>10 — muito restritivo</span></div>
                   </div>
-
-                  {/* Score Weights */}
                   <div>
-                    <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-2">Pesos dos critérios de avaliação</label>
+                    <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-2">Pesos dos critérios</label>
                     <div className="grid grid-cols-2 gap-2">
                       {[
-                        { key: 'icpWeightProfession', label: 'Profissão bate', icon: '🎯', tip: 'Profissão do lead = profissão da campanha' },
-                        { key: 'icpWeightWhatsapp', label: 'WhatsApp válido', icon: '📱', tip: 'Lead tem WhatsApp ativo e verificado' },
-                        { key: 'icpWeightOwner', label: 'Sócio/proprietário', icon: '👤', tip: 'Lead é dono ou sócio do negócio' },
-                        { key: 'icpWeightArea', label: 'Bairro premium', icon: '📍', tip: 'Lead está em bairro de alto valor' },
-                        { key: 'icpWeightCnpjYears', label: 'Tempo de atuação', icon: '📅', tip: 'Anos desde abertura do CNPJ (máx 5+)' },
-                        { key: 'icpWeightGoogle', label: 'Reputação Google', icon: '⭐', tip: 'Rating ≥ 4.5 com 10+ avaliações' },
-                      ].map(({ key, label, icon, tip }) => (
-                        <div key={key} className="flex items-center gap-2 bg-white rounded-lg border border-[#E5E7EB] px-2.5 py-2" title={tip}>
+                        { key: 'icpWeightProfession', label: 'Segmento bate', icon: '🎯' },
+                        { key: 'icpWeightWhatsapp', label: 'WhatsApp válido', icon: '📱' },
+                        { key: 'icpWeightOwner', label: 'Sócio/proprietário', icon: '👤' },
+                        { key: 'icpWeightArea', label: 'Bairro premium', icon: '📍' },
+                        { key: 'icpWeightCnpjYears', label: 'Tempo de atuação', icon: '📅' },
+                        { key: 'icpWeightGoogle', label: 'Reputação Google', icon: '⭐' },
+                      ].map(({ key, label, icon }) => (
+                        <div key={key} className="flex items-center gap-2 bg-white rounded-lg border border-[#E5E7EB] px-2.5 py-2">
                           <span className="text-[13px]">{icon}</span>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-[10.5px] font-medium text-[#0F172A] truncate">{label}</div>
-                          </div>
-                          <input
-                            type="number" min="0" max="5" step="1"
-                            value={(newCamp as any)[key]}
-                            onChange={e => setNewCamp(p => ({...p, [key]: e.target.value}))}
-                            className="w-10 h-7 text-center rounded bg-[#F9FAFB] border border-[#E5E7EB] text-[12px] font-bold text-[#1B3A6B] focus:border-[#1B3A6B] outline-none"
-                          />
+                          <div className="flex-1 min-w-0"><div className="text-[10.5px] font-medium text-[#0F172A] truncate">{label}</div></div>
+                          <input type="number" min="0" max="5" step="1" value={(newCamp as any)[key]} onChange={e => setNewCamp(p => ({...p, [key]: e.target.value}))} className="w-10 h-7 text-center rounded bg-[#F9FAFB] border border-[#E5E7EB] text-[12px] font-bold text-[#1B3A6B] focus:border-[#1B3A6B] outline-none" />
                         </div>
                       ))}
                     </div>
-                    {(() => {
-                      const maxScore = Number(newCamp.icpWeightProfession) + Number(newCamp.icpWeightWhatsapp) + Number(newCamp.icpWeightOwner) + Number(newCamp.icpWeightArea) + Number(newCamp.icpWeightCnpjYears) + Number(newCamp.icpWeightGoogle);
-                      const minScore = Number(newCamp.icpMinScore);
-                      const pct = maxScore > 0 ? Math.round((minScore / maxScore) * 100) : 0;
-                      return (
-                        <div className="mt-2 flex items-center gap-2">
-                          <div className="flex-1 h-2 bg-[#E5E7EB] rounded-full overflow-hidden">
-                            <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(100, pct)}%`, background: pct > 80 ? '#D92D20' : pct > 50 ? '#E8981C' : '#027A48' }} />
-                          </div>
-                          <span className="text-[10px] font-mono text-[#64748B] whitespace-nowrap">mín {minScore} / máx {maxScore}</span>
-                        </div>
-                      );
-                    })()}
                   </div>
-
-                  {/* High Value Areas */}
                   <div>
-                    <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">Bairros de alto valor (opcional)</label>
-                    <input
-                      value={newCamp.icpHighValueAreas}
-                      onChange={e => setNewCamp(p => ({...p, icpHighValueAreas: e.target.value}))}
-                      placeholder="Centro, Jardim Paulista, Vila Nova"
-                      className="w-full h-8 px-3 rounded-lg bg-white border border-[#E5E7EB] text-[12px] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none"
-                    />
-                    <p className="text-[10px] text-[#64748B] mt-0.5">Leads nesses bairros ganham pontos extras. Separe por vírgula.</p>
+                    <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">Bairros de alto valor</label>
+                    <input value={newCamp.icpHighValueAreas} onChange={e => setNewCamp(p => ({...p, icpHighValueAreas: e.target.value}))} placeholder="Centro, Jardim Paulista" className="w-full h-8 px-3 rounded-lg bg-white border border-[#E5E7EB] text-[12px] focus:border-[#1B3A6B] outline-none" />
                   </div>
-
-                  {/* Google Reputation Config */}
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="text-[10px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">Rating mínimo Google</label>
-                      <input
-                        type="number" min="0" max="5" step="0.5"
-                        value={newCamp.icpMinGoogleRating}
-                        onChange={e => setNewCamp(p => ({...p, icpMinGoogleRating: e.target.value}))}
-                        className="w-full h-8 px-3 rounded-lg bg-white border border-[#E5E7EB] text-[12px] focus:border-[#1B3A6B] outline-none"
-                      />
+                      <label className="text-[10px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">Rating mín. Google</label>
+                      <input type="number" min="0" max="5" step="0.5" value={newCamp.icpMinGoogleRating} onChange={e => setNewCamp(p => ({...p, icpMinGoogleRating: e.target.value}))} className="w-full h-8 px-3 rounded-lg bg-white border border-[#E5E7EB] text-[12px] focus:border-[#1B3A6B] outline-none" />
                     </div>
                     <div>
-                      <label className="text-[10px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">Avaliações mínimas</label>
-                      <input
-                        type="number" min="0" max="100"
-                        value={newCamp.icpMinReviews}
-                        onChange={e => setNewCamp(p => ({...p, icpMinReviews: e.target.value}))}
-                        className="w-full h-8 px-3 rounded-lg bg-white border border-[#E5E7EB] text-[12px] focus:border-[#1B3A6B] outline-none"
-                      />
+                      <label className="text-[10px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">Avaliações mín.</label>
+                      <input type="number" min="0" max="100" value={newCamp.icpMinReviews} onChange={e => setNewCamp(p => ({...p, icpMinReviews: e.target.value}))} className="w-full h-8 px-3 rounded-lg bg-white border border-[#E5E7EB] text-[12px] focus:border-[#1B3A6B] outline-none" />
                     </div>
                   </div>
                 </div>
               )}
             </div>
+
             <button type="submit" disabled={isCreating} className="w-full h-10 rounded-lg text-[13px] font-semibold bg-[#1B3A6B] text-white hover:bg-[#142C52] transition-all disabled:opacity-50 flex items-center justify-center gap-2">
               {isCreating ? <Loader2 className="w-4 h-4 animate-spin" /> : editingCampaign ? <Edit2 className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-              {isCreating ? (editingCampaign ? 'Salvando...' : 'Criando...') : (editingCampaign ? 'Salvar Alterações' : 'Criar Campanha')}
+              {isCreating ? (editingCampaign ? 'Salvando...' : 'Criando...') : (editingCampaign ? 'Salvar Alterações' : '+ Criar Campanha')}
             </button>
           </form>
+        </div>
+      )}
+
+      {/* ═══ Add-on Purchase Modal ═══ */}
+      {showAddonModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setShowAddonModal(false)}>
+          <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 space-y-4 animate-fadeIn">
+            <div className="flex items-center justify-between">
+              <h3 className="text-[16px] font-bold text-[#0F172A]">Liberar mais campanhas</h3>
+              <button onClick={() => setShowAddonModal(false)} className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-[#F1F3F6] text-[#64748B]"><X className="w-4 h-4" /></button>
+            </div>
+
+            <div className="text-center py-4">
+              <div className="text-[40px] mb-2">🚀</div>
+              <div className="text-[14px] font-semibold text-[#0F172A]">+1 Campanha Ativa</div>
+              <div className="text-[12px] text-[#64748B] mt-1">Adicione mais uma campanha ao seu plano {campaignLimit ? PLAN_LABELS[campaignLimit.plan] : ''}</div>
+              <div className="mt-3">
+                <span className="text-[28px] font-bold text-[#1B3A6B]">R$ 49</span>
+                <span className="text-[14px] text-[#64748B]">,90/mês</span>
+              </div>
+            </div>
+
+            <div className="space-y-2 text-[12px] text-[#475569]">
+              <div className="flex items-center gap-2"><span className="text-[#027A48]">✓</span> Campanha ativa adicional</div>
+              <div className="flex items-center gap-2"><span className="text-[#027A48]">✓</span> Leads ilimitados na campanha</div>
+              <div className="flex items-center gap-2"><span className="text-[#027A48]">✓</span> Cancele a qualquer momento</div>
+            </div>
+
+            <button
+              onClick={handlePurchaseAddon}
+              disabled={purchasingAddon}
+              className="w-full h-10 rounded-lg text-[13px] font-semibold bg-[#1B3A6B] text-white hover:bg-[#142C52] transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {purchasingAddon ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+              {purchasingAddon ? 'Processando...' : 'Contratar Add-on'}
+            </button>
+            <p className="text-[10px] text-center text-[#94A3B8]">O valor será adicionado à sua próxima fatura</p>
+          </div>
         </div>
       )}
     </div>
