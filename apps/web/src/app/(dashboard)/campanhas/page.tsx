@@ -82,6 +82,15 @@ const SEGMENTS = [
   },
 ];
 
+const CAPTURE_SOURCES = [
+  { id: 'GOOGLE_MAPS', label: 'Google Maps Places', icon: '📍', description: 'Busca por especialidade e geolocalização.' },
+  { id: 'CNPJ_MINER', label: 'CNPJ Miner (Receita Federal)', icon: '🔍', description: 'Empresas abertas recentemente na base da RF.' },
+  { id: 'DOCTORALIA', label: 'Doctoralia', icon: '🩺', description: 'Médicos, dentistas e clínicas locais.' },
+  { id: 'COMPRASNET', label: 'Comprasnet Licitações', icon: '⚖️', description: 'Ganhadoras de licitações públicas para Seguro Garantia.' },
+  { id: 'VIVAREAL', label: 'VivaReal Imóveis', icon: '🏢', description: 'Anúncios de aluguel comercial para Seguro Fiança.' },
+  { id: 'INSTAGRAM', label: 'Instagram Scraper', icon: '📸', description: 'Perfis profissionais locais com contatos expostos.' },
+];
+
 const PROF_ICON: Record<string, string> = {
   DOCTOR: '🏥', LAWYER: '⚖️', DENTIST: '🦷', ENTREPRENEUR: '🏢', ENGINEER: '🏗️',
   ARCHITECT: '🏗️', ACCOUNTANT: '📊', OTHER: '🎯',
@@ -114,6 +123,7 @@ export default function Campaigns() {
 
   // Form state
   const [selectedSegment, setSelectedSegment] = useState('health');
+  const [captureSource, setCaptureSource] = useState('GOOGLE_MAPS');
   const [searchTags, setSearchTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [newCamp, setNewCamp] = useState({
@@ -232,6 +242,7 @@ export default function Campaigns() {
       icpMinGoogleRating: String(f.min_google_rating ?? 4),
       icpMinReviews: String(f.min_reviews ?? 5),
     });
+    setCaptureSource(f.capture_source || 'GOOGLE_MAPS');
     setIcpOpen(true);
     setIsCreateOpen(true);
   };
@@ -264,6 +275,7 @@ export default function Campaigns() {
     setSearchTags(DEFAULT_SEGMENT.suggestedTags);
     setTagInput('');
     setNewCamp({ name: '', cities: '', dailyLimit: '20', hourStart: '8', hourEnd: '18', icpMinScore: '3', icpWeightProfession: '3', icpWeightWhatsapp: '2', icpWeightOwner: '2', icpWeightArea: '1', icpWeightCnpjYears: '1', icpWeightGoogle: '1', icpHighValueAreas: '', icpMinGoogleRating: '4', icpMinReviews: '5' });
+    setCaptureSource('GOOGLE_MAPS');
     setIcpOpen(false);
   };
 
@@ -298,6 +310,7 @@ export default function Campaigns() {
       hourWindowEnd: Number(newCamp.hourEnd) || 18,
       searchTags,
       filters: {
+        capture_source: captureSource,
         min_fit_score: Number(newCamp.icpMinScore) || 3,
         weights: {
           profession_match: Number(newCamp.icpWeightProfession) || 3,
@@ -424,7 +437,13 @@ export default function Campaigns() {
                   <div className="w-10 h-10 rounded-lg bg-[rgba(27,58,107,0.08)] text-[#1B3A6B] flex items-center justify-center text-lg shrink-0">{icon}</div>
                   <div>
                     <div className="text-[14px] font-semibold text-[#0F172A]">{camp.name}</div>
-                    <div className="text-[11px] text-[#64748B]">Criada em {fmtDate(camp.createdAt)}</div>
+                    <div className="text-[11px] text-[#64748B] flex items-center gap-1.5 flex-wrap">
+                      <span>Criada em {fmtDate(camp.createdAt)}</span>
+                      <span>·</span>
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#F1F3F6] text-[#475569] font-medium text-[9.5px]">
+                        🔌 {CAPTURE_SOURCES.find(s => s.id === (camp.filters?.capture_source || 'GOOGLE_MAPS'))?.label || 'Google Maps'}
+                      </span>
+                    </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -579,6 +598,30 @@ export default function Campaigns() {
                 </button>
               </div>
               <p className="text-[10px] text-[#64748B] mt-1">Cada tag vira uma busca separada no Google Maps. Ex: &quot;advogados&quot;, &quot;escritório de advocacia&quot;</p>
+            </div>
+
+            {/* Capture Source */}
+            <div>
+              <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">Fonte de Captação (Descoberta)</label>
+              <div className="relative">
+                <select
+                  value={captureSource}
+                  onChange={e => setCaptureSource(e.target.value)}
+                  className="w-full h-9 pl-3 pr-8 rounded-lg bg-[#F9FAFB] border border-[#E5E7EB] text-[13px] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none appearance-none cursor-pointer font-medium text-[#0F172A]"
+                >
+                  {CAPTURE_SOURCES.map(source => (
+                    <option key={source.id} value={source.id}>
+                      {source.icon} {source.label}
+                    </option>
+                  ))}
+                </select>
+                <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-[#64748B]">
+                  <ChevronDown className="w-4 h-4" />
+                </div>
+              </div>
+              <p className="text-[10.5px] text-[#64748B] mt-1.5">
+                {CAPTURE_SOURCES.find(s => s.id === captureSource)?.description}
+              </p>
             </div>
 
             {/* Cities */}

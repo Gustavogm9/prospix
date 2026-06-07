@@ -597,6 +597,15 @@ function LeadsTab({
   );
 }
 
+const CAPTURE_SOURCES: Record<string, { label: string; icon: string }> = {
+  GOOGLE_MAPS: { label: 'Google Maps Places', icon: '📍' },
+  CNPJ_MINER:  { label: 'CNPJ Miner (Receita Federal)', icon: '🔍' },
+  DOCTORALIA:  { label: 'Doctoralia', icon: '🩺' },
+  COMPRASNET:  { label: 'Comprasnet Licitações', icon: '⚖️' },
+  VIVAREAL:    { label: 'VivaReal Imóveis', icon: '🏢' },
+  INSTAGRAM:   { label: 'Instagram Scraper', icon: '📸' },
+};
+
 // ═══════════════════════════════════════════════════════════════════════════
 // TAB: CONFIGURAÇÃO
 // ═══════════════════════════════════════════════════════════════════════════
@@ -611,6 +620,10 @@ function ConfigTab({ campaign, filters, weights }: { campaign: any; filters: Rec
         </div>
         <div className="space-y-3">
           <ConfigRow label="Nome" value={campaign.name} />
+          <ConfigRow label="Fonte de Captação" value={(() => {
+            const src = CAPTURE_SOURCES[filters.capture_source || 'GOOGLE_MAPS'];
+            return src ? `${src.icon} ${src.label}` : '📍 Google Maps Places';
+          })()} />
           <ConfigRow label="Segmento / Profissão" value={PROFESSION_LABELS[campaign.profession] || campaign.profession || '—'} />
           <ConfigRow label="Cidades" value={(campaign.cities || []).join(', ') || '—'} />
           <ConfigRow label="Bairros" value={(campaign.neighborhoods || []).length > 0 ? campaign.neighborhoods.join(', ') : 'Todos'} />
