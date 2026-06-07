@@ -47,10 +47,10 @@ CREATE POLICY "plan_limits_read" ON plan_limits FOR SELECT TO authenticated USIN
 
 -- tenant_addons: users can only see their own tenant's add-ons
 CREATE POLICY "tenant_addons_read" ON tenant_addons FOR SELECT TO authenticated
-  USING (tenant_id IN (SELECT tenant_id FROM tenant_users WHERE user_id = auth.uid()));
+  USING (tenant_id IN (SELECT tenant_id FROM users WHERE id = auth.uid()));
 
 CREATE POLICY "tenant_addons_insert" ON tenant_addons FOR INSERT TO authenticated
-  WITH CHECK (tenant_id IN (SELECT tenant_id FROM tenant_users WHERE user_id = auth.uid()));
+  WITH CHECK (tenant_id IN (SELECT tenant_id FROM users WHERE id = auth.uid()));
 
 -- 5. Fix any BUSINESS_OWNER values in campaigns table to ENTREPRENEUR
 UPDATE campaigns SET profession = 'ENTREPRENEUR' WHERE profession = 'BUSINESS_OWNER';
