@@ -1,8 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Card, Button, Badge, Input, toast } from '@prospix/ui';
-import { Clock, Phone, Mail, Calendar, X, Plus, Info } from 'lucide-react';
+import { Clock, Phone, Mail, Calendar, X, Plus, Info, Settings } from 'lucide-react';
 import { meetingsQueries, leadsQueries } from '@/lib/queries';
 import { useAuthStore } from '@/store/auth-store';
 import { apiFetch } from '@/lib/api-fetch';
@@ -90,7 +91,9 @@ const mapBackendMeeting = (meeting: any): Meeting => {
 };
 
 export default function Schedule() {
+  const router = useRouter();
   const tenantId = useAuthStore(state => state.tenantId);
+  const [calendarConnected, setCalendarConnected] = useState<boolean | null>(null);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [weekOffset, setWeekOffset] = useState(0);
 
@@ -145,8 +148,18 @@ export default function Schedule() {
     }
   }, [tenantId]);
 
+  // Check calendar connection status on mount
   useEffect(() => {
     fetchMeetings();
+    (async () => {
+      try {
+        const res = await apiFetch('/api/integrations/credentials');
+        const json = await res.json();
+        setCalendarConnected(json?.data?.google?.calendarConnected ?? false);
+      } catch {
+        setCalendarConnected(false);
+      }
+    })();
   }, [fetchMeetings]);
 
   const fetchLeadOptions = async () => {
@@ -262,18 +275,45 @@ export default function Schedule() {
         <div className="w-px h-6 bg-[#E5E7EB] mx-1" />
         <button
           onClick={async () => {
+            if (calendarConnected === false) {
+              // Redirect to settings integrations tab
+              router.push('/configuracoes?tab=integracoes');
+              return;
+            }
             try {
               await apiFetch('/api/integrations/calendar/sync', { method: 'POST' });
               toast.success('Sincronizado!', 'Google Calendar atualizado com sucesso.');
               await fetchMeetings();
             } catch {
-              toast.error('Integração pendente', 'Configure o Google Calendar em Configurações → Integrações.');
+              // API returned 400 = not configured
+              router.push('/configuracoes?tab=integracoes');
             }
           }}
-          className="h-8 px-3 rounded-md text-[12px] font-medium text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6] flex items-center gap-1.5"
+          className={`h-8 px-3 rounded-md text-[12px] font-medium flex items-center gap-1.5 transition-all ${
+            calendarConnected === false
+              ? 'text-[#E8981C] border border-[#E8981C]/30 bg-[#FFF8F0] hover:bg-[#FFF1E0]'
+              : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'
+          }`}
         >
-          <Calendar className="w-3 h-3" />
-          Sync Google Calendar
+          {calendarConnected === false ? (
+            <>
+              <Settings className="w-3 h-3" />
+              Configurar Google Calendar
+            </>
+          ) : (
+            <>
+              <Calendar className="w-3 h-3" />
+              Sync Google Calendar
+            </>
+          )}
+        </button>
+        <button
+          onClick={() => router.push('/configuracoes?tab=agenda')}
+          className="h-8 px-3 rounded-md text-[12px] font-medium text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6] flex items-center gap-1.5 transition-all"
+          title="Configurar horários disponíveis"
+        >
+          <Settings className="w-3 h-3" />
+          Meus horários
         </button>
         <span className="ml-auto text-[11px] text-[#475569] flex items-center gap-1.5">
           <span className="w-[6px] h-[6px] rounded-full bg-[#039855] animate-pulse" />

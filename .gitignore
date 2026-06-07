@@ -93,3 +93,6 @@ temp/
 .husky/_/
 .vercel
 .env*
+
+# Local utility scripts with secrets
+scripts/

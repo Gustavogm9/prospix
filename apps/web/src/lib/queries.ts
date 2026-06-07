@@ -127,20 +127,22 @@ export interface LeadFilters extends CursorPaginationParams {
   campaign_id?: string;
   fit_score_gte?: number;
   search?: string;
+  /** Offset-based pagination (alternative to cursor) */
+  offset?: number;
 }
 
 export const leadsQueries = {
-  /** List leads with cursor-based pagination and advanced filters */
+  /** List leads with offset-based pagination and advanced filters */
   list: async (tenantId: string, filters: LeadFilters = {}) => {
-    const { limit = 50, cursor, status, profession, campaign_id, fit_score_gte, search } = filters;
+    const { limit = 50, cursor, offset, status, profession, campaign_id, fit_score_gte, search } = filters;
 
     let query = supabase
       .from('leads')
-      .select('*')
+      .select('*', { count: 'exact' })
       .eq('tenant_id', tenantId)
       .is('deleted_at', null)
-      .order('id', { ascending: true })
-      .limit(limit + 1);
+      .order('created_at', { ascending: false })
+      .limit(limit);
 
     if (status) query = query.eq('status', status);
     if (profession) query = query.eq('profession', profession);
@@ -149,19 +151,97 @@ export const leadsQueries = {
     if (search) {
       query = query.or(`name.ilike.%${search}%,whatsapp.ilike.%${search}%,email.ilike.%${search}%`);
     }
-    if (cursor) query = query.gt('id', cursor);
 
-    const { data, error } = await query;
-    if (error) return { data: [], nextCursor: null, error: mapError(error) };
-
-    let nextCursor: string | null = null;
-    const list = data ?? [];
-    if (list.length > limit) {
-      const last = list.pop();
-      nextCursor = last!.id;
+    // Offset-based pagination (preferred)
+    if (offset !== undefined) {
+      query = query.range(offset, offset + limit - 1);
+    } else if (cursor) {
+      query = query.gt('id', cursor);
     }
 
-    return { data: list, nextCursor, error: null } as CursorPaginatedResult<Lead> & { error: null };
+    const { data, error, count } = await query;
+    if (error) return { data: [], nextCursor: null, totalCount: 0, error: mapError(error) };
+
+    const list = data ?? [];
+    return { data: list, nextCursor: null, totalCount: count ?? 0, error: null };
+  },
+
+  /** Count leads by status — used for dashboard cards */
+  count: async (tenantId: string, filters: Omit<LeadFilters, 'limit' | 'cursor' | 'offset'> = {}) => {
+    const { status: _status, profession, campaign_id, fit_score_gte, search } = filters;
+
+    const buildQuery = (statusFilter?: string) => {
+      let q = supabase
+        .from('leads')
+        .select('id', { count: 'exact', head: true })
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null);
+
+      if (statusFilter) q = q.eq('status', statusFilter);
+      if (profession) q = q.eq('profession', profession);
+      if (campaign_id) q = q.eq('campaign_id', campaign_id);
+      if (fit_score_gte !== undefined) q = q.gte('fit_score', fit_score_gte);
+      if (search) q = q.or(`name.ilike.%${search}%,whatsapp.ilike.%${search}%,email.ilike.%${search}%`);
+      return q;
+    };
+
+    const [total, captured, enriched, contacted, inConversation, meetingScheduled, won, lost] = await Promise.all([
+      buildQuery(),
+      buildQuery('CAPTURED'),
+      buildQuery('ENRICHED'),
+      buildQuery('CONTACTED'),
+      buildQuery('IN_CONVERSATION'),
+      buildQuery('MEETING_SCHEDULED'),
+      buildQuery('WON'),
+      buildQuery('LOST'),
+    ]);
+
+    return {
+      total: total.count ?? 0,
+      CAPTURED: captured.count ?? 0,
+      ENRICHED: enriched.count ?? 0,
+      CONTACTED: contacted.count ?? 0,
+      IN_CONVERSATION: inConversation.count ?? 0,
+      MEETING_SCHEDULED: meetingScheduled.count ?? 0,
+      WON: won.count ?? 0,
+      LOST: lost.count ?? 0,
+    };
+  },
+
+  /** Export all leads matching filters (for CSV) - fetches in batches */
+  exportAll: async (tenantId: string, filters: Omit<LeadFilters, 'limit' | 'cursor' | 'offset'> = {}) => {
+    const { status, profession, campaign_id, fit_score_gte, search } = filters;
+    const batchSize = 1000;
+    let allLeads: any[] = [];
+    let from = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      let query = supabase
+        .from('leads')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .range(from, from + batchSize - 1);
+
+      if (status) query = query.eq('status', status);
+      if (profession) query = query.eq('profession', profession);
+      if (campaign_id) query = query.eq('campaign_id', campaign_id);
+      if (fit_score_gte !== undefined) query = query.gte('fit_score', fit_score_gte);
+      if (search) query = query.or(`name.ilike.%${search}%,whatsapp.ilike.%${search}%,email.ilike.%${search}%`);
+
+      const { data, error } = await query;
+      if (error || !data?.length) {
+        hasMore = false;
+      } else {
+        allLeads = [...allLeads, ...data];
+        from += batchSize;
+        hasMore = data.length === batchSize;
+      }
+    }
+
+    return allLeads;
   },
 
   /** Get a single lead by ID */

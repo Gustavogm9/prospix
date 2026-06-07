@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button } from '@prospix/ui';
-import { CheckCircle2, Circle, X, ArrowRight, MessageSquare, UserPlus, FileText } from 'lucide-react';
+import { CheckCircle2, Circle, X, ArrowRight, MessageSquare, UserPlus, FileText, Calendar } from 'lucide-react';
 
 const STORAGE_KEY = 'prospix-onboarding-state-v1';
 
-type StepId = 'whatsapp' | 'firstLead' | 'firstScript';
+type StepId = 'whatsapp' | 'firstLead' | 'agenda' | 'firstScript';
 
 interface OnboardingState {
   dismissed: boolean;
@@ -14,7 +14,7 @@ interface OnboardingState {
 
 const DEFAULT_STATE: OnboardingState = {
   dismissed: false,
-  completed: { whatsapp: false, firstLead: false, firstScript: false },
+  completed: { whatsapp: false, firstLead: false, agenda: false, firstScript: false },
 };
 
 function loadState(): OnboardingState {
@@ -27,6 +27,7 @@ function loadState(): OnboardingState {
       completed: {
         whatsapp: !!parsed.completed?.whatsapp,
         firstLead: !!parsed.completed?.firstLead,
+        agenda: !!parsed.completed?.agenda,
         firstScript: !!parsed.completed?.firstScript,
       },
     };
@@ -70,6 +71,14 @@ const STEPS: StepDef[] = [
     ctaPath: '/leads',
   },
   {
+    id: 'agenda',
+    title: 'Configure sua agenda',
+    description: 'Defina seus horários disponíveis, dias de atendimento e duração padrão das reuniões para a IA agendar.',
+    icon: Calendar,
+    ctaLabel: 'Configurar',
+    ctaPath: '/configuracoes?tab=agenda',
+  },
+  {
     id: 'firstScript',
     title: 'Crie seu primeiro roteiro',
     description: 'Defina abordagem comercial para que a IA siga seu tom de voz nas conversas.',
@@ -96,6 +105,7 @@ export const OnboardingChecklist = ({ signals }: OnboardingChecklistProps) => {
         completed: {
           whatsapp: signals.whatsapp ?? prev.completed.whatsapp,
           firstLead: signals.firstLead ?? prev.completed.firstLead,
+          agenda: signals.agenda ?? prev.completed.agenda,
           firstScript: signals.firstScript ?? prev.completed.firstScript,
         },
       };

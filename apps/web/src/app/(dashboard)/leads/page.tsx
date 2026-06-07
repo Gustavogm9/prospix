@@ -1,13 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { Button, Badge, Drawer, toast } from '@prospix/ui';
-import { Filter, Download, RefreshCw, User, Phone, DollarSign, MessageSquare, ChevronRight, Info } from 'lucide-react';
-import { leadsQueries, conversationsQueries } from '@/lib/queries';
+import { useState, useEffect, useCallback } from 'react';
+import { toast } from '@prospix/ui';
+import { Download, RefreshCw, ChevronRight, ChevronLeft, Info, Search, X } from 'lucide-react';
+import { leadsQueries, campaignsQueries } from '@/lib/queries';
 import { useAuthStore } from '@/store/auth-store';
+import LeadDrawer from '../funil/lead-drawer';
 
-
+// ── Types ──────────────────────────────────────────────────────────────────
 interface Lead {
   id: string;
   name: string;
@@ -19,14 +19,55 @@ interface Lead {
   status: string;
   createdAt: string;
   profession?: string;
+  campaignId?: string;
 }
 
+interface Campaign {
+  id: string;
+  name: string;
+}
+
+interface StatusCounts {
+  total: number;
+  CAPTURED: number;
+  ENRICHED: number;
+  CONTACTED: number;
+  IN_CONVERSATION: number;
+  MEETING_SCHEDULED: number;
+  WON: number;
+  LOST: number;
+}
+
+// ── Constants ──────────────────────────────────────────────────────────────
 const PROFESSION_LABELS: Record<string, string> = {
   DOCTOR: 'Médico(a)', LAWYER: 'Advogado(a)', DENTIST: 'Dentista',
   ENTREPRENEUR: 'Empresário(a)', ENGINEER: 'Engenheiro(a)',
   ARCHITECT: 'Arquiteto(a)', ACCOUNTANT: 'Contador(a)', OTHER: 'Outro',
 };
 
+const STATUS_CONFIG: Record<string, { label: string; emoji: string; color: string; bg: string; border: string }> = {
+  CAPTURED:           { label: 'Capturados',    emoji: '📥', color: 'text-[#475569]', bg: 'bg-[#F1F5F9]', border: 'border-[#CBD5E1]' },
+  ENRICHED:           { label: 'Enriquecidos',  emoji: '🔍', color: 'text-[#1B3A6B]', bg: 'bg-[#EFF6FF]', border: 'border-[#93C5FD]' },
+  CONTACTED:          { label: 'Contatados',    emoji: '💬', color: 'text-[#B8740E]', bg: 'bg-[#FFF8F0]', border: 'border-[#FDE68A]' },
+  IN_CONVERSATION:    { label: 'Em conversa',   emoji: '🗣️', color: 'text-[#7C3AED]', bg: 'bg-[#F5F3FF]', border: 'border-[#C4B5FD]' },
+  MEETING_SCHEDULED:  { label: 'Reunião',       emoji: '📅', color: 'text-[#0891B2]', bg: 'bg-[#ECFEFF]', border: 'border-[#67E8F9]' },
+  WON:                { label: 'Ganhos',        emoji: '✅', color: 'text-[#027A48]', bg: 'bg-[#ECFDF3]', border: 'border-[#A7F3D0]' },
+  LOST:               { label: 'Perdidos',      emoji: '❌', color: 'text-[#D92D20]', bg: 'bg-[#FEF3F2]', border: 'border-[#FECACA]' },
+};
+
+const SCORE_OPTIONS = [
+  { label: 'Qualquer score', value: undefined },
+  { label: '≥ 5', value: 5 },
+  { label: '≥ 6', value: 6 },
+  { label: '≥ 7', value: 7 },
+  { label: '≥ 8', value: 8 },
+];
+
+const PAGE_SIZE = 25;
+
+const AVATAR_COLORS = ['#1B3A6B', '#5A2A82', '#B8740E', '#075E54', '#9E2A2B', '#1F4E5F', '#374151'];
+
+// ── Mapper ─────────────────────────────────────────────────────────────────
 const mapBackendLead = (lead: any): Lead => {
   const metadata = (lead.metadata || {}) as Record<string, any>;
   const address = lead.address || {};
@@ -43,203 +84,304 @@ const mapBackendLead = (lead: any): Lead => {
     status: lead.status || '—',
     createdAt: lead.created_at ? new Date(lead.created_at).toLocaleDateString('pt-BR') : '—',
     profession: lead.profession ? (PROFESSION_LABELS[lead.profession] || lead.profession) : '',
+    campaignId: lead.campaign_id || undefined,
   };
 };
 
-const AVATAR_COLORS = ['#1B3A6B', '#5A2A82', '#B8740E', '#075E54', '#9E2A2B', '#1F4E5F', '#374151'];
-
-const CATEGORY_CARDS = [
-  { label: 'Médicos', filter: 'medicos', icon: '🏥', desc: 'Cardio, ortopedia, dermato, pediatria', bg: 'rgba(27,58,107,0.15)' },
-  { label: 'Advogados', filter: 'advogados', icon: '⚖️', desc: 'Sócios de escritório, autônomos', bg: 'rgba(232,152,28,0.15)' },
-  { label: 'Dentistas', filter: 'dentistas', icon: '🦷', desc: 'Clínica própria, sócios', bg: 'rgba(90,42,130,0.12)' },
-  { label: 'Empresários', filter: 'empresarios', icon: '🏢', desc: '2-10 funcionários, dono ativo', bg: 'rgba(7,94,84,0.12)' },
-];
-
-
-
+// ═══════════════════════════════════════════════════════════════════════════
+// COMPONENT
+// ═══════════════════════════════════════════════════════════════════════════
 export default function Leads() {
-  const router = useRouter();
   const tenantId = useAuthStore(state => state.tenantId);
+
+  // Data
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [statusCounts, setStatusCounts] = useState<StatusCounts | null>(null);
+  const [totalCount, setTotalCount] = useState(0);
+
+  // Filters
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [fitFilter, setFitFilter] = useState<'all' | 'medicos' | 'advogados' | 'dentistas' | 'empresarios'>('all');
-  const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
+  const [statusFilter, setStatusFilter] = useState<string>('');
+  const [campaignFilter, setCampaignFilter] = useState<string>('');
+  const [scoreFilter, setScoreFilter] = useState<number | undefined>(undefined);
+
+  // Pagination
+  const [page, setPage] = useState(0);
+
+  // UI
   const [isLoading, setIsLoading] = useState(true);
-  const [isStartingChat, setIsStartingChat] = useState(false);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [cachedCounts, setCachedCounts] = useState<{ total: number; medicos: number; advogados: number; dentistas: number; empresarios: number } | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+  const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
 
-  const computeCounts = (list: Lead[]) => ({
-    total: list.length,
-    medicos: list.filter(l => /méd|doctor|cardio|ortop|derm|pediat|cirurg|ginec/i.test(l.profession || '')).length,
-    advogados: list.filter(l => /advog|lawyer|oab/i.test(l.profession || '')).length,
-    dentistas: list.filter(l => /dent|cro|odont/i.test(l.profession || '')).length,
-    empresarios: list.filter(l => /empres|business|filial|loja|com[eé]rc/i.test(l.profession || '')).length,
-  });
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const activeFilterCount = [statusFilter, campaignFilter, scoreFilter, debouncedSearch].filter(Boolean).length;
 
-  const categoryCounts = cachedCounts ?? computeCounts(leads);
-
-  const handleExportCsv = () => {
-    if (leads.length === 0) {
-      toast.error('Exportação indisponível', 'Não há leads carregados para exportar.');
-      return;
-    }
-
-    const escapeCsv = (value: string | number) => `"${String(value ?? '').replace(/"/g, '""')}"`;
-    const headers = ['ID', 'Empresa', 'Lead', 'Telefone', 'Avaliação Google', 'Fit Score', 'Cidade', 'Status', 'Cadastro'];
-    const rows = leads.map((lead) => [
-      lead.id, lead.company, lead.name, lead.phone, lead.googleRating, lead.fitScore, lead.city, lead.status, lead.createdAt,
-    ]);
-    const csv = [headers, ...rows].map((row) => row.map(escapeCsv).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `leads-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    toast.success('CSV exportado', 'Arquivo gerado com os leads carregados na tela.');
-  };
-
-  const handleStartConversation = async () => {
-    if (!selectedLead || !tenantId) return;
-    setIsStartingChat(true);
-    try {
-      const result = await conversationsQueries.create(tenantId, selectedLead.id);
-      if (result.error) throw new Error(result.error.message);
-      toast.success('Conversa criada', 'O lead está pronto para atendimento manual.');
-      setSelectedLead(null);
-      router.push('/conversas');
-    } catch (error: unknown) {
-      const message = error instanceof Error
-        ? error.message || 'Não foi possível criar a conversa para este lead.'
-        : 'Não foi possível criar a conversa para este lead.';
-      toast.error('Erro ao iniciar conversa', message);
-    } finally {
-      setIsStartingChat(false);
-    }
-  };
-
-  // Debounce logic for search
+  // ── Debounce search ────────────────────────────────────────────────────
   useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedSearch(search);
-    }, 300);
+    const handler = setTimeout(() => setDebouncedSearch(search), 300);
     return () => clearTimeout(handler);
   }, [search]);
 
+  // Reset page when filters change
+  useEffect(() => { setPage(0); }, [debouncedSearch, statusFilter, campaignFilter, scoreFilter]);
+
+  // ── Load campaigns (once) ──────────────────────────────────────────────
   useEffect(() => {
-    const fetchLeads = async () => {
-      if (!tenantId) return;
-      setIsLoading(true);
-      try {
-        const profMap: Record<string, string> = {
-          medicos: 'DOCTOR', advogados: 'LAWYER', dentistas: 'DENTIST', empresarios: 'BUSINESS_OWNER'
-        };
-        const result = await leadsQueries.list(tenantId, {
-          search: debouncedSearch || undefined,
-          profession: (fitFilter !== 'all' ? profMap[fitFilter] : undefined) as any,
-          limit: 50,
-        });
-
-        if ('error' in result && result.error) throw new Error(result.error.message);
-        const mapped = (result.data || []).map(mapBackendLead);
-        setLeads(mapped);
-        if (fitFilter === 'all' && !debouncedSearch) {
-          setCachedCounts(computeCounts(mapped));
-        }
-        setNextCursor(null);
-      } catch (err) {
-        console.error(err);
-        setLeads([]);
-        toast.error('Erro de Conexão', 'Não foi possível carregar os leads.');
-      } finally {
-        setIsLoading(false);
+    if (!tenantId) return;
+    campaignsQueries.list(tenantId).then(result => {
+      if (!result.error && result.data) {
+        setCampaigns(result.data.map((c: any) => ({ id: c.id, name: c.name })));
       }
-    };
+    });
+  }, [tenantId]);
 
-    fetchLeads();
-  }, [debouncedSearch, fitFilter, tenantId]);
+  // ── Load status counts ─────────────────────────────────────────────────
+  const fetchCounts = useCallback(async () => {
+    if (!tenantId) return;
+    const counts = await leadsQueries.count(tenantId, {
+      campaign_id: campaignFilter || undefined,
+    });
+    setStatusCounts(counts);
+  }, [tenantId, campaignFilter]);
 
-  const loadMore = async () => {
-    if (isLoadingMore || !tenantId) return;
-    setIsLoadingMore(true);
+  useEffect(() => { fetchCounts(); }, [fetchCounts]);
+
+  // ── Load leads ─────────────────────────────────────────────────────────
+  const fetchLeads = useCallback(async () => {
+    if (!tenantId) return;
+    setIsLoading(true);
     try {
-      const profMap: Record<string, string> = {
-        medicos: 'DOCTOR', advogados: 'LAWYER', dentistas: 'DENTIST', empresarios: 'BUSINESS_OWNER'
-      };
       const result = await leadsQueries.list(tenantId, {
         search: debouncedSearch || undefined,
-        profession: (fitFilter !== 'all' ? profMap[fitFilter] : undefined) as any,
-        limit: 50,
-        cursor: nextCursor || undefined,
+        status: (statusFilter || undefined) as any,
+        campaign_id: campaignFilter || undefined,
+        fit_score_gte: scoreFilter,
+        limit: PAGE_SIZE,
+        offset: page * PAGE_SIZE,
       });
-      const mapped = (result.data || []).map(mapBackendLead);
-      setLeads(prev => [...prev, ...mapped]);
-      setNextCursor(null);
+
+      if (result.error) throw new Error(result.error.message);
+      setLeads((result.data || []).map(mapBackendLead));
+      setTotalCount(result.totalCount ?? 0);
     } catch (err) {
       console.error(err);
+      setLeads([]);
+      toast.error('Erro de Conexão', 'Não foi possível carregar os leads.');
     } finally {
-      setIsLoadingMore(false);
+      setIsLoading(false);
+    }
+  }, [tenantId, debouncedSearch, statusFilter, campaignFilter, scoreFilter, page]);
+
+  useEffect(() => { fetchLeads(); }, [fetchLeads]);
+
+  // ── CSV Export ─────────────────────────────────────────────────────────
+  const handleExportCsv = async () => {
+    if (!tenantId) return;
+    setIsExporting(true);
+    try {
+      const allLeads = await leadsQueries.exportAll(tenantId, {
+        search: debouncedSearch || undefined,
+        status: (statusFilter || undefined) as any,
+        campaign_id: campaignFilter || undefined,
+        fit_score_gte: scoreFilter,
+      });
+
+      if (allLeads.length === 0) {
+        toast.error('Nenhum lead', 'Não há leads para exportar com os filtros atuais.');
+        return;
+      }
+
+      const escapeCsv = (value: string | number | null | undefined) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+      const headers = ['Nome', 'Empresa', 'WhatsApp', 'Profissão', 'Cidade', 'Status', 'Fit Score', 'Avaliação Google', 'Campanha', 'Criado em'];
+      const rows = allLeads.map((lead: any) => {
+        const metadata = (lead.metadata || {}) as Record<string, any>;
+        const address = lead.address || {};
+        const rawData = (lead.source_raw_data || {}) as Record<string, any>;
+        return [
+          lead.name || '',
+          metadata.cnpj_info?.nomeFantasia || metadata.cnpj_info?.razaoSocial || rawData.name || lead.name || '',
+          lead.whatsapp || '',
+          lead.profession ? (PROFESSION_LABELS[lead.profession] || lead.profession) : '',
+          address.city || '',
+          lead.status || '',
+          lead.fit_score || 0,
+          lead.google_rating || '',
+          lead.campaign_id || '',
+          lead.created_at ? new Date(lead.created_at).toLocaleDateString('pt-BR') : '',
+        ];
+      });
+
+      const BOM = '\uFEFF';
+      const csv = BOM + [headers, ...rows].map(row => row.map(escapeCsv).join(';')).join('\r\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `leads-prospix-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      toast.success('CSV exportado', `${allLeads.length} leads exportados com sucesso.`);
+    } catch (err) {
+      console.error(err);
+      toast.error('Erro na exportação', 'Não foi possível gerar o CSV.');
+    } finally {
+      setIsExporting(false);
     }
   };
 
+  // ── Helpers ────────────────────────────────────────────────────────────
   const getInitials = (name: string) => name.split(' ').map(n => n[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
 
+  const clearFilters = () => {
+    setStatusFilter('');
+    setCampaignFilter('');
+    setScoreFilter(undefined);
+    setSearch('');
+  };
+
+  const getStatusBadge = (status: string) => {
+    const config = STATUS_CONFIG[status];
+    if (!config) return <span className="bg-[#F1F5F9] text-[#475569] border border-[#E5E7EB] text-[10px] px-1.5 py-0.5 rounded-full">{status}</span>;
+    return <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${config.bg} ${config.color} ${config.border}`}>{config.label}</span>;
+  };
+
+  const getScoreBadge = (score: number) => {
+    const color = score >= 8 ? 'text-[#027A48] bg-[#ECFDF3] border-[#A7F3D0]'
+      : score >= 6 ? 'text-[#1B3A6B] bg-[#EFF6FF] border-[#93C5FD]'
+      : 'text-[#64748B] bg-[#F8FAFC] border-[#E5E7EB]';
+    return <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded-full border ${color}`}>Fit {score.toFixed(1)}</span>;
+  };
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // RENDER
+  // ═══════════════════════════════════════════════════════════════════════
   return (
-    <div className="space-y-5 animate-fadeIn">
+    <div className="space-y-4 animate-fadeIn">
       {/* Info banner */}
       <div className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-[rgba(27,58,107,0.04)] to-[rgba(232,152,28,0.06)] border border-[rgba(27,58,107,0.08)] rounded-xl text-[12.5px] text-[#0F172A]">
         <Info className="w-4 h-4 text-[#1B3A6B] shrink-0" />
-        <div><strong>{leads.length} leads capturados pela IA</strong>, organizados por especialidade. Cada um tem WhatsApp validado, fit score e está em alguma etapa do funil.</div>
+        <div><strong>{statusCounts?.total ?? '...'} leads</strong> no total, organizados por etapa do funil. Use os filtros para encontrar leads específicos.</div>
       </div>
 
-      {/* Toolbar */}
+      {/* ── Status Cards ────────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
+        {Object.entries(STATUS_CONFIG).map(([key, config]) => {
+          const count = statusCounts ? (statusCounts as any)[key] ?? 0 : '—';
+          const isActive = statusFilter === key;
+          return (
+            <button
+              key={key}
+              onClick={() => setStatusFilter(isActive ? '' : key)}
+              className={`bg-white border rounded-xl p-3 cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-md shadow-sm text-left ${
+                isActive ? 'border-[#1B3A6B] ring-2 ring-[#1B3A6B]/20 shadow-md' : 'border-[#E5E7EB] hover:border-[#1B3A6B]'
+              }`}
+            >
+              <div className="text-[16px] mb-1">{config.emoji}</div>
+              <div className="text-[22px] font-bold text-[#0F172A] font-mono leading-none">{count}</div>
+              <div className="text-[11px] font-semibold text-[#475569] mt-1 truncate">{config.label}</div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ── Toolbar ─────────────────────────────────────────────────── */}
       <div className="bg-white border border-[#E5E7EB] rounded-lg p-2.5 flex items-center gap-2 flex-wrap shadow-sm">
-        <button onClick={() => setFitFilter('all')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${fitFilter === 'all' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Todos · {categoryCounts.total}</button>
-        <button onClick={() => setFitFilter('medicos')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${fitFilter === 'medicos' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Médicos · {categoryCounts.medicos}</button>
-        <button onClick={() => setFitFilter('advogados')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${fitFilter === 'advogados' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Advogados · {categoryCounts.advogados}</button>
-        <button onClick={() => setFitFilter('dentistas')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${fitFilter === 'dentistas' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Dentistas · {categoryCounts.dentistas}</button>
-        <button onClick={() => setFitFilter('empresarios')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${fitFilter === 'empresarios' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Empresários · {categoryCounts.empresarios}</button>
-        <div className="w-px h-6 bg-[#E5E7EB] mx-1" />
-        <button onClick={() => toast.info('Filtros avançados', 'Em breve você poderá filtrar por cidade, fit score, status e mais.')} className="h-8 px-3 rounded-md text-[12px] font-medium text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6] flex items-center gap-1.5">
-          <Filter className="w-3 h-3" /> Filtros{(fitFilter !== 'all' || debouncedSearch) ? ` (${(fitFilter !== 'all' ? 1 : 0) + (debouncedSearch ? 1 : 0)})` : ''}
+        {/* Campaign filter */}
+        <select
+          value={campaignFilter}
+          onChange={e => setCampaignFilter(e.target.value)}
+          className="h-8 px-2.5 rounded-md text-[12px] font-medium text-[#475569] border border-[#E5E7EB] bg-white hover:bg-[#F1F3F6] outline-none focus:border-[#1B3A6B] min-w-[140px]"
+        >
+          <option value="">Todas campanhas</option>
+          {campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+
+        {/* Status filter */}
+        <select
+          value={statusFilter}
+          onChange={e => setStatusFilter(e.target.value)}
+          className="h-8 px-2.5 rounded-md text-[12px] font-medium text-[#475569] border border-[#E5E7EB] bg-white hover:bg-[#F1F3F6] outline-none focus:border-[#1B3A6B] min-w-[130px]"
+        >
+          <option value="">Todos status</option>
+          {Object.entries(STATUS_CONFIG).map(([key, config]) => (
+            <option key={key} value={key}>{config.emoji} {config.label}</option>
+          ))}
+        </select>
+
+        {/* Score filter */}
+        <select
+          value={scoreFilter ?? ''}
+          onChange={e => setScoreFilter(e.target.value ? Number(e.target.value) : undefined)}
+          className="h-8 px-2.5 rounded-md text-[12px] font-medium text-[#475569] border border-[#E5E7EB] bg-white hover:bg-[#F1F3F6] outline-none focus:border-[#1B3A6B] min-w-[120px]"
+        >
+          {SCORE_OPTIONS.map(opt => (
+            <option key={opt.label} value={opt.value ?? ''}>{opt.label}</option>
+          ))}
+        </select>
+
+        <div className="w-px h-6 bg-[#E5E7EB] mx-0.5" />
+
+        {/* Clear filters */}
+        {activeFilterCount > 0 && (
+          <button onClick={clearFilters} className="h-8 px-2.5 rounded-md text-[12px] font-medium text-[#D92D20] border border-[#FECACA] bg-[#FEF3F2] hover:bg-[#FEE2E2] flex items-center gap-1.5 transition-all">
+            <X className="w-3 h-3" /> Limpar ({activeFilterCount})
+          </button>
+        )}
+
+        {/* Export */}
+        <button
+          onClick={handleExportCsv}
+          disabled={isExporting}
+          className="h-8 px-3 rounded-md text-[12px] font-medium text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6] flex items-center gap-1.5 disabled:opacity-50"
+        >
+          <Download className="w-3 h-3" />
+          {isExporting ? 'Exportando...' : 'Exportar CSV'}
         </button>
-        <button onClick={handleExportCsv} className="h-8 px-3 rounded-md text-[12px] font-medium text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6] flex items-center gap-1.5">
-          <Download className="w-3 h-3" /> Exportar CSV
-        </button>
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar lead..." className="ml-auto h-8 px-3 rounded-md text-[12px] border border-[#E5E7EB] bg-white text-[#0F172A] placeholder-[#64748B] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none w-48" />
+
+        {/* Search */}
+        <div className="ml-auto relative">
+          <Search className="w-3.5 h-3.5 text-[#94A3B8] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Buscar lead, telefone..."
+            className="h-8 pl-8 pr-3 rounded-md text-[12px] border border-[#E5E7EB] bg-white text-[#0F172A] placeholder-[#94A3B8] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none w-56"
+          />
+        </div>
       </div>
 
-      {/* Category cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {CATEGORY_CARDS.map((cat, i) => (
-          <div key={i} onClick={() => setFitFilter(cat.filter as any)} className={`bg-white border rounded-xl p-4 cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-md shadow-sm ${fitFilter === cat.filter ? 'border-[#1B3A6B] ring-1 ring-[#1B3A6B]' : 'border-[#E5E7EB] hover:border-[#1B3A6B]'}`}>
-            <div className="w-10 h-10 rounded-lg flex items-center justify-center mb-3 text-lg" style={{ background: cat.bg }}>{cat.icon}</div>
-            <div className="text-[28px] font-bold text-[#0F172A] font-mono leading-none tracking-tight">{(categoryCounts as any)[cat.filter] || 0}</div>
-            <div className="text-[13.5px] font-semibold text-[#0F172A] mt-1.5">{cat.label}</div>
-            <div className="text-[12px] text-[#475569] mt-1">{cat.desc}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Leads list panel */}
+      {/* ── Leads Table ─────────────────────────────────────────────── */}
       <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
+        {/* Header */}
         <div className="px-5 py-3.5 border-b border-[#EEF0F3] flex items-center justify-between">
           <div>
-            <div className="text-[14px] font-semibold text-[#0F172A]">Leads capturados hoje</div>
-            <div className="text-[11px] text-[#64748B] mt-0.5">{leads.length} leads carregados{nextCursor ? ' · mais disponíveis' : ''}</div>
+            <div className="text-[14px] font-semibold text-[#0F172A]">Todos os leads</div>
+            <div className="text-[11px] text-[#64748B] mt-0.5">
+              {totalCount.toLocaleString('pt-BR')} leads encontrados
+              {activeFilterCount > 0 && ` · ${activeFilterCount} filtro${activeFilterCount > 1 ? 's' : ''} ativo${activeFilterCount > 1 ? 's' : ''}`}
+            </div>
           </div>
-          <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-[#ECFDF3] text-[#027A48] flex items-center gap-1.5">
-            <span className="w-[5px] h-[5px] rounded-full bg-[#039855] animate-pulse" />
-            Capturando
-          </span>
+          <button onClick={() => { fetchLeads(); fetchCounts(); }} className="p-2 rounded-lg hover:bg-[#F1F3F6] text-[#64748B] hover:text-[#1B3A6B] transition-all" title="Atualizar">
+            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+          </button>
         </div>
 
+        {/* Table header */}
+        <div className="hidden md:grid grid-cols-[1fr_1fr_120px_100px_90px_80px_40px] px-5 py-2 border-b border-[#EEF0F3] bg-[#FAFBFC] text-[10px] font-semibold text-[#64748B] uppercase tracking-wider">
+          <div>Lead</div>
+          <div>Empresa / Cidade</div>
+          <div>Status</div>
+          <div>Campanha</div>
+          <div>Score</div>
+          <div>Data</div>
+          <div></div>
+        </div>
+
+        {/* Loading */}
         {isLoading ? (
           <div className="p-12 text-center">
             <RefreshCw className="w-5 h-5 animate-spin text-[#64748B] mx-auto mb-2" />
@@ -249,25 +391,43 @@ export default function Leads() {
           leads.map((lead, i) => (
             <div
               key={lead.id}
-              className="px-5 py-3.5 border-b border-[#EEF0F3] flex items-center gap-3 cursor-pointer transition-all hover:bg-[rgba(27,58,107,0.04)] border-l-[3px] border-l-transparent hover:border-l-[#1B3A6B]"
-              onClick={() => setSelectedLead(lead)}
+              className="px-5 py-3 border-b border-[#EEF0F3] grid grid-cols-1 md:grid-cols-[1fr_1fr_120px_100px_90px_80px_40px] items-center gap-2 md:gap-3 cursor-pointer transition-all hover:bg-[rgba(27,58,107,0.03)] border-l-[3px] border-l-transparent hover:border-l-[#1B3A6B]"
+              onClick={() => setSelectedLeadId(lead.id)}
             >
-              <div className="w-9 h-9 rounded-full flex items-center justify-center text-white text-[12px] font-bold shrink-0" style={{ background: AVATAR_COLORS[i % AVATAR_COLORS.length] }}>
-                {getInitials(lead.name)}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-[13.5px] font-semibold text-[#0F172A] flex items-center gap-2 flex-wrap">
-                  {lead.name}
-                  <span className="text-[10.5px] font-semibold px-1.5 py-0.5 rounded-full bg-[rgba(27,58,107,0.08)] text-[#1B3A6B]">{lead.status}</span>
+              {/* Lead name + phone */}
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-[11px] font-bold shrink-0" style={{ background: AVATAR_COLORS[i % AVATAR_COLORS.length] }}>
+                  {getInitials(lead.name)}
                 </div>
-                <div className="text-[11.5px] text-[#475569]">{lead.profession || lead.company} · {lead.city}</div>
+                <div className="min-w-0">
+                  <div className="text-[13px] font-semibold text-[#0F172A] truncate">{lead.name}</div>
+                  <div className="text-[11px] text-[#64748B] font-mono truncate">{lead.phone || '—'}</div>
+                </div>
               </div>
-              <div className="text-right shrink-0 min-w-[70px]">
-                <div className="text-[11.5px] font-semibold text-[#0F172A]">{lead.createdAt}</div>
-                <div className="text-[11px] text-[#64748B] mt-0.5">Fit {lead.fitScore}</div>
+
+              {/* Company + city */}
+              <div className="min-w-0 hidden md:block">
+                <div className="text-[12px] text-[#0F172A] truncate">{lead.company}</div>
+                <div className="text-[11px] text-[#64748B] truncate">{lead.profession ? `${lead.profession} · ` : ''}{lead.city}</div>
               </div>
-              <div className="w-8 h-8 flex items-center justify-center rounded-lg bg-[#F1F3F6] text-[#64748B] shrink-0 hover:bg-[#1B3A6B] hover:text-white transition-all">
-                <ChevronRight className="w-3.5 h-3.5" />
+
+              {/* Status */}
+              <div className="hidden md:block">{getStatusBadge(lead.status)}</div>
+
+              {/* Campaign */}
+              <div className="hidden md:block text-[11px] text-[#64748B] truncate">
+                {campaigns.find(c => c.id === lead.campaignId)?.name || '—'}
+              </div>
+
+              {/* Score */}
+              <div className="hidden md:block">{getScoreBadge(lead.fitScore)}</div>
+
+              {/* Date */}
+              <div className="hidden md:block text-[11px] text-[#64748B]">{lead.createdAt}</div>
+
+              {/* Arrow */}
+              <div className="hidden md:flex items-center justify-center">
+                <ChevronRight className="w-4 h-4 text-[#CBD5E1]" />
               </div>
             </div>
           ))
@@ -275,66 +435,41 @@ export default function Leads() {
           <div className="p-12 text-center text-[12.5px] text-[#64748B]">Nenhum lead encontrado com os filtros selecionados.</div>
         )}
 
-        {leads.length > 0 && (
-          <div className="px-5 py-3 bg-[#F1F3F6] border-t border-[#EEF0F3] flex items-center justify-between">
-            <span className="text-[12px] text-[#475569]">
-              Mostrando {leads.length} leads
+        {/* ── Pagination ────────────────────────────────────────────── */}
+        {totalCount > 0 && (
+          <div className="px-5 py-3 bg-[#FAFBFC] border-t border-[#EEF0F3] flex items-center justify-between">
+            <span className="text-[12px] text-[#64748B]">
+              Mostrando {Math.min(page * PAGE_SIZE + 1, totalCount).toLocaleString('pt-BR')}–{Math.min((page + 1) * PAGE_SIZE, totalCount).toLocaleString('pt-BR')} de {totalCount.toLocaleString('pt-BR')}
             </span>
-            {nextCursor && (
-              <button onClick={loadMore} disabled={isLoadingMore} className="text-[12px] font-semibold text-[#1B3A6B] hover:underline disabled:opacity-50">
-                {isLoadingMore ? 'Carregando...' : 'Carregar mais →'}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPage(p => Math.max(0, p - 1))}
+                disabled={page === 0}
+                className="h-8 px-3 rounded-md text-[12px] font-medium text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6] flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              >
+                <ChevronLeft className="w-3 h-3" /> Anterior
               </button>
-            )}
+              <span className="text-[12px] font-semibold text-[#0F172A] tabular-nums">
+                {page + 1} / {totalPages}
+              </span>
+              <button
+                onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+                disabled={page >= totalPages - 1}
+                className="h-8 px-3 rounded-md text-[12px] font-medium text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6] flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              >
+                Próximo <ChevronRight className="w-3 h-3" />
+              </button>
+            </div>
           </div>
         )}
       </div>
 
-      {/* Lead Drawer */}
-      {selectedLead && (
-        <Drawer
-          isOpen={!!selectedLead}
-          onClose={() => setSelectedLead(null)}
-          title="Ficha Cadastral da Lead"
-        >
-          <div className="space-y-6">
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <h3 className="text-base font-bold text-text">{selectedLead.name}</h3>
-                <span className={`text-[10px] font-mono font-bold px-2 py-0.5 border rounded-full ${
-                  selectedLead.fitScore >= 8.0 
-                    ? 'bg-success-soft text-success-text border-success/20' 
-                    : 'bg-surface-sunken text-text-secondary border-border/80'
-                }`}>
-                  {selectedLead.fitScore} Fit Score
-                </span>
-              </div>
-            </div>
-            <div className="bg-surface-sunken p-4 border border-border rounded-xl space-y-3.5">
-              <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">Dados de Contato</span>
-              <div className="space-y-3 text-xs">
-                <div className="flex items-center gap-3"><User className="w-4 h-4 text-text-secondary shrink-0" /><div><p className="text-[10px] text-text-secondary mb-0.5">Representante</p><p className="text-text font-medium">{selectedLead.name}</p></div></div>
-                <div className="flex items-center gap-3"><Phone className="w-4 h-4 text-text-secondary shrink-0" /><div><p className="text-[10px] text-text-secondary mb-0.5">WhatsApp</p><p className="text-text font-mono font-medium">{selectedLead.phone}</p></div></div>
-                <div className="flex items-center gap-3"><DollarSign className="w-4 h-4 text-text-secondary shrink-0" /><div><p className="text-[10px] text-text-secondary mb-0.5">Avaliação Google</p><p className="text-text font-medium">{selectedLead.googleRating}</p></div></div>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-surface-sunken p-3.5 border border-border rounded-xl">
-                <span className="text-[9px] font-semibold text-text-secondary uppercase tracking-wider block">Estágio</span>
-                <Badge className="bg-white border border-border text-text-secondary text-[10px] px-2 py-0.5 mt-1">{selectedLead.status}</Badge>
-              </div>
-              <div className="bg-surface-sunken p-3.5 border border-border rounded-xl">
-                <span className="text-[9px] font-semibold text-text-secondary uppercase tracking-wider block">Cidade</span>
-                <p className="text-xs text-text font-medium mt-1">{selectedLead.city}</p>
-              </div>
-            </div>
-            <div className="pt-4 border-t border-border/60">
-              <Button className="w-full bg-primary hover:bg-primary-hover text-white font-semibold h-11 rounded-xl transition-all shadow-lg shadow-primary/10 flex items-center justify-center gap-2 disabled:opacity-50" disabled={isStartingChat} onClick={handleStartConversation}>
-                <MessageSquare className="w-4 h-4" />
-                <span>{isStartingChat ? 'Abrindo conversa...' : 'Iniciar Chat de Prospecção'}</span>
-              </Button>
-            </div>
-          </div>
-        </Drawer>
+      {/* ── Lead Drawer (full 4-tab version from funil) ──────────── */}
+      {selectedLeadId && (
+        <LeadDrawer
+          leadId={selectedLeadId}
+          onClose={() => setSelectedLeadId(null)}
+        />
       )}
     </div>
   );

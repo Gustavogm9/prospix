@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
     await fetch(`${baseUrl}/instance/create`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', apikey: apiKey },
-      body: JSON.stringify({ instanceName }),
+      body: JSON.stringify({ instanceName, integration: 'WHATSAPP-BAILEYS', qrcode: true }),
     });
 
     // Configure webhook

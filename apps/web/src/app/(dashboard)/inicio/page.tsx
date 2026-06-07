@@ -449,8 +449,8 @@ export default function HomePage() {
         const totalLeads = Object.values(rawStages).reduce((a: number, b: any) => a + Number(b), 0);
         const whatsappValid = funnelRaw?.whatsapp_valid_count || 0;
         
-        // Mensagem enviada: status is anything other than CAPTURED, ENRICHED, NEW
-        const uncontacted = (rawStages.CAPTURED || 0) + (rawStages.ENRICHED || 0) + (rawStages.NEW || 0);
+        // Mensagem enviada: status is anything other than CAPTURED, ENRICHED, NEW, ARCHIVED
+        const uncontacted = (rawStages.CAPTURED || 0) + (rawStages.ENRICHED || 0) + (rawStages.NEW || 0) + (rawStages.ARCHIVED || 0);
         const contactedTotal = Math.max(0, totalLeads - uncontacted);
         
         // Respondeu: Conversing, qualified, meeting_scheduled, closed_won, escalated_human, and not_interested

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Button, Input, Badge, toast } from '@prospix/ui';
 import { Settings as SettingsIcon, Shield, CreditCard, Key, Calendar, Phone, Loader2, CheckCircle2, AlertCircle, RefreshCw, FileText, ExternalLink, Bell } from 'lucide-react';
 import { useAuthStore } from '@/store/auth-store';
@@ -105,11 +106,12 @@ type TenantBillingData = {
   invoices: BillingInvoice[];
 };
 
-type TabKey = 'perfil' | 'integracoes' | 'credenciais' | 'financeiro' | 'privacidade';
+type TabKey = 'perfil' | 'integracoes' | 'agenda' | 'credenciais' | 'financeiro' | 'privacidade';
 
 const tabConfig: { key: TabKey; label: string; icon: React.ElementType }[] = [
   { key: 'perfil', label: 'Meu Perfil', icon: SettingsIcon },
   { key: 'integracoes', label: 'Conexões', icon: Shield },
+  { key: 'agenda', label: 'Agenda', icon: Calendar },
   { key: 'credenciais', label: 'Credenciais & APIs', icon: Key },
   { key: 'financeiro', label: 'Faturamento', icon: CreditCard },
   { key: 'privacidade', label: 'Privacidade & Dados', icon: FileText },
@@ -117,7 +119,14 @@ const tabConfig: { key: TabKey; label: string; icon: React.ElementType }[] = [
 
 export default function Settings() {
   const { user, tenantId } = useAuthStore();
-  const [activeTab, setActiveTab] = useState('perfil');
+  const searchParams = useSearchParams();
+  const [activeTab, setActiveTab] = useState(() => {
+    const tab = searchParams.get('tab');
+    if (tab && ['perfil', 'integracoes', 'agenda', 'credenciais', 'financeiro', 'privacidade'].includes(tab)) {
+      return tab;
+    }
+    return 'perfil';
+  });
 
   // Profile fields state
   const [name, setName] = useState(user?.name || '');
@@ -158,6 +167,18 @@ export default function Settings() {
 
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const canManageCredentials = user?.role !== 'ASSISTANT';
+
+  // Agenda settings state
+  const [agendaSettings, setAgendaSettings] = useState({
+    availableDays: [1, 2, 3, 4, 5] as number[], // 0=Dom, 1=Seg... 6=Sab
+    startHour: '08:00',
+    endHour: '18:00',
+    lunchStart: '12:00',
+    lunchEnd: '13:30',
+    defaultDuration: 30,
+    bufferMinutes: 15,
+  });
+  const [isAgendaSaving, setIsAgendaSaving] = useState(false);
 
   const formatBRL = (cents: number) => {
     return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cents / 100);
@@ -891,6 +912,181 @@ export default function Settings() {
                       Conectar Agenda
                     </Button>
                   </div>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ─── TAB: AGENDA ─── */}
+          {activeTab === 'agenda' && (
+            <>
+              {/* Horários de Atendimento */}
+              <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
+                  <div className="flex items-center gap-2">
+                    <Calendar className="w-4 h-4 text-[#1B3A6B]" />
+                    <div className="text-[14px] font-semibold text-[#0F172A]">Horários de Atendimento</div>
+                  </div>
+                  <div className="text-[11px] text-[#64748B] mt-0.5">Defina quando você está disponível para reuniões agendadas pela IA.</div>
+                </div>
+                <div className="p-5 space-y-6">
+                  {/* Dias disponíveis */}
+                  <div>
+                    <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-2.5">Dias Disponíveis</label>
+                    <div className="flex flex-wrap gap-2">
+                      {[
+                        { value: 1, label: 'Seg' },
+                        { value: 2, label: 'Ter' },
+                        { value: 3, label: 'Qua' },
+                        { value: 4, label: 'Qui' },
+                        { value: 5, label: 'Sex' },
+                        { value: 6, label: 'Sáb' },
+                        { value: 0, label: 'Dom' },
+                      ].map(day => {
+                        const isActive = agendaSettings.availableDays.includes(day.value);
+                        return (
+                          <button
+                            key={day.value}
+                            onClick={() => {
+                              setAgendaSettings(prev => ({
+                                ...prev,
+                                availableDays: isActive
+                                  ? prev.availableDays.filter(d => d !== day.value)
+                                  : [...prev.availableDays, day.value].sort(),
+                              }));
+                            }}
+                            className={`h-10 w-14 rounded-xl text-[13px] font-semibold border transition-all ${
+                              isActive
+                                ? 'bg-[#1B3A6B] text-white border-[#1B3A6B] shadow-sm'
+                                : 'bg-[#F8FAFC] text-[#94A3B8] border-[#E5E7EB] hover:bg-[#F1F3F6] hover:text-[#475569]'
+                            }`}
+                          >
+                            {day.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Horário início/fim */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Início do expediente</label>
+                      <select
+                        value={agendaSettings.startHour}
+                        onChange={e => setAgendaSettings(prev => ({ ...prev, startHour: e.target.value }))}
+                        className="w-full bg-white border border-[#E5E7EB] text-[13px] rounded-xl px-3 h-10 text-[#0F172A] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none"
+                      >
+                        {['06:00','06:30','07:00','07:30','08:00','08:30','09:00','09:30','10:00'].map(t => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Fim do expediente</label>
+                      <select
+                        value={agendaSettings.endHour}
+                        onChange={e => setAgendaSettings(prev => ({ ...prev, endHour: e.target.value }))}
+                        className="w-full bg-white border border-[#E5E7EB] text-[13px] rounded-xl px-3 h-10 text-[#0F172A] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none"
+                      >
+                        {['15:00','16:00','17:00','17:30','18:00','18:30','19:00','19:30','20:00','21:00'].map(t => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Almoço */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Início do almoço</label>
+                      <select
+                        value={agendaSettings.lunchStart}
+                        onChange={e => setAgendaSettings(prev => ({ ...prev, lunchStart: e.target.value }))}
+                        className="w-full bg-white border border-[#E5E7EB] text-[13px] rounded-xl px-3 h-10 text-[#0F172A] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none"
+                      >
+                        {['11:00','11:30','12:00','12:30','13:00'].map(t => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Fim do almoço</label>
+                      <select
+                        value={agendaSettings.lunchEnd}
+                        onChange={e => setAgendaSettings(prev => ({ ...prev, lunchEnd: e.target.value }))}
+                        className="w-full bg-white border border-[#E5E7EB] text-[13px] rounded-xl px-3 h-10 text-[#0F172A] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none"
+                      >
+                        {['12:30','13:00','13:30','14:00','14:30'].map(t => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Duração e Buffer */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Duração padrão da reunião</label>
+                      <select
+                        value={agendaSettings.defaultDuration}
+                        onChange={e => setAgendaSettings(prev => ({ ...prev, defaultDuration: Number(e.target.value) }))}
+                        className="w-full bg-white border border-[#E5E7EB] text-[13px] rounded-xl px-3 h-10 text-[#0F172A] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none"
+                      >
+                        <option value={15}>15 minutos</option>
+                        <option value={30}>30 minutos</option>
+                        <option value={45}>45 minutos</option>
+                        <option value={60}>60 minutos</option>
+                        <option value={90}>90 minutos</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Intervalo entre reuniões</label>
+                      <select
+                        value={agendaSettings.bufferMinutes}
+                        onChange={e => setAgendaSettings(prev => ({ ...prev, bufferMinutes: Number(e.target.value) }))}
+                        className="w-full bg-white border border-[#E5E7EB] text-[13px] rounded-xl px-3 h-10 text-[#0F172A] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none"
+                      >
+                        <option value={0}>Sem intervalo</option>
+                        <option value={5}>5 minutos</option>
+                        <option value={10}>10 minutos</option>
+                        <option value={15}>15 minutos</option>
+                        <option value={30}>30 minutos</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Preview */}
+                  <div className="bg-[#F8FAFC] border border-[#E5E7EB] rounded-xl p-4">
+                    <div className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider mb-2">Resumo da sua disponibilidade</div>
+                    <div className="text-[13px] text-[#0F172A] space-y-1">
+                      <p>📅 <strong>{agendaSettings.availableDays.length} dias</strong> por semana ({agendaSettings.availableDays.map(d => ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][d]).join(', ')})</p>
+                      <p>⏰ Horário: <strong>{agendaSettings.startHour}</strong> às <strong>{agendaSettings.endHour}</strong></p>
+                      <p>🍽️ Almoço: <strong>{agendaSettings.lunchStart}</strong> às <strong>{agendaSettings.lunchEnd}</strong></p>
+                      <p>📝 Reuniões de <strong>{agendaSettings.defaultDuration} min</strong> com intervalo de <strong>{agendaSettings.bufferMinutes} min</strong></p>
+                    </div>
+                  </div>
+
+                  <Button
+                    disabled={isAgendaSaving}
+                    onClick={async () => {
+                      setIsAgendaSaving(true);
+                      try {
+                        await apiFetch('/api/integrations/credentials', {
+                          method: 'PATCH',
+                          body: JSON.stringify({ agendaSettings }),
+                        });
+                        toast.success('Agenda configurada', 'Seus horários de disponibilidade foram salvos.');
+                      } catch {
+                        toast.error('Erro ao salvar', 'Não foi possível salvar as configurações de agenda.');
+                      } finally {
+                        setIsAgendaSaving(false);
+                      }
+                    }}
+                    className="bg-[#1B3A6B] hover:bg-[#15305A] text-white font-semibold text-[13px] px-5 h-10 rounded-xl shadow-md shadow-[#1B3A6B]/10 disabled:opacity-60"
+                  >
+                    {isAgendaSaving ? 'Salvando...' : 'Salvar Configurações'}
+                  </Button>
                 </div>
               </div>
             </>
