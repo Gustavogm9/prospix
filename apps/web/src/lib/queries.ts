@@ -763,8 +763,8 @@ export const tenantAddonsQueries = {
   },
 
   /** Purchase an add-on */
-  purchase: async (tenantId: string, addonType: 'extra_campaign' | 'extra_leads_100', quantity = 1) => {
-    const prices: Record<string, number> = { extra_campaign: 4990, extra_leads_100: 2990 };
+  purchase: async (tenantId: string, addonType: 'extra_campaign' | 'extra_leads_100' | 'source_linkedin', quantity = 1) => {
+    const prices: Record<string, number> = { extra_campaign: 4990, extra_leads_100: 2990, source_linkedin: 29700 };
     const { data, error } = await supabase
       .from('tenant_addons' as any)
       .insert({
@@ -2254,4 +2254,140 @@ export const dashboardQueries = {
       error: null,
     };
   },
+};
+
+export const leadSourcesQueries = {
+  list: async (tenantId: string) => {
+    const { data, error } = await supabase
+      .from('lead_sources' as any)
+      .select('*')
+      .eq('tenant_id', tenantId);
+
+    if (error) return { data: [], error: mapError(error) };
+    return { data: data ?? [], error: null };
+  },
+
+  getStats: async (tenantId: string) => {
+    const { data, error } = await supabase
+      .from('leads')
+      .select('source, whatsapp_valid, created_at')
+      .eq('tenant_id', tenantId)
+      .is('deleted_at', null);
+
+    if (error) return { data: {}, error: mapError(error) };
+
+    const stats: Record<string, { total: number; last30Days: number; whatsappValid: number }> = {};
+    const now = new Date();
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+    (data || []).forEach(lead => {
+      const src = lead.source || 'GOOGLE_MAPS';
+      if (!stats[src]) {
+        stats[src] = { total: 0, last30Days: 0, whatsappValid: 0 };
+      }
+      stats[src].total += 1;
+      
+      const createdAt = new Date(lead.created_at);
+      if (createdAt >= thirtyDaysAgo) {
+        stats[src].last30Days += 1;
+      }
+      
+      if (lead.whatsapp_valid) {
+        stats[src].whatsappValid += 1;
+      }
+    });
+
+    return { data: stats, error: null };
+  },
+
+  toggle: async (tenantId: string, sourceType: string, status: 'ACTIVE' | 'PAUSED') => {
+    const { data: existing } = await supabase
+      .from('lead_sources' as any)
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .eq('source_type', sourceType)
+      .maybeSingle();
+
+    if (existing) {
+      const { data, error } = await supabase
+        .from('lead_sources' as any)
+        .update({ status, updated_at: new Date().toISOString() } as any)
+        .eq('tenant_id', tenantId)
+        .eq('source_type', sourceType)
+        .select()
+        .single();
+      if (error) return { data: null, error: mapError(error) };
+      return { data, error: null };
+    } else {
+      const { data, error } = await supabase
+        .from('lead_sources' as any)
+        .insert({
+          tenant_id: tenantId,
+          source_type: sourceType,
+          status,
+        } as any)
+        .select()
+        .single();
+      if (error) return { data: null, error: mapError(error) };
+      return { data, error: null };
+    }
+  },
+
+  activatePremium: async (tenantId: string, sourceType: 'LINKEDIN') => {
+    const prices: Record<string, number> = { LINKEDIN: 29700 };
+    const priceCents = prices[sourceType] || 0;
+    const addonType = sourceType === 'LINKEDIN' ? 'source_linkedin' : '';
+
+    if (!addonType) {
+      return { data: null, error: { message: 'Invalid premium source type' } };
+    }
+
+    const addonId = crypto.randomUUID();
+    const { data: addon, error: addonError } = await supabase
+      .from('tenant_addons' as any)
+      .insert({
+        id: addonId,
+        tenant_id: tenantId,
+        addon_type: addonType,
+        quantity: 1,
+        price_cents: priceCents,
+        active: true,
+      } as any)
+      .select()
+      .single();
+
+    if (addonError) return { data: null, error: mapError(addonError) };
+
+    const { data: existing } = await supabase
+      .from('lead_sources' as any)
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .eq('source_type', sourceType)
+      .maybeSingle();
+
+    if (existing) {
+      const { data, error } = await supabase
+        .from('lead_sources' as any)
+        .update({ status: 'ACTIVE', addon_id: addonId, updated_at: new Date().toISOString() } as any)
+        .eq('tenant_id', tenantId)
+        .eq('source_type', sourceType)
+        .select()
+        .single();
+      if (error) return { data: null, error: mapError(error) };
+      return { data: { leadSource: data, addon }, error: null };
+    } else {
+      const { data, error } = await supabase
+        .from('lead_sources' as any)
+        .insert({
+          tenant_id: tenantId,
+          source_type: sourceType,
+          status: 'ACTIVE',
+          addon_id: addonId,
+        } as any)
+        .select()
+        .single();
+      if (error) return { data: null, error: mapError(error) };
+      return { data: { leadSource: data, addon }, error: null };
+    }
+  }
 };
