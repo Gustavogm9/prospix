@@ -17,9 +17,9 @@ CREATE TABLE IF NOT EXISTS plan_limits (
 
 INSERT INTO plan_limits (plan, max_active_campaigns, max_leads_per_day, max_messages_per_day, price_cents)
 VALUES
-  ('STARTER',  1, 50,  50,  9900),
-  ('STANDARD', 2, 150, 150, 19900),
-  ('PREMIUM',  3, 500, 500, 39900)
+  ('STARTER',  1, 50,  50,  29000),
+  ('STANDARD', 2, 150, 150, 49000),
+  ('PREMIUM',  3, 500, 500, 89000)
 ON CONFLICT (plan) DO NOTHING;
 
 -- 3. Tenant add-ons table
