@@ -96,16 +96,40 @@ const STATIC_SOURCES: StaticSource[] = [
     borderColor: 'border-sky-100 hover:border-sky-300'
   },
   {
-    type: 'LINKEDIN',
-    name: 'LinkedIn Sales Navigator',
-    description: 'Busca ultra-segmentada de executivos.',
-    longDescription: 'Prospecção premium de tomadores de decisão, gerentes e diretores de médias/grandes empresas filtrados por cargo, tempo de casa e segmento no LinkedIn.',
+    type: 'CNPJ_PREMIUM',
+    name: 'Porte & Faturamento (CNPJ Premium)',
+    description: 'Enriquece com faturamento e porte estimado.',
+    longDescription: 'Integra faturamento anual estimado e porte (ME, EPP, Médias/Grandes) para segmentar e qualificar as melhores empresas no funil.',
     isPremium: true,
-    costText: 'R$ 297/mês',
-    icon: '💼',
-    color: 'from-slate-100/60 to-slate-200/30 text-slate-800',
-    badgeColor: 'bg-slate-200/70 text-slate-800 border-slate-300/50',
-    borderColor: 'border-slate-200 hover:border-slate-300'
+    costText: 'R$ 149/mês',
+    icon: '📊',
+    color: 'from-amber-100/60 to-amber-200/30 text-amber-800',
+    badgeColor: 'bg-amber-200/70 text-amber-800 border-amber-300/50',
+    borderColor: 'border-amber-200 hover:border-amber-300'
+  },
+  {
+    type: 'SOCIO_CONTACT',
+    name: 'Contato Direto do Sócio (QSA Cell Finder)',
+    description: 'WhatsApp celular dos sócios administradores.',
+    longDescription: 'Identifica o WhatsApp celular direto dos sócios e decisores do CNPJ para contornar telefones fixos de recepções.',
+    isPremium: true,
+    costText: 'R$ 199/mês',
+    icon: '👤',
+    color: 'from-blue-100/60 to-blue-200/30 text-blue-800',
+    badgeColor: 'bg-blue-200/70 text-blue-800 border-blue-300/50',
+    borderColor: 'border-blue-200 hover:border-blue-300'
+  },
+  {
+    type: 'INSTAGRAM_SCRAPER',
+    name: 'Instagram & Presença Digital',
+    description: 'Captura contatos adicionais das redes sociais.',
+    longDescription: 'Mapeia e analisa os perfis de Instagram das empresas capturadas, extraindo seguidores, postagens e links de contato da bio.',
+    isPremium: true,
+    costText: 'R$ 99/mês',
+    icon: '📸',
+    color: 'from-purple-100/60 to-purple-200/30 text-purple-800',
+    badgeColor: 'bg-purple-200/70 text-purple-800 border-purple-300/50',
+    borderColor: 'border-purple-200 hover:border-purple-300'
   },
   {
     type: 'LANDING_PAGE',
@@ -287,7 +311,7 @@ export default function LeadSources() {
     setSubmittingPremium(true);
 
     try {
-      const result = await leadSourcesQueries.activatePremium(tenantId, selectedPremiumSource.type as 'LINKEDIN');
+      const result = await leadSourcesQueries.activatePremium(tenantId, selectedPremiumSource.type as 'CNPJ_PREMIUM' | 'SOCIO_CONTACT' | 'INSTAGRAM_SCRAPER');
       if (result.error) throw new Error(result.error.message);
 
       toast.success(
