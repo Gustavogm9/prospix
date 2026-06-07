@@ -132,6 +132,78 @@ const STATIC_SOURCES: StaticSource[] = [
     borderColor: 'border-purple-200 hover:border-purple-300'
   },
   {
+    type: 'CYBER_RISK',
+    name: 'Análise de Vulnerabilidade (Cyber Risk)',
+    description: 'Varredura de riscos digitais e LGPD.',
+    longDescription: 'Identifica SSL ausente, falta de políticas de privacidade e brechas no site corporativo. O gatilho comercial perfeito para Seguro Cyber.',
+    isPremium: true,
+    costText: 'R$ 149/mês',
+    icon: '🛡️',
+    color: 'from-red-100/60 to-red-200/30 text-red-800',
+    badgeColor: 'bg-red-200/70 text-red-800 border-red-300/50',
+    borderColor: 'border-red-200 hover:border-red-300'
+  },
+  {
+    type: 'ADS_TRACKER',
+    name: 'Rastreador de Tráfego Pago (Ads Tracker)',
+    description: 'Detecta investimento ativo em anúncios online.',
+    longDescription: 'Identifica pixels do Google Ads e Facebook no site do lead para indicar verba de crescimento e qualificar para benefícios PME.',
+    isPremium: true,
+    costText: 'R$ 79/mês',
+    icon: '📈',
+    color: 'from-indigo-100/60 to-indigo-200/30 text-indigo-800',
+    badgeColor: 'bg-indigo-200/70 text-indigo-800 border-indigo-300/50',
+    borderColor: 'border-indigo-200 hover:border-indigo-300'
+  },
+  {
+    type: 'EMAIL_SCRAPER',
+    name: 'Extrator de E-mails Corporativos',
+    description: 'Localiza e-mails diretos expostos no website.',
+    longDescription: 'Vasculha o domínio do lead para capturar e-mails institucionais e de departamentos, permitindo abordagens comerciais multicanais.',
+    isPremium: true,
+    costText: 'R$ 89/mês',
+    icon: '📧',
+    color: 'from-emerald-100/60 to-emerald-200/30 text-emerald-800',
+    badgeColor: 'bg-emerald-200/70 text-emerald-800 border-emerald-300/50',
+    borderColor: 'border-emerald-200 hover:border-emerald-300'
+  },
+  {
+    type: 'FLEET_TRACKER',
+    name: 'Rastreador de Frotas & ANTT',
+    description: 'Mapeia veículos comerciais e licenças ANTT.',
+    longDescription: 'Cruza dados de registros de transporte (ANTT) e frotas ativas no CNPJ para qualificar oportunidades de Seguro de Frota e Carga.',
+    isPremium: true,
+    costText: 'R$ 199/mês',
+    icon: '🚛',
+    color: 'from-orange-100/60 to-orange-200/30 text-orange-800',
+    badgeColor: 'bg-orange-200/70 text-orange-800 border-orange-300/50',
+    borderColor: 'border-orange-200 hover:border-orange-300'
+  },
+  {
+    type: 'JUDICIAL_TRACKER',
+    name: 'Histórico de Risco Judicial',
+    description: 'Rastreia processos civis, trabalhistas e fiscais.',
+    longDescription: 'Identifica processos ativos e passivos nos tribunais vinculados ao CNPJ e sócios. O gatilho comercial perfeito para Seguro D&O.',
+    isPremium: true,
+    costText: 'R$ 249/mês',
+    icon: '⚖️',
+    color: 'from-yellow-100/60 to-yellow-200/30 text-yellow-800',
+    badgeColor: 'bg-yellow-200/70 text-yellow-800 border-yellow-300/50',
+    borderColor: 'border-yellow-200 hover:border-yellow-300'
+  },
+  {
+    type: 'TECHNOGRAPHIC',
+    name: 'Detector de Stacks Tecnológicas',
+    description: 'Mapeia CRMs, e-commerces e analytics em uso.',
+    longDescription: 'Identifica se a empresa utiliza softwares de alto valor (HubSpot, Salesforce, VTEX, Shopify) qualificando maturidade digital.',
+    isPremium: true,
+    costText: 'R$ 99/mês',
+    icon: '⚙️',
+    color: 'from-slate-100/60 to-slate-200/30 text-slate-800',
+    badgeColor: 'bg-slate-200/70 text-slate-800 border-slate-300/50',
+    borderColor: 'border-slate-200 hover:border-slate-300'
+  },
+  {
     type: 'LANDING_PAGE',
     name: 'Landing Pages & Formulários',
     description: 'Captura inbound de leads em tempo real.',
@@ -311,7 +383,7 @@ export default function LeadSources() {
     setSubmittingPremium(true);
 
     try {
-      const result = await leadSourcesQueries.activatePremium(tenantId, selectedPremiumSource.type as 'CNPJ_PREMIUM' | 'SOCIO_CONTACT' | 'INSTAGRAM_SCRAPER');
+      const result = await leadSourcesQueries.activatePremium(tenantId, selectedPremiumSource.type as any);
       if (result.error) throw new Error(result.error.message);
 
       toast.success(

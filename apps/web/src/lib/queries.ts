@@ -763,13 +763,34 @@ export const tenantAddonsQueries = {
   },
 
   /** Purchase an add-on */
-  purchase: async (tenantId: string, addonType: 'extra_campaign' | 'extra_leads_100' | 'source_cnpj_premium' | 'source_socio_contact' | 'source_instagram', quantity = 1) => {
+  purchase: async (
+    tenantId: string, 
+    addonType: 
+      | 'extra_campaign' 
+      | 'extra_leads_100' 
+      | 'source_cnpj_premium' 
+      | 'source_socio_contact' 
+      | 'source_instagram'
+      | 'source_cyber_risk'
+      | 'source_ads_tracker'
+      | 'source_email_scraper'
+      | 'source_fleet_tracker'
+      | 'source_judicial_tracker'
+      | 'source_technographic', 
+    quantity = 1
+  ) => {
     const prices: Record<string, number> = { 
       extra_campaign: 4990, 
       extra_leads_100: 2990, 
       source_cnpj_premium: 14900,
       source_socio_contact: 19900,
-      source_instagram: 9900
+      source_instagram: 9900,
+      source_cyber_risk: 14900,
+      source_ads_tracker: 7900,
+      source_email_scraper: 8900,
+      source_fleet_tracker: 19900,
+      source_judicial_tracker: 24900,
+      source_technographic: 9900,
     };
     const { data, error } = await supabase
       .from('tenant_addons' as any)
@@ -2339,18 +2360,42 @@ export const leadSourcesQueries = {
     }
   },
 
-  activatePremium: async (tenantId: string, sourceType: 'CNPJ_PREMIUM' | 'SOCIO_CONTACT' | 'INSTAGRAM_SCRAPER') => {
+  activatePremium: async (
+    tenantId: string, 
+    sourceType: 
+      | 'CNPJ_PREMIUM' 
+      | 'SOCIO_CONTACT' 
+      | 'INSTAGRAM_SCRAPER'
+      | 'CYBER_RISK'
+      | 'ADS_TRACKER'
+      | 'EMAIL_SCRAPER'
+      | 'FLEET_TRACKER'
+      | 'JUDICIAL_TRACKER'
+      | 'TECHNOGRAPHIC'
+  ) => {
     const prices: Record<string, number> = { 
       CNPJ_PREMIUM: 14900, 
       SOCIO_CONTACT: 19900, 
-      INSTAGRAM_SCRAPER: 9900 
+      INSTAGRAM_SCRAPER: 9900,
+      CYBER_RISK: 14900,
+      ADS_TRACKER: 7900,
+      EMAIL_SCRAPER: 8900,
+      FLEET_TRACKER: 19900,
+      JUDICIAL_TRACKER: 24900,
+      TECHNOGRAPHIC: 9900,
     };
     const priceCents = prices[sourceType] || 0;
     
     const addonMapping: Record<string, string> = {
       CNPJ_PREMIUM: 'source_cnpj_premium',
       SOCIO_CONTACT: 'source_socio_contact',
-      INSTAGRAM_SCRAPER: 'source_instagram'
+      INSTAGRAM_SCRAPER: 'source_instagram',
+      CYBER_RISK: 'source_cyber_risk',
+      ADS_TRACKER: 'source_ads_tracker',
+      EMAIL_SCRAPER: 'source_email_scraper',
+      FLEET_TRACKER: 'source_fleet_tracker',
+      JUDICIAL_TRACKER: 'source_judicial_tracker',
+      TECHNOGRAPHIC: 'source_technographic',
     };
     const addonType = addonMapping[sourceType] || '';
 
