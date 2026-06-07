@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Loader2, MapPin, ArrowRight, AlertCircle, X } from 'lucide-react';
-import { leadSourcesQueries, campaignsQueries } from '@/lib/queries';
+import { Loader2, Cpu, ArrowRight, AlertCircle, X } from 'lucide-react';
+import { leadSourcesQueries } from '@/lib/queries';
 import { useAuthStore } from '@/store/auth-store';
 import { toast } from '@prospix/ui';
 
@@ -36,160 +36,100 @@ interface StaticSource {
 
 const STATIC_SOURCES: StaticSource[] = [
   {
-    type: 'GOOGLE_MAPS',
-    name: 'Google Maps Places',
-    description: 'Busca por especialidade e localização.',
-    longDescription: 'Varredura automática e em tempo real do Google Maps para extrair telefones, sites e avaliações de empresas e profissionais na região selecionada.',
-    isPremium: false,
-    costText: 'Grátis (Incluso)',
-    icon: '🗺️',
-    color: 'from-blue-50/50 to-indigo-50/30 text-blue-700',
-    badgeColor: 'bg-blue-100/70 text-blue-800 border-blue-200/50',
-    borderColor: 'border-blue-100 hover:border-blue-300'
-  },
-  {
-    type: 'CNPJ_MINER',
-    name: 'CNPJ Miner (Receita Federal)',
-    description: 'Busca de empresas abertas recentemente.',
-    longDescription: 'Varredura da base pública da Receita Federal em tempo real para encontrar novas empresas abertas no local selecionado.',
-    isPremium: false,
-    costText: 'Grátis (Incluso)',
-    icon: '🔍',
-    color: 'from-sky-50/50 to-cyan-50/30 text-sky-700',
-    badgeColor: 'bg-sky-100/70 text-sky-800 border-sky-200/50',
-    borderColor: 'border-sky-100 hover:border-sky-300'
-  },
-  {
-    type: 'DOCTORALIA',
-    name: 'Doctoralia Scraper',
-    description: 'Especialistas de saúde e clínicas locais.',
-    longDescription: 'Captura contatos e dados profissionais direto do maior diretório de saúde da América Latina na região selecionada.',
-    isPremium: false,
-    costText: 'Grátis (Incluso)',
-    icon: '🩺',
-    color: 'from-teal-50/50 to-emerald-50/30 text-teal-700',
-    badgeColor: 'bg-teal-100/70 text-teal-800 border-teal-200/50',
-    borderColor: 'border-teal-100 hover:border-teal-300'
-  },
-  {
-    type: 'COMPRASNET',
-    name: 'Comprasnet Licitações',
-    description: 'Empresas ganhadoras de licitações públicas.',
-    longDescription: 'Identifica empresas contratadas pelo governo que necessitam de Seguro Garantia contratual na sua localidade.',
-    isPremium: false,
-    costText: 'Grátis (Incluso)',
-    icon: '⚖️',
-    color: 'from-amber-50/50 to-yellow-50/30 text-amber-700',
-    badgeColor: 'bg-amber-100/70 text-amber-800 border-amber-200/50',
-    borderColor: 'border-amber-100 hover:border-amber-300'
-  },
-  {
-    type: 'VIVAREAL',
-    name: 'VivaReal Imóveis',
-    description: 'Anúncios de aluguel comercial ativo.',
-    longDescription: 'Varre anúncios comerciais e contatos de imobiliárias para oferecer Seguro Fiança Locatícia empresarial.',
-    isPremium: false,
-    costText: 'Grátis (Incluso)',
-    icon: '🏢',
-    color: 'from-indigo-50/50 to-blue-50/30 text-indigo-700',
-    badgeColor: 'bg-indigo-100/70 text-indigo-800 border-indigo-200/50',
-    borderColor: 'border-indigo-100 hover:border-indigo-300'
-  },
-  {
-    type: 'INSTAGRAM',
-    name: 'Instagram Scraper',
-    description: 'Perfis comerciais ativos com contatos expostos.',
-    longDescription: 'Mapeia e analisa o perfil de Instagram de empresas na região de interesse, extraindo contatos comerciais e e-mails.',
-    isPremium: false,
-    costText: 'Grátis (Incluso)',
-    icon: '📸',
-    color: 'from-pink-50/50 to-rose-50/30 text-pink-700',
-    badgeColor: 'bg-pink-100/70 text-pink-800 border-pink-200/50',
-    borderColor: 'border-pink-100 hover:border-pink-300'
-  },
-  {
-    type: 'RECEITA_FEDERAL',
-    name: 'Receita Federal - CNPJ',
-    description: 'Validação cadastral de CNPJ ativo.',
-    longDescription: 'Identifica o quadro de sócios (QSA), capital social, CNAE fiscal e situação cadastral oficial da clínica ou empresa associada ao lead.',
-    isPremium: false,
-    costText: 'Grátis (Incluso)',
-    icon: '🏢',
-    color: 'from-emerald-50/50 to-teal-50/30 text-emerald-700',
-    badgeColor: 'bg-emerald-100/70 text-emerald-800 border-emerald-200/50',
-    borderColor: 'border-emerald-100 hover:border-emerald-300'
-  },
-  {
-    type: 'CRM_SP',
-    name: 'CRM-SP (Médicos)',
-    description: 'Base oficial de médicos ativos.',
-    longDescription: 'Cruzamento com o conselho oficial de medicina para validar registro, especialidade declarada e regularidade dos profissionais capturados.',
-    isPremium: false,
-    costText: 'Grátis (Incluso)',
-    icon: '🏥',
-    color: 'from-pink-50/50 to-rose-50/30 text-pink-700',
-    badgeColor: 'bg-pink-100/70 text-pink-800 border-pink-200/50',
-    borderColor: 'border-pink-100 hover:border-pink-300'
-  },
-  {
-    type: 'OAB_SP',
-    name: 'OAB-SP (Advogados)',
-    description: 'Base oficial de advogados ativos.',
-    longDescription: 'Cruzamento automático com os registros oficiais da OAB-SP para identificar advogados ativos e a situação das sociedades profissionais.',
-    isPremium: false,
-    costText: 'Grátis (Incluso)',
-    icon: '⚖️',
-    color: 'from-amber-50/50 to-yellow-50/30 text-amber-700',
-    badgeColor: 'bg-amber-100/70 text-amber-800 border-amber-200/50',
-    borderColor: 'border-amber-100 hover:border-amber-300'
-  },
-  {
-    type: 'CRO_SP',
-    name: 'CRO-SP (Dentistas)',
-    description: 'Base oficial de dentistas ativos.',
-    longDescription: 'Identificação e validação de dentistas ativos por especialidade e local de atendimento junto ao Conselho Regional de Odontologia.',
-    isPremium: false,
-    costText: 'Grátis (Incluso)',
-    icon: '🦷',
-    color: 'from-sky-50/50 to-blue-50/30 text-sky-700',
-    badgeColor: 'bg-sky-100/70 text-sky-800 border-sky-200/50',
-    borderColor: 'border-sky-100 hover:border-sky-300'
-  },
-  {
-    type: 'LANDING_PAGE',
-    name: 'Landing Pages & Formulários',
-    description: 'Captura inbound de leads em tempo real.',
-    longDescription: 'Captura automática quando um cliente preenche seu formulário de contato, calculadora de cotação ou link de indicação no seu site.',
-    isPremium: false,
-    costText: 'Grátis (Incluso)',
-    icon: '🌐',
-    color: 'from-purple-50/50 to-indigo-50/30 text-purple-700',
-    badgeColor: 'bg-purple-100/70 text-purple-800 border-purple-200/50',
-    borderColor: 'border-purple-100 hover:border-purple-300'
-  },
-  {
-    type: 'IMPORTED',
-    name: 'Importação CSV / Excel',
-    description: 'Carregamento de listas prontas.',
-    longDescription: 'Faça upload de planilhas de contatos em massa (CSV, XLSX) e o sistema higieniza os dados e valida o WhatsApp automaticamente.',
-    isPremium: false,
-    costText: 'Grátis (Incluso)',
+    type: 'CNPJ_PREMIUM',
+    name: 'Porte & Faturamento (CNPJ Premium)',
+    description: 'Enriquece com faturamento e porte estimado.',
+    longDescription: 'Integra faturamento anual estimado e porte (ME, EPP, Médias/Grandes) para segmentar e qualificar as melhores empresas no funil.',
+    isPremium: true,
+    costText: 'R$ 149/mês',
     icon: '📊',
-    color: 'from-gray-50/50 to-slate-50/30 text-gray-700',
-    badgeColor: 'bg-gray-100/70 text-gray-800 border-gray-200/50',
-    borderColor: 'border-gray-100 hover:border-gray-300'
+    color: 'from-amber-100/60 to-amber-200/30 text-amber-800',
+    badgeColor: 'bg-amber-200/70 text-amber-800 border-amber-300/50',
+    borderColor: 'border-amber-200 hover:border-amber-300'
   },
   {
-    type: 'MANUAL',
-    name: 'Inserção Manual',
-    description: 'Criação direta pelo funil de vendas.',
-    longDescription: 'Adição manual rápida de leads diretamente pelo CRM de vendas. Ideal para contatos capturados de forma offline ou em reuniões presenciais.',
-    isPremium: false,
-    costText: 'Grátis (Incluso)',
-    icon: '➕',
-    color: 'from-stone-50/50 to-neutral-50/30 text-stone-700',
-    badgeColor: 'bg-stone-100/70 text-stone-800 border-stone-200/50',
-    borderColor: 'border-stone-100 hover:border-stone-300'
+    type: 'SOCIO_CONTACT',
+    name: 'Contato Direto do Sócio (QSA Cell Finder)',
+    description: 'WhatsApp celular dos sócios administradores.',
+    longDescription: 'Identifica o WhatsApp celular direto dos sócios e decisores do CNPJ para contornar telefones fixos de recepções.',
+    isPremium: true,
+    costText: 'R$ 199/mês',
+    icon: '👤',
+    color: 'from-blue-100/60 to-blue-200/30 text-blue-800',
+    badgeColor: 'bg-blue-200/70 text-blue-800 border-blue-300/50',
+    borderColor: 'border-blue-200 hover:border-blue-300'
+  },
+  {
+    type: 'CYBER_RISK',
+    name: 'Análise de Vulnerabilidade (Cyber Risk)',
+    description: 'Varredura de riscos digitais e LGPD.',
+    longDescription: 'Identifica SSL ausente, falta de políticas de privacidade e brechas no site corporativo. O gatilho comercial perfeito para Seguro Cyber.',
+    isPremium: true,
+    costText: 'R$ 149/mês',
+    icon: '🛡️',
+    color: 'from-red-100/60 to-red-200/30 text-red-800',
+    badgeColor: 'bg-red-200/70 text-red-800 border-red-300/50',
+    borderColor: 'border-red-200 hover:border-red-300'
+  },
+  {
+    type: 'ADS_TRACKER',
+    name: 'Rastreador de Tráfego Pago (Ads Tracker)',
+    description: 'Detecta investimento ativo em anúncios online.',
+    longDescription: 'Identifica pixels do Google Ads e Facebook no site do lead para indicar verba de crescimento e qualificar para benefícios PME.',
+    isPremium: true,
+    costText: 'R$ 79/mês',
+    icon: '📈',
+    color: 'from-indigo-100/60 to-indigo-200/30 text-indigo-800',
+    badgeColor: 'bg-indigo-200/70 text-indigo-800 border-indigo-300/50',
+    borderColor: 'border-indigo-200 hover:border-indigo-300'
+  },
+  {
+    type: 'EMAIL_SCRAPER',
+    name: 'Extrator de E-mails Corporativos',
+    description: 'Localiza e-mails diretos expostos no website.',
+    longDescription: 'Vasculha o domínio do lead para capturar e-mails institucionais e de departamentos, permitindo abordagens comerciais multicanais.',
+    isPremium: true,
+    costText: 'R$ 89/mês',
+    icon: '📧',
+    color: 'from-emerald-100/60 to-emerald-200/30 text-emerald-800',
+    badgeColor: 'bg-emerald-200/70 text-emerald-800 border-emerald-300/50',
+    borderColor: 'border-emerald-200 hover:border-emerald-300'
+  },
+  {
+    type: 'FLEET_TRACKER',
+    name: 'Rastreador de Frotas & ANTT',
+    description: 'Mapeia veículos comerciais e licenças ANTT.',
+    longDescription: 'Cruza dados de registros de transporte (ANTT) e frotas ativas no CNPJ para qualificar oportunidades de Seguro de Frota e Carga.',
+    isPremium: true,
+    costText: 'R$ 199/mês',
+    icon: '🚛',
+    color: 'from-orange-100/60 to-orange-200/30 text-orange-800',
+    badgeColor: 'bg-orange-200/70 text-orange-800 border-orange-300/50',
+    borderColor: 'border-orange-200 hover:border-orange-300'
+  },
+  {
+    type: 'JUDICIAL_TRACKER',
+    name: 'Histórico de Risco Judicial',
+    description: 'Rastreia processos civis, trabalhistas e fiscais.',
+    longDescription: 'Identifica processos ativos e passivos nos tribunais vinculados ao CNPJ e sócios. O gatilho comercial perfeito para Seguro D&O.',
+    isPremium: true,
+    costText: 'R$ 249/mês',
+    icon: '⚖️',
+    color: 'from-yellow-100/60 to-yellow-200/30 text-yellow-800',
+    badgeColor: 'bg-yellow-200/70 text-yellow-800 border-yellow-300/50',
+    borderColor: 'border-yellow-200 hover:border-yellow-300'
+  },
+  {
+    type: 'TECHNOGRAPHIC',
+    name: 'Detector de Stacks Tecnológicas',
+    description: 'Mapeia CRMs, e-commerces e analytics em uso.',
+    longDescription: 'Identifica se a empresa utiliza softwares de alto valor (HubSpot, Salesforce, VTEX, Shopify) qualificando maturidade digital.',
+    isPremium: true,
+    costText: 'R$ 99/mês',
+    icon: '⚙️',
+    color: 'from-slate-100/60 to-slate-200/30 text-slate-800',
+    badgeColor: 'bg-slate-200/70 text-slate-800 border-slate-300/50',
+    borderColor: 'border-slate-200 hover:border-slate-300'
   }
 ];
 
@@ -219,7 +159,7 @@ function Switch({ checked, disabled, onChange }: SwitchProps) {
   );
 }
 
-export default function LeadSources() {
+export default function DataEnrichment() {
   const tenantId = useAuthStore(state => state.tenantId);
   const [dbSources, setDbSources] = useState<DBLeadSource[]>([]);
   const [stats, setStats] = useState<Record<string, SourceStats>>({});
@@ -229,7 +169,6 @@ export default function LeadSources() {
   const [selectedPremiumSource, setSelectedPremiumSource] = useState<StaticSource | null>(null);
   const [submittingPremium, setSubmittingPremium] = useState(false);
   const [togglingSource, setTogglingSource] = useState<string | null>(null);
-  const [activeSegmentText, setActiveSegmentText] = useState('segmentos ativos');
 
   const fetchData = async () => {
     if (!tenantId) return;
@@ -245,8 +184,8 @@ export default function LeadSources() {
       setDbSources(listResult.data || []);
       setStats(statsResult.data || {});
     } catch (err) {
-      console.error('Failed to load lead sources', err);
-      toast.error('Erro ao carregar', 'Não foi possível carregar as fontes e estatísticas.');
+      console.error('Failed to load enrichment addons', err);
+      toast.error('Erro ao carregar', 'Não foi possível carregar as inteligências de enriquecimento.');
     } finally {
       setLoading(false);
     }
@@ -254,40 +193,6 @@ export default function LeadSources() {
 
   useEffect(() => {
     fetchData();
-  }, [tenantId]);
-
-  useEffect(() => {
-    if (!tenantId) return;
-    const fetchCampaigns = async () => {
-      try {
-        const result = await campaignsQueries.list(tenantId);
-        if (result.data) {
-          const activeCamps = result.data.filter((c: any) => c.status === 'ACTIVE');
-          if (activeCamps.length > 0) {
-            const professions = Array.from(new Set(activeCamps.map((c: any) => {
-              if (c.profession === 'DOCTOR') return 'Médicos';
-              if (c.profession === 'LAWYER') return 'Advogados';
-              if (c.profession === 'DENTIST') return 'Dentistas';
-              if (c.profession === 'ENTREPRENEUR') return 'Empresários';
-              if (c.profession === 'ENGINEER') return 'Engenheiros';
-              if (c.profession === 'ARCHITECT') return 'Arquitetos';
-              if (c.profession === 'ACCOUNTANT') return 'Contadores';
-              return 'Profissionais';
-            })));
-            const cities = Array.from(new Set(activeCamps.flatMap((c: any) => c.cities || [])));
-            
-            const profStr = professions.length > 0 ? professions.slice(0, 2).join(', ') : 'contatos';
-            const cityStr = cities.length > 0 ? ` em ${cities.slice(0, 2).join(', ')}` : '';
-            setActiveSegmentText(`${profStr}${cityStr}`);
-          } else {
-            setActiveSegmentText('contatos em cidades selecionadas');
-          }
-        }
-      } catch (e) {
-        console.error(e);
-      }
-    };
-    fetchCampaigns();
   }, [tenantId]);
 
   const getSourceStatus = (type: string, isPremium: boolean): 'ACTIVE' | 'PAUSED' | 'DISABLED' => {
@@ -308,8 +213,8 @@ export default function LeadSources() {
       if (result.error) throw new Error(result.error.message);
 
       toast.success(
-        newStatus === 'ACTIVE' ? 'Fonte Ativada' : 'Fonte Pausada',
-        `A fonte ${STATIC_SOURCES.find(s => s.type === type)?.name} foi ${newStatus === 'ACTIVE' ? 'ativada' : 'pausada'} com sucesso.`
+        newStatus === 'ACTIVE' ? 'Enriquecedor Ativado' : 'Enriquecedor Pausado',
+        `A inteligência ${STATIC_SOURCES.find(s => s.type === type)?.name} foi ${newStatus === 'ACTIVE' ? 'ativada' : 'pausada'} com sucesso.`
       );
       
       setDbSources(prev => {
@@ -323,8 +228,8 @@ export default function LeadSources() {
         }
       });
     } catch (err: any) {
-      console.error('Failed to toggle source', err);
-      toast.error('Erro ao atualizar', err.message || 'Ocorreu um erro ao atualizar o status da fonte.');
+      console.error('Failed to toggle enrichment addon', err);
+      toast.error('Erro ao atualizar', err.message || 'Ocorreu um erro ao atualizar o status da inteligência.');
     } finally {
       setTogglingSource(null);
     }
@@ -339,16 +244,16 @@ export default function LeadSources() {
       if (result.error) throw new Error(result.error.message);
 
       toast.success(
-        'Fonte Premium Contratada!',
-        `A fonte premium ${selectedPremiumSource.name} foi contratada e integrada com sucesso.`
+        'Inteligência Premium Contratada!',
+        `O enriquecedor premium ${selectedPremiumSource.name} foi contratado e integrado ao fluxo.`
       );
 
       await fetchData();
       setShowPremiumModal(false);
       setSelectedPremiumSource(null);
     } catch (err: any) {
-      console.error('Failed to activate premium source', err);
-      toast.error('Erro na contratação', err.message || 'Não foi possível contratar a fonte premium.');
+      console.error('Failed to activate premium enrichment addon', err);
+      toast.error('Erro na contratação', err.message || 'Não foi possível contratar a inteligência premium.');
     } finally {
       setSubmittingPremium(false);
     }
@@ -370,7 +275,6 @@ export default function LeadSources() {
     return true;
   });
 
-  const totalLeads = Object.values(stats).reduce((acc, curr) => acc + (curr.total || 0), 0);
   const activeCount = mappedSources.filter(s => s.status === 'ACTIVE').length;
   const pausedOrDisabledCount = mappedSources.filter(s => s.status !== 'ACTIVE').length;
 
@@ -378,7 +282,7 @@ export default function LeadSources() {
     return (
       <div className="flex flex-col items-center justify-center h-80 gap-3">
         <Loader2 className="w-8 h-8 text-[#1B3A6B] animate-spin" />
-        <span className="text-[13px] text-[#64748B] font-medium">Carregando fontes de leads...</span>
+        <span className="text-[13px] text-[#64748B] font-medium">Carregando inteligências de enriquecimento...</span>
       </div>
     );
   }
@@ -387,9 +291,9 @@ export default function LeadSources() {
     <div className="space-y-6 animate-fadeIn pb-10">
       {/* Header Info Banner */}
       <div className="flex items-center gap-3.5 px-4.5 py-4 bg-gradient-to-r from-[rgba(27,58,107,0.04)] to-[rgba(232,152,28,0.06)] border border-[rgba(27,58,107,0.08)] rounded-xl text-[12.5px] text-[#0F172A] shadow-sm">
-        <MapPin className="w-5 h-5 text-[#1B3A6B] shrink-0" />
+        <Cpu className="w-5 h-5 text-[#1B3A6B] shrink-0" />
         <div>
-          <strong className="text-[#1B3A6B]">Fontes de prospecção ativas.</strong> A IA combina e orquestra múltiplas fontes reais para capturar leads qualificados focando em <span className="font-semibold text-[#1B3A6B]">{activeSegmentText}</span>.
+          <strong className="text-[#1B3A6B]">Inteligência e Enriquecimento de Dados.</strong> Ative add-ons premium para enriquecer automaticamente os leads capturados com informações fiscais, vulnerabilidades cibernéticas, presença social, frotas e risco judicial.
         </div>
       </div>
 
@@ -431,10 +335,8 @@ export default function LeadSources() {
         <div className="flex items-center gap-4.5 text-[12px] text-[#475569] font-medium mr-1.5">
           <div className="flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-[#10B981] animate-pulse" />
-            <span>Higienização Ativa</span>
+            <span>Rotina Periódica Ativa</span>
           </div>
-          <div className="h-4 w-px bg-[#E2E8F0]" />
-          <span>Total de <strong className="text-[#0F172A] font-bold">{totalLeads}</strong> leads capturados</span>
         </div>
       </div>
 
@@ -496,7 +398,7 @@ export default function LeadSources() {
                     <div className="text-[13px] font-bold text-[#0F172A]">
                       {src.stats.total}
                     </div>
-                    <div className="text-[9.5px] text-[#64748B] font-medium tracking-tight">Capturados</div>
+                    <div className="text-[9.5px] text-[#64748B] font-medium tracking-tight">Leads Processados</div>
                   </div>
                   
                   <div className="bg-[#F8FAFC] rounded-lg p-2 border border-[#F1F5F9]">
@@ -516,7 +418,7 @@ export default function LeadSources() {
 
                 <div className="flex items-center justify-between pt-1">
                   <span className="text-[11px] text-[#64748B]">
-                    {src.stats.last30Days > 0 ? `+${src.stats.last30Days} nos últimos 30 dias` : 'Sem capturas recentes'}
+                    {src.stats.last30Days > 0 ? `+${src.stats.last30Days} nos últimos 30 dias` : 'Sem atividades recentes'}
                   </span>
                   
                   {isDisabled ? (
@@ -527,7 +429,7 @@ export default function LeadSources() {
                       }} 
                       className="px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-[#1B3A6B] to-[#2E5894] hover:from-[#142C52] hover:to-[#1B3A6B] text-white text-[11px] font-bold transition-all shadow-sm flex items-center gap-1"
                     >
-                      Ativar Fonte
+                      Ativar Inteligência
                     </button>
                   ) : (
                     <div className="flex items-center gap-2">
@@ -559,7 +461,7 @@ export default function LeadSources() {
             <div className="flex items-center justify-between px-5 py-4 border-b border-[#F1F3F9] bg-slate-50/50">
               <div className="flex items-center gap-2">
                 <span className="text-[18px]">🚀</span>
-                <h3 className="text-[14.5px] font-bold text-[#0F172A]">Contratar Fonte Premium</h3>
+                <h3 className="text-[14.5px] font-bold text-[#0F172A]">Contratar Enriquecedor Premium</h3>
               </div>
               <button 
                 onClick={() => !submittingPremium && setShowPremiumModal(false)} 
@@ -591,7 +493,7 @@ export default function LeadSources() {
                   <span className="font-bold text-[#0F172A]">{selectedPremiumSource.costText}</span>
                 </div>
                 <div className="flex justify-between items-center text-[12px]">
-                  <span className="text-[#64748B] font-medium">Integração da Base</span>
+                  <span className="text-[#64748B] font-medium">Integração do Fluxo</span>
                   <span className="text-[#10B981] font-semibold">Inclusa</span>
                 </div>
                 <div className="h-px bg-[#E2E8F0] my-2" />

@@ -137,6 +137,7 @@ export default function AppShell({ children }: AppShellProps) {
       items: [
         { name: 'Campanhas', path: '/campanhas', icon: Target, badge: counters?.campaigns || undefined },
         { name: 'Fontes de leads', path: '/fontes', icon: MapPin },
+        { name: 'Enriquecimento', path: '/enriquecimento', icon: Cpu },
         { name: 'Roteiros da IA', path: '/roteiros', icon: FileText },
         { name: 'Indicações', path: '/indicacoes', icon: Star },
       ],
