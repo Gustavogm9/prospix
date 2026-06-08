@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useMemo } from 'react';
+import { useCallback } from 'react';
 import {
   ReactFlow,
   MiniMap,
@@ -94,7 +94,7 @@ const initialEdges: Edge[] = [
 ];
 
 export function ScriptFlowBuilder() {
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
+  const [nodes, , onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
   const onConnect = useCallback(
