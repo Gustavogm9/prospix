@@ -878,23 +878,67 @@ export default function LeadSources() {
   };
 
   // ── Executar Busca (Discovery Engine) ──────────────────────
+  const [campaignPickerOpen, setCampaignPickerOpen] = useState(false);
+  const [pendingDiscoverySource, setPendingDiscoverySource] = useState<string | null>(null);
+  const [availableCampaigns, setAvailableCampaigns] = useState<any[]>([]);
+
   const handleRunDiscovery = async (sourceType: string) => {
     if (!tenantId || runningDiscovery) return;
-    setRunningDiscovery(sourceType);
 
     try {
-      // Buscar campanhas ativas para usar como config
+      // Buscar campanhas ativas
       const campResult = await campaignsQueries.list(tenantId);
       const activeCampaigns = (campResult.data || []).filter((c: any) => c.status === 'ACTIVE');
       
       if (activeCampaigns.length === 0) {
         toast.error('Sem campanha ativa', 'Crie e ative uma campanha antes de executar a busca.');
-        setRunningDiscovery(null);
         return;
       }
 
-      const campaign = activeCampaigns[0]; // Usa a primeira campanha ativa
-      
+      // Se tem mais de 1 campanha ativa, pede pro usuário escolher
+      if (activeCampaigns.length > 1) {
+        setAvailableCampaigns(activeCampaigns);
+        setPendingDiscoverySource(sourceType);
+        setCampaignPickerOpen(true);
+        return;
+      }
+
+      // Só tem 1 campanha — executa direto
+      await executeDiscovery(sourceType, activeCampaigns[0]);
+    } catch (err: any) {
+      console.error('Discovery error:', err);
+      toast.error('Erro na busca', err.message || 'Não foi possível executar a busca.');
+    }
+  };
+
+  const executeDiscovery = async (sourceType: string, campaign: any) => {
+    setRunningDiscovery(sourceType);
+    setCampaignPickerOpen(false);
+
+    try {
+      // Resolver search_tags: se vazio, usar filters.search_terms da profissão
+      let searchTags = campaign.search_tags || [];
+      if (searchTags.length === 0 && campaign.filters?.search_terms) {
+        const profTerms = campaign.filters.search_terms[campaign.profession] || [];
+        // Fallback: juntar todas as search_terms
+        if (profTerms.length > 0) {
+          searchTags = profTerms;
+        } else {
+          searchTags = Object.values(campaign.filters.search_terms).flat() as string[];
+        }
+      }
+
+      // Fallback final: usar o nome da profissão como tag
+      if (searchTags.length === 0 && campaign.profession) {
+        const profNames: Record<string, string[]> = {
+          DOCTOR: ['médico', 'clínica médica', 'consultório'],
+          LAWYER: ['advogado', 'escritório de advocacia'],
+          DENTIST: ['dentista', 'consultório odontológico'],
+          ENTREPRENEUR: ['empresa', 'comércio'],
+        };
+        searchTags = profNames[campaign.profession] || [campaign.name];
+      }
+
       const response = await fetch('/api/discover', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -903,10 +947,11 @@ export default function LeadSources() {
           campaign_id: campaign.id,
           source_type: sourceType,
           config: {
-            search_tags: campaign.search_tags || [],
+            search_tags: searchTags,
             cities: campaign.cities || [],
-            state: campaign.state || 'SP',
+            state: 'SP', // TODO: derivar do estado das cidades
             daily_limit: campaign.daily_limit || 20,
+            profession: campaign.profession || null,
           },
         }),
       });
@@ -915,10 +960,9 @@ export default function LeadSources() {
 
       if (data.ok) {
         toast.success(
-          `Busca concluída!`,
+          `Busca concluída! (${campaign.name})`,
           `${data.leads_inserted || 0} novos leads capturados de ${data.leads_found || 0} encontrados.`
         );
-        // Atualizar stats
         await fetchData();
       } else {
         const errorMsg = data.error || data.errors?.join(', ') || 'Erro desconhecido';
@@ -1274,6 +1318,48 @@ export default function LeadSources() {
           onClose={() => setShowCSVModal(false)}
           tenantId={tenantId}
         />
+      )}
+
+      {/* ═══ Campaign Picker Modal (quando há múltiplas campanhas) ═══ */}
+      {campaignPickerOpen && pendingDiscoverySource && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm animate-fadeIn" onClick={() => setCampaignPickerOpen(false)}>
+          <div
+            className="bg-white rounded-xl shadow-xl border border-[#E2E8F0] w-full max-w-sm mx-4 overflow-hidden transform transition-all animate-scaleUp"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-[#F1F3F9] bg-slate-50/50">
+              <div className="flex items-center gap-2">
+                <Search className="w-4 h-4 text-[#1B3A6B]" />
+                <h3 className="text-[14px] font-bold text-[#0F172A]">Escolha a campanha</h3>
+              </div>
+              <button
+                onClick={() => setCampaignPickerOpen(false)}
+                className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-[#E2E8F0] text-[#64748B] transition-all"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 space-y-2">
+              <p className="text-[11px] text-[#64748B] mb-3">
+                Qual campanha usar para configurar a busca? (cidades, profissão, tags)
+              </p>
+              {availableCampaigns.map((camp: any) => (
+                <button
+                  key={camp.id}
+                  onClick={() => executeDiscovery(pendingDiscoverySource, camp)}
+                  className="w-full text-left p-3 rounded-lg border border-[#E2E8F0] hover:border-[#1B3A6B] hover:bg-blue-50/30 transition-all group"
+                >
+                  <div className="text-[12.5px] font-bold text-[#0F172A] group-hover:text-[#1B3A6B]">
+                    {camp.name}
+                  </div>
+                  <div className="text-[10.5px] text-[#64748B] mt-0.5">
+                    {(camp.cities || []).join(', ')} • {camp.profession || 'Geral'}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
