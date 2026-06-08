@@ -167,7 +167,7 @@ export default function ScriptDetailsPage() {
         if (error) throw error;
         toast.success('Roteiro deletado.');
         router.push('/roteiros');
-      } catch (err) {
+      } catch {
         toast.error('Erro ao deletar roteiro.');
       }
     }
@@ -195,7 +195,7 @@ export default function ScriptDetailsPage() {
         setIsAiModalOpen(false);
         if (activeTab !== 'VARIANTS') setActiveTab('VARIANTS');
       }
-    } catch (err) {
+    } catch {
       toast.error('Erro ao gerar com IA');
     } finally {
       setIsGenerating(false);
