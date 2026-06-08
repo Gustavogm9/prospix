@@ -329,6 +329,8 @@ export default function Settings() {
         googleMapsApiKey: '',
         evolutionApiKey: '',
         evolutionBaseUrl: '',
+        tavilyApiKey: '',
+        firecrawlApiKey: '',
       });
       toast.success('Credenciais salvas', 'As chaves foram criptografadas e vinculadas ao tenant.');
     } catch (err: unknown) {
