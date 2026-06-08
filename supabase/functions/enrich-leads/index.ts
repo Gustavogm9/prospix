@@ -1121,6 +1121,86 @@ serve(async (req: Request) => {
               });
             }
 
+            // A.1. Firecrawl Enrichment
+            if (activeSources.has("FIRECRAWL_ENRICHMENT")) {
+              console.log(`  🔥 Firecrawl: Iniciando scraping para ${website || lead.name}...`);
+              
+              // Carrega API key do tenant
+              const { data: secrets } = await supabase
+                .from("tenant_secrets")
+                .select("firecrawl_api_key_encrypted")
+                .eq("tenant_id", tid)
+                .single();
+
+              const firecrawlKey = secrets?.firecrawl_api_key_encrypted;
+
+              if (firecrawlKey && website) {
+                try {
+                  const targetUrl = website.startsWith("http") ? website : `https://${website}`;
+                  
+                  const firecrawlResp = await fetch("https://api.firecrawl.dev/v1/scrape", {
+                    method: "POST",
+                    headers: {
+                      "Content-Type": "application/json",
+                      "Authorization": `Bearer ${firecrawlKey}`,
+                    },
+                    body: JSON.stringify({
+                      url: targetUrl,
+                      formats: ["markdown", "html"],
+                      onlyMainContent: true
+                    }),
+                  });
+
+                  if (firecrawlResp.ok) {
+                    const fcData = await firecrawlResp.json();
+                    
+                    if (fcData.success && fcData.data) {
+                       metadata.firecrawl = {
+                          markdown: fcData.data.markdown,
+                          metadata: fcData.data.metadata,
+                          scraped_at: now()
+                       };
+                       
+                       // Updates the html to be used by other tools since we have it here
+                       if (fcData.data.html && (!crawlResult || !crawlResult.html)) {
+                         if (!crawlResult) {
+                             crawlResult = { html: fcData.data.html, isHttps: targetUrl.startsWith("https"), sslValid: true, headers: {} };
+                         } else {
+                             crawlResult.html = fcData.data.html;
+                         }
+                       }
+
+                       events.push({
+                        tenant_id: tid,
+                        lead_id: lead.id,
+                        event_type: "firecrawl_enriched",
+                        payload: {
+                          success: true,
+                          markdown_length: fcData.data.markdown?.length || 0,
+                          reason: `Site transformado em markdown (${fcData.data.markdown?.length || 0} chars) com sucesso.`
+                        },
+                        created_at: now()
+                      });
+                      
+                      console.log(`  ✅ Firecrawl: Sucesso (${fcData.data.markdown?.length || 0} chars markdown)`);
+                    } else {
+                       metadata.firecrawl = { available: false, reason: fcData.error || "Erro na API do Firecrawl" };
+                    }
+                  } else {
+                    const errText = await firecrawlResp.text();
+                    console.warn(`  ⚠️ Firecrawl API retornou HTTP ${firecrawlResp.status} - ${errText}`);
+                    metadata.firecrawl = { available: false, reason: `HTTP ${firecrawlResp.status}` };
+                  }
+                } catch (fcErr: any) {
+                  console.warn(`  ⚠️ Firecrawl erro: ${fcErr.message?.slice(0, 80)}`);
+                  metadata.firecrawl = { available: false, reason: `Erro na consulta: ${fcErr.message?.slice(0, 100)}` };
+                }
+              } else {
+                console.log(`  ℹ️ Firecrawl ignorado: API Key ausente ou website não encontrado`);
+                metadata.firecrawl = { available: false, reason: !firecrawlKey ? "API key não configurada" : "Sem website" };
+              }
+            }
+
             // B. Ads Pixel Tracker
             if (activeSources.has("ADS_TRACKER")) {
               let fbPixel = false, googleAds = false, tiktokPixel = false;
@@ -1486,6 +1566,9 @@ serve(async (req: Request) => {
           }
           if (activeSources.has("TECHNOGRAPHIC") && metadata.technographic?.has_high_value_tools) {
             scoreBreakdown["tecnologias_alto_valor"] = 1.0;
+          }
+          if (activeSources.has("FIRECRAWL_ENRICHMENT") && metadata.firecrawl?.markdown) {
+            scoreBreakdown["site_processado_ia"] = 1.0;
           }
 
           const enrichedLead = {

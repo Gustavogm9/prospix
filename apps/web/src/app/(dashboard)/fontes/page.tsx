@@ -62,6 +62,30 @@ const STATIC_SOURCES: StaticSource[] = [
     borderColor: 'border-sky-100 hover:border-sky-300'
   },
   {
+    type: 'TAVILY_B2B_SEARCH',
+    name: 'Tavily B2B Search',
+    description: 'Buscador avançado de Leads em tempo real.',
+    longDescription: 'Agente inteligente que navega na internet para descobrir novas empresas B2B com altíssima precisão baseada em contexto semântico.',
+    isPremium: true,
+    costText: 'Premium (Chave Própria)',
+    icon: '🌐',
+    color: 'from-blue-50/50 to-indigo-50/30 text-blue-700',
+    badgeColor: 'bg-blue-100/70 text-blue-800 border-blue-200/50',
+    borderColor: 'border-blue-100 hover:border-blue-300'
+  },
+  {
+    type: 'FIRECRAWL_ENRICHMENT',
+    name: 'Firecrawl Enrichment',
+    description: 'Varredura profunda e scraping de sites.',
+    longDescription: 'Mapeia todo o site do Lead e converte para Markdown, municiando a IA com o contexto completo da empresa para uma abordagem 100% personalizada.',
+    isPremium: true,
+    costText: 'Premium (Chave Própria)',
+    icon: '🔥',
+    color: 'from-orange-50/50 to-red-50/30 text-orange-700',
+    badgeColor: 'bg-orange-100/70 text-orange-800 border-orange-200/50',
+    borderColor: 'border-orange-100 hover:border-orange-300'
+  },
+  {
     type: 'DOCTORALIA',
     name: 'Doctoralia Scraper',
     description: 'Especialistas de saúde e clínicas locais.',

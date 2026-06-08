@@ -24,7 +24,8 @@ type SourceType =
   | "VIVAREAL"
   | "CRM_SP"
   | "OAB_SP"
-  | "CRO_SP";
+  | "CRO_SP"
+  | "TAVILY_B2B_SEARCH";
 
 interface DiscoverRequest {
   tenant_id: string;
@@ -1167,6 +1168,8 @@ async function routeDiscovery(
       return discoverOabSp(config);
     case "CRO_SP":
       return discoverCroSp(config);
+    case "TAVILY_B2B_SEARCH":
+      return discoverTavily(tenant_id, config);
     default:
       throw new Error(`source_type desconhecido: ${source_type}`);
   }
@@ -1282,7 +1285,7 @@ serve(async (req: Request) => {
 
     const validSources: SourceType[] = [
       "GOOGLE_MAPS", "CNPJ_MINER", "DOCTORALIA", "COMPRASNET",
-      "VIVAREAL", "CRM_SP", "OAB_SP", "CRO_SP",
+      "VIVAREAL", "CRM_SP", "OAB_SP", "CRO_SP", "TAVILY_B2B_SEARCH"
     ];
     if (!validSources.includes(source_type)) {
       return new Response(
@@ -1333,7 +1336,11 @@ serve(async (req: Request) => {
     const errors: string[] = [];
 
     try {
-      discoveredLeads = await routeDiscovery({ tenant_id, campaign_id, source_type, config });
+      if (source_type === "TAVILY_B2B_SEARCH") {
+         discoveredLeads = await discoverTavily(tenant_id, config);
+      } else {
+         discoveredLeads = await routeDiscovery({ tenant_id, campaign_id, source_type, config });
+      }
     } catch (err: any) {
       const errorMsg = err.message || "Erro desconhecido no handler de descoberta";
       console.error(`❌ Erro no handler ${source_type}: ${errorMsg}`);

@@ -23,6 +23,8 @@ export async function GET(request: NextRequest) {
         googleAi: { configured: Boolean(secret?.google_ai_api_key_encrypted) },
         googleMaps: { configured: Boolean(secret?.google_maps_api_key_encrypted) },
         evolution: { configured: Boolean(secret?.evolution_api_key_encrypted) },
+        tavily: { configured: Boolean(secret?.tavily_api_key_encrypted) },
+        firecrawl: { configured: Boolean(secret?.firecrawl_api_key_encrypted) },
       },
       whatsapp: {
         baseUrlConfigured: Boolean(secret?.evolution_base_url),
@@ -67,6 +69,8 @@ export async function PATCH(request: NextRequest) {
   if (body.googleAiApiKey !== undefined) updateData.google_ai_api_key_encrypted = body.googleAiApiKey || null;
   if (body.googleMapsApiKey !== undefined) updateData.google_maps_api_key_encrypted = body.googleMapsApiKey || null;
   if (body.evolutionApiKey !== undefined) updateData.evolution_api_key_encrypted = body.evolutionApiKey || null;
+  if (body.tavilyApiKey !== undefined) updateData.tavily_api_key_encrypted = body.tavilyApiKey || null;
+  if (body.firecrawlApiKey !== undefined) updateData.firecrawl_api_key_encrypted = body.firecrawlApiKey || null;
 
   // Auto-set ai_provider to TENANT_OWN if any key is provided
   const hasTenantOwnedKey = Boolean(
@@ -74,7 +78,9 @@ export async function PATCH(request: NextRequest) {
     updateData.anthropic_api_key_encrypted ||
     updateData.google_ai_api_key_encrypted ||
     updateData.google_maps_api_key_encrypted ||
-    updateData.evolution_api_key_encrypted
+    updateData.evolution_api_key_encrypted ||
+    updateData.tavily_api_key_encrypted ||
+    updateData.firecrawl_api_key_encrypted
   );
 
   if (body.aiProvider === undefined && hasTenantOwnedKey) {
@@ -111,6 +117,8 @@ export async function PATCH(request: NextRequest) {
         googleAi: { configured: Boolean(secret?.google_ai_api_key_encrypted) },
         googleMaps: { configured: Boolean(secret?.google_maps_api_key_encrypted) },
         evolution: { configured: Boolean(secret?.evolution_api_key_encrypted) },
+        tavily: { configured: Boolean(secret?.tavily_api_key_encrypted) },
+        firecrawl: { configured: Boolean(secret?.firecrawl_api_key_encrypted) },
       },
       whatsapp: {
         baseUrlConfigured: Boolean(secret?.evolution_base_url),

@@ -1663,12 +1663,14 @@ export type Database = {
           evolution_base_url: string | null
           evolution_instance_name: string | null
           evolution_webhook_secret: string | null
+          firecrawl_api_key_encrypted: string | null
           google_ai_api_key_encrypted: string | null
           google_calendar_id: string | null
           google_maps_api_key_encrypted: string | null
           google_oauth_refresh_encrypted: string | null
           google_oauth_scope: string | null
           openai_api_key_encrypted: string | null
+          tavily_api_key_encrypted: string | null
           tenant_id: string
           twilio_account_sid_encrypted: string | null
           twilio_auth_token_encrypted: string | null
@@ -1681,12 +1683,14 @@ export type Database = {
           evolution_base_url?: string | null
           evolution_instance_name?: string | null
           evolution_webhook_secret?: string | null
+          firecrawl_api_key_encrypted?: string | null
           google_ai_api_key_encrypted?: string | null
           google_calendar_id?: string | null
           google_maps_api_key_encrypted?: string | null
           google_oauth_refresh_encrypted?: string | null
           google_oauth_scope?: string | null
           openai_api_key_encrypted?: string | null
+          tavily_api_key_encrypted?: string | null
           tenant_id: string
           twilio_account_sid_encrypted?: string | null
           twilio_auth_token_encrypted?: string | null
@@ -1699,12 +1703,14 @@ export type Database = {
           evolution_base_url?: string | null
           evolution_instance_name?: string | null
           evolution_webhook_secret?: string | null
+          firecrawl_api_key_encrypted?: string | null
           google_ai_api_key_encrypted?: string | null
           google_calendar_id?: string | null
           google_maps_api_key_encrypted?: string | null
           google_oauth_refresh_encrypted?: string | null
           google_oauth_scope?: string | null
           openai_api_key_encrypted?: string | null
+          tavily_api_key_encrypted?: string | null
           tenant_id?: string
           twilio_account_sid_encrypted?: string | null
           twilio_auth_token_encrypted?: string | null

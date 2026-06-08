@@ -31,6 +31,8 @@ type CredentialState = {
     googleAi: { configured: boolean };
     googleMaps: { configured: boolean };
     evolution: { configured: boolean };
+    tavily?: { configured: boolean };
+    firecrawl?: { configured: boolean };
   };
   whatsapp: {
     baseUrlConfigured: boolean;
@@ -159,6 +161,8 @@ export default function Settings() {
     googleMapsApiKey: '',
     evolutionApiKey: '',
     evolutionBaseUrl: '',
+    tavilyApiKey: '',
+    firecrawlApiKey: '',
   });
   const [isCredentialsLoading, setIsCredentialsLoading] = useState(false);
   const [isCredentialsSaving, setIsCredentialsSaving] = useState(false);
@@ -1129,6 +1133,18 @@ export default function Settings() {
                       {credentialState.keys.googleMaps.configured ? 'Configurada' : 'Não configurada'}
                     </Badge>
                   </div>
+                  <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E5E7EB]">
+                    <span className="text-[10px] text-[#64748B] font-bold uppercase tracking-wider block mb-1">Tavily Search</span>
+                    <Badge className={credentialState.keys.tavily?.configured ? 'bg-[#ECFDF3] text-[#027A48] border border-[#A7F3D0]' : 'bg-white border-[#E5E7EB] text-[#64748B]'}>
+                      {credentialState.keys.tavily?.configured ? 'Configurada' : 'Não configurada'}
+                    </Badge>
+                  </div>
+                  <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E5E7EB]">
+                    <span className="text-[10px] text-[#64748B] font-bold uppercase tracking-wider block mb-1">Firecrawl</span>
+                    <Badge className={credentialState.keys.firecrawl?.configured ? 'bg-[#ECFDF3] text-[#027A48] border border-[#A7F3D0]' : 'bg-white border-[#E5E7EB] text-[#64748B]'}>
+                      {credentialState.keys.firecrawl?.configured ? 'Configurada' : 'Não configurada'}
+                    </Badge>
+                  </div>
                 </div>
 
                 {/* API Key inputs */}
@@ -1203,6 +1219,36 @@ export default function Settings() {
                         disabled={!canManageCredentials || isCredentialsLoading}
                         onChange={(e) => setCredentialDraft({ ...credentialDraft, evolutionApiKey: e.target.value })}
                         placeholder={credentialState.keys.evolution.configured ? 'Nova chave para substituir a atual' : 'Token da Evolution API'}
+                        className="pl-10 bg-white border-[#E5E7EB] text-[#0F172A] placeholder-[#64748B] text-[12px] focus:border-[#1B3A6B] h-10 font-mono disabled:opacity-70 rounded-lg"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Tavily API Key</label>
+                    <div className="relative">
+                      <Key className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#64748B]" />
+                      <Input
+                        type="password"
+                        value={credentialDraft.tavilyApiKey}
+                        disabled={!canManageCredentials || isCredentialsLoading}
+                        onChange={(e) => setCredentialDraft({ ...credentialDraft, tavilyApiKey: e.target.value })}
+                        placeholder={credentialState.keys.tavily?.configured ? 'Nova chave para substituir a atual' : 'tvly-...'}
+                        className="pl-10 bg-white border-[#E5E7EB] text-[#0F172A] placeholder-[#64748B] text-[12px] focus:border-[#1B3A6B] h-10 font-mono disabled:opacity-70 rounded-lg"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Firecrawl API Key</label>
+                    <div className="relative">
+                      <Key className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#64748B]" />
+                      <Input
+                        type="password"
+                        value={credentialDraft.firecrawlApiKey}
+                        disabled={!canManageCredentials || isCredentialsLoading}
+                        onChange={(e) => setCredentialDraft({ ...credentialDraft, firecrawlApiKey: e.target.value })}
+                        placeholder={credentialState.keys.firecrawl?.configured ? 'Nova chave para substituir a atual' : 'fc-...'}
                         className="pl-10 bg-white border-[#E5E7EB] text-[#0F172A] placeholder-[#64748B] text-[12px] focus:border-[#1B3A6B] h-10 font-mono disabled:opacity-70 rounded-lg"
                       />
                     </div>
