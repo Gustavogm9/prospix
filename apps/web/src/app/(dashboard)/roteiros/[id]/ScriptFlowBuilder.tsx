@@ -98,7 +98,7 @@ export function ScriptFlowBuilder() {
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
   const onConnect = useCallback(
-    (params: Connection | Edge) => setEdges((eds) => addEdge({ ...params, animated: true, style: { stroke: '#94A3B8', strokeWidth: 2 } }, eds)),
+    (params: Connection | Edge) => setEdges((eds) => addEdge({ ...params, animated: true, style: { stroke: '#94A3B8', strokeWidth: 2 } } as Edge, eds)),
     [setEdges],
   );
 
