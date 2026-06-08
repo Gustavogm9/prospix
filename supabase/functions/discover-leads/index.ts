@@ -283,9 +283,8 @@ async function insertLeads(
           source: lead.source,
           status: "CAPTURED",
           address: lead.address,
-          metadata: lead.metadata,
+          metadata: { ...lead.metadata, website: lead.website || null },
           profession: lead.profession || null,
-          website: lead.website || null,
           created_at: now,
           updated_at: now,
         })
@@ -337,9 +336,8 @@ async function insertLeads(
           source: lead.source,
           status: "CAPTURED",
           address: lead.address,
-          metadata: lead.metadata,
+          metadata: { ...lead.metadata, website: lead.website || null },
           profession: lead.profession || null,
-          website: lead.website || null,
           created_at: now,
           updated_at: now,
         })
@@ -764,6 +762,10 @@ async function discoverDoctoralia(
         // Extrai telefones do HTML
         const phones = extractPhonesFromText(html);
 
+        // Diagnostic: log a snippet of the HTML to help debug extraction
+        const htmlSnippet = html.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<style[\s\S]*?<\/style>/gi, "").slice(0, 2000);
+        console.log(`  🔬 HTML snippet (primeiro 2000 chars sem scripts): ${htmlSnippet.slice(0, 500)}`);
+
         // Strategy 1: Extract from data-doctor-name attributes
         const dataNameRegex = /data-doctor-name=["']([^"']+)["']/gi;
         const doctorNames: string[] = [];
@@ -820,6 +822,35 @@ async function discoverDoctoralia(
             }
           } catch (_) { /* ignore malformed JSON-LD */ }
         }
+
+        // Strategy 6: Brute-force — extract any <h2> or <h3> text that looks like a person name
+        const h2h3Regex = /<(?:h2|h3)[^>]*>\s*(?:<[^>]*>\s*)*((?:Dr\.?a?\s+)?[A-ZÀ-Ú][a-zà-ú]+(?:\s+(?:de?|dos?|das?|e|[A-ZÀ-Ú])[a-zà-ú]*)*(?:\s+[A-ZÀ-Ú][a-zà-ú]+)+)/gi;
+        while ((nameMatch = h2h3Regex.exec(html)) !== null) {
+          const name = nameMatch[1].replace(/<[^>]*>/g, "").trim();
+          if (name.length > 5 && name.length < 80 && name.includes(" ")) {
+            doctorNames.push(name);
+          }
+        }
+
+        // Strategy 7: Extract from <a> tags with data-ga-label or title containing doctor names
+        const gaLabelRegex = /(?:data-ga-label|title)=["']((?:Dr\.?a?\s+)?[A-ZÀ-Ú][a-zà-ú]+(?:\s+[A-Za-zÀ-ú]+){1,6})["']/gi;
+        while ((nameMatch = gaLabelRegex.exec(html)) !== null) {
+          const name = nameMatch[1].trim();
+          if (name.length > 5 && name.length < 80 && /^(Dr\.?|Dra\.?)\s/i.test(name)) {
+            doctorNames.push(name);
+          }
+        }
+
+        // Strategy 8: Look for any text matching "Dr(a). Name" pattern in the body
+        const drPatternRegex = />(Dr\.?a?\.\s+[A-ZÀ-Ú][a-zà-ú]+(?:\s+(?:de?|dos?|das?|e|[A-ZÀ-Ú])[a-zà-ú]*)*(?:\s+[A-ZÀ-Ú][a-zà-ú]+)*)</gi;
+        while ((nameMatch = drPatternRegex.exec(html)) !== null) {
+          const name = nameMatch[1].trim();
+          if (name.length > 5 && name.length < 80) {
+            doctorNames.push(name);
+          }
+        }
+
+        console.log(`  🔬 Estratégias: data-attr=${doctorNames.filter(n => n.startsWith("Dr")).length}, total bruto=${doctorNames.length}`);
 
         // Remove duplicatas de nomes
         const uniqueNames = [...new Set(doctorNames)];
@@ -1047,196 +1078,18 @@ async function discoverVivaReal(
 // ══════════════════════════════════════════════════════════════════════════════
 
 async function discoverCrmSp(
-  config: DiscoverRequest["config"]
+  _config: DiscoverRequest["config"]
 ): Promise<DiscoveredLead[]> {
-  console.log("⚕️ CRM-SP: Iniciando busca de médicos...");
+  console.log("⚕️ CRM-SP: Fonte temporariamente indisponível.");
 
-  const cities = config.cities || [];
-  const tags = config.search_tags || []; // Especialidades
-  const state = config.state || "SP";
-  const dailyLimit = config.daily_limit || 20;
-  const leads: DiscoveredLead[] = [];
-
-  for (const city of cities) {
-    if (leads.length >= dailyLimit) break;
-
-    // Tenta buscar no CFM (portal federal) que aceita pesquisa por cidade
-    console.log(`  🔍 Buscando médicos em: ${city}`);
-
-    try {
-      // Tenta o portal CFM (busca-medicos) via pesquisa
-      await sleep(2000);
-
-      // O CFM tem um endpoint de pesquisa que retorna HTML
-      const cfmUrl = `https://portal.cfm.org.br/busca-medicos/`;
-
-      // Faz um POST simulando o formulário de busca
-      const formData = new URLSearchParams();
-      formData.set("uf", state);
-      formData.set("municipio", city);
-      if (tags.length > 0) {
-        formData.set("especialidade", tags[0]);
-      }
-      formData.set("tipo_inscricao", "P"); // Principal
-      formData.set("situacao", "A"); // Ativo
-
-      const resp = await safeFetch(cfmUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Referer: cfmUrl,
-        },
-        body: formData.toString(),
-      }, 20000);
-
-      if (!resp.ok) {
-        console.warn(`  ⚠️ CFM retornou HTTP ${resp.status}`);
-      } else {
-        const html = await resp.text();
-        console.log(`  📄 CFM HTML recebido: ${html.length} bytes`);
-
-        // ── Multiple name extraction strategies ──
-        const names: string[] = [];
-        const crms: string[] = [];
-        let m;
-
-        // Strategy 1: Original regex — td/span/div with proper case names
-        const doctorRegex1 =
-          /<(?:td|span|div|p|a|strong|b)[^>]*>\s*(?:Dr\.?a?\s+)?([A-ZÀ-Ú][a-zà-ú]+(?:\s+(?:de?|dos?|das?|e|[A-ZÀ-Ú])[a-zà-ú]*)*(?:\s+[A-ZÀ-Ú][a-zà-ú]+)+)\s*<\/(?:td|span|div|p|a|strong|b)>/gi;
-        while ((m = doctorRegex1.exec(html)) !== null) {
-          const name = m[1].trim();
-          if (name.length > 5 && name.length < 80 && name.includes(" ")) {
-            names.push(name);
-          }
-        }
-
-        // Strategy 2: ALL CAPS names (common in council listings)
-        const doctorRegex2 =
-          /<(?:td|span|div|p|a|strong|b|li)[^>]*>\s*([A-ZÀ-Ú]{2,}(?:\s+(?:DE?|DOS?|DAS?|E|[A-ZÀ-Ú]{2,}))+)\s*<\/(?:td|span|div|p|a|strong|b|li)>/g;
-        while ((m = doctorRegex2.exec(html)) !== null) {
-          const raw = m[1].trim();
-          if (raw.length > 5 && raw.length < 80 && raw.includes(" ")) {
-            // Convert ALL CAPS to Title Case
-            const titleCase = raw
-              .split(/\s+/)
-              .map((w) => {
-                const lower = w.toLowerCase();
-                if (["de", "do", "da", "dos", "das", "e"].includes(lower)) return lower;
-                return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
-              })
-              .join(" ");
-            names.push(titleCase);
-          }
-        }
-
-        // Strategy 3: Extract CRM numbers
-        const crmRegex = /CRM[-\s/]*(?:SP)?\s*[-:.]?\s*(\d{4,8})/gi;
-        while ((m = crmRegex.exec(html)) !== null) {
-          crms.push(m[1]);
-        }
-
-        // Strategy 4: Look for names near CRM patterns
-        const nearCrmRegex = /([A-ZÀ-Ú][A-Za-zÀ-ú\s.]{5,60})\s*[-–]?\s*CRM/gi;
-        while ((m = nearCrmRegex.exec(html)) !== null) {
-          const name = m[1].trim();
-          if (name.length > 5 && name.includes(" ") && !names.includes(name)) {
-            names.push(name);
-          }
-        }
-
-        // Deduplicate names
-        const uniqueNames = [...new Set(names)];
-        console.log(`  📋 ${uniqueNames.length} médicos encontrados no CFM (${crms.length} CRMs)`);
-
-        for (let i = 0; i < uniqueNames.length && leads.length < dailyLimit; i++) {
-          const rawName = uniqueNames[i];
-          // Only add "Dr(a)." prefix if not already there
-          const displayName = /^Dr\.?a?\s/i.test(rawName) ? rawName : `Dr(a). ${rawName}`;
-
-          leads.push({
-            name: displayName,
-            whatsapp: null, // CRM não disponibiliza telefone
-            source: "CRM_SP",
-            address: {
-              city: city,
-              state: state,
-            },
-            metadata: {
-              crm_number: crms[i] || null,
-              specialty: tags[0] || null,
-              conselho: "CRM",
-              uf_inscricao: state,
-              scrape_date: new Date().toISOString(),
-            },
-            profession: "DOCTOR",
-          });
-        }
-      }
-    } catch (err: any) {
-      console.error(`  💥 Erro ao buscar médicos em ${city}: ${err.message}`);
-    }
-
-    // Fallback: tenta CREMESP (conselho estadual de SP)
-    if (leads.length === 0 && state === "SP") {
-      try {
-        console.log(`  🔄 Tentando CREMESP como fallback...`);
-        await sleep(2000);
-
-        const cremespUrl = "https://www.cremesp.org.br/?siteAcao=Sou_Medico&acao=pesquisa_avancada";
-        const formData = new URLSearchParams();
-        formData.set("cidade", city);
-        if (tags.length > 0) formData.set("especialidade", tags[0]);
-
-        const resp = await safeFetch(cremespUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            Referer: cremespUrl,
-          },
-          body: formData.toString(),
-        }, 20000);
-
-        if (resp.ok) {
-          const html = await resp.text();
-          console.log(`  📄 CREMESP HTML recebido: ${html.length} bytes`);
-
-          // Padrão do CREMESP: lista de resultados em tabela
-          const nameRegex =
-            /(?:nome|médico|profissional)[^>]*>([A-ZÀ-Ú][A-ZÀ-Ú\s]{5,60})</gi;
-          let m;
-          while ((m = nameRegex.exec(html)) !== null && leads.length < dailyLimit) {
-            const name = m[1].trim();
-            // Convert ALL CAPS to Title Case
-            const titleCase = name
-              .split(/\s+/)
-              .map((w) => {
-                const lower = w.toLowerCase();
-                if (["de", "do", "da", "dos", "das", "e"].includes(lower)) return lower;
-                return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
-              })
-              .join(" ");
-            leads.push({
-              name: `Dr(a). ${titleCase}`,
-              whatsapp: null,
-              source: "CRM_SP",
-              address: { city, state },
-              metadata: {
-                conselho: "CREMESP",
-                specialty: tags[0] || null,
-                scrape_date: new Date().toISOString(),
-              },
-              profession: "DOCTOR",
-            });
-          }
-        }
-      } catch (err: any) {
-        console.error(`  ⚠️ CREMESP fallback falhou: ${err.message}`);
-      }
-    }
-  }
-
-  console.log(`⚕️ CRM-SP: ${leads.length} leads encontrados`);
-  return leads;
+  // CFM uses CAPTCHA/Cloudflare and CREMESP has SSL certificate issues
+  // Direct HTTP scraping returns generic portal HTML or fails TLS handshake.
+  // This source needs a scraping proxy (e.g., Apify, ScrapingBee) to work.
+  throw new Error(
+    "CRM/CFM bloqueiam acesso automatizado (WAF/Captcha/SSL). " +
+    "Requer Apify ou automação de navegador para funcionar. " +
+    "Alternativa: use DOCTORALIA com profession=DOCTOR para encontrar médicos."
+  );
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1244,211 +1097,18 @@ async function discoverCrmSp(
 // ══════════════════════════════════════════════════════════════════════════════
 
 async function discoverOabSp(
-  config: DiscoverRequest["config"]
+  _config: DiscoverRequest["config"]
 ): Promise<DiscoveredLead[]> {
-  console.log("⚖️ OAB-SP: Iniciando busca de advogados...");
+  console.log("⚖️ OAB-SP: Fonte temporariamente indisponível.");
 
-  const cities = config.cities || [];
-  const state = config.state || "SP";
-  const dailyLimit = config.daily_limit || 20;
-  const leads: DiscoveredLead[] = [];
-
-  for (const city of cities) {
-    if (leads.length >= dailyLimit) break;
-
-    console.log(`  🔍 Buscando advogados em: ${city}`);
-
-    // ── Attempt 1: CNA JSON API (POST) ──
-    let apiWorked = false;
-    try {
-      await sleep(2000);
-
-      // Try multiple possible CNA API endpoints
-      const cnaEndpoints = [
-        "https://cna.oab.org.br/api/search",
-        "https://cna.oab.org.br/api/advogados/search",
-      ];
-
-      for (const endpoint of cnaEndpoints) {
-        if (apiWorked || leads.length >= dailyLimit) break;
-
-        console.log(`  🔗 Tentando CNA API: ${endpoint}`);
-
-        try {
-          const resp = await safeFetch(endpoint, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Accept: "application/json",
-              Referer: "https://cna.oab.org.br/",
-              Origin: "https://cna.oab.org.br",
-            },
-            body: JSON.stringify({
-              nome: "",
-              seccional: state,
-              municipio: city,
-              tipoInscricao: "",
-            }),
-          }, 20000);
-
-          console.log(`  📡 CNA API status: ${resp.status}`);
-
-          if (resp.ok) {
-            const text = await resp.text();
-            console.log(`  📄 CNA resposta: ${text.length} bytes, preview: ${text.slice(0, 200)}`);
-
-            try {
-              const data = JSON.parse(text);
-              // Handle various response formats
-              let results: any[] = [];
-              if (Array.isArray(data)) {
-                results = data;
-              } else if (data.advogados) {
-                results = data.advogados;
-              } else if (data.data) {
-                results = Array.isArray(data.data) ? data.data : [];
-              } else if (data.results) {
-                results = data.results;
-              } else if (data.registros) {
-                results = data.registros;
-              }
-
-              console.log(`  📊 ${results.length} advogados encontrados no CNA`);
-
-              for (const adv of results) {
-                if (leads.length >= dailyLimit) break;
-
-                const name =
-                  adv.nome || adv.nomeAdvogado || adv.nomeCompleto || adv.name || "";
-                if (!name || name.length < 3) continue;
-
-                const oabNumber =
-                  adv.inscricao || adv.numeroInscricao || adv.numero || adv.oab || null;
-                const situation =
-                  adv.situacao || adv.tipoSituacao || adv.status || null;
-
-                // Ignora advogados com inscrição cancelada/suspensa
-                if (
-                  situation &&
-                  /cancelad|suspens|licenciad/i.test(String(situation))
-                ) {
-                  continue;
-                }
-
-                leads.push({
-                  name: name,
-                  whatsapp: null,
-                  source: "OAB_SP",
-                  address: {
-                    city: city,
-                    state: state,
-                  },
-                  metadata: {
-                    oab_number: oabNumber,
-                    seccional: state,
-                    situacao: situation,
-                    conselho: "OAB",
-                    scrape_date: new Date().toISOString(),
-                  },
-                  profession: "LAWYER",
-                });
-              }
-
-              if (results.length > 0) apiWorked = true;
-            } catch (parseErr) {
-              console.warn(`  ⚠️ CNA resposta não é JSON válido, tentando como HTML...`);
-              // Response might be HTML, will be handled in fallback
-            }
-          } else {
-            console.warn(`  ⚠️ CNA API ${endpoint} retornou HTTP ${resp.status}`);
-          }
-        } catch (endpointErr: any) {
-          console.warn(`  ⚠️ Endpoint ${endpoint} falhou: ${endpointErr.message}`);
-        }
-      }
-    } catch (err: any) {
-      console.error(`  💥 Erro na CNA API: ${err.message}`);
-    }
-
-    // ── Attempt 2: CNA HTML search page scraping ──
-    if (!apiWorked && leads.length === 0) {
-      try {
-        console.log(`  🔄 Tentando scrape HTML do CNA...`);
-        await sleep(2000);
-
-        // Try the search results page directly
-        const searchUrl = `https://cna.oab.org.br/search?q=&cidade=${encodeURIComponent(city)}&seccional=${state}`;
-        console.log(`  🔗 Scraping: ${searchUrl}`);
-
-        const pageResp = await safeFetch(searchUrl, {
-          headers: {
-            Accept: "text/html,application/xhtml+xml",
-            Referer: "https://cna.oab.org.br/",
-          },
-        }, 20000);
-
-        if (pageResp.ok) {
-          const html = await pageResp.text();
-          console.log(`  📄 CNA HTML: ${html.length} bytes`);
-
-          // Strategy 1: Extract from structured elements
-          const nameRegex =
-            /(?:advogado|nome|name|resultado)[^>]*>\s*([A-ZÀ-Ú][A-Za-zÀ-ú\s.]{5,60})\s*</gi;
-          const oabRegex = /(?:OAB|inscri)[^>]*>?[-/\s]*(?:SP)?\s*[-.:]?\s*(\d{3,8})/gi;
-
-          const names: string[] = [];
-          const oabs: string[] = [];
-          let m;
-
-          while ((m = nameRegex.exec(html)) !== null) {
-            const name = m[1].trim();
-            if (name.length > 5 && name.includes(" ")) {
-              names.push(name);
-            }
-          }
-          while ((m = oabRegex.exec(html)) !== null) {
-            oabs.push(m[1]);
-          }
-
-          // Strategy 2: Try extracting from table rows
-          const trRegex = /<tr[^>]*>\s*<td[^>]*>\s*([A-ZÀ-Ú][A-Za-zÀ-ú\s.]{5,60})\s*<\/td>/gi;
-          while ((m = trRegex.exec(html)) !== null) {
-            const name = m[1].trim();
-            if (name.length > 5 && name.includes(" ") && !names.includes(name)) {
-              names.push(name);
-            }
-          }
-
-          const uniqueNames = [...new Set(names)];
-          console.log(`  📋 ${uniqueNames.length} nomes extraídos do HTML CNA`);
-
-          for (let i = 0; i < uniqueNames.length && leads.length < dailyLimit; i++) {
-            leads.push({
-              name: uniqueNames[i],
-              whatsapp: null,
-              source: "OAB_SP",
-              address: { city, state },
-              metadata: {
-                oab_number: oabs[i] || null,
-                seccional: state,
-                conselho: "OAB",
-                source_method: "html_scrape",
-                scrape_date: new Date().toISOString(),
-              },
-              profession: "LAWYER",
-            });
-          }
-        } else {
-          console.warn(`  ⚠️ CNA HTML search retornou HTTP ${pageResp.status}`);
-        }
-      } catch (err: any) {
-        console.error(`  💥 CNA HTML scrape falhou: ${err.message}`);
-      }
-    }
-  }
-
-  console.log(`⚖️ OAB-SP: ${leads.length} leads encontrados`);
-  return leads;
+  // OAB CNA site is an Angular SPA and its API is protected (CORS/Tokens).
+  // Direct HTTP scraping only returns the empty app shell, not the data.
+  // This source needs a scraping proxy (e.g., Apify, ScrapingBee) with browser rendering to work.
+  throw new Error(
+    "OAB CNA bloqueia acesso automatizado direto (API/SPA). " +
+    "Requer Apify ou automação de navegador (Puppeteer/Playwright) para funcionar. " +
+    "Alternativa: use CNPJ_MINER com CNAE de advocacia para encontrar escritórios."
+  );
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
