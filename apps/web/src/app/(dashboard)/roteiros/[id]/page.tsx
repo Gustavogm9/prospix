@@ -42,6 +42,7 @@ export default function ScriptDetailsPage() {
   const [aiInstructions, setAiInstructions] = useState('');
   const [variations, setVariations] = useState<ScriptVariation[]>([]);
   const [aiTools, setAiTools] = useState<string[]>(['calendar', 'forward']);
+  const [flowData, setFlowData] = useState<{nodes: any[], edges: any[]} | null>(null);
 
   // AI Gen State
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
@@ -72,6 +73,7 @@ export default function ScriptDetailsPage() {
             setStatus(script.status || 'ACTIVE');
             setBaseMessage(script.base_message || '');
             setAiTools(script.ai_tools || ['calendar', 'forward']);
+            setFlowData((script.flow as any) || null);
             // in a real scenario ai_instructions would be fetched from DB
             setAiInstructions(script.ai_instructions || 'Você é um consultor MetLife focado em fechar reuniões de 10 min. Seja direto e não mande áudios.');
 
@@ -145,6 +147,25 @@ export default function ScriptDetailsPage() {
     } catch (err) {
       console.error(err);
       toast.error('Erro ao salvar', 'Ocorreu um erro ao gravar o roteiro.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSaveFlow = async (flow: any) => {
+    if (!tenantId || scriptId === 'new') {
+      toast.error('Erro', 'Salve o roteiro antes de configurar o fluxo visual.');
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const { error } = await scriptsQueries.update(tenantId, scriptId, { flow });
+      if (error) throw error;
+      setFlowData(flow);
+      toast.success('Fluxo visual salvo com sucesso');
+    } catch (err) {
+      console.error(err);
+      toast.error('Erro ao salvar fluxo', 'Ocorreu um erro ao gravar a estrutura visual.');
     } finally {
       setIsSaving(false);
     }
@@ -280,7 +301,12 @@ export default function ScriptDetailsPage() {
         
         {activeTab === 'FLUXO' && (
           <div className="animate-fadeIn max-w-[1200px] mx-auto w-full">
-            <ScriptFlowBuilder />
+            <ScriptFlowBuilder 
+              initialNodesProp={flowData?.nodes} 
+              initialEdgesProp={flowData?.edges}
+              onSave={handleSaveFlow}
+              isSaving={isSaving}
+            />
           </div>
         )}
 

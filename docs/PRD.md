@@ -5,6 +5,7 @@
 > **Posicionamento estratégico:** plataforma **multi-tenant desde o Day 1** — Guilds vai revender a mesma estrutura para outros corretores (MetLife, Bradesco, Prudential) e segmentos correlatos.
 > Data: 18/05/2026 · Versão 1.1 · Aprovação Tenant #1: R$ 7.900 setup + R$ 490/mês (kickoff confirmado)
 > Project lead: Gustavo Macedo · gustavo.macedo@guilds.com.br
+> **AVISO DE ATUALIZAÇÃO V2 (Junho/2026): O sistema principal migrou para o ecossistema Supabase + Next.js + Edge Functions. O Flow Builder visual (anteriormente listado como Fase 2) já foi antecipado e concluído na Fase 1. A inteligência multi-tenant agora é configurável em UI e o webhook possui Function Calling (mídias) e parser dinâmico de árvore React Flow. Para documentação de status atualizado, consulte `system-documentation.md`.**
 
 ---
 

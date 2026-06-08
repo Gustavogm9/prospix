@@ -2,17 +2,33 @@
 
 > **Plataforma de Prospecção Inteligente Multi-Tenant**
 > Desenvolvida por **Guilds** · Projeto liderado por Gustavo Macedo
-> Última atualização: 29/05/2026
+> Última atualização: Junho 2026 (Core Engine V2 Produção)
 
 ---
 
-## 1. Visão Geral do Produto
+## 1. Visão Geral do Produto e Status de Produção
 
 ### 1.1 O que é o Prospix
 
-O Prospix é uma **plataforma SaaS multi-tenant de prospecção automatizada** voltada para **corretores de seguros**. A plataforma captura leads de fontes públicas (Google Maps), enriquece dados, aborda automaticamente via WhatsApp usando IA conversacional, agenda reuniões e acompanha o funil de vendas completo.
+O Prospix é uma **plataforma SaaS multi-tenant de prospecção automatizada** voltada para **corretores de seguros**. A plataforma captura leads de fontes públicas, enriquece dados, aborda automaticamente via WhatsApp usando IA conversacional, agenda reuniões e acompanha o funil de vendas completo.
 
-### 1.2 Proposta de Valor
+### 1.2 Status de Produção (100% Pronto)
+Os seguintes módulos compõem a versão V2 do Core Engine e já estão 100% integrados em produção:
+- **Editor Visual de Fluxo (React Flow):** Totalmente operacional. O diagrama visual desenhado na UI é compilado como State Machine e injetado no System Prompt da IA para governar o fluxo.
+- **Configuração de IA por Tenant:** Modelo (GPT-4o-mini), temperatura e instruções base configuráveis via UI e integradas na Engine.
+- **Loop de Indicações (Referrals):** Coleta, registro e transformação automática de indicações em novos leads.
+- **Real-Time Escalation:** Notificação de requisição de suporte humano no WhatsApp do usuário e auto-pausa da automação IA.
+- **Envio de Mídias (Function Calling):** A IA decide autonomamente quando enviar um PDF (presentation) através da tool `send_pdf`, via Evolution API.
+- **Auto Mode Discovery:** Worker que descobre campanhas ativas e gerencia as buscas automaticamente.
+
+### 1.3 Limitações Conhecidas (Não 100% Pronto)
+- **Bloqueio de IP em Scrapers (WAF):** Alguns scrapers (CRO/OAB) podem sofrer 403 Forbidden por bot protection da Cloudflare, exigindo uso de proxies residenciais para operar em alta escala.
+- **Dashboard Financeiro (Stripe/Asaas):** Frontend exibe dados de mock e a sincronização completa de boletos Asaas em tela requer refinos.
+- **Gráficos Avançados de Performance:** Funil histórico com drop-off de conversão avançada requer maior volume de dados para exibição polida.
+
+---
+
+## 2. Proposta de Valor
 
 | Para | Benefício |
 |---|---|

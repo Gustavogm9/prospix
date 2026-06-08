@@ -190,22 +190,57 @@ function buildConversationContext(messages: any[], leadName: string): string {
 
 // ── Guardrails ──────────────────────────────────────────────────────────────
 function applyGuardrails(text: string): string {
-  let result = text;
-
-  // Truncate to max 300 chars
-  if (result.length > 300) {
-    result = result.slice(0, 297) + "...";
-  }
-
+  let cleaned = text.replace(/<[^>]*>?/gm, ''); // remove html
+  cleaned = cleaned.replace(/^(System:|AI:|Assistant:)\s*/i, ''); // remove prefixes
+  
   // Remove any price mentions (R$ XX, XX reais, etc.)
-  result = result.replace(/R\$\s*[\d.,]+/gi, "[consulta personalizada]");
-  result = result.replace(/\d+\s*reais/gi, "[consulta personalizada]");
+  cleaned = cleaned.replace(/R\$\s*[\d.,]+/gi, "[consulta personalizada]");
+  cleaned = cleaned.replace(/\d+\s*reais/gi, "[consulta personalizada]");
 
   // Remove guarantee/promise keywords
-  result = result.replace(/garant(o|imos|ia)/gi, "buscamos");
-  result = result.replace(/prometo|prometemos/gi, "trabalhamos para");
+  cleaned = cleaned.replace(/garant(o|imos|ia)/gi, "buscamos");
+  cleaned = cleaned.replace(/prometo|prometemos/gi, "trabalhamos para");
 
-  return result;
+  // Truncate to max 300 chars
+  if (cleaned.length > 300) {
+    cleaned = cleaned.slice(0, 297) + "...";
+  }
+
+  return cleaned.trim();
+}
+
+function parseFlowToPrompt(flow: any): string {
+  if (!flow || !flow.nodes || !Array.isArray(flow.nodes) || flow.nodes.length === 0) return "";
+  const nodes = flow.nodes;
+  const edges = flow.edges || [];
+  
+  let instructions = "\n### FLUXOGRAMA DE DECISÃO DA CONVERSA (STATE MACHINE)\nSiga RIGOROSAMENTE estas etapas do fluxo para este roteiro. Mapeie em que ponto a conversa está e responda de acordo com os próximos nós:\n\n";
+  
+  // Sort nodes generally by Y position to read top to bottom logically
+  const sortedNodes = [...nodes].sort((a: any, b: any) => (a.position?.y || 0) - (b.position?.y || 0));
+
+  for (const node of sortedNodes) {
+    const title = node.data?.title || node.type;
+    const content = node.data?.message || node.data?.content || '';
+    if (!title && !content) continue;
+    
+    instructions += `- **[${title}]**: ${content}\n`;
+    
+    // find connected edges
+    const outgoing = edges.filter((e: any) => e.source === node.id);
+    if (outgoing.length > 0) {
+      for (const edge of outgoing) {
+        const targetNode = nodes.find((n: any) => n.id === edge.target);
+        if (targetNode) {
+          const condition = edge.data?.label ? `Se o usuário se encaixar em "${edge.data.label}"` : `Se a conversa avançar`;
+          instructions += `   -> ${condition} => Vá para o passo: [${targetNode.data?.title || targetNode.type}]\n`;
+        }
+      }
+    }
+  }
+  
+  instructions += "\n(Sua tarefa é identificar em qual etapa a conversa está atualmente e responder com base no que está escrito no nó correto e nas ramificações possíveis.)\n";
+  return instructions;
 }
 
 // ── Status update logic based on intent ─────────────────────────────────────
@@ -625,15 +660,25 @@ serve(async (req: Request) => {
     let scriptBaseMessage: string | null = null;
     let aiTools: string[] | null = [];
     let aiInstructions: string | null = null;
+    let scriptFlow: any = null;
+    
     if (conversation.script_id) {
       const { data: script } = await supabase
         .from("scripts")
-        .select("base_message, name, ai_tools, ai_instructions")
+        .select("base_message, name, ai_tools, ai_instructions, flow")
         .eq("id", conversation.script_id)
         .single();
       scriptBaseMessage = script?.base_message || null;
       aiTools = script?.ai_tools || [];
       aiInstructions = script?.ai_instructions || null;
+      scriptFlow = script?.flow || null;
+    }
+
+    if (scriptFlow) {
+      const flowInstructions = parseFlowToPrompt(scriptFlow);
+      if (flowInstructions) {
+        aiInstructions = (aiInstructions || "") + "\n\n" + flowInstructions;
+      }
     }
 
     const { data: tenantAiConfig } = await supabase

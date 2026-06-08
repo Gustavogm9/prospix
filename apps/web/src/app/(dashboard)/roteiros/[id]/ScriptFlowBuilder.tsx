@@ -256,14 +256,30 @@ const initialEdges: Edge[] = [
   { id: 'e9-10', source: '9', target: '10', type: 'custom' }
 ];
 
-export function ScriptFlowBuilder() {
-  const [nodes, , onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+export function ScriptFlowBuilder({ 
+  initialNodesProp, 
+  initialEdgesProp, 
+  onSave, 
+  isSaving 
+}: { 
+  initialNodesProp?: Node[], 
+  initialEdgesProp?: Edge[], 
+  onSave?: (flow: { nodes: Node[], edges: Edge[] }) => void,
+  isSaving?: boolean 
+}) {
+  const [nodes, , onNodesChange] = useNodesState(initialNodesProp?.length ? initialNodesProp : initialNodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdgesProp?.length ? initialEdgesProp : initialEdges);
 
   const onConnect = useCallback(
     (params: Connection | Edge) => setEdges((eds) => addEdge({ ...params, type: 'custom' } as Edge, eds)),
     [setEdges],
   );
+
+  const handleSave = () => {
+    if (onSave) {
+      onSave({ nodes, edges });
+    }
+  };
 
   return (
     <div className="bg-white rounded-2xl border border-[#E5E7EB] flex flex-col h-[700px] overflow-hidden shadow-sm relative">
@@ -276,6 +292,18 @@ export function ScriptFlowBuilder() {
           <p className="text-[13px] text-[#64748B] mt-1">
             Arraste e solte para definir o momento exato em que esta mensagem será disparada.
           </p>
+        </div>
+        <div className="flex gap-3">
+          <button
+            onClick={handleSave}
+            disabled={isSaving}
+            className="flex items-center justify-center gap-2 px-4 py-2 bg-[#1B3A6B] hover:bg-[#1B3A6B]/90 text-white rounded-lg text-sm font-semibold transition-colors disabled:opacity-50"
+          >
+            {isSaving ? (
+              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            ) : null}
+            Salvar Fluxo
+          </button>
         </div>
       </div>
       <div className="flex-1 w-full h-full bg-[#F8F9FB]">
