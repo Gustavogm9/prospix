@@ -360,6 +360,15 @@ async function processFirstTouch(): Promise<{
             total_usages: (script.total_usages || 0) + 1,
           }).eq("id", script.id);
 
+          // Track WhatsApp usage
+          await supabase.rpc("increment_tenant_usage", {
+            p_tenant_id: tenantId,
+            p_llm_tokens_input: 0,
+            p_llm_tokens_output: 0,
+            p_whatsapp_msgs: 1,
+            p_maps_calls: 0
+          });
+
           // Increment variation stats
           await supabase.from("script_variations").update({
             total_sent: (variation.total_sent || 0) + 1,
@@ -397,6 +406,15 @@ async function processFirstTouch(): Promise<{
 
           sent++;
           console.log(`  ✅ ${lead.name} → SENT (${variation.variant_letter})`);
+
+          // Track WhatsApp usage
+          await supabase.rpc("increment_tenant_usage", {
+            p_tenant_id: tenantId,
+            p_llm_tokens_input: 0,
+            p_llm_tokens_output: 0,
+            p_whatsapp_msgs: 1,
+            p_maps_calls: 0
+          });
         } else {
           // Log failure
           await supabase.from("lead_events").insert({
@@ -539,6 +557,15 @@ async function processPendingOutbound(): Promise<{
 
         sent++;
         console.log(`  ✅ ${leadName} → AI response SENT`);
+
+        // Track WhatsApp usage
+        await supabase.rpc("increment_tenant_usage", {
+          p_tenant_id: item.tenant_id,
+          p_llm_tokens_input: 0,
+          p_llm_tokens_output: 0,
+          p_whatsapp_msgs: 1,
+          p_maps_calls: 0
+        });
       } else {
         const attempts = (item.attempts || 0) + 1;
         const updateData: any = {

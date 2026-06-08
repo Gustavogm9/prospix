@@ -771,6 +771,15 @@ serve(async (req: Request) => {
       created_at: now,
     });
 
+    // Increment AI LLM usage
+    await supabase.rpc("increment_tenant_usage", {
+      p_tenant_id: tenantId,
+      p_llm_tokens_input: aiResponse.tokensIn || 0,
+      p_llm_tokens_output: aiResponse.tokensOut || 0,
+      p_whatsapp_msgs: 0,
+      p_maps_calls: 0
+    });
+
     console.log(`  ⏱️ Scheduled for +${delaySec}s (${scheduledFor})`);
 
     return new Response(JSON.stringify({

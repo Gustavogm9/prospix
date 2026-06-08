@@ -317,6 +317,17 @@ async function insertLeads(
 
       inserted++;
       console.log(`  ✅ Inserido: ${lead.name} (${phone})`);
+
+      if (sourceType === "GOOGLE_MAPS") {
+        // Track Google Maps usage
+        await supabase.rpc("increment_tenant_usage", {
+          p_tenant_id: tenantId,
+          p_llm_tokens_input: 0,
+          p_llm_tokens_output: 0,
+          p_whatsapp_msgs: 0,
+          p_maps_calls: 1
+        });
+      }
     } catch (err: any) {
       console.error(`  💥 Erro inesperado ao inserir ${lead.name}: ${err.message}`);
     }
