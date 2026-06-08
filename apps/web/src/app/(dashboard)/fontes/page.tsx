@@ -949,9 +949,9 @@ export default function LeadSources() {
           config: {
             search_tags: searchTags,
             cities: campaign.cities || [],
-            state: 'SP', // TODO: derivar do estado das cidades
+            state: campaign.state || 'SP',
             daily_limit: campaign.daily_limit || 20,
-            profession: campaign.profession || null,
+            profession: campaign.profession,
           },
         }),
       });

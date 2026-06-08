@@ -562,6 +562,8 @@ export const campaignsQueries = {
     activeScriptId?: string;
     filters?: Record<string, unknown>;
     searchTags?: string[];
+    captureSources?: string[];
+    state?: string;
   }) => {
     const { data, error } = await supabase
       .from('campaigns')
@@ -578,6 +580,8 @@ export const campaignsQueries = {
         active_script_id: campaignData.activeScriptId,
         filters: (campaignData.filters || { min_fit_score: 3 }) as any,
         search_tags: campaignData.searchTags || [],
+        capture_sources: campaignData.captureSources || ['GOOGLE_MAPS'],
+        state: campaignData.state || 'SP',
         status: 'DRAFT' as const,
         updated_at: new Date().toISOString(),
       } as any)
@@ -600,6 +604,8 @@ export const campaignsQueries = {
     activeScriptId?: string;
     filters?: Record<string, unknown>;
     searchTags?: string[];
+    captureSources?: string[];
+    state?: string;
   }) => {
     const { data: campaign, error: findErr } = await supabase
       .from('campaigns')
@@ -624,6 +630,8 @@ export const campaignsQueries = {
     if (updateData.hourWindowEnd !== undefined) updatePayload.hour_window_end = updateData.hourWindowEnd;
     if (updateData.activeScriptId !== undefined) updatePayload.active_script_id = updateData.activeScriptId;
     if (updateData.searchTags !== undefined) updatePayload.search_tags = updateData.searchTags;
+    if (updateData.captureSources !== undefined) updatePayload.capture_sources = updateData.captureSources;
+    if (updateData.state !== undefined) updatePayload.state = updateData.state;
     if (updateData.filters) {
       updatePayload.filters = { ...(campaign.filters as any || {}), ...updateData.filters };
     }

@@ -20,7 +20,36 @@ interface Campaign {
   createdAt: string;
   filters?: Record<string, any>;
   searchTags?: string[];
+  captureSources?: string[];
+  state?: string;
 }
+
+const BRAZILIAN_STATES = [
+  { value: 'AC', label: 'AC – Acre' }, { value: 'AL', label: 'AL – Alagoas' },
+  { value: 'AP', label: 'AP – Amapá' }, { value: 'AM', label: 'AM – Amazonas' },
+  { value: 'BA', label: 'BA – Bahia' }, { value: 'CE', label: 'CE – Ceará' },
+  { value: 'DF', label: 'DF – Distrito Federal' }, { value: 'ES', label: 'ES – Espírito Santo' },
+  { value: 'GO', label: 'GO – Goiás' }, { value: 'MA', label: 'MA – Maranhão' },
+  { value: 'MT', label: 'MT – Mato Grosso' }, { value: 'MS', label: 'MS – Mato Grosso do Sul' },
+  { value: 'MG', label: 'MG – Minas Gerais' }, { value: 'PA', label: 'PA – Pará' },
+  { value: 'PB', label: 'PB – Paraíba' }, { value: 'PR', label: 'PR – Paraná' },
+  { value: 'PE', label: 'PE – Pernambuco' }, { value: 'PI', label: 'PI – Piauí' },
+  { value: 'RJ', label: 'RJ – Rio de Janeiro' }, { value: 'RN', label: 'RN – Rio Grande do Norte' },
+  { value: 'RS', label: 'RS – Rio Grande do Sul' }, { value: 'RO', label: 'RO – Rondônia' },
+  { value: 'RR', label: 'RR – Roraima' }, { value: 'SC', label: 'SC – Santa Catarina' },
+  { value: 'SP', label: 'SP – São Paulo' }, { value: 'SE', label: 'SE – Sergipe' },
+  { value: 'TO', label: 'TO – Tocantins' },
+];
+
+const PROFESSION_SOURCES: Record<string, string[]> = {
+  DOCTOR:       ['GOOGLE_MAPS', 'CNPJ_MINER', 'DOCTORALIA', 'CRM_SP', 'INSTAGRAM', 'LANDING_PAGE', 'IMPORTED'],
+  LAWYER:       ['GOOGLE_MAPS', 'CNPJ_MINER', 'OAB_SP', 'INSTAGRAM', 'LANDING_PAGE', 'IMPORTED'],
+  DENTIST:      ['GOOGLE_MAPS', 'CNPJ_MINER', 'CRO_SP', 'DOCTORALIA', 'INSTAGRAM', 'LANDING_PAGE', 'IMPORTED'],
+  ENTREPRENEUR: ['GOOGLE_MAPS', 'CNPJ_MINER', 'COMPRASNET', 'VIVAREAL', 'INSTAGRAM', 'LANDING_PAGE', 'IMPORTED'],
+  ENGINEER:     ['GOOGLE_MAPS', 'CNPJ_MINER', 'INSTAGRAM', 'LANDING_PAGE', 'IMPORTED'],
+  ACCOUNTANT:   ['GOOGLE_MAPS', 'CNPJ_MINER', 'INSTAGRAM', 'LANDING_PAGE', 'IMPORTED'],
+  OTHER:        ['GOOGLE_MAPS', 'CNPJ_MINER', 'LANDING_PAGE', 'IMPORTED'],
+};
 
 interface CampaignLimit {
   plan: string;
@@ -86,9 +115,14 @@ const CAPTURE_SOURCES = [
   { id: 'GOOGLE_MAPS', label: 'Google Maps Places', icon: '📍', description: 'Busca por especialidade e geolocalização.' },
   { id: 'CNPJ_MINER', label: 'CNPJ Miner (Receita Federal)', icon: '🔍', description: 'Empresas abertas recentemente na base da RF.' },
   { id: 'DOCTORALIA', label: 'Doctoralia', icon: '🩺', description: 'Médicos, dentistas e clínicas locais.', isComingSoon: true },
-  { id: 'COMPRASNET', label: 'Comprasnet Licitações', icon: '⚖️', description: 'Ganhadoras de licitações públicas para Seguro Garantia.', isComingSoon: true },
-  { id: 'VIVAREAL', label: 'VivaReal Imóveis', icon: '🏢', description: 'Anúncios de aluguel comercial para Seguro Fiança.', isComingSoon: true },
-  { id: 'INSTAGRAM', label: 'Instagram Scraper', icon: '📸', description: 'Perfis profissionais locais com contatos expostos.', isComingSoon: true },
+  { id: 'CRM_SP', label: 'CRM (Conselho Medicina)', icon: '🏥', description: 'Base do conselho regional de medicina.' },
+  { id: 'OAB_SP', label: 'OAB (Ordem Advogados)', icon: '⚖️', description: 'Base da Ordem dos Advogados do Brasil.' },
+  { id: 'CRO_SP', label: 'CRO (Conselho Odonto)', icon: '🦷', description: 'Base do conselho regional de odontologia.' },
+  { id: 'COMPRASNET', label: 'Comprasnet Licitações', icon: '📜', description: 'Ganhadoras de licitações públicas.', isComingSoon: true },
+  { id: 'VIVAREAL', label: 'VivaReal Imóveis', icon: '🏠', description: 'Anúncios de aluguel comercial.', isComingSoon: true },
+  { id: 'INSTAGRAM', label: 'Instagram Scraper', icon: '📸', description: 'Perfis profissionais locais.', isComingSoon: true },
+  { id: 'LANDING_PAGE', label: 'Landing Page (Webhook)', icon: '🌐', description: 'Leads via formulários externos.' },
+  { id: 'IMPORTED', label: 'Importação CSV', icon: '📄', description: 'Leads importados manualmente.' },
 ];
 
 const PROF_ICON: Record<string, string> = {
@@ -123,7 +157,8 @@ export default function Campaigns() {
 
   // Form state
   const [selectedSegment, setSelectedSegment] = useState('health');
-  const [captureSource, setCaptureSource] = useState('GOOGLE_MAPS');
+  const [captureSources, setCaptureSources] = useState<string[]>(['GOOGLE_MAPS']);
+  const [campState, setCampState] = useState('SP');
   const [searchTags, setSearchTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [newCamp, setNewCamp] = useState({
@@ -147,6 +182,8 @@ export default function Campaigns() {
         hourWindowEnd: c.hour_window_end, status: c.status,
         createdAt: c.created_at, filters: c.filters,
         searchTags: c.search_tags || [],
+        captureSources: c.capture_sources || ['GOOGLE_MAPS'],
+        state: c.state || 'SP',
       })));
     } catch (err) {
       console.error('Failed to fetch campaigns', err);
@@ -210,6 +247,8 @@ export default function Campaigns() {
         hourWindowEnd: camp.hourWindowEnd,
         filters: camp.filters,
         searchTags: camp.searchTags || [],
+        captureSources: camp.captureSources || ['GOOGLE_MAPS'],
+        state: camp.state || 'SP',
       });
       if (result.error) throw new Error(result.error.message);
       toast.success('Campanha duplicada');
@@ -242,7 +281,8 @@ export default function Campaigns() {
       icpMinGoogleRating: String(f.min_google_rating ?? 4),
       icpMinReviews: String(f.min_reviews ?? 5),
     });
-    setCaptureSource(f.capture_source || 'GOOGLE_MAPS');
+    setCaptureSources(camp.captureSources || [f.capture_source || 'GOOGLE_MAPS']);
+    setCampState(camp.state || 'SP');
     setIcpOpen(true);
     setIsCreateOpen(true);
   };
@@ -275,7 +315,8 @@ export default function Campaigns() {
     setSearchTags(DEFAULT_SEGMENT.suggestedTags);
     setTagInput('');
     setNewCamp({ name: '', cities: '', dailyLimit: '20', hourStart: '8', hourEnd: '18', icpMinScore: '3', icpWeightProfession: '3', icpWeightWhatsapp: '2', icpWeightOwner: '2', icpWeightArea: '1', icpWeightCnpjYears: '1', icpWeightGoogle: '1', icpHighValueAreas: '', icpMinGoogleRating: '4', icpMinReviews: '5' });
-    setCaptureSource('GOOGLE_MAPS');
+    setCaptureSources(['GOOGLE_MAPS']);
+    setCampState('SP');
     setIcpOpen(false);
   };
 
@@ -309,8 +350,9 @@ export default function Campaigns() {
       hourWindowStart: Number(newCamp.hourStart) || 8,
       hourWindowEnd: Number(newCamp.hourEnd) || 18,
       searchTags,
+      captureSources,
+      state: campState,
       filters: {
-        capture_source: captureSource,
         min_fit_score: Number(newCamp.icpMinScore) || 3,
         weights: {
           profession_match: Number(newCamp.icpWeightProfession) || 3,
@@ -439,10 +481,19 @@ export default function Campaigns() {
                     <div className="text-[14px] font-semibold text-[#0F172A]">{camp.name}</div>
                     <div className="text-[11px] text-[#64748B] flex items-center gap-1.5 flex-wrap">
                       <span>Criada em {fmtDate(camp.createdAt)}</span>
+                      {camp.state && <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-[#F1F3F6] text-[#475569] font-medium text-[9.5px]">📍 {camp.state}</span>}
                       <span>·</span>
-                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#F1F3F6] text-[#475569] font-medium text-[9.5px]">
-                        🔌 {CAPTURE_SOURCES.find(s => s.id === (camp.filters?.capture_source || 'GOOGLE_MAPS'))?.label || 'Google Maps'}
-                      </span>
+                      {(camp.captureSources || ['GOOGLE_MAPS']).slice(0, 2).map(src => {
+                        const srcDef = CAPTURE_SOURCES.find(s => s.id === src);
+                        return srcDef ? (
+                          <span key={src} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-[#F1F3F6] text-[#475569] font-medium text-[9.5px]">
+                            {srcDef.icon} {srcDef.label}
+                          </span>
+                        ) : null;
+                      })}
+                      {(camp.captureSources || ['GOOGLE_MAPS']).length > 2 && (
+                        <span className="text-[9.5px] px-1.5 py-0.5 rounded bg-[#F1F3F6] text-[#64748B] font-medium">+{(camp.captureSources || []).length - 2}</span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -600,28 +651,78 @@ export default function Campaigns() {
               <p className="text-[10px] text-[#64748B] mt-1">Cada tag vira uma busca separada no Google Maps. Ex: &quot;advogados&quot;, &quot;escritório de advocacia&quot;</p>
             </div>
 
-            {/* Capture Source */}
+            {/* State (UF) */}
             <div>
-              <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">Fonte de Captação (Descoberta)</label>
+              <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">Estado (UF)</label>
               <div className="relative">
                 <select
-                  value={captureSource}
-                  onChange={e => setCaptureSource(e.target.value)}
+                  value={campState}
+                  onChange={e => setCampState(e.target.value)}
                   className="w-full h-9 pl-3 pr-8 rounded-lg bg-[#F9FAFB] border border-[#E5E7EB] text-[13px] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none appearance-none cursor-pointer font-medium text-[#0F172A]"
                 >
-                  {CAPTURE_SOURCES.map(source => (
-                    <option key={source.id} value={source.id} disabled={source.isComingSoon}>
-                      {source.icon} {source.label} {source.isComingSoon ? '(Em breve)' : ''}
-                    </option>
+                  {BRAZILIAN_STATES.map(st => (
+                    <option key={st.value} value={st.value}>{st.label}</option>
                   ))}
                 </select>
                 <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-[#64748B]">
                   <ChevronDown className="w-4 h-4" />
                 </div>
               </div>
-              <p className="text-[10.5px] text-[#64748B] mt-1.5">
-                {CAPTURE_SOURCES.find(s => s.id === captureSource)?.description}
-              </p>
+              <p className="text-[10px] text-[#64748B] mt-1">Usado para fontes regionais (CRM, OAB, CRO do estado).</p>
+            </div>
+
+            {/* Capture Sources (multi-select) */}
+            <div>
+              <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-1.5">Fontes de Captação</label>
+              <p className="text-[10px] text-[#64748B] mb-2">Selecione quais fontes de descoberta esta campanha usará. Fontes disponíveis mudam conforme o segmento.</p>
+              <div className="grid grid-cols-1 gap-1.5 max-h-[200px] overflow-y-auto p-2 bg-[#F9FAFB] border border-[#E5E7EB] rounded-lg">
+                {(() => {
+                  const seg = SEGMENTS.find(s => s.id === selectedSegment) ?? DEFAULT_SEGMENT;
+                  const allowed = PROFESSION_SOURCES[seg.profession] || PROFESSION_SOURCES['OTHER'] || [];
+                  return CAPTURE_SOURCES.filter(src => allowed.includes(src.id)).map(source => {
+                    const checked = captureSources.includes(source.id);
+                    const isComingSoon = source.isComingSoon;
+                    return (
+                      <label
+                        key={source.id}
+                        className={`flex items-center gap-2.5 p-2 rounded-lg border cursor-pointer transition-all ${
+                          isComingSoon
+                            ? 'opacity-50 cursor-not-allowed border-[#E5E7EB] bg-[#F9FAFB]'
+                            : checked
+                              ? 'border-[#1B3A6B] bg-[rgba(27,58,107,0.04)] ring-1 ring-[#1B3A6B]/20'
+                              : 'border-[#E5E7EB] hover:border-[#1B3A6B]/40 hover:bg-white'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={isComingSoon}
+                          onChange={() => {
+                            if (isComingSoon) return;
+                            setCaptureSources(prev =>
+                              prev.includes(source.id)
+                                ? prev.filter(s => s !== source.id)
+                                : [...prev, source.id]
+                            );
+                          }}
+                          className="w-3.5 h-3.5 rounded border-[#CBD5E1] text-[#1B3A6B] focus:ring-[#1B3A6B] accent-[#1B3A6B] shrink-0"
+                        />
+                        <span className="text-[14px] shrink-0">{source.icon}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[11.5px] font-medium text-[#0F172A] truncate">
+                            {source.label}
+                            {isComingSoon && <span className="ml-1 text-[9px] text-[#94A3B8] font-bold uppercase">(Em breve)</span>}
+                          </div>
+                          <div className="text-[9.5px] text-[#64748B] truncate">{source.description}</div>
+                        </div>
+                      </label>
+                    );
+                  });
+                })()}
+              </div>
+              {captureSources.length === 0 && (
+                <p className="text-[10px] text-[#D92D20] mt-1 font-medium">⚠ Selecione pelo menos uma fonte.</p>
+              )}
             </div>
 
             {/* Cities */}

@@ -532,7 +532,9 @@ async function discoverCnpjMiner(
 
   const cnpjaKey = Deno.env.get("CNPJA_API_KEY");
   if (!cnpjaKey) {
-    throw new Error("CNPJA_API_KEY não configurada");
+    throw new Error(
+      "CNPJA_API_KEY não configurada — configure a variável de ambiente CNPJA_API_KEY no Supabase (Settings > Edge Functions > Secrets) com sua chave da API CNPJá (https://cnpja.com)"
+    );
   }
 
   const cities = config.cities || [];
@@ -638,21 +640,106 @@ async function discoverCnpjMiner(
 // HANDLER 3: DOCTORALIA (Web Scraping)
 // ══════════════════════════════════════════════════════════════════════════════
 
+// Doctoralia ONLY works for medical professions. Map professions to valid URL slugs.
+const DOCTORALIA_SPECIALTY_SLUGS: Record<string, string[]> = {
+  DOCTOR: [
+    "cardiologista", "dermatologista", "endocrinologista", "gastroenterologista",
+    "ginecologista", "neurologista", "oftalmologista", "ortopedista",
+    "otorrinolaringologista", "pediatra", "psiquiatra", "urologista",
+    "clinico-geral", "geriatra", "nefrologista", "pneumologista",
+    "reumatologista", "oncologista", "hematologista", "infectologista",
+    "cirurgiao-plastico", "angiologista", "proctologista", "medico",
+  ],
+  DENTIST: [
+    "dentista", "ortodontista", "implantodontista", "endodontista",
+    "periodontista", "odontopediatra", "cirurgiao-dentista",
+  ],
+};
+
+// Map common Portuguese search tags to Doctoralia-compatible slugs
+const DOCTORALIA_TAG_SLUG_MAP: Record<string, string> = {
+  "médico": "clinico-geral",
+  "medico": "clinico-geral",
+  "clínico geral": "clinico-geral",
+  "clinico geral": "clinico-geral",
+  "cardiologista": "cardiologista",
+  "dermatologista": "dermatologista",
+  "endocrinologista": "endocrinologista",
+  "gastroenterologista": "gastroenterologista",
+  "ginecologista": "ginecologista",
+  "neurologista": "neurologista",
+  "oftalmologista": "oftalmologista",
+  "ortopedista": "ortopedista",
+  "otorrinolaringologista": "otorrinolaringologista",
+  "pediatra": "pediatra",
+  "psiquiatra": "psiquiatra",
+  "urologista": "urologista",
+  "geriatra": "geriatra",
+  "nefrologista": "nefrologista",
+  "pneumologista": "pneumologista",
+  "reumatologista": "reumatologista",
+  "oncologista": "oncologista",
+  "hematologista": "hematologista",
+  "infectologista": "infectologista",
+  "cirurgião plástico": "cirurgiao-plastico",
+  "cirurgiao plastico": "cirurgiao-plastico",
+  "angiologista": "angiologista",
+  "proctologista": "proctologista",
+  "dentista": "dentista",
+  "ortodontista": "ortodontista",
+  "implantodontista": "implantodontista",
+  "endodontista": "endodontista",
+  "periodontista": "periodontista",
+  "odontopediatra": "odontopediatra",
+  "cirurgião dentista": "cirurgiao-dentista",
+  "cirurgiao dentista": "cirurgiao-dentista",
+};
+
 async function discoverDoctoralia(
   config: DiscoverRequest["config"]
 ): Promise<DiscoveredLead[]> {
   console.log("🩺 Doctoralia: Iniciando busca...");
+
+  // Doctoralia ONLY works for medical professions (DOCTOR / DENTIST)
+  const profession = config.profession || "";
+  const allowedProfessions = ["DOCTOR", "DENTIST"];
+  if (!allowedProfessions.includes(profession)) {
+    throw new Error(
+      `Doctoralia disponível apenas para profissões médicas (DOCTOR, DENTIST). ` +
+      `Profissão recebida: '${profession || "nenhuma"}'. ` +
+      `Para outras profissões, use fontes como CNPJ_MINER, OAB_SP, etc.`
+    );
+  }
 
   const tags = config.search_tags || [];
   const cities = config.cities || [];
   const dailyLimit = config.daily_limit || 20;
   const leads: DiscoveredLead[] = [];
 
+  // If no tags provided, use default specialties for the profession
+  const validSlugs = DOCTORALIA_SPECIALTY_SLUGS[profession] || [];
+  let effectiveTags = tags.length > 0 ? tags : validSlugs.slice(0, 3);
+
+  // Map tags to valid Doctoralia slugs
+  effectiveTags = effectiveTags.map((tag) => {
+    const lower = tag.toLowerCase().trim();
+    // Check if it's already a known slug
+    if (validSlugs.includes(lower)) return lower;
+    // Check the mapping table
+    if (DOCTORALIA_TAG_SLUG_MAP[lower]) return DOCTORALIA_TAG_SLUG_MAP[lower];
+    // Try to slugify directly and check if valid
+    const slugged = toSlug(tag);
+    if (validSlugs.includes(slugged)) return slugged;
+    // Fallback: use the slug as-is (it may still work on Doctoralia)
+    return slugged;
+  });
+
+  console.log(`  📋 Profissão: ${profession}, Tags mapeadas: [${effectiveTags.join(", ")}]`);
+
   for (const city of cities) {
-    for (const tag of tags) {
+    for (const specialtySlug of effectiveTags) {
       if (leads.length >= dailyLimit) break;
 
-      const specialtySlug = toSlug(tag);
       const citySlug = toSlug(city);
       const url = `https://www.doctoralia.com.br/${specialtySlug}/${citySlug}`;
 
@@ -665,45 +752,73 @@ async function discoverDoctoralia(
         const resp = await safeFetch(url, {}, 20000);
         if (!resp.ok) {
           console.error(`  ❌ Doctoralia retornou HTTP ${resp.status} para ${url}`);
+          if (resp.status === 404) {
+            console.warn(`  ⚠️ Slug '${specialtySlug}' inválido para Doctoralia — pulando`);
+          }
           continue;
         }
 
         const html = await resp.text();
-
-        // Extrai cards de médicos/clínicas do HTML
-        // Doctoralia usa itemprop="name" e structured data
-        const nameMatches = html.match(
-          /itemprop=["']name["'][^>]*>([^<]+)</gi
-        ) || [];
-
-        const addressMatches = html.match(
-          /itemprop=["']address["'][^>]*>([^<]*)</gi
-        ) || [];
+        console.log(`  📄 HTML recebido: ${html.length} bytes`);
 
         // Extrai telefones do HTML
         const phones = extractPhonesFromText(html);
 
-        // Tenta extrair nomes de h2/h3 tags com padrões de nomes de médicos
-        const doctorNameRegex =
-          /<(?:h2|h3)[^>]*class="[^"]*(?:doctor|name|professional)[^"]*"[^>]*>([^<]+)</gi;
+        // Strategy 1: Extract from data-doctor-name attributes
+        const dataNameRegex = /data-doctor-name=["']([^"']+)["']/gi;
         const doctorNames: string[] = [];
         let nameMatch;
+        while ((nameMatch = dataNameRegex.exec(html)) !== null) {
+          const name = nameMatch[1].trim();
+          if (name.length > 3 && name.length < 100) doctorNames.push(name);
+        }
+
+        // Strategy 2: Extract from h2/h3 tags with professional name patterns
+        const doctorNameRegex =
+          /<(?:h2|h3)[^>]*class="[^"]*(?:doctor|name|professional)[^"]*"[^>]*>([^<]+)</gi;
         while ((nameMatch = doctorNameRegex.exec(html)) !== null) {
           doctorNames.push(nameMatch[1].trim());
         }
 
-        // Fallback: extrai de itemprop="name"
+        // Strategy 3: Extract from itemprop="name" (structured data)
+        const nameMatches = html.match(
+          /itemprop=["']name["'][^>]*>([^<]+)</gi
+        ) || [];
         for (const m of nameMatches) {
           const clean = m.replace(/itemprop=["']name["'][^>]*>/i, "").trim();
           if (clean && clean.length > 3 && clean.length < 100) {
-            // Filtra nomes que parecem ser de profissionais de saúde
-            if (
-              /^(Dr\.?|Dra\.?)\s/i.test(clean) ||
-              doctorNames.length === 0
-            ) {
+            if (/^(Dr\.?|Dra\.?)\s/i.test(clean) || doctorNames.length === 0) {
               doctorNames.push(clean);
             }
           }
+        }
+
+        // Strategy 4: Extract from <a> tags with doctor profile links
+        const profileLinkRegex = /href="[^"]*\/(?:medico|dentista)\/[^"]*"[^>]*>\s*(?:<[^>]*>)*\s*(Dr\.?a?\s+[^<]{3,60})/gi;
+        while ((nameMatch = profileLinkRegex.exec(html)) !== null) {
+          const name = nameMatch[1].replace(/<[^>]*>/g, "").trim();
+          if (name.length > 3) doctorNames.push(name);
+        }
+
+        // Strategy 5: JSON-LD structured data
+        const jsonLdRegex = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+        let jsonLdMatch;
+        while ((jsonLdMatch = jsonLdRegex.exec(html)) !== null) {
+          try {
+            const jsonData = JSON.parse(jsonLdMatch[1]);
+            const items = Array.isArray(jsonData) ? jsonData : [jsonData];
+            for (const item of items) {
+              if (item["@type"] === "Physician" || item["@type"] === "Dentist" || item["@type"] === "MedicalBusiness") {
+                if (item.name) doctorNames.push(item.name);
+              }
+              // Also check itemListElement
+              if (item.itemListElement) {
+                for (const el of item.itemListElement) {
+                  if (el.item?.name) doctorNames.push(el.item.name);
+                }
+              }
+            }
+          } catch (_) { /* ignore malformed JSON-LD */ }
         }
 
         // Remove duplicatas de nomes
@@ -716,7 +831,7 @@ async function discoverDoctoralia(
         // Cria leads combinando nomes com telefones (quando possível)
         for (let i = 0; i < uniqueNames.length && leads.length < dailyLimit; i++) {
           const docName = uniqueNames[i];
-          const phone = phones[i] || null; // Associa telefone por posição (heurística)
+          const phone = phones[i] || null;
 
           leads.push({
             name: docName,
@@ -727,11 +842,11 @@ async function discoverDoctoralia(
               state: config.state || "",
             },
             metadata: {
-              specialty: tag,
+              specialty: specialtySlug,
               doctoralia_url: url,
               scrape_date: new Date().toISOString(),
             },
-            profession: "DOCTOR",
+            profession: profession,
           });
         }
       } catch (err: any) {
@@ -776,11 +891,39 @@ async function discoverComprasnet(
     }, 20000);
 
     if (resp.ok) {
-      const data = await resp.json();
-      const contracts = data.data || data.resultado || data || [];
+      const rawText = await resp.text();
+      console.log(`  📄 PNCP resposta: ${rawText.length} bytes, preview: ${rawText.slice(0, 300)}`);
 
-      // Pode ser um array direto ou dentro de uma propriedade
-      const items = Array.isArray(contracts) ? contracts : (contracts.items || []);
+      let data: any;
+      try {
+        data = JSON.parse(rawText);
+      } catch (_) {
+        console.warn(`  ⚠️ PNCP não retornou JSON válido`);
+        data = {};
+      }
+
+      // Handle various response shapes from the PNCP API
+      let items: any[] = [];
+      if (Array.isArray(data)) {
+        items = data;
+      } else if (data.data && Array.isArray(data.data)) {
+        items = data.data;
+      } else if (data.resultado && Array.isArray(data.resultado)) {
+        items = data.resultado;
+      } else if (data.items && Array.isArray(data.items)) {
+        items = data.items;
+      } else if (data.contratacoes && Array.isArray(data.contratacoes)) {
+        items = data.contratacoes;
+      } else {
+        // Try to find any array property in the response
+        for (const key of Object.keys(data)) {
+          if (Array.isArray(data[key]) && data[key].length > 0) {
+            items = data[key];
+            console.log(`  📌 Usando propriedade '${key}' como lista de contratações`);
+            break;
+          }
+        }
+      }
 
       console.log(`  📊 ${items.length} contratações encontradas`);
 
@@ -885,106 +1028,18 @@ async function discoverComprasnet(
 // ══════════════════════════════════════════════════════════════════════════════
 
 async function discoverVivaReal(
-  config: DiscoverRequest["config"]
+  _config: DiscoverRequest["config"]
 ): Promise<DiscoveredLead[]> {
-  console.log("🏠 VivaReal: Iniciando busca...");
+  console.log("🏠 VivaReal: Fonte temporariamente indisponível.");
 
-  const cities = config.cities || [];
-  const state = config.state || "SP";
-  const dailyLimit = config.daily_limit || 20;
-  const leads: DiscoveredLead[] = [];
-
-  for (const city of cities) {
-    if (leads.length >= dailyLimit) break;
-
-    const citySlug = toSlug(city);
-    const stateSlug = toSlug(state);
-    const url = `https://www.vivareal.com.br/aluguel/${citySlug}-${stateSlug}/comercial/`;
-
-    console.log(`  🔍 Scraping: ${url}`);
-
-    try {
-      // Rate limit: 3 segundos entre requests
-      await sleep(3000);
-
-      const resp = await safeFetch(url, {}, 20000);
-
-      if (!resp.ok) {
-        if (resp.status === 403 || resp.status === 429) {
-          console.warn(`  🚫 VivaReal bloqueou o acesso (HTTP ${resp.status}) — scraping não permitido`);
-          continue;
-        }
-        console.error(`  ❌ VivaReal retornou HTTP ${resp.status}`);
-        continue;
-      }
-
-      const html = await resp.text();
-
-      // Extrai informações de contato dos anúncios
-      // VivaReal usa structured data e classes específicas
-      const advertiserRegex =
-        /(?:data-advertiser-name|advertiser(?:Name|_name)|anunciante)[=:]["']([^"']+)["']/gi;
-      const advertiserNames: string[] = [];
-      let advMatch;
-      while ((advMatch = advertiserRegex.exec(html)) !== null) {
-        const name = advMatch[1].trim();
-        if (name && name.length > 2 && name.length < 100) {
-          advertiserNames.push(name);
-        }
-      }
-
-      // Extrai telefones
-      const phones = extractPhonesFromText(html);
-
-      // Fallback: tenta extrair de links tel:
-      const telLinks = html.match(/href=["']tel:([^"']+)["']/gi) || [];
-      for (const link of telLinks) {
-        const telNumber = link.replace(/href=["']tel:/i, "").replace(/["']/g, "");
-        const normalized = normalizePhone(telNumber);
-        if (normalized && !phones.includes(normalized)) {
-          phones.push(normalized);
-        }
-      }
-
-      const uniqueNames = [...new Set(advertiserNames)];
-      console.log(
-        `  📋 ${uniqueNames.length} anunciantes e ${phones.length} telefones encontrados`
-      );
-
-      for (let i = 0; i < Math.max(uniqueNames.length, phones.length) && leads.length < dailyLimit; i++) {
-        const name = uniqueNames[i] || `Anunciante VivaReal ${i + 1}`;
-        const phone = phones[i] || null;
-
-        // Evita duplicatas pelo nome dentro do mesmo batch
-        if (leads.some((l) => l.name === name && l.source === "VIVAREAL")) continue;
-
-        leads.push({
-          name,
-          whatsapp: phone,
-          source: "VIVAREAL",
-          address: {
-            city: city,
-            state: state,
-          },
-          metadata: {
-            vivareal_url: url,
-            // Locadores comerciais precisam de Seguro Fiança
-            seguro_sugerido: "SEGURO_FIANCA_LOCATICIA",
-            scrape_date: new Date().toISOString(),
-          },
-        });
-      }
-    } catch (err: any) {
-      if (err.name === "AbortError") {
-        console.warn(`  ⏱️ Timeout ao acessar VivaReal para ${city}`);
-      } else {
-        console.error(`  💥 Erro ao scrape VivaReal (${city}): ${err.message}`);
-      }
-    }
-  }
-
-  console.log(`🏠 VivaReal: ${leads.length} leads encontrados`);
-  return leads;
+  // VivaReal uses Cloudflare protection that blocks automated access.
+  // Direct HTTP scraping returns 403/challenge pages instead of real content.
+  // This source needs a scraping proxy (e.g., Apify, ScrapingBee) to work.
+  throw new Error(
+    "VivaReal protegido por Cloudflare — requer proxy de scraping (Apify/ScrapingBee). " +
+    "Configure a integração com proxy e reative esta fonte. " +
+    "Alternativa: use CNPJ_MINER com CNAE imobiliário para encontrar imobiliárias."
+  );
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1038,34 +1093,68 @@ async function discoverCrmSp(
         console.warn(`  ⚠️ CFM retornou HTTP ${resp.status}`);
       } else {
         const html = await resp.text();
+        console.log(`  📄 CFM HTML recebido: ${html.length} bytes`);
 
-        // Extrai nomes de médicos e CRM do HTML
-        // Padrão típico: "Dr. Nome Completo" ou nome dentro de tags com class
-        const doctorRegex =
-          /<(?:td|span|div)[^>]*>(?:Dr\.?|Dra\.?\s+)?([A-ZÀ-Ú][a-zà-ú]+(?:\s+[A-ZÀ-Ú][a-zà-ú]+){1,5})<\/(?:td|span|div)>/gi;
-
-        const crmRegex = /CRM[-\s]*(?:SP)?\s*[-:]\s*(\d{4,8})/gi;
-
+        // ── Multiple name extraction strategies ──
         const names: string[] = [];
         const crms: string[] = [];
         let m;
 
-        while ((m = doctorRegex.exec(html)) !== null) {
+        // Strategy 1: Original regex — td/span/div with proper case names
+        const doctorRegex1 =
+          /<(?:td|span|div|p|a|strong|b)[^>]*>\s*(?:Dr\.?a?\s+)?([A-ZÀ-Ú][a-zà-ú]+(?:\s+(?:de?|dos?|das?|e|[A-ZÀ-Ú])[a-zà-ú]*)*(?:\s+[A-ZÀ-Ú][a-zà-ú]+)+)\s*<\/(?:td|span|div|p|a|strong|b)>/gi;
+        while ((m = doctorRegex1.exec(html)) !== null) {
           const name = m[1].trim();
-          if (name.length > 5 && name.length < 80) {
+          if (name.length > 5 && name.length < 80 && name.includes(" ")) {
             names.push(name);
           }
         }
 
+        // Strategy 2: ALL CAPS names (common in council listings)
+        const doctorRegex2 =
+          /<(?:td|span|div|p|a|strong|b|li)[^>]*>\s*([A-ZÀ-Ú]{2,}(?:\s+(?:DE?|DOS?|DAS?|E|[A-ZÀ-Ú]{2,}))+)\s*<\/(?:td|span|div|p|a|strong|b|li)>/g;
+        while ((m = doctorRegex2.exec(html)) !== null) {
+          const raw = m[1].trim();
+          if (raw.length > 5 && raw.length < 80 && raw.includes(" ")) {
+            // Convert ALL CAPS to Title Case
+            const titleCase = raw
+              .split(/\s+/)
+              .map((w) => {
+                const lower = w.toLowerCase();
+                if (["de", "do", "da", "dos", "das", "e"].includes(lower)) return lower;
+                return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+              })
+              .join(" ");
+            names.push(titleCase);
+          }
+        }
+
+        // Strategy 3: Extract CRM numbers
+        const crmRegex = /CRM[-\s/]*(?:SP)?\s*[-:.]?\s*(\d{4,8})/gi;
         while ((m = crmRegex.exec(html)) !== null) {
           crms.push(m[1]);
         }
 
-        console.log(`  📋 ${names.length} médicos encontrados no CFM`);
+        // Strategy 4: Look for names near CRM patterns
+        const nearCrmRegex = /([A-ZÀ-Ú][A-Za-zÀ-ú\s.]{5,60})\s*[-–]?\s*CRM/gi;
+        while ((m = nearCrmRegex.exec(html)) !== null) {
+          const name = m[1].trim();
+          if (name.length > 5 && name.includes(" ") && !names.includes(name)) {
+            names.push(name);
+          }
+        }
 
-        for (let i = 0; i < names.length && leads.length < dailyLimit; i++) {
+        // Deduplicate names
+        const uniqueNames = [...new Set(names)];
+        console.log(`  📋 ${uniqueNames.length} médicos encontrados no CFM (${crms.length} CRMs)`);
+
+        for (let i = 0; i < uniqueNames.length && leads.length < dailyLimit; i++) {
+          const rawName = uniqueNames[i];
+          // Only add "Dr(a)." prefix if not already there
+          const displayName = /^Dr\.?a?\s/i.test(rawName) ? rawName : `Dr(a). ${rawName}`;
+
           leads.push({
-            name: `Dr(a). ${names[i]}`,
+            name: displayName,
             whatsapp: null, // CRM não disponibiliza telefone
             source: "CRM_SP",
             address: {
@@ -1109,14 +1198,25 @@ async function discoverCrmSp(
 
         if (resp.ok) {
           const html = await resp.text();
+          console.log(`  📄 CREMESP HTML recebido: ${html.length} bytes`);
+
           // Padrão do CREMESP: lista de resultados em tabela
           const nameRegex =
             /(?:nome|médico|profissional)[^>]*>([A-ZÀ-Ú][A-ZÀ-Ú\s]{5,60})</gi;
           let m;
           while ((m = nameRegex.exec(html)) !== null && leads.length < dailyLimit) {
             const name = m[1].trim();
+            // Convert ALL CAPS to Title Case
+            const titleCase = name
+              .split(/\s+/)
+              .map((w) => {
+                const lower = w.toLowerCase();
+                if (["de", "do", "da", "dos", "das", "e"].includes(lower)) return lower;
+                return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+              })
+              .join(" ");
             leads.push({
-              name: `Dr(a). ${name.charAt(0) + name.slice(1).toLowerCase()}`,
+              name: `Dr(a). ${titleCase}`,
               whatsapp: null,
               source: "CRM_SP",
               address: { city, state },
@@ -1158,102 +1258,173 @@ async function discoverOabSp(
 
     console.log(`  🔍 Buscando advogados em: ${city}`);
 
+    // ── Attempt 1: CNA JSON API (POST) ──
+    let apiWorked = false;
     try {
       await sleep(2000);
 
-      // Tenta a API do CNA (Cadastro Nacional de Advogados)
-      const resp = await safeFetch("https://cna.oab.org.br/api/search", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Referer: "https://cna.oab.org.br/",
-          Origin: "https://cna.oab.org.br",
-        },
-        body: JSON.stringify({
-          nome: "",
-          seccional: state,
-          municipio: city,
-          tipoInscricao: "",
-        }),
-      }, 20000);
+      // Try multiple possible CNA API endpoints
+      const cnaEndpoints = [
+        "https://cna.oab.org.br/api/search",
+        "https://cna.oab.org.br/api/advogados/search",
+      ];
 
-      if (resp.ok) {
-        const data = await resp.json();
-        const results = Array.isArray(data) ? data : (data.advogados || data.data || data.results || []);
+      for (const endpoint of cnaEndpoints) {
+        if (apiWorked || leads.length >= dailyLimit) break;
 
-        console.log(`  📊 ${results.length} advogados encontrados no CNA`);
+        console.log(`  🔗 Tentando CNA API: ${endpoint}`);
 
-        for (const adv of results) {
-          if (leads.length >= dailyLimit) break;
-
-          const name =
-            adv.nome || adv.nomeAdvogado || adv.name || "Advogado(a)";
-          const oabNumber =
-            adv.inscricao || adv.numeroInscricao || adv.oab || null;
-          const situation =
-            adv.situacao || adv.tipoSituacao || null;
-
-          // Ignora advogados com inscrição cancelada/suspensa
-          if (
-            situation &&
-            /cancelad|suspens|licenciad/i.test(String(situation))
-          ) {
-            continue;
-          }
-
-          leads.push({
-            name: name,
-            whatsapp: null, // CNA geralmente não tem telefone
-            source: "OAB_SP",
-            address: {
-              city: city,
-              state: state,
+        try {
+          const resp = await safeFetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json",
+              Referer: "https://cna.oab.org.br/",
+              Origin: "https://cna.oab.org.br",
             },
-            metadata: {
-              oab_number: oabNumber,
+            body: JSON.stringify({
+              nome: "",
               seccional: state,
-              situacao: situation,
-              conselho: "OAB",
-              scrape_date: new Date().toISOString(),
-            },
-            profession: "LAWYER",
-          });
-        }
-      } else {
-        console.warn(`  ⚠️ CNA API retornou HTTP ${resp.status}`);
+              municipio: city,
+              tipoInscricao: "",
+            }),
+          }, 20000);
 
-        // Fallback: scrape da página do CNA
+          console.log(`  📡 CNA API status: ${resp.status}`);
+
+          if (resp.ok) {
+            const text = await resp.text();
+            console.log(`  📄 CNA resposta: ${text.length} bytes, preview: ${text.slice(0, 200)}`);
+
+            try {
+              const data = JSON.parse(text);
+              // Handle various response formats
+              let results: any[] = [];
+              if (Array.isArray(data)) {
+                results = data;
+              } else if (data.advogados) {
+                results = data.advogados;
+              } else if (data.data) {
+                results = Array.isArray(data.data) ? data.data : [];
+              } else if (data.results) {
+                results = data.results;
+              } else if (data.registros) {
+                results = data.registros;
+              }
+
+              console.log(`  📊 ${results.length} advogados encontrados no CNA`);
+
+              for (const adv of results) {
+                if (leads.length >= dailyLimit) break;
+
+                const name =
+                  adv.nome || adv.nomeAdvogado || adv.nomeCompleto || adv.name || "";
+                if (!name || name.length < 3) continue;
+
+                const oabNumber =
+                  adv.inscricao || adv.numeroInscricao || adv.numero || adv.oab || null;
+                const situation =
+                  adv.situacao || adv.tipoSituacao || adv.status || null;
+
+                // Ignora advogados com inscrição cancelada/suspensa
+                if (
+                  situation &&
+                  /cancelad|suspens|licenciad/i.test(String(situation))
+                ) {
+                  continue;
+                }
+
+                leads.push({
+                  name: name,
+                  whatsapp: null,
+                  source: "OAB_SP",
+                  address: {
+                    city: city,
+                    state: state,
+                  },
+                  metadata: {
+                    oab_number: oabNumber,
+                    seccional: state,
+                    situacao: situation,
+                    conselho: "OAB",
+                    scrape_date: new Date().toISOString(),
+                  },
+                  profession: "LAWYER",
+                });
+              }
+
+              if (results.length > 0) apiWorked = true;
+            } catch (parseErr) {
+              console.warn(`  ⚠️ CNA resposta não é JSON válido, tentando como HTML...`);
+              // Response might be HTML, will be handled in fallback
+            }
+          } else {
+            console.warn(`  ⚠️ CNA API ${endpoint} retornou HTTP ${resp.status}`);
+          }
+        } catch (endpointErr: any) {
+          console.warn(`  ⚠️ Endpoint ${endpoint} falhou: ${endpointErr.message}`);
+        }
+      }
+    } catch (err: any) {
+      console.error(`  💥 Erro na CNA API: ${err.message}`);
+    }
+
+    // ── Attempt 2: CNA HTML search page scraping ──
+    if (!apiWorked && leads.length === 0) {
+      try {
         console.log(`  🔄 Tentando scrape HTML do CNA...`);
         await sleep(2000);
 
-        const pageResp = await safeFetch(
-          `https://cna.oab.org.br/?seccional=${state}&municipio=${encodeURIComponent(city)}`,
-          {},
-          20000
-        );
+        // Try the search results page directly
+        const searchUrl = `https://cna.oab.org.br/search?q=&cidade=${encodeURIComponent(city)}&seccional=${state}`;
+        console.log(`  🔗 Scraping: ${searchUrl}`);
+
+        const pageResp = await safeFetch(searchUrl, {
+          headers: {
+            Accept: "text/html,application/xhtml+xml",
+            Referer: "https://cna.oab.org.br/",
+          },
+        }, 20000);
 
         if (pageResp.ok) {
           const html = await pageResp.text();
+          console.log(`  📄 CNA HTML: ${html.length} bytes`);
 
-          // Extrai nomes de advogados do HTML
+          // Strategy 1: Extract from structured elements
           const nameRegex =
-            /(?:advogado|nome)[^>]*>([A-ZÀ-Ú][A-ZÀ-Ú\s.]{5,60})</gi;
-          const oabRegex = /OAB[-/\s]*(?:SP)?\s*(\d{3,8})/gi;
+            /(?:advogado|nome|name|resultado)[^>]*>\s*([A-ZÀ-Ú][A-Za-zÀ-ú\s.]{5,60})\s*</gi;
+          const oabRegex = /(?:OAB|inscri)[^>]*>?[-/\s]*(?:SP)?\s*[-.:]?\s*(\d{3,8})/gi;
 
           const names: string[] = [];
           const oabs: string[] = [];
           let m;
 
           while ((m = nameRegex.exec(html)) !== null) {
-            names.push(m[1].trim());
+            const name = m[1].trim();
+            if (name.length > 5 && name.includes(" ")) {
+              names.push(name);
+            }
           }
           while ((m = oabRegex.exec(html)) !== null) {
             oabs.push(m[1]);
           }
 
-          for (let i = 0; i < names.length && leads.length < dailyLimit; i++) {
+          // Strategy 2: Try extracting from table rows
+          const trRegex = /<tr[^>]*>\s*<td[^>]*>\s*([A-ZÀ-Ú][A-Za-zÀ-ú\s.]{5,60})\s*<\/td>/gi;
+          while ((m = trRegex.exec(html)) !== null) {
+            const name = m[1].trim();
+            if (name.length > 5 && name.includes(" ") && !names.includes(name)) {
+              names.push(name);
+            }
+          }
+
+          const uniqueNames = [...new Set(names)];
+          console.log(`  📋 ${uniqueNames.length} nomes extraídos do HTML CNA`);
+
+          for (let i = 0; i < uniqueNames.length && leads.length < dailyLimit; i++) {
             leads.push({
-              name: names[i],
+              name: uniqueNames[i],
               whatsapp: null,
               source: "OAB_SP",
               address: { city, state },
@@ -1261,15 +1432,18 @@ async function discoverOabSp(
                 oab_number: oabs[i] || null,
                 seccional: state,
                 conselho: "OAB",
+                source_method: "html_scrape",
                 scrape_date: new Date().toISOString(),
               },
               profession: "LAWYER",
             });
           }
+        } else {
+          console.warn(`  ⚠️ CNA HTML search retornou HTTP ${pageResp.status}`);
         }
+      } catch (err: any) {
+        console.error(`  💥 CNA HTML scrape falhou: ${err.message}`);
       }
-    } catch (err: any) {
-      console.error(`  💥 Erro ao buscar advogados em ${city}: ${err.message}`);
     }
   }
 
@@ -1282,138 +1456,18 @@ async function discoverOabSp(
 // ══════════════════════════════════════════════════════════════════════════════
 
 async function discoverCroSp(
-  config: DiscoverRequest["config"]
+  _config: DiscoverRequest["config"]
 ): Promise<DiscoveredLead[]> {
-  console.log("🦷 CRO-SP: Iniciando busca de dentistas...");
+  console.log("🦷 CRO-SP: Fonte temporariamente indisponível.");
 
-  const cities = config.cities || [];
-  const state = config.state || "SP";
-  const tags = config.search_tags || [];
-  const dailyLimit = config.daily_limit || 20;
-  const leads: DiscoveredLead[] = [];
-
-  for (const city of cities) {
-    if (leads.length >= dailyLimit) break;
-
-    console.log(`  🔍 Buscando dentistas em: ${city}`);
-
-    try {
-      await sleep(2000);
-
-      // Tenta o site do CRO-SP (consulta de dentistas)
-      const croUrl = "https://www.crosp.org.br/servicos/consulta-dentista/";
-
-      // Primeiro tenta fazer um POST com os filtros
-      const formData = new URLSearchParams();
-      formData.set("cidade", city);
-      formData.set("uf", state);
-      if (tags.length > 0) formData.set("especialidade", tags[0]);
-
-      const resp = await safeFetch(croUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Referer: croUrl,
-        },
-        body: formData.toString(),
-      }, 20000);
-
-      if (resp.ok) {
-        const html = await resp.text();
-
-        // Extrai nomes de dentistas
-        const nameRegex =
-          /(?:nome|dentista|profissional)[^>]*>([A-ZÀ-Ú][A-Za-zÀ-ú\s.]{5,60})</gi;
-        const croRegex = /CRO[-/\s]*(?:SP)?\s*[-:]\s*(\d{3,8})/gi;
-
-        const names: string[] = [];
-        const cros: string[] = [];
-        let m;
-
-        while ((m = nameRegex.exec(html)) !== null) {
-          const name = m[1].trim();
-          if (name.length > 5) names.push(name);
-        }
-        while ((m = croRegex.exec(html)) !== null) {
-          cros.push(m[1]);
-        }
-
-        console.log(`  📋 ${names.length} dentistas encontrados no CRO-SP`);
-
-        for (let i = 0; i < names.length && leads.length < dailyLimit; i++) {
-          leads.push({
-            name: names[i],
-            whatsapp: null, // CRO não disponibiliza telefone
-            source: "CRO_SP",
-            address: {
-              city: city,
-              state: state,
-            },
-            metadata: {
-              cro_number: cros[i] || null,
-              specialty: tags[0] || null,
-              conselho: "CRO",
-              uf_inscricao: state,
-              scrape_date: new Date().toISOString(),
-            },
-            profession: "DENTIST",
-          });
-        }
-      } else {
-        console.warn(`  ⚠️ CRO-SP retornou HTTP ${resp.status}`);
-      }
-
-      // Fallback: tenta o CFO (Conselho Federal de Odontologia)
-      if (leads.length === 0) {
-        console.log(`  🔄 Tentando CFO como fallback...`);
-        await sleep(2000);
-
-        try {
-          const cfoUrl = "https://website.cfo.org.br/busca-dentista/";
-          const formData = new URLSearchParams();
-          formData.set("municipio", city);
-          formData.set("uf", state);
-
-          const cfoResp = await safeFetch(cfoUrl, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/x-www-form-urlencoded",
-              Referer: cfoUrl,
-            },
-            body: formData.toString(),
-          }, 20000);
-
-          if (cfoResp.ok) {
-            const html = await cfoResp.text();
-            const nameRegex =
-              /(?:nome|dentista)[^>]*>([A-ZÀ-Ú][A-Za-zÀ-ú\s.]{5,60})</gi;
-            let m;
-            while ((m = nameRegex.exec(html)) !== null && leads.length < dailyLimit) {
-              leads.push({
-                name: m[1].trim(),
-                whatsapp: null,
-                source: "CRO_SP",
-                address: { city, state },
-                metadata: {
-                  conselho: "CFO",
-                  specialty: tags[0] || null,
-                  scrape_date: new Date().toISOString(),
-                },
-                profession: "DENTIST",
-              });
-            }
-          }
-        } catch (err: any) {
-          console.error(`  ⚠️ CFO fallback falhou: ${err.message}`);
-        }
-      }
-    } catch (err: any) {
-      console.error(`  💥 Erro ao buscar dentistas em ${city}: ${err.message}`);
-    }
-  }
-
-  console.log(`🦷 CRO-SP: ${leads.length} leads encontrados`);
-  return leads;
+  // CRO-SP website blocks automated access (timeout after ~12s).
+  // The site likely uses WAF/bot protection that prevents direct scraping.
+  // This source needs Apify or a similar browser automation tool to work.
+  throw new Error(
+    "CRO-SP bloqueia acesso automatizado (timeout/WAF). " +
+    "Requer Apify ou automação de navegador para funcionar. " +
+    "Alternativa: use DOCTORALIA com profession=DENTIST para encontrar dentistas."
+  );
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
