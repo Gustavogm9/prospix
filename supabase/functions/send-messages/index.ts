@@ -66,17 +66,33 @@ async function loadEvoConfig(tenantId: string): Promise<EvoConfig | null> {
 async function sendWhatsApp(
   evoConfig: EvoConfig,
   phone: string,
-  text: string
+  text: string,
+  mediaUrl?: string | null,
+  mediaType?: string | null
 ): Promise<{ ok: boolean; whatsappMsgId?: string; error?: string }> {
   try {
-    const url = `${evoConfig.baseUrl}/message/sendText/${evoConfig.instanceName}`;
+    let url = `${evoConfig.baseUrl}/message/sendText/${evoConfig.instanceName}`;
+    let body: any = { number: phone, text };
+
+    if (mediaUrl) {
+      url = `${evoConfig.baseUrl}/message/sendMedia/${evoConfig.instanceName}`;
+      body = {
+        number: phone,
+        mediatype: mediaType || "document",
+        mimetype: "application/pdf",
+        caption: text,
+        media: mediaUrl,
+        fileName: "Apresentacao_Prospix.pdf"
+      };
+    }
+
     const resp = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         apikey: evoConfig.apiKey,
       },
-      body: JSON.stringify({ number: phone, text }),
+      body: JSON.stringify(body),
     });
 
     if (!resp.ok) {
@@ -490,7 +506,7 @@ async function processPendingOutbound(): Promise<{
       const leadName = (conversation.leads as any).name || "Lead";
 
       // Send via Evolution API
-      const sendResult = await sendWhatsApp(evoConfig, phone, item.content);
+      const sendResult = await sendWhatsApp(evoConfig, phone, item.content, item.media_url, item.media_type);
 
       if (sendResult.ok) {
         // Mark as sent
@@ -508,6 +524,8 @@ async function processPendingOutbound(): Promise<{
           direction: "OUTBOUND",
           sender: "AI",
           content: item.content,
+          media_url: item.media_url,
+          media_type: item.media_type,
           delivery_status: "SENT",
           whatsapp_message_id: sendResult.whatsappMsgId || null,
         });

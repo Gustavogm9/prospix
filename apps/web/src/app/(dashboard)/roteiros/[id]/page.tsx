@@ -48,6 +48,7 @@ export default function ScriptDetailsPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [selectedNiche, setSelectedNiche] = useState('DOCTOR');
   const [selectedProduct, setSelectedProduct] = useState('DIT');
+  const [performanceStats, setPerformanceStats] = useState<any>(null);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -82,6 +83,12 @@ export default function ScriptDetailsPage() {
                 weight: v.weight ? Math.round(v.weight * 100) : 0,
                 content: v.content || v.message || '',
               })));
+            }
+            
+            // Fetch performance real
+            const perfRes = await scriptsQueries.getPerformance(tenantId, script.id);
+            if (!perfRes.error && perfRes.data) {
+              setPerformanceStats(perfRes.data);
             }
           } else {
             toast.error('Roteiro não encontrado');
@@ -120,7 +127,7 @@ export default function ScriptDetailsPage() {
       // aiTools and aiInstructions should be passed here in a real scenario
       if (scriptId === 'new') {
         const { data, error } = await scriptsQueries.create(tenantId, {
-          name, category, baseMessage
+          name, category, baseMessage, aiInstructions
         });
         if (data?.id) {
           await scriptsQueries.update(tenantId, data.id, { status, aiTools, variations: mappedVariations });
@@ -130,7 +137,7 @@ export default function ScriptDetailsPage() {
         router.replace(`/roteiros/${data?.id}`);
       } else {
         const { error } = await scriptsQueries.update(tenantId, scriptId, {
-          name, category, baseMessage, variations: mappedVariations, status, aiTools
+          name, category, baseMessage, variations: mappedVariations, status, aiTools, aiInstructions
         });
         if (error) throw error;
         toast.success('Roteiro atualizado com sucesso');
@@ -439,24 +446,20 @@ export default function ScriptDetailsPage() {
           <div className="animate-fadeIn max-w-[1200px] mx-auto w-full space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className="bg-white border border-[#E5E7EB] rounded-2xl p-6 shadow-sm">
-                <h4 className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider mb-2">Envios · 30D</h4>
-                <div className="text-3xl font-bold text-[#0F172A] mb-1">180</div>
-                <div className="text-[12px] font-bold text-[#039855]">+24 esta semana</div>
+                <h4 className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider mb-2">Envios (Total)</h4>
+                <div className="text-3xl font-bold text-[#0F172A] mb-1">{performanceStats?.totalSent || 0}</div>
               </div>
               <div className="bg-white border border-[#E5E7EB] rounded-2xl p-6 shadow-sm">
                 <h4 className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider mb-2">Taxa de Resposta</h4>
-                <div className="text-3xl font-bold text-[#0F172A] mb-1">32 <span className="text-[18px]">%</span></div>
-                <div className="text-[12px] font-bold text-[#039855]">+4pp vs benchmark</div>
+                <div className="text-3xl font-bold text-[#0F172A] mb-1">{performanceStats?.overallResponseRate || 0} <span className="text-[18px]">%</span></div>
               </div>
               <div className="bg-white border border-[#E5E7EB] rounded-2xl p-6 shadow-sm">
                 <h4 className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider mb-2">Reuniões Agendadas</h4>
-                <div className="text-3xl font-bold text-[#0F172A] mb-1">16</div>
-                <div className="text-[12px] font-bold text-[#039855]">9% conversão</div>
+                <div className="text-3xl font-bold text-[#0F172A] mb-1">{performanceStats?.meetingsCount || 0}</div>
               </div>
               <div className="bg-white border border-[#E5E7EB] rounded-2xl p-6 shadow-sm">
-                <h4 className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider mb-2">Custo IA</h4>
-                <div className="text-3xl font-bold text-[#0F172A] mb-1">R$ 142</div>
-                <div className="text-[12px] font-bold text-[#039855]">R$ 8,87/reunião</div>
+                <h4 className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider mb-2">Status AI</h4>
+                <div className="text-lg font-bold text-[#039855] mb-1 flex items-center gap-2"><Bot className="w-5 h-5"/> Ativo</div>
               </div>
             </div>
 
@@ -467,33 +470,21 @@ export default function ScriptDetailsPage() {
               </div>
 
               <div className="space-y-6">
-                <div className="space-y-2">
-                  <div className="flex justify-between text-[13px] font-bold text-[#0F172A]">
-                    <span>Variação A · "Trabalho com proteção..."</span>
-                    <span className="text-[#039855]">35% resposta</span>
-                  </div>
-                  <div className="w-full h-3 bg-[#EEF0F3] rounded-full overflow-hidden">
-                    <div className="h-full bg-[#039855] rounded-full" style={{ width: '85%' }} />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <div className="flex justify-between text-[13px] font-bold text-[#0F172A]">
-                    <span>Variação B · "Profissionais como você..."</span>
-                    <span className="text-[#1B3A6B]">31% resposta</span>
-                  </div>
-                  <div className="w-full h-3 bg-[#EEF0F3] rounded-full overflow-hidden">
-                    <div className="h-full bg-[#1B3A6B] rounded-full" style={{ width: '75%' }} />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <div className="flex justify-between text-[13px] font-bold text-[#0F172A]">
-                    <span>Variação C · "Tenho uma apresentação..."</span>
-                    <span className="text-[#E47320]">27% resposta</span>
-                  </div>
-                  <div className="w-full h-3 bg-[#EEF0F3] rounded-full overflow-hidden">
-                    <div className="h-full bg-[#E47320] rounded-full" style={{ width: '65%' }} />
-                  </div>
-                </div>
+                {(performanceStats?.variations || []).length > 0 ? (
+                  performanceStats.variations.map((v: any, idx: number) => (
+                    <div key={v.id} className="space-y-2">
+                      <div className="flex justify-between text-[13px] font-bold text-[#0F172A]">
+                        <span className="truncate max-w-[80%]">Variação {v.variant_letter} · "{v.message?.substring(0, 40)}..."</span>
+                        <span className={idx === 0 ? "text-[#039855]" : "text-[#1B3A6B]"}>{v.rate}% resposta</span>
+                      </div>
+                      <div className="w-full h-3 bg-[#EEF0F3] rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full ${idx === 0 ? 'bg-[#039855]' : 'bg-[#1B3A6B]'}`} style={{ width: `${v.rate}%` }} />
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-sm text-gray-500 text-center py-4">Ainda não há dados de envio para este roteiro.</div>
+                )}
               </div>
             </div>
           </div>

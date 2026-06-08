@@ -1175,8 +1175,88 @@ serve(async (req: Request) => {
   }
 
   try {
-    const body: DiscoverRequest = await req.json();
-    const { tenant_id, campaign_id, source_type, config } = body;
+    const body: any = await req.json();
+
+    if (body.auto_mode === true) {
+      console.log(`\n${"═".repeat(70)}`);
+      console.log(`🤖 Auto-Discovery Mode Started`);
+      console.log(`   Time: ${new Date().toISOString()}`);
+      console.log(`${"═".repeat(70)}\n`);
+
+      const { data: activeCampaigns } = await supabase
+        .from("campaigns")
+        .select("id, tenant_id, name, target_audience, filters, profession")
+        .eq("status", "ACTIVE");
+
+      if (!activeCampaigns || activeCampaigns.length === 0) {
+        return new Response(JSON.stringify({ ok: true, message: "No active campaigns found" }), { headers: { "Content-Type": "application/json" } });
+      }
+
+      let totalFound = 0;
+      let totalInserted = 0;
+      const results: any[] = [];
+
+      for (const campaign of activeCampaigns) {
+        console.log(`\n📢 Auto-running campaign: ${campaign.name} (${campaign.id})`);
+        
+        const isMedical = campaign.profession === "DOCTOR" || campaign.profession === "DENTIST";
+        const sourcesToRun: SourceType[] = isMedical ? ["DOCTORALIA", "CNPJ_MINER"] : ["CNPJ_MINER", "GOOGLE_MAPS"];
+
+        const cities = campaign.filters?.cities || [];
+        const tags = campaign.target_audience ? [campaign.target_audience] : [];
+
+        if (cities.length === 0) {
+          console.log(`  ⏭️ Skipping: No cities configured.`);
+          continue;
+        }
+
+        const config = {
+          cities,
+          search_tags: tags,
+          profession: campaign.profession,
+          daily_limit: 10
+        };
+
+        for (const source of sourcesToRun) {
+          console.log(`  -> Running source: ${source}`);
+          try {
+            const discoveredLeads = await routeDiscovery({
+              tenant_id: campaign.tenant_id,
+              campaign_id: campaign.id,
+              source_type: source,
+              config
+            });
+
+            if (discoveredLeads.length > 0) {
+               const { inserted, skipped } = await insertLeads(
+                 campaign.tenant_id,
+                 campaign.id,
+                 source,
+                 discoveredLeads
+               );
+
+               totalFound += discoveredLeads.length;
+               totalInserted += inserted;
+               
+               results.push({
+                 campaign_id: campaign.id,
+                 source,
+                 found: discoveredLeads.length,
+                 inserted
+               });
+            }
+          } catch(e: any) {
+            console.error(`  ❌ Auto-discovery error for ${source}: ${e.message}`);
+          }
+        }
+      }
+
+      return new Response(JSON.stringify({ ok: true, totalFound, totalInserted, results }), {
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    const { tenant_id, campaign_id, source_type, config } = body as DiscoverRequest;
 
     // Validações básicas
     if (!tenant_id || !campaign_id || !source_type) {

@@ -856,6 +856,7 @@ export const tenantAddonsQueries = {
     if (error) return { success: false, error: mapError(error) };
     return { success: true, error: null };
   },
+
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1281,6 +1282,7 @@ export const scriptsQueries = {
     baseMessage?: string;
     targetProfession?: Profession;
     variables?: string[];
+    aiInstructions?: string;
   }) => {
     const scriptId = crypto.randomUUID();
     const { data, error } = await supabase
@@ -1292,6 +1294,7 @@ export const scriptsQueries = {
         category: (scriptData.category || 'APPROACH') as any,
         target_profession: scriptData.targetProfession || null,
         base_message: scriptData.baseMessage || '',
+        ai_instructions: scriptData.aiInstructions || null,
         status: 'DRAFT' as const,
         variables: scriptData.variables || [],
         updated_at: new Date().toISOString(),
@@ -1311,6 +1314,7 @@ export const scriptsQueries = {
     name?: string;
     category?: string;
     baseMessage?: string;
+    aiInstructions?: string;
     status?: ScriptStatus;
     aiTools?: string[];
     flow?: Record<string, unknown>;
@@ -1331,6 +1335,7 @@ export const scriptsQueries = {
     if (updateData.name !== undefined) updatePayload.name = updateData.name;
     if (updateData.category !== undefined) updatePayload.category = updateData.category;
     if (updateData.baseMessage !== undefined) updatePayload.base_message = updateData.baseMessage;
+    if (updateData.aiInstructions !== undefined) updatePayload.ai_instructions = updateData.aiInstructions;
     if (updateData.status !== undefined) updatePayload.status = updateData.status;
     if (updateData.aiTools !== undefined) updatePayload.ai_tools = updateData.aiTools;
     if (updateData.flow !== undefined) updatePayload.flow = updateData.flow;
@@ -1421,6 +1426,54 @@ export const scriptsQueries = {
 
     if (error) return { data: null, error: mapError(error) };
     return { data, error: null };
+  },
+
+  /** Get script performance metrics */
+  getPerformance: async (tenantId: string, scriptId: string) => {
+    // Get variations stats
+    const { data: variations, error: varErr } = await supabase
+      .from('script_variations')
+      .select('id, variant_letter, total_sent, total_responded, response_rate, message')
+      .eq('script_id', scriptId)
+      .eq('tenant_id', tenantId);
+
+    if (varErr) return { data: null, error: mapError(varErr) };
+
+    // Count meeting scheduled leads linked to campaigns using this script
+    const { data: campaigns } = await supabase
+      .from('campaigns')
+      .select('id')
+      .eq('active_script_id', scriptId)
+      .eq('tenant_id', tenantId);
+
+    let meetingsCount = 0;
+    if (campaigns && campaigns.length > 0) {
+      const campaignIds = campaigns.map((c: any) => c.id);
+      const { count } = await supabase
+        .from('leads')
+        .select('id', { count: 'exact', head: true })
+        .eq('tenant_id', tenantId)
+        .in('campaign_id', campaignIds)
+        .eq('status', 'MEETING_SCHEDULED');
+      meetingsCount = count || 0;
+    }
+
+    const totalSent = (variations || []).reduce((acc: number, v: any) => acc + (v.total_sent || 0), 0);
+    const totalResponded = (variations || []).reduce((acc: number, v: any) => acc + (v.total_responded || 0), 0);
+    const overallResponseRate = totalSent > 0 ? Math.round((totalResponded / totalSent) * 100) : 0;
+
+    return {
+      data: {
+        totalSent,
+        overallResponseRate,
+        meetingsCount,
+        variations: (variations || []).map((v: any) => ({
+          ...v,
+          rate: v.total_sent > 0 ? Math.round(((v.total_responded || 0) / v.total_sent) * 100) : 0,
+        }))
+      },
+      error: null
+    };
   },
 };
 

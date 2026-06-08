@@ -40,24 +40,34 @@ async function callOpenAI(
   systemPrompt: string,
   userMessage: string,
   temperature = 0.7,
-  maxTokens = 300
-): Promise<{ content: string; tokensIn: number; tokensOut: number; latencyMs: number }> {
+  maxTokens = 300,
+  model = MODEL,
+  tools?: any[]
+): Promise<{ content: string; toolCalls: any[]; tokensIn: number; tokensOut: number; latencyMs: number }> {
   const start = Date.now();
+  
+  const payload: any = {
+    model,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userMessage },
+    ],
+    temperature,
+    max_tokens: maxTokens,
+  };
+
+  if (tools && tools.length > 0) {
+    payload.tools = tools;
+    payload.tool_choice = "auto";
+  }
+
   const resp = await fetch(OPENAI_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${OPENAI_API_KEY}`,
     },
-    body: JSON.stringify({
-      model: MODEL,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userMessage },
-      ],
-      temperature,
-      max_tokens: maxTokens,
-    }),
+    body: JSON.stringify(payload),
   });
 
   const latencyMs = Date.now() - start;
@@ -68,11 +78,13 @@ async function callOpenAI(
   }
 
   const data = await resp.json();
-  const content = data.choices?.[0]?.message?.content?.trim() || "";
+  const message = data.choices?.[0]?.message;
+  const content = message?.content?.trim() || "";
+  const toolCalls = message?.tool_calls || [];
   const tokensIn = data.usage?.prompt_tokens || 0;
   const tokensOut = data.usage?.completion_tokens || 0;
 
-  return { content, tokensIn, tokensOut, latencyMs };
+  return { content, toolCalls, tokensIn, tokensOut, latencyMs };
 }
 
 // ── Referral Extraction ──────────────────────────────────────────────────────
@@ -135,8 +147,8 @@ async function classifyIntent(
 }
 
 // ── Response Generation ─────────────────────────────────────────────────────
-function buildResponsePrompt(scriptBaseMessage: string | null, aiTools?: string[] | null): string {
-  let prompt = `Você é um consultor de seguros profissional e simpático.
+function buildResponsePrompt(scriptBaseMessage: string | null, aiTools?: string[] | null, aiInstructions?: string | null): string {
+  let prompt = aiInstructions || `Você é um consultor de seguros profissional e simpático.
 Você está prospectando via WhatsApp.
 Responda de forma natural, curta (máx 2 parágrafos), e consultiva.
 Nunca mencione preços específicos.
@@ -519,13 +531,26 @@ serve(async (req: Request) => {
       }, { onConflict: "tenant_id,whatsapp" });
     }
 
-    // If CALLBACK_REQUEST, disable AI and don't generate response
     if (classification.intent === "CALLBACK_REQUEST") {
       await supabase.from("conversations").update({
         ai_handling: false,
         status: "ESCALATED",
         escalated_reason: "Lead solicitou contato humano",
       }).eq("id", conversation.id);
+
+      // Notifica o tenant
+      const { data: tenantAdmin } = await supabase.from("users").select("id").eq("tenant_id", tenantId).limit(1).single();
+      if (tenantAdmin) {
+        await supabase.from("notifications").insert({
+          id: uuid(),
+          tenant_id: tenantId,
+          user_id: tenantAdmin.id,
+          title: "Lead Solicitou Contato Humano",
+          body: `O lead ${lead.name || lead.whatsapp} solicitou atendimento humano.`,
+          type: "lead_escalated",
+          link: `/inbox?conversation=${conversation.id}`
+        });
+      }
 
       console.log("  📞 Callback requested, AI disabled, escalated");
       return new Response(JSON.stringify({
@@ -599,21 +624,68 @@ serve(async (req: Request) => {
     // Fetch the active script for context
     let scriptBaseMessage: string | null = null;
     let aiTools: string[] | null = [];
+    let aiInstructions: string | null = null;
     if (conversation.script_id) {
       const { data: script } = await supabase
         .from("scripts")
-        .select("base_message, name, ai_tools")
+        .select("base_message, name, ai_tools, ai_instructions")
         .eq("id", conversation.script_id)
         .single();
       scriptBaseMessage = script?.base_message || null;
       aiTools = script?.ai_tools || [];
+      aiInstructions = script?.ai_instructions || null;
     }
 
-    const responsePrompt = buildResponsePrompt(scriptBaseMessage, aiTools);
+    const { data: tenantAiConfig } = await supabase
+      .from("tenant_ai_configs")
+      .select("system_model, system_temperature")
+      .eq("tenant_id", tenantId)
+      .single();
+
+    const modelToUse = tenantAiConfig?.system_model || MODEL;
+    const tempToUse = tenantAiConfig?.system_temperature ?? 0.7;
+
+    const responsePrompt = buildResponsePrompt(scriptBaseMessage, aiTools, aiInstructions);
     const conversationCtx = buildConversationContext(recentMessages || [], lead.name || "");
 
-    const aiResponse = await callOpenAI(responsePrompt, conversationCtx, 0.7, 300);
+    const openAiTools = [];
+    if (aiTools?.includes("SEND_PDF")) {
+      openAiTools.push({
+        type: "function",
+        function: {
+          name: "send_pdf",
+          description: "Envia o PDF de apresentação da empresa para o cliente.",
+          parameters: {
+            type: "object",
+            properties: {
+              confirmation_message: {
+                type: "string",
+                description: "A mensagem que acompanhará o PDF."
+              }
+            },
+            required: ["confirmation_message"]
+          }
+        }
+      });
+    }
+
+    const aiResponse = await callOpenAI(responsePrompt, conversationCtx, tempToUse, 300, modelToUse, openAiTools);
     let responseText = applyGuardrails(aiResponse.content);
+    let mediaUrl = null;
+    let mediaType = null;
+
+    if (aiResponse.toolCalls?.length > 0) {
+      for (const call of aiResponse.toolCalls) {
+        if (call.function?.name === "send_pdf") {
+          try {
+            const args = JSON.parse(call.function.arguments);
+            responseText = args.confirmation_message || "Segue a nossa apresentação em PDF:";
+            mediaUrl = "https://prospix.com.br/wp-content/uploads/2023/10/Apresentacao-Prospix.pdf";
+            mediaType = "document";
+          } catch(e) {}
+        }
+      }
+    }
 
     console.log(`  💡 AI Response: ${responseText.slice(0, 80)}...`);
 
@@ -627,6 +699,8 @@ serve(async (req: Request) => {
       tenant_id: tenantId,
       conversation_id: conversation.id,
       content: responseText,
+      media_url: mediaUrl,
+      media_type: mediaType,
       idempotency_key: idempotencyKey,
       scheduled_for: scheduledFor,
       attempts: 0,
