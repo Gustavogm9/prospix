@@ -25,6 +25,8 @@ export default function Performance() {
   const [period, setPeriod] = useState<'week' | 'month' | '90d'>('month');
   const [perfData, setPerfData] = useState<PerformanceData | null>(null);
   const [funnelData, setFunnelData] = useState<FunnelData | null>(null);
+  const [scriptPerfData, setScriptPerfData] = useState<any[] | null>(null);
+  const [timeData, setTimeData] = useState<any[] | null>(null);
   const [loading, setLoading] = useState(true);
 
   const tenantId = useAuthStore(state => state.tenantId);
@@ -34,12 +36,16 @@ export default function Performance() {
       if (!tenantId) return;
       setLoading(true);
       try {
-        const [perfRes, funnelRes] = await Promise.all([
+        const [perfRes, funnelRes, scriptRes, timeRes] = await Promise.all([
           dashboardQueries.performance(tenantId, period),
           dashboardQueries.funnel(tenantId, period),
+          dashboardQueries.performanceByScript(tenantId),
+          dashboardQueries.bestTimeOfDay(tenantId),
         ]);
         setPerfData(perfRes.data ?? null);
         setFunnelData(funnelRes.data ?? null);
+        setScriptPerfData(scriptRes.data ?? null);
+        setTimeData(timeRes.data ?? null);
       } catch (err) {
         console.error('Failed to fetch performance data', err);
         toast.error('Erro ao carregar', 'Não foi possível carregar métricas de performance.');
@@ -161,6 +167,62 @@ export default function Performance() {
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Script Performance & Best Time */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        {/* Performance por roteiro */}
+        <div className="lg:col-span-2 bg-white border border-[#E5E7EB] rounded-xl shadow-sm p-5">
+          <div className="mb-4">
+            <div className="text-[14px] font-semibold text-[#0F172A]">Performance por roteiro</div>
+            <div className="text-[11.5px] text-[#64748B]">Compare quais geram mais reuniões e respostas</div>
+          </div>
+          <div className="space-y-4 mt-2">
+            {scriptPerfData?.map((s, i) => {
+              const colors = ['#039855', '#1B3A6B', '#3b82f6', '#f59e0b'];
+              const color = colors[i % colors.length];
+              return (
+                <div key={i}>
+                  <div className="flex justify-between text-[12px] font-medium text-[#0F172A] mb-1.5">
+                    <span>{s.name}</span>
+                    <span>{s.rate}%</span>
+                  </div>
+                  <div className="h-2 bg-[#F1F3F6] rounded-full overflow-hidden">
+                    <div className="h-full rounded-full transition-all" style={{ width: `${s.rate}%`, background: color }} />
+                  </div>
+                </div>
+              );
+            })}
+            {!scriptPerfData?.length && <div className="text-center text-[#64748B] text-[12px] py-4">Nenhum roteiro com conversas ainda.</div>}
+          </div>
+        </div>
+
+        {/* Melhor horário */}
+        <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm p-5 flex flex-col">
+          <div className="mb-4">
+            <div className="text-[14px] font-semibold text-[#0F172A]">Melhor horário</div>
+            <div className="text-[11.5px] text-[#64748B]">Hora do dia com maior taxa de resposta</div>
+          </div>
+          <div className="grid grid-cols-2 gap-3 flex-1 mt-2">
+            {timeData?.map((t, i) => {
+              const bgColors = ['bg-[#ECFDF3]', 'bg-[#FEF3C7]', 'bg-[#F1F5F9]', 'bg-[#F1F5F9]'];
+              const textColors = ['text-[#027A48]', 'text-[#B45309]', 'text-[#475569]', 'text-[#475569]'];
+              return (
+                <div key={i} className={`${bgColors[i] || 'bg-[#F1F5F9]'} rounded-lg p-3 text-center flex flex-col justify-center`}>
+                  <div className="text-[10px] uppercase font-bold text-[#64748B] mb-1 leading-tight">{t.label.split(' ')[0]}<br/>{t.label.split(' ')[1]}</div>
+                  <div className={`text-[18px] font-bold ${textColors[i] || 'text-[#475569]'}`}>{t.rate}%</div>
+                  <div className="text-[10px] text-[#64748B] mt-0.5">resposta</div>
+                </div>
+              );
+            })}
+          </div>
+          {timeData && timeData.length > 0 && timeData[0].rate > 0 ? (
+            <div className="mt-4 text-[11px] bg-[#FEF9C3] text-[#854D0E] p-3 rounded-lg flex items-start gap-2 leading-relaxed">
+              <span className="shrink-0 text-[14px]">💡</span>
+              <span><strong>Recomendação:</strong> aumente os envios na faixa das <strong>{timeData[0].label.split(' ')[1]}</strong> que tem a melhor conversão do dia.</span>
+            </div>
+          ) : null}
+        </div>
       </div>
 
       {/* Funnel visualization */}

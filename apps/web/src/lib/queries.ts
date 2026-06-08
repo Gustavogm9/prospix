@@ -2374,6 +2374,77 @@ export const dashboardQueries = {
       error: null,
     };
   },
+
+  performanceByScript: async (tenantId: string) => {
+    const { data: scripts, error: scriptsErr } = await supabase
+      .from('scripts')
+      .select('id, name')
+      .eq('tenant_id', tenantId);
+
+    if (scriptsErr) return { data: [], error: mapError(scriptsErr) };
+
+    const { data: conversations, error: convErr } = await supabase
+      .from('conversations')
+      .select('script_id, message_count')
+      .eq('tenant_id', tenantId);
+
+    if (convErr) return { data: [], error: mapError(convErr) };
+
+    const stats = (scripts || []).map(script => {
+      const scriptConvs = (conversations || []).filter(c => c.script_id === script.id);
+      const total = scriptConvs.length;
+      const responded = scriptConvs.filter(c => (c.message_count || 0) > 1).length;
+      const rate = total > 0 ? (responded / total) * 100 : 0;
+      return {
+        id: script.id,
+        name: script.name,
+        total,
+        responded,
+        rate: Number(rate.toFixed(1))
+      };
+    });
+
+    stats.sort((a, b) => b.rate - a.rate);
+
+    return { data: stats, error: null };
+  },
+
+  bestTimeOfDay: async (tenantId: string) => {
+    const { data: messages, error } = await supabase
+      .from('messages')
+      .select('created_at')
+      .eq('tenant_id', tenantId)
+      .eq('direction', 'INBOUND');
+
+    if (error) return { data: [], error: mapError(error) };
+
+    let morning = 0; // 9-12
+    let afternoon = 0; // 14-17
+    let earlyMorning = 0; // 7-9
+    let lateAfternoon = 0; // 17-20
+    let total = 0;
+
+    (messages || []).forEach(m => {
+      const hour = new Date(m.created_at).getHours();
+      total++;
+      if (hour >= 9 && hour < 12) morning++;
+      else if (hour >= 14 && hour < 17) afternoon++;
+      else if (hour >= 7 && hour < 9) earlyMorning++;
+      else if (hour >= 17 && hour < 20) lateAfternoon++;
+    });
+
+    const getRate = (count: number) => total > 0 ? Math.round((count / total) * 100) : 0;
+
+    return {
+      data: [
+        { label: 'Manhã 9-12h', rate: getRate(morning), period: 'morning' },
+        { label: 'Tarde 14-17h', rate: getRate(afternoon), period: 'afternoon' },
+        { label: 'Início Manhã 7-8h', rate: getRate(earlyMorning), period: 'earlyMorning' },
+        { label: 'Fim Tarde 17-20h', rate: getRate(lateAfternoon), period: 'lateAfternoon' }
+      ].sort((a, b) => b.rate - a.rate),
+      error: null
+    };
+  },
 };
 
 export const leadSourcesQueries = {
