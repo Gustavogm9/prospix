@@ -32,6 +32,7 @@ interface StaticSource {
   color: string;
   badgeColor: string;
   borderColor: string;
+  isComingSoon?: boolean;
 }
 
 const STATIC_SOURCES: StaticSource[] = [
@@ -366,8 +367,12 @@ export default function DataEnrichment() {
                   </div>
                   
                   <div className="flex items-center gap-2">
-                    {isDisabled ? (
-                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                    {src.isComingSoon ? (
+                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-slate-100 text-slate-500 border border-slate-200">
+                        Em Breve
+                      </span>
+                    ) : isDisabled ? (
+                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
                         Premium
                       </span>
                     ) : isActive ? (
@@ -421,7 +426,14 @@ export default function DataEnrichment() {
                     {src.stats.last30Days > 0 ? `+${src.stats.last30Days} nos últimos 30 dias` : 'Sem atividades recentes'}
                   </span>
                   
-                  {isDisabled ? (
+                  {src.isComingSoon ? (
+                    <button 
+                      disabled
+                      className="px-3.5 py-1.5 rounded-lg bg-slate-50 text-slate-400 text-[11px] font-bold cursor-not-allowed border border-slate-200"
+                    >
+                      Em Desenvolvimento
+                    </button>
+                  ) : isDisabled ? (
                     <button 
                       onClick={() => {
                         setSelectedPremiumSource(src);

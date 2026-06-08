@@ -807,82 +807,245 @@ serve(async (req: Request) => {
 
           // ── Premium Source Add-ons Enrichment ──────────────────
           
-          // 1. Instagram Scraper (Social Linker)
-          if (activeSources.has("INSTAGRAM_SCRAPER") && lead.whatsapp) {
-            const rand = Math.random();
-            if (rand > 0.2) { // 80% chance of finding Instagram profile
-              const instagramFollowers = Math.floor(Math.random() * 8500) + 120;
-              metadata.instagram = {
-                username: leadName ? `@${leadName.toLowerCase().replace(/[^a-z0-9]/g, "")}` : "@perfil_empresa",
-                followers: instagramFollowers,
-                posts_count: Math.floor(Math.random() * 150) + 8,
-                has_bio_link: Math.random() > 0.4,
-                last_posted_at: new Date(Date.now() - Math.floor(Math.random() * 7) * 24 * 60 * 60 * 1000).toISOString(),
-              };
-              events.push({
-                tenant_id: tid,
-                lead_id: lead.id,
-                event_type: "instagram_found",
-                payload: {
-                  username: metadata.instagram.username,
-                  followers: instagramFollowers,
-                  reason: `Perfil do Instagram localizado e analisado com sucesso (${instagramFollowers} seguidores).`,
-                },
-                created_at: now(),
-              });
+          // ── 1. Instagram Scraper (Social Linker) ──────────────────
+          if (activeSources.has("INSTAGRAM_SCRAPER")) {
+            const APIFY_TOKEN = Deno.env.get("APIFY_API_TOKEN");
+            if (APIFY_TOKEN) {
+              try {
+                // Gerar possíveis usernames a partir do nome da empresa
+                const companyNameClean = (cnpjInfo?.nome_fantasia || cnpjInfo?.razao_social || leadName || "")
+                  .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+                  .toLowerCase()
+                  .replace(/\b(ltda|me|epp|eireli|s\.?a\.?|ss)\b/gi, "")
+                  .replace(/[^a-z0-9]/g, "")
+                  .trim();
+
+                if (companyNameClean.length >= 3) {
+                  console.log(`  📸 Instagram: buscando perfil para "${companyNameClean}"...`);
+
+                  // Chamar Apify Instagram Profile Scraper (sync, fast run)
+                  const apifyResp = await fetch(
+                    `https://api.apify.com/v2/acts/apify~instagram-profile-scraper/run-sync-get-dataset-items?token=${APIFY_TOKEN}`,
+                    {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        usernames: [companyNameClean],
+                        resultsLimit: 1,
+                      }),
+                    }
+                  );
+
+                  if (apifyResp.ok) {
+                    const apifyData = await apifyResp.json();
+                    const profile = Array.isArray(apifyData) ? apifyData[0] : null;
+
+                    if (profile && profile.username) {
+                      metadata.instagram = {
+                        username: profile.username,
+                        full_name: profile.fullName || null,
+                        followers: profile.followersCount || 0,
+                        following: profile.followsCount || 0,
+                        posts_count: profile.postsCount || 0,
+                        biography: profile.biography?.slice(0, 200) || null,
+                        is_business: profile.isBusinessAccount || false,
+                        profile_url: `https://www.instagram.com/${profile.username}`,
+                        data_source: "apify",
+                      };
+                      console.log(`  ✅ Instagram: @${profile.username} (${profile.followersCount || 0} seguidores)`);
+                    } else {
+                      metadata.instagram = {
+                        available: false,
+                        searched_username: companyNameClean,
+                        reason: "Perfil não encontrado no Instagram",
+                      };
+                    }
+                  } else {
+                    console.warn(`  ⚠️ Instagram Apify API retornou status ${apifyResp.status}`);
+                    metadata.instagram = {
+                      available: false,
+                      reason: `Apify API erro: HTTP ${apifyResp.status}`,
+                    };
+                  }
+                } else {
+                  metadata.instagram = {
+                    available: false,
+                    reason: "Nome da empresa muito curto para buscar perfil",
+                  };
+                }
+
+                events.push({
+                  tenant_id: tid,
+                  lead_id: lead.id,
+                  event_type: "instagram_enriched",
+                  payload: {
+                    username: metadata.instagram?.username || null,
+                    followers: metadata.instagram?.followers || 0,
+                    reason: metadata.instagram?.username
+                      ? `Perfil @${metadata.instagram.username} encontrado com ${metadata.instagram.followers} seguidores.`
+                      : metadata.instagram?.reason || "Perfil não localizado.",
+                  },
+                  created_at: now(),
+                });
+              } catch (igErr: any) {
+                console.warn(`  ⚠️ Instagram Scraper erro: ${igErr.message?.slice(0, 80)}`);
+                metadata.instagram = {
+                  available: false,
+                  reason: `Erro na busca: ${igErr.message?.slice(0, 100)}`,
+                };
+              }
+            } else {
+              console.log("  ℹ️ APIFY_API_TOKEN não configurado — Instagram Scraper desativado");
+              metadata.instagram = { available: false, reason: "API key não configurada" };
             }
           }
 
-          // 2. Contato Direto do Sócio (QSA Cell Finder)
-          if (activeSources.has("SOCIO_CONTACT") && cnpjInfo && cnpjInfo.qsa?.length > 0) {
-            const adminSocio = cnpjInfo.qsa.find((s: any) => 
-              s.qual?.toLowerCase().includes("administrador") || 
-              s.qual?.toLowerCase().includes("diretor") ||
-              s.qual?.toLowerCase().includes("sócio")
-            );
-            if (adminSocio) {
-              const ddd = lead.whatsapp ? lead.whatsapp.substring(0, 5) : "+5517";
-              const randomMobile = `${ddd}99${Math.floor(Math.random() * 899999 + 100000)}`;
-              
-              metadata.socio_contact = {
-                name: adminSocio.nome,
-                phone: randomMobile,
-                whatsapp_checked: true,
-              };
-              
-              // Substitute phone for direct prospecção
-              lead.whatsapp = randomMobile;
-              whatsappValid = true; // Sócio direct numbers are pre-validated as active cellphones
+          // ── 2. Contato Direto do Sócio (QSA Cell Finder) ──────────────
+          if (activeSources.has("SOCIO_CONTACT") && cnpjInfo) {
+            const INFOSIMPLES_TOKEN = Deno.env.get("INFOSIMPLES_API_TOKEN");
+            if (INFOSIMPLES_TOKEN) {
+              try {
+                // Encontrar o sócio-administrador no QSA
+                const adminKeywords = /administrador|s[óo]cio[- ]?administrador|diretor|gerente|presidente|propriet[áa]rio/i;
+                const adminPartner = (cnpjInfo.qsa || []).find(s => adminKeywords.test(s.qualificacao));
+                const partnerName = adminPartner?.nome || cnpjInfo.qsa?.[0]?.nome;
 
-              events.push({
-                tenant_id: tid,
-                lead_id: lead.id,
-                event_type: "socio_whatsapp_found",
-                payload: {
-                  socio_name: adminSocio.nome,
-                  phone: randomMobile,
-                  reason: `Celular direto do sócio-administrador (${adminSocio.nome}) encontrado via QSA Cell Finder.`,
-                },
-                created_at: now(),
-              });
+                if (partnerName) {
+                  console.log(`  👤 QSA Cell Finder: buscando celular de "${partnerName}"...`);
+
+                  // Tentar buscar telefone via InfoSimples — consulta por nome
+                  const infoResp = await fetch("https://api.infosimples.com/api/v2/consultas/telefone/nome", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      nome: partnerName,
+                      uf: cnpjInfo.uf || undefined,
+                      municipio: cnpjInfo.municipio || undefined,
+                      token: INFOSIMPLES_TOKEN,
+                    }),
+                  });
+
+                  if (infoResp.ok) {
+                    const infoData = await infoResp.json();
+                    // InfoSimples retorna code 200 para sucesso
+                    if (infoData.code === 200 && infoData.data && infoData.data.length > 0) {
+                      // Filtrar apenas celulares (DDD + 9XXXX-XXXX)
+                      const phones: string[] = [];
+                      for (const record of infoData.data) {
+                        const phoneList = record.telefones || record.phones || [];
+                        for (const p of phoneList) {
+                          const num = (p.numero || p.phone || p || "").toString().replace(/\D/g, "");
+                          // Celulares brasileiros: 11 dígitos, 9° dígito = 9
+                          if (num.length === 11 && num[2] === "9") {
+                            phones.push(num);
+                          } else if (num.length === 13 && num.startsWith("55") && num[4] === "9") {
+                            phones.push(num.slice(2)); // remover 55
+                          }
+                        }
+                      }
+
+                      const uniquePhones = [...new Set(phones)].slice(0, 3);
+
+                      if (uniquePhones.length > 0) {
+                        // Validar o primeiro celular encontrado via WhatsApp
+                        const primaryPhone = `55${uniquePhones[0]}`;
+                        const wppCheck = await checkWhatsApp(primaryPhone, evoConfig);
+
+                        metadata.socio_contact = {
+                          partner_name: partnerName,
+                          partner_role: adminPartner?.qualificacao || "Sócio",
+                          phones_found: uniquePhones,
+                          primary_phone: uniquePhones[0],
+                          whatsapp_validated: wppCheck === true,
+                          data_source: "infosimples",
+                        };
+
+                        // Se o WhatsApp do sócio for válido, atualizar o whatsapp do lead
+                        if (wppCheck === true && !whatsappValid) {
+                          console.log(`  ✅ QSA Cell: WhatsApp do sócio ${partnerName} validado: ${uniquePhones[0]}`);
+                          // Nota: não sobrescrevemos o whatsapp original, guardamos em metadata
+                        }
+
+                        console.log(`  ✅ QSA Cell: ${uniquePhones.length} celular(es) encontrado(s) para ${partnerName}`);
+                      } else {
+                        metadata.socio_contact = {
+                          partner_name: partnerName,
+                          partner_role: adminPartner?.qualificacao || "Sócio",
+                          phones_found: [],
+                          available: false,
+                          reason: "Nenhum celular encontrado nos registros",
+                          data_source: "infosimples",
+                        };
+                      }
+                    } else {
+                      metadata.socio_contact = {
+                        partner_name: partnerName,
+                        available: false,
+                        reason: infoData.message || "Nenhum resultado retornado pela API",
+                        data_source: "infosimples",
+                      };
+                    }
+                  } else {
+                    console.warn(`  ⚠️ InfoSimples API retornou status ${infoResp.status}`);
+                    metadata.socio_contact = {
+                      partner_name: partnerName,
+                      available: false,
+                      reason: `InfoSimples API erro: HTTP ${infoResp.status}`,
+                    };
+                  }
+                } else {
+                  metadata.socio_contact = {
+                    available: false,
+                    reason: "Nenhum sócio encontrado no QSA do CNPJ",
+                  };
+                }
+
+                events.push({
+                  tenant_id: tid,
+                  lead_id: lead.id,
+                  event_type: "socio_contact_enriched",
+                  payload: {
+                    partner_name: metadata.socio_contact?.partner_name || null,
+                    phones_count: metadata.socio_contact?.phones_found?.length || 0,
+                    whatsapp_validated: metadata.socio_contact?.whatsapp_validated || false,
+                    reason: metadata.socio_contact?.phones_found?.length > 0
+                      ? `${metadata.socio_contact.phones_found.length} celular(es) encontrado(s) para o sócio ${metadata.socio_contact.partner_name}.`
+                      : metadata.socio_contact?.reason || "Celular do sócio não localizado.",
+                  },
+                  created_at: now(),
+                });
+              } catch (socioErr: any) {
+                console.warn(`  ⚠️ QSA Cell Finder erro: ${socioErr.message?.slice(0, 80)}`);
+                metadata.socio_contact = {
+                  available: false,
+                  reason: `Erro na busca: ${socioErr.message?.slice(0, 100)}`,
+                };
+              }
+            } else {
+              console.log("  ℹ️ INFOSIMPLES_API_TOKEN não configurado — QSA Cell Finder desativado");
+              metadata.socio_contact = { available: false, reason: "API key não configurada" };
             }
           }
 
-          // 3. Faturamento & Porte (CNPJ Premium)
+          // 3. Faturamento & Porte (CNPJ Premium) — REAL DATA from CNPJ APIs
+          // Uses porte_empresa and capital_social already returned by BrasilAPI/CNPJá.
           if (activeSources.has("CNPJ_PREMIUM") && cnpjInfo) {
-            const capitalSocial = Number(cnpjInfo.capital_social || 50000);
-            const faturamentoPresumido = capitalSocial * (1.5 + Math.random() * 3);
+            // Extract real porte from the raw CNPJ data (comes from BrasilAPI/ReceitaWS)
+            const rawData = metadata.cnpj_info || {} as any;
+            const porteRaw = rawData.porte || rawData.descricao_porte || "";
             let porteEmpresa = "ME";
-            if (faturamentoPresumido > 4800000) porteEmpresa = "MEDIA";
-            else if (faturamentoPresumido > 360000) porteEmpresa = "EPP";
-            else if (faturamentoPresumido > 10000000) porteEmpresa = "GRANDE";
-            else porteEmpresa = "ME";
+            if (/grande/i.test(porteRaw)) porteEmpresa = "GRANDE";
+            else if (/m[eé]di/i.test(porteRaw)) porteEmpresa = "MEDIA";
+            else if (/pequeno|epp/i.test(porteRaw)) porteEmpresa = "EPP";
+            else if (/micro|mei/i.test(porteRaw)) porteEmpresa = "ME";
+
+            const capitalSocial = Number(rawData.capital_social || 0);
 
             metadata.cnpj_premium = {
-              faturamento_estimado: faturamentoPresumido,
               porte: porteEmpresa,
-              funcionarios_estimados: Math.floor(faturamentoPresumido / 75000) + 1,
+              porte_descricao: porteRaw || "Não informado",
               capital_social: capitalSocial,
+              data_source: "receita_federal",
             };
 
             events.push({
@@ -890,9 +1053,11 @@ serve(async (req: Request) => {
               lead_id: lead.id,
               event_type: "cnpj_premium_enriched",
               payload: {
-                faturamento_estimado: faturamentoPresumido,
                 porte: porteEmpresa,
-                reason: `Faturamento presumido (R$ ${faturamentoPresumido.toLocaleString('pt-BR', {maxFractionDigits:0})}) e porte (${porteEmpresa}) identificados.`,
+                capital_social: capitalSocial,
+                reason: capitalSocial > 0
+                  ? `Porte (${porteEmpresa}) e capital social (R$ ${capitalSocial.toLocaleString('pt-BR')}) extraídos da Receita Federal.`
+                  : `Porte (${porteEmpresa}) identificado via Receita Federal. Capital social não disponível.`,
               },
               created_at: now(),
             });
@@ -928,17 +1093,14 @@ serve(async (req: Request) => {
                   ].filter(Boolean)
                 };
               } else {
-                // Fallback simulation
-                const missingSsl = Math.random() > 0.6;
-                const missingLgpd = Math.random() > 0.5;
+                // Website inaccessible — report honestly instead of simulating
                 metadata.cyber_risk = {
-                  ssl_valid: !missingSsl,
-                  lgpd_policy_found: !missingLgpd,
-                  has_vulnerabilities: missingSsl || missingLgpd,
-                  vulnerabilities: [
-                    missingSsl ? "Certificado SSL ausente ou inválido (Simulado)" : null,
-                    missingLgpd ? "Política de privacidade (LGPD) ausente (Simulado)" : null
-                  ].filter(Boolean)
+                  analyzed: false,
+                  ssl_valid: null,
+                  lgpd_policy_found: null,
+                  has_vulnerabilities: false,
+                  vulnerabilities: [],
+                  reason: "Website inacessível ou não encontrado — análise de risco não realizada."
                 };
               }
 
@@ -967,9 +1129,8 @@ serve(async (req: Request) => {
                 googleAds = crawlResult.html.includes("googletagmanager.com/gtag") || crawlResult.html.includes("googleads");
                 tiktokPixel = crawlResult.html.includes("analytics.tiktok.com") || crawlResult.html.includes("ttq(");
               } else {
-                // Simulation fallback
-                fbPixel = Math.random() > 0.6;
-                googleAds = Math.random() > 0.5;
+                // Website inaccessible — no simulation, report honestly
+                // fbPixel, googleAds, tiktokPixel remain false
               }
 
               metadata.ads_tracker = {
@@ -1010,12 +1171,7 @@ serve(async (req: Request) => {
                 scrapedEmails.push(...cleanEmails.slice(0, 3));
               }
 
-              if (scrapedEmails.length === 0) {
-                // Fallback simulation
-                const domain = website || `${leadName.toLowerCase().replace(/[^a-z0-9]/g, "")}.com.br`;
-                scrapedEmails.push(`contato@${domain}`);
-                if (Math.random() > 0.5) scrapedEmails.push(`financeiro@${domain}`);
-              }
+              // No fallback — if no emails found, report empty array honestly
 
               metadata.email_scraper = {
                 emails: scrapedEmails,
@@ -1047,9 +1203,7 @@ serve(async (req: Request) => {
                 if (crawlResult.html.includes("wp-content")) detectedTechs.push("WordPress");
                 if (crawlResult.html.includes("google-analytics")) detectedTechs.push("Google Analytics");
               } else {
-                // Simulation fallback
-                if (Math.random() > 0.6) { detectedTechs.push("WordPress"); detectedTechs.push("Google Analytics"); }
-                if (Math.random() > 0.7) { detectedTechs.push("RD Station"); highValueTools = true; }
+                // Website inaccessible — no simulation, report empty honestly
               }
 
               metadata.technographic = {
@@ -1073,68 +1227,212 @@ serve(async (req: Request) => {
             }
           }
 
-          // ── 7. Fleet & Logistics Finder (Frota & Carga Simulator) ──
-          if (activeSources.has("FLEET_TRACKER")) {
-            const isTransportProf = lead.profession === "ENTREPRENEUR" || lead.profession === "OTHER";
-            const rand = Math.random();
-            const hasFleet = isTransportProf ? (rand > 0.3) : (rand > 0.85); // much higher chance for entrepreneurs
-            
-            if (hasFleet) {
-              const vehicles = Math.floor(Math.random() * 14) + 2;
+          // ── 7. Fleet & Logistics Finder (ANTT/RNTRC heurístico via CNAE) ──
+          if (activeSources.has("FLEET_TRACKER") && cnpjInfo) {
+            try {
+              const cnaeCode = cnpjInfo.cnae?.replace(/\D/g, "") || "";
+              const companyNameUpper = (cnpjInfo.razao_social || cnpjInfo.nome_fantasia || "").toUpperCase();
+
+              // CNAEs do setor de transporte (divisões 49, 50, 51, 52, 53)
+              const transportCnaePrefixes = ["49", "50", "51", "52", "53"];
+              const cnaeIsTransport = transportCnaePrefixes.some(p => cnaeCode.startsWith(p));
+
+              // Palavras-chave indicativas de frota/logística no nome empresarial
+              const fleetKeywords = [
+                "TRANSPORTE", "TRANSPORTES", "TRANSPORTADORA",
+                "LOGISTICA", "LOGÍSTICA", "FRETE", "FRETES",
+                "CARGA", "CARGAS", "MUDANCAS", "MUDANÇAS",
+                "EXPRESS", "EXPRESSO", "RODOVIARIO", "RODOVIÁRIO",
+                "CAMINHAO", "CAMINHÕES", "CAMINHOES",
+                "FROTA", "FROTAS", "DELIVERY", "ENTREGAS",
+                "DISTRIBUIDORA", "DISTRIBUICAO", "DISTRIBUIÇÃO",
+              ];
+              const nameIndicators = fleetKeywords.filter(kw => companyNameUpper.includes(kw));
+              const hasNameIndicator = nameIndicators.length > 0;
+
+              // Classificação CNAE detalhada para tipos de transporte
+              let transportType = "";
+              if (cnaeCode.startsWith("4911") || cnaeCode.startsWith("4912")) transportType = "Transporte ferroviário";
+              else if (cnaeCode.startsWith("4921") || cnaeCode.startsWith("4922") || cnaeCode.startsWith("4923") || cnaeCode.startsWith("4924") || cnaeCode.startsWith("4929") || cnaeCode.startsWith("4930")) transportType = "Transporte rodoviário";
+              else if (cnaeCode.startsWith("50")) transportType = "Transporte aquaviário";
+              else if (cnaeCode.startsWith("51")) transportType = "Transporte aéreo";
+              else if (cnaeCode.startsWith("52")) transportType = "Atividades auxiliares de transporte";
+              else if (cnaeCode.startsWith("53")) transportType = "Correio e entregas";
+
+              const hasFleet = cnaeIsTransport || hasNameIndicator;
+
+              const indicators: string[] = [];
+              if (cnaeIsTransport) indicators.push(`CNAE ${cnaeCode} — setor de ${transportType || "transporte"}`);
+              if (hasNameIndicator) indicators.push(`Nome contém: ${nameIndicators.join(", ")}`);
+
               metadata.fleet_tracker = {
-                has_fleet: true,
-                vehicle_count: vehicles,
-                antt_status: Math.random() > 0.2 ? "ATIVO" : "INATIVO",
-                transport_radar: Math.random() > 0.5 ? "HABILITADO" : "DISPENSADO",
+                has_fleet: hasFleet,
+                cnae_transport: cnaeIsTransport,
+                cnae_code: cnaeCode,
+                transport_type: transportType || null,
+                name_indicators: nameIndicators,
+                indicators,
+                data_source: "cnae_analysis",
               };
-              
+
               events.push({
                 tenant_id: tid,
                 lead_id: lead.id,
-                event_type: "fleet_data_found",
+                event_type: "fleet_tracker_analyzed",
                 payload: {
-                  has_fleet: true,
-                  vehicle_count: vehicles,
-                  antt_status: metadata.fleet_tracker.antt_status,
-                  reason: `Identificada frota comercial de ${vehicles} veículos e registro ANTT (${metadata.fleet_tracker.antt_status}).`
+                  has_fleet: hasFleet,
+                  cnae_transport: cnaeIsTransport,
+                  transport_type: transportType || null,
+                  indicators,
+                  reason: hasFleet
+                    ? `Indicadores de frota/logística detectados: ${indicators.join("; ")}`
+                    : `CNAE (${cnaeCode}) fora do setor de transporte e sem indicadores no nome empresarial.`,
                 },
-                created_at: now()
+                created_at: now(),
               });
-            } else {
-              metadata.fleet_tracker = { has_fleet: false };
+
+              if (hasFleet) {
+                console.log(`  🚛 Fleet Tracker: indicadores detectados — ${indicators.join("; ")}`);
+              }
+            } catch (fleetErr: any) {
+              console.warn(`  ⚠️ Fleet Tracker erro: ${fleetErr.message?.slice(0, 80)}`);
+              metadata.fleet_tracker = {
+                has_fleet: false,
+                available: false,
+                reason: `Erro na análise: ${fleetErr.message?.slice(0, 100)}`,
+              };
             }
           }
 
-          // ── 8. Judicial & Legal Risk Tracker (Processos/D&O Simulator) ──
-          if (activeSources.has("JUDICIAL_TRACKER")) {
-            const hasLawsuits = Math.random() > 0.6; // 40% chance of lawsuits
-            if (hasLawsuits) {
-              const count = Math.floor(Math.random() * 3) + 1;
-              const details = [
-                { class: "Trabalhista", tribunal: "TRT-2", value: Math.floor(Math.random() * 80000) + 15000, status: "EM_ANDAMENTO" },
-                { class: "Civil", tribunal: "TJSP", value: Math.floor(Math.random() * 250000) + 30000, status: "EM_ANDAMENTO" },
-              ].slice(0, count);
+          // ── 8. Judicial & Legal Risk Tracker (Escavador API) ──────────
+          if (activeSources.has("JUDICIAL_TRACKER") && cnpjInfo) {
+            const ESCAVADOR_TOKEN = Deno.env.get("ESCAVADOR_API_TOKEN");
+            if (ESCAVADOR_TOKEN) {
+              try {
+                const cnpjClean = cleanCnpj(cnpjInfo.cnpj);
+                console.log(`  ⚖️ Judicial Tracker: consultando processos para CNPJ ${cnpjClean}...`);
 
-              metadata.judicial_tracker = {
-                has_lawsuits: true,
-                lawsuits_count: count,
-                lawsuits_details: details,
-              };
+                const escResp = await fetch(
+                  `https://api.escavador.com/api/v2/processos?cpf_cnpj=${cnpjClean}`,
+                  {
+                    method: "GET",
+                    headers: {
+                      "Authorization": `Bearer ${ESCAVADOR_TOKEN}`,
+                      "Accept": "application/json",
+                    },
+                  }
+                );
 
-              events.push({
-                tenant_id: tid,
-                lead_id: lead.id,
-                event_type: "lawsuits_detected",
-                payload: {
-                  has_lawsuits: true,
-                  lawsuits_count: count,
-                  details: details,
-                  reason: `Processos ativos localizados nos tribunais (${count} ações trabalhistas/cíveis registradas).`
-                },
-                created_at: now()
-              });
+                if (escResp.ok) {
+                  const escData = await escResp.json();
+                  const processos = escData.items || escData.data || escData.processos || [];
+                  const totalProcessos = escData.total || processos.length || 0;
+
+                  // Classificar tipos de processos
+                  const tipos: Record<string, number> = {};
+                  const tribunais: Set<string> = new Set();
+                  let valorTotal = 0;
+                  const processosAtivos: any[] = [];
+
+                  for (const proc of processos.slice(0, 50)) {
+                    const tipo = (proc.tipo || proc.classe || proc.natureza || "Outros").toString();
+                    tipos[tipo] = (tipos[tipo] || 0) + 1;
+
+                    if (proc.tribunal) tribunais.add(proc.tribunal);
+
+                    const valor = Number(proc.valor_causa || proc.valor || 0);
+                    if (valor > 0) valorTotal += valor;
+
+                    // Considerar ativos os que não tem data de arquivamento
+                    if (!proc.data_arquivamento && !proc.arquivado) {
+                      processosAtivos.push({
+                        numero: proc.numero_cnj || proc.numero || null,
+                        tipo: tipo,
+                        tribunal: proc.tribunal || null,
+                        valor: valor || null,
+                        data_inicio: proc.data_inicio || proc.data_distribuicao || null,
+                      });
+                    }
+                  }
+
+                  // Classificar áreas judiciais
+                  const areaMap: Record<string, string> = {
+                    "trabalhist": "Trabalhista",
+                    "civel": "Cível", "cível": "Cível",
+                    "tributari": "Tributário", "fiscal": "Fiscal",
+                    "criminal": "Criminal", "penal": "Penal",
+                    "consumidor": "Consumidor",
+                  };
+                  const areas: Set<string> = new Set();
+                  for (const [tipo] of Object.entries(tipos)) {
+                    const tipoLower = tipo.toLowerCase();
+                    for (const [key, label] of Object.entries(areaMap)) {
+                      if (tipoLower.includes(key)) areas.add(label);
+                    }
+                  }
+
+                  metadata.judicial_tracker = {
+                    has_lawsuits: totalProcessos > 0,
+                    total_count: totalProcessos,
+                    active_count: processosAtivos.length,
+                    types: tipos,
+                    areas: [...areas],
+                    courts: [...tribunais].slice(0, 10),
+                    estimated_total_value: valorTotal,
+                    top_processes: processosAtivos.slice(0, 5),
+                    data_source: "escavador",
+                  };
+
+                  console.log(`  ⚖️ Judicial: ${totalProcessos} processo(s) encontrado(s), ${processosAtivos.length} ativo(s)`);
+                } else if (escResp.status === 404) {
+                  // Nenhum processo encontrado — resultado legítimo
+                  metadata.judicial_tracker = {
+                    has_lawsuits: false,
+                    total_count: 0,
+                    active_count: 0,
+                    types: {},
+                    areas: [],
+                    courts: [],
+                    estimated_total_value: 0,
+                    top_processes: [],
+                    data_source: "escavador",
+                  };
+                  console.log(`  ⚖️ Judicial: nenhum processo encontrado para CNPJ ${cnpjClean}`);
+                } else {
+                  console.warn(`  ⚠️ Escavador API retornou status ${escResp.status}`);
+                  metadata.judicial_tracker = {
+                    has_lawsuits: false,
+                    available: false,
+                    reason: `Escavador API erro: HTTP ${escResp.status}`,
+                  };
+                }
+
+                events.push({
+                  tenant_id: tid,
+                  lead_id: lead.id,
+                  event_type: "judicial_tracker_analyzed",
+                  payload: {
+                    has_lawsuits: metadata.judicial_tracker.has_lawsuits,
+                    total_count: metadata.judicial_tracker.total_count || 0,
+                    active_count: metadata.judicial_tracker.active_count || 0,
+                    areas: metadata.judicial_tracker.areas || [],
+                    reason: metadata.judicial_tracker.has_lawsuits
+                      ? `${metadata.judicial_tracker.total_count} processo(s) encontrado(s) via Escavador. Áreas: ${(metadata.judicial_tracker.areas || []).join(", ") || "não classificado"}.`
+                      : metadata.judicial_tracker.reason || "Nenhum processo judicial encontrado vinculado ao CNPJ.",
+                  },
+                  created_at: now(),
+                });
+              } catch (judErr: any) {
+                console.warn(`  ⚠️ Judicial Tracker erro: ${judErr.message?.slice(0, 80)}`);
+                metadata.judicial_tracker = {
+                  has_lawsuits: false,
+                  available: false,
+                  reason: `Erro na consulta: ${judErr.message?.slice(0, 100)}`,
+                };
+              }
             } else {
-              metadata.judicial_tracker = { has_lawsuits: false };
+              console.log("  ℹ️ ESCAVADOR_API_TOKEN não configurado — Judicial Tracker desativado");
+              metadata.judicial_tracker = { has_lawsuits: false, available: false, reason: "API key não configurada" };
             }
           }
 

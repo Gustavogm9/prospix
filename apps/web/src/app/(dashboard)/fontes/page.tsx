@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Loader2, MapPin, ArrowRight, AlertCircle, X } from 'lucide-react';
+import { useEffect, useState, useRef, useCallback } from 'react';
+import { Loader2, MapPin, ArrowRight, AlertCircle, X, Upload, Check, Copy, FileSpreadsheet, ClipboardCheck, Search } from 'lucide-react';
 import { leadSourcesQueries, campaignsQueries } from '@/lib/queries';
 import { useAuthStore } from '@/store/auth-store';
 import { toast } from '@prospix/ui';
+import { supabase } from '@/lib/supabase';
 
 interface DBLeadSource {
   id: string;
@@ -32,6 +33,7 @@ interface StaticSource {
   color: string;
   badgeColor: string;
   borderColor: string;
+  isComingSoon?: boolean;
 }
 
 const STATIC_SOURCES: StaticSource[] = [
@@ -65,11 +67,12 @@ const STATIC_SOURCES: StaticSource[] = [
     description: 'Especialistas de saúde e clínicas locais.',
     longDescription: 'Captura contatos e dados profissionais direto do maior diretório de saúde da América Latina na região selecionada.',
     isPremium: false,
-    costText: 'Grátis (Incluso)',
+    costText: 'Premium',
     icon: '🩺',
     color: 'from-teal-50/50 to-emerald-50/30 text-teal-700',
     badgeColor: 'bg-teal-100/70 text-teal-800 border-teal-200/50',
-    borderColor: 'border-teal-100 hover:border-teal-300'
+    borderColor: 'border-teal-100 hover:border-teal-300',
+    isComingSoon: true
   },
   {
     type: 'COMPRASNET',
@@ -77,11 +80,12 @@ const STATIC_SOURCES: StaticSource[] = [
     description: 'Empresas ganhadoras de licitações públicas.',
     longDescription: 'Identifica empresas contratadas pelo governo que necessitam de Seguro Garantia contratual na sua localidade.',
     isPremium: false,
-    costText: 'Grátis (Incluso)',
+    costText: 'Premium',
     icon: '⚖️',
     color: 'from-amber-50/50 to-yellow-50/30 text-amber-700',
     badgeColor: 'bg-amber-100/70 text-amber-800 border-amber-200/50',
-    borderColor: 'border-amber-100 hover:border-amber-300'
+    borderColor: 'border-amber-100 hover:border-amber-300',
+    isComingSoon: true
   },
   {
     type: 'VIVAREAL',
@@ -89,11 +93,12 @@ const STATIC_SOURCES: StaticSource[] = [
     description: 'Anúncios de aluguel comercial ativo.',
     longDescription: 'Varre anúncios comerciais e contatos de imobiliárias para oferecer Seguro Fiança Locatícia empresarial.',
     isPremium: false,
-    costText: 'Grátis (Incluso)',
+    costText: 'Premium',
     icon: '🏢',
     color: 'from-indigo-50/50 to-blue-50/30 text-indigo-700',
     badgeColor: 'bg-indigo-100/70 text-indigo-800 border-indigo-200/50',
-    borderColor: 'border-indigo-100 hover:border-indigo-300'
+    borderColor: 'border-indigo-100 hover:border-indigo-300',
+    isComingSoon: true
   },
   {
     type: 'INSTAGRAM',
@@ -101,11 +106,12 @@ const STATIC_SOURCES: StaticSource[] = [
     description: 'Perfis comerciais ativos com contatos expostos.',
     longDescription: 'Mapeia e analisa o perfil de Instagram de empresas na região de interesse, extraindo contatos comerciais e e-mails.',
     isPremium: false,
-    costText: 'Grátis (Incluso)',
+    costText: 'Premium',
     icon: '📸',
     color: 'from-pink-50/50 to-rose-50/30 text-pink-700',
     badgeColor: 'bg-pink-100/70 text-pink-800 border-pink-200/50',
-    borderColor: 'border-pink-100 hover:border-pink-300'
+    borderColor: 'border-pink-100 hover:border-pink-300',
+    isComingSoon: true
   },
   {
     type: 'RECEITA_FEDERAL',
@@ -125,11 +131,12 @@ const STATIC_SOURCES: StaticSource[] = [
     description: 'Base oficial de médicos ativos.',
     longDescription: 'Cruzamento com o conselho oficial de medicina para validar registro, especialidade declarada e regularidade dos profissionais capturados.',
     isPremium: false,
-    costText: 'Grátis (Incluso)',
+    costText: 'Premium',
     icon: '🏥',
     color: 'from-pink-50/50 to-rose-50/30 text-pink-700',
     badgeColor: 'bg-pink-100/70 text-pink-800 border-pink-200/50',
-    borderColor: 'border-pink-100 hover:border-pink-300'
+    borderColor: 'border-pink-100 hover:border-pink-300',
+    isComingSoon: true
   },
   {
     type: 'OAB_SP',
@@ -137,11 +144,12 @@ const STATIC_SOURCES: StaticSource[] = [
     description: 'Base oficial de advogados ativos.',
     longDescription: 'Cruzamento automático com os registros oficiais da OAB-SP para identificar advogados ativos e a situação das sociedades profissionais.',
     isPremium: false,
-    costText: 'Grátis (Incluso)',
+    costText: 'Premium',
     icon: '⚖️',
     color: 'from-amber-50/50 to-yellow-50/30 text-amber-700',
     badgeColor: 'bg-amber-100/70 text-amber-800 border-amber-200/50',
-    borderColor: 'border-amber-100 hover:border-amber-300'
+    borderColor: 'border-amber-100 hover:border-amber-300',
+    isComingSoon: true
   },
   {
     type: 'CRO_SP',
@@ -149,11 +157,12 @@ const STATIC_SOURCES: StaticSource[] = [
     description: 'Base oficial de dentistas ativos.',
     longDescription: 'Identificação e validação de dentistas ativos por especialidade e local de atendimento junto ao Conselho Regional de Odontologia.',
     isPremium: false,
-    costText: 'Grátis (Incluso)',
+    costText: 'Premium',
     icon: '🦷',
     color: 'from-sky-50/50 to-blue-50/30 text-sky-700',
     badgeColor: 'bg-sky-100/70 text-sky-800 border-sky-200/50',
-    borderColor: 'border-sky-100 hover:border-sky-300'
+    borderColor: 'border-sky-100 hover:border-sky-300',
+    isComingSoon: true
   },
   {
     type: 'LANDING_PAGE',
@@ -219,6 +228,512 @@ function Switch({ checked, disabled, onChange }: SwitchProps) {
   );
 }
 
+// ── Phone normalization helper (client-side) ─────────────────────────────────
+function normalizePhoneClient(raw: string): string {
+  const phone = raw.replace(/\D/g, '');
+  if (phone.startsWith('55') && phone.length >= 12) return `+${phone}`;
+  if (phone.length === 11 || phone.length === 10) return `+55${phone}`;
+  if (phone.length >= 8) return `+55${phone}`;
+  return phone;
+}
+
+// ── CSV parsing helper ───────────────────────────────────────────────────────
+function parseCSV(text: string): { headers: string[]; rows: string[][] } {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length === 0) return { headers: [], rows: [] };
+
+  // Auto-detect delimiter: semicolon or comma
+  const firstLine = lines[0] ?? '';
+  const delimiter = firstLine.includes(';') ? ';' : ',';
+
+  const parseLine = (line: string): string[] => {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === delimiter && !inQuotes) {
+        result.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    result.push(current.trim());
+    return result;
+  };
+
+  const headers = parseLine(lines[0] ?? '');
+  const rows = lines.slice(1).map(parseLine);
+  return { headers, rows };
+}
+
+// ── CSV Upload Modal ─────────────────────────────────────────────────────────
+const CSV_FIELD_OPTIONS = [
+  { value: '', label: '— Ignorar —' },
+  { value: 'name', label: 'Nome' },
+  { value: 'phone', label: 'Telefone' },
+  { value: 'email', label: 'Email' },
+  { value: 'company', label: 'Empresa' },
+  { value: 'city', label: 'Cidade' },
+];
+
+interface ImportResults {
+  imported: number;
+  skipped: number;
+  errors: number;
+}
+
+function CSVUploadModal({
+  open,
+  onClose,
+  tenantId,
+}: {
+  open: boolean;
+  onClose: () => void;
+  tenantId: string;
+}) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [csvData, setCsvData] = useState<string[][]>([]);
+  const [csvColumns, setCsvColumns] = useState<string[]>([]);
+  const [columnMapping, setColumnMapping] = useState<Record<string, string>>({});
+  const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState(0);
+  const [results, setResults] = useState<ImportResults | null>(null);
+  const [fileName, setFileName] = useState('');
+
+  const resetState = useCallback(() => {
+    setCsvData([]);
+    setCsvColumns([]);
+    setColumnMapping({});
+    setImporting(false);
+    setImportProgress(0);
+    setResults(null);
+    setFileName('');
+    setDragOver(false);
+  }, []);
+
+  const handleClose = useCallback(() => {
+    if (importing) return;
+    resetState();
+    onClose();
+  }, [importing, onClose, resetState]);
+
+  const processFile = useCallback((file: File) => {
+    setFileName(file.name);
+    setResults(null);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      const { headers, rows } = parseCSV(text);
+      if (headers.length === 0 || rows.length === 0) {
+        toast.error('Arquivo vazio', 'O arquivo não contém dados válidos.');
+        return;
+      }
+      setCsvColumns(headers);
+      setCsvData(rows);
+
+      // Auto-map columns based on common header names
+      const autoMap: Record<string, string> = {};
+      headers.forEach((h) => {
+        const lower = h.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        if (/^(nome|name|nome_completo|full_name)$/.test(lower)) autoMap[h] = 'name';
+        else if (/^(telefone|phone|celular|whatsapp|tel|fone|numero)$/.test(lower)) autoMap[h] = 'phone';
+        else if (/^(email|e_mail|e-mail|correo)$/.test(lower)) autoMap[h] = 'email';
+        else if (/^(empresa|company|razao_social|organizacao)$/.test(lower)) autoMap[h] = 'company';
+        else if (/^(cidade|city|municipio|localidade)$/.test(lower)) autoMap[h] = 'city';
+      });
+      setColumnMapping(autoMap);
+    };
+    reader.readAsText(file, 'UTF-8');
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) processFile(file);
+  }, [processFile]);
+
+  const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) processFile(file);
+  }, [processFile]);
+
+  // Check if required mappings exist
+  const mappedValues = Object.values(columnMapping);
+  const hasName = mappedValues.includes('name');
+  const hasPhone = mappedValues.includes('phone');
+  const canImport = hasName && hasPhone && csvData.length > 0;
+
+  const handleImport = async () => {
+    if (!canImport || importing) return;
+    setImporting(true);
+    setImportProgress(0);
+    setResults(null);
+
+    // Build column index map
+    const colIdx: Record<string, number> = {};
+    for (const [colName, fieldKey] of Object.entries(columnMapping)) {
+      if (fieldKey) {
+        const idx = csvColumns.indexOf(colName);
+        if (idx >= 0) colIdx[fieldKey] = idx;
+      }
+    }
+
+    let imported = 0;
+    let skipped = 0;
+    let errors = 0;
+    const total = csvData.length;
+    const BATCH_SIZE = 10;
+
+    for (let i = 0; i < total; i += BATCH_SIZE) {
+      const batch = csvData.slice(i, i + BATCH_SIZE);
+      const inserts = [];
+
+      for (const row of batch) {
+        const name = colIdx.name !== undefined ? row[colIdx.name]?.trim() : '';
+        const rawPhone = colIdx.phone !== undefined ? row[colIdx.phone]?.trim() : '';
+        const email = colIdx.email !== undefined ? row[colIdx.email]?.trim() : '';
+        const company = colIdx.company !== undefined ? row[colIdx.company]?.trim() : '';
+        const city = colIdx.city !== undefined ? row[colIdx.city]?.trim() : '';
+
+        if (!name || !rawPhone) {
+          skipped++;
+          continue;
+        }
+
+        const phone = normalizePhoneClient(rawPhone);
+        if (phone.replace(/\D/g, '').length < 10) {
+          errors++;
+          continue;
+        }
+
+        inserts.push({
+          tenant_id: tenantId,
+          name,
+          whatsapp: phone,
+          source: 'IMPORTED',
+          status: 'CAPTURED',
+          metadata: {
+            email: email || undefined,
+            company: company || undefined,
+            city: city || undefined,
+            imported_at: new Date().toISOString(),
+          },
+        });
+      }
+
+      if (inserts.length > 0) {
+        const { data, error } = await supabase
+          .from('leads')
+          .upsert(inserts, { onConflict: 'tenant_id,whatsapp', ignoreDuplicates: true })
+          .select('id');
+
+        if (error) {
+          console.error('Batch insert error:', error.message);
+          errors += inserts.length;
+        } else {
+          const insertedCount = data?.length || 0;
+          imported += insertedCount;
+          skipped += inserts.length - insertedCount;
+        }
+      }
+
+      setImportProgress(Math.min(100, Math.round(((i + batch.length) / total) * 100)));
+    }
+
+    setImportProgress(100);
+    setResults({ imported, skipped, errors });
+    setImporting(false);
+
+    if (imported > 0) {
+      toast.success('Importação concluída', `${imported} leads importados com sucesso.`);
+    } else {
+      toast.info('Importação finalizada', 'Nenhum novo lead importado (possíveis duplicatas).');
+    }
+  };
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm animate-fadeIn" onClick={handleClose}>
+      <div
+        className="bg-white rounded-xl shadow-xl border border-[#E2E8F0] w-full max-w-2xl mx-4 overflow-hidden transform transition-all animate-scaleUp max-h-[90vh] flex flex-col"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Modal Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#F1F3F9] bg-slate-50/50 shrink-0">
+          <div className="flex items-center gap-2">
+            <FileSpreadsheet className="w-5 h-5 text-[#1B3A6B]" />
+            <h3 className="text-[14.5px] font-bold text-[#0F172A]">Importar CSV / Excel</h3>
+          </div>
+          <button
+            onClick={handleClose}
+            disabled={importing}
+            className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-[#E2E8F0] text-[#64748B] transition-all disabled:opacity-50"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Modal Content */}
+        <div className="p-5 space-y-4 overflow-y-auto flex-1">
+          {/* Step 1: File Upload */}
+          {csvColumns.length === 0 ? (
+            <div
+              onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+              className={`border-2 border-dashed rounded-xl p-10 flex flex-col items-center gap-3 cursor-pointer transition-all ${
+                dragOver
+                  ? 'border-[#1B3A6B] bg-blue-50/50'
+                  : 'border-[#CBD5E1] hover:border-[#94A3B8] bg-[#F8FAFC]'
+              }`}
+            >
+              <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-[#1B3A6B]/10 to-[#1B3A6B]/5 flex items-center justify-center">
+                <Upload className="w-7 h-7 text-[#1B3A6B]" />
+              </div>
+              <div className="text-center">
+                <p className="text-[13px] font-semibold text-[#0F172A]">Arraste seu arquivo aqui</p>
+                <p className="text-[11px] text-[#64748B] mt-1">ou clique para selecionar • CSV, TXT</p>
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,.txt"
+                onChange={handleFileInput}
+                className="hidden"
+              />
+            </div>
+          ) : (
+            <>
+              {/* File info badge */}
+              <div className="flex items-center justify-between bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <FileSpreadsheet className="w-4 h-4 text-[#1B3A6B]" />
+                  <span className="text-[12px] font-medium text-[#0F172A]">{fileName}</span>
+                  <span className="text-[11px] text-[#64748B]">{csvData.length} linhas</span>
+                </div>
+                {!importing && !results && (
+                  <button
+                    onClick={resetState}
+                    className="text-[11px] text-[#64748B] hover:text-red-500 font-medium transition-colors"
+                  >
+                    Remover
+                  </button>
+                )}
+              </div>
+
+              {/* Step 2: Column Mapping */}
+              {!results && (
+                <div className="space-y-3">
+                  <div>
+                    <h4 className="text-[12.5px] font-bold text-[#0F172A] mb-1">Mapeamento de Colunas</h4>
+                    <p className="text-[11px] text-[#64748B]">Associe as colunas do arquivo aos campos do sistema. <strong>Nome</strong> e <strong>Telefone</strong> são obrigatórios.</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    {csvColumns.map((col) => (
+                      <div key={col} className="flex items-center gap-2 bg-[#F8FAFC] border border-[#E5E7EB] rounded-lg px-3 py-2">
+                        <span className="text-[11px] font-medium text-[#0F172A] truncate flex-1" title={col}>{col}</span>
+                        <span className="text-[10px] text-[#94A3B8]">→</span>
+                        <select
+                          value={columnMapping[col] || ''}
+                          onChange={e => setColumnMapping(prev => ({ ...prev, [col]: e.target.value }))}
+                          className={`text-[11px] font-medium border rounded-md px-2 py-1 w-28 transition-colors ${
+                            columnMapping[col]
+                              ? 'border-[#1B3A6B]/30 bg-blue-50/50 text-[#1B3A6B]'
+                              : 'border-[#E2E8F0] bg-white text-[#64748B]'
+                          }`}
+                        >
+                          {CSV_FIELD_OPTIONS.map(opt => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Validation indicator */}
+                  <div className="flex items-center gap-3 text-[11px]">
+                    <span className={`flex items-center gap-1 ${hasName ? 'text-emerald-600' : 'text-red-500'}`}>
+                      {hasName ? <Check className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
+                      Nome {hasName ? 'mapeado' : 'obrigatório'}
+                    </span>
+                    <span className={`flex items-center gap-1 ${hasPhone ? 'text-emerald-600' : 'text-red-500'}`}>
+                      {hasPhone ? <Check className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
+                      Telefone {hasPhone ? 'mapeado' : 'obrigatório'}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Step 3: Preview Table */}
+              {!results && csvData.length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="text-[12px] font-bold text-[#0F172A]">Pré-visualização (primeiras 5 linhas)</h4>
+                  <div className="overflow-x-auto border border-[#E2E8F0] rounded-lg">
+                    <table className="w-full text-[10.5px]">
+                      <thead>
+                        <tr className="bg-[#F8FAFC] border-b border-[#E2E8F0]">
+                          {csvColumns.map((col, i) => (
+                            <th key={i} className="px-2.5 py-2 text-left font-semibold text-[#475569] whitespace-nowrap">
+                              {col}
+                              {columnMapping[col] && (
+                                <span className="ml-1 text-[9px] text-[#1B3A6B] font-bold">({CSV_FIELD_OPTIONS.find(o => o.value === columnMapping[col])?.label})</span>
+                              )}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {csvData.slice(0, 5).map((row, i) => (
+                          <tr key={i} className="border-b border-[#F1F5F9] last:border-0 hover:bg-[#F8FAFC]">
+                            {csvColumns.map((_, j) => (
+                              <td key={j} className="px-2.5 py-1.5 text-[#0F172A] whitespace-nowrap max-w-[150px] truncate">
+                                {row[j] || <span className="text-[#CBD5E1]">—</span>}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {csvData.length > 5 && (
+                    <p className="text-[10px] text-[#94A3B8] text-right">... e mais {csvData.length - 5} linhas</p>
+                  )}
+                </div>
+              )}
+
+              {/* Progress Bar */}
+              {importing && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-medium text-[#0F172A]">Importando leads...</span>
+                    <span className="text-[#1B3A6B] font-bold">{importProgress}%</span>
+                  </div>
+                  <div className="w-full bg-[#E2E8F0] rounded-full h-2 overflow-hidden">
+                    <div
+                      className="bg-gradient-to-r from-[#1B3A6B] to-[#2E5894] h-full rounded-full transition-all duration-300"
+                      style={{ width: `${importProgress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Results */}
+              {results && (
+                <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center">
+                      <ClipboardCheck className="w-4 h-4 text-emerald-600" />
+                    </div>
+                    <h4 className="text-[13px] font-bold text-[#0F172A]">Importação Concluída</h4>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="bg-white border border-emerald-200/50 rounded-lg p-3 text-center">
+                      <div className="text-[16px] font-bold text-emerald-600">{results.imported}</div>
+                      <div className="text-[10px] text-[#64748B] font-medium">Importados</div>
+                    </div>
+                    <div className="bg-white border border-amber-200/50 rounded-lg p-3 text-center">
+                      <div className="text-[16px] font-bold text-amber-600">{results.skipped}</div>
+                      <div className="text-[10px] text-[#64748B] font-medium">Duplicados</div>
+                    </div>
+                    <div className="bg-white border border-red-200/50 rounded-lg p-3 text-center">
+                      <div className="text-[16px] font-bold text-red-500">{results.errors}</div>
+                      <div className="text-[10px] text-[#64748B] font-medium">Erros</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Modal Footer */}
+        <div className="px-5 py-4 border-t border-[#F1F3F9] bg-slate-50/50 flex items-center justify-end gap-3 shrink-0">
+          <button
+            onClick={handleClose}
+            disabled={importing}
+            className="h-8.5 px-4.5 rounded-lg border border-[#E2E8F0] text-[#475569] text-[12px] font-semibold hover:bg-white transition-all disabled:opacity-50"
+          >
+            {results ? 'Fechar' : 'Cancelar'}
+          </button>
+          {!results && csvData.length > 0 && (
+            <button
+              onClick={handleImport}
+              disabled={!canImport || importing}
+              className="h-8.5 px-5 rounded-lg bg-[#1B3A6B] hover:bg-[#142C52] text-white text-[12px] font-bold shadow-md transition-all flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {importing ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  Importando...
+                </>
+              ) : (
+                <>
+                  <Upload className="w-3.5 h-3.5" />
+                  Importar {csvData.length} leads
+                </>
+              )}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Webhook URL Card Component ───────────────────────────────────────────────
+function WebhookURLInfo({ tenantId }: { tenantId: string }) {
+  const [copied, setCopied] = useState(false);
+  const webhookURL = `https://yvbyplzfqfrlfujathii.supabase.co/functions/v1/webhook-inbound?tenant_id=${tenantId}`;
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(webhookURL);
+      setCopied(true);
+      toast.success('URL Copiada', 'URL do webhook copiada para a área de transferência.');
+      setTimeout(() => setCopied(false), 2500);
+    } catch {
+      toast.error('Erro', 'Não foi possível copiar a URL.');
+    }
+  };
+
+  return (
+    <div className="mt-3 bg-purple-50/50 border border-purple-200/40 rounded-lg p-3 space-y-2">
+      <p className="text-[10.5px] text-[#475569] leading-relaxed">
+        Configure esta URL no seu formulário externo (Typeform, Elementor, RD Station, etc.):
+      </p>
+      <div className="flex items-center gap-1.5">
+        <code className="flex-1 text-[9.5px] bg-white border border-purple-200/50 rounded-md px-2 py-1.5 text-[#1B3A6B] font-mono truncate select-all">
+          {webhookURL}
+        </code>
+        <button
+          onClick={handleCopy}
+          className={`shrink-0 h-7 px-2.5 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all ${
+            copied
+              ? 'bg-emerald-100 text-emerald-700 border border-emerald-200'
+              : 'bg-white border border-purple-200 text-[#1B3A6B] hover:bg-purple-50'
+          }`}
+        >
+          {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+          {copied ? 'Copiado!' : 'Copiar'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function LeadSources() {
   const tenantId = useAuthStore(state => state.tenantId);
   const [dbSources, setDbSources] = useState<DBLeadSource[]>([]);
@@ -230,6 +745,14 @@ export default function LeadSources() {
   const [submittingPremium, setSubmittingPremium] = useState(false);
   const [togglingSource, setTogglingSource] = useState<string | null>(null);
   const [activeSegmentText, setActiveSegmentText] = useState('segmentos ativos');
+  const [showCSVModal, setShowCSVModal] = useState(false);
+  const [runningDiscovery, setRunningDiscovery] = useState<string | null>(null);
+
+  // Fontes que são do tipo "descoberta ativa" (têm motor de busca)
+  const DISCOVERY_SOURCES = new Set([
+    'GOOGLE_MAPS', 'CNPJ_MINER', 'DOCTORALIA', 'COMPRASNET',
+    'VIVAREAL', 'INSTAGRAM_SCRAPER', 'CRM_SP', 'OAB_SP', 'CRO_SP'
+  ]);
 
   const fetchData = async () => {
     if (!tenantId) return;
@@ -354,6 +877,61 @@ export default function LeadSources() {
     }
   };
 
+  // ── Executar Busca (Discovery Engine) ──────────────────────
+  const handleRunDiscovery = async (sourceType: string) => {
+    if (!tenantId || runningDiscovery) return;
+    setRunningDiscovery(sourceType);
+
+    try {
+      // Buscar campanhas ativas para usar como config
+      const campResult = await campaignsQueries.list(tenantId);
+      const activeCampaigns = (campResult.data || []).filter((c: any) => c.status === 'ACTIVE');
+      
+      if (activeCampaigns.length === 0) {
+        toast.error('Sem campanha ativa', 'Crie e ative uma campanha antes de executar a busca.');
+        setRunningDiscovery(null);
+        return;
+      }
+
+      const campaign = activeCampaigns[0]; // Usa a primeira campanha ativa
+      
+      const response = await fetch('/api/discover', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenant_id: tenantId,
+          campaign_id: campaign.id,
+          source_type: sourceType,
+          config: {
+            search_tags: campaign.search_tags || [],
+            cities: campaign.cities || [],
+            state: campaign.state || 'SP',
+            daily_limit: campaign.daily_limit || 20,
+          },
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.ok) {
+        toast.success(
+          `Busca concluída!`,
+          `${data.leads_inserted || 0} novos leads capturados de ${data.leads_found || 0} encontrados.`
+        );
+        // Atualizar stats
+        await fetchData();
+      } else {
+        const errorMsg = data.error || data.errors?.join(', ') || 'Erro desconhecido';
+        toast.error('Erro na busca', errorMsg);
+      }
+    } catch (err: any) {
+      console.error('Discovery error:', err);
+      toast.error('Erro na busca', err.message || 'Não foi possível executar a busca.');
+    } finally {
+      setRunningDiscovery(null);
+    }
+  };
+
   const mappedSources = STATIC_SOURCES.map(src => {
     const status = getSourceStatus(src.type, src.isPremium);
     const sourceStats = stats[src.type] || { total: 0, last30Days: 0, whatsappValid: 0 };
@@ -464,8 +1042,12 @@ export default function LeadSources() {
                   </div>
                   
                   <div className="flex items-center gap-2">
-                    {isDisabled ? (
-                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                    {src.isComingSoon ? (
+                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-slate-100 text-slate-500 border border-slate-200">
+                        Em Breve
+                      </span>
+                    ) : isDisabled ? (
+                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
                         Premium
                       </span>
                     ) : isActive ? (
@@ -519,7 +1101,22 @@ export default function LeadSources() {
                     {src.stats.last30Days > 0 ? `+${src.stats.last30Days} nos últimos 30 dias` : 'Sem capturas recentes'}
                   </span>
                   
-                  {isDisabled ? (
+                  {src.isComingSoon ? (
+                    <button 
+                      disabled
+                      className="px-3.5 py-1.5 rounded-lg bg-slate-50 text-slate-400 text-[11px] font-bold cursor-not-allowed border border-slate-200"
+                    >
+                      Em Desenvolvimento
+                    </button>
+                  ) : src.type === 'IMPORTED' ? (
+                    <button 
+                      onClick={() => setShowCSVModal(true)} 
+                      className="px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-[#1B3A6B] to-[#2E5894] hover:from-[#142C52] hover:to-[#1B3A6B] text-white text-[11px] font-bold transition-all shadow-sm flex items-center gap-1.5"
+                    >
+                      <Upload className="w-3 h-3" />
+                      Importar Arquivo
+                    </button>
+                  ) : isDisabled ? (
                     <button 
                       onClick={() => {
                         setSelectedPremiumSource(src);
@@ -531,6 +1128,30 @@ export default function LeadSources() {
                     </button>
                   ) : (
                     <div className="flex items-center gap-2">
+                      {/* Botão Executar Busca para fontes de descoberta ativa */}
+                      {DISCOVERY_SOURCES.has(src.type) && isActive && (
+                        <button
+                          onClick={() => handleRunDiscovery(src.type)}
+                          disabled={runningDiscovery !== null}
+                          className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 ${
+                            runningDiscovery === src.type
+                              ? 'bg-amber-50 text-amber-600 border border-amber-200 cursor-wait'
+                              : 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+                          } disabled:opacity-50`}
+                        >
+                          {runningDiscovery === src.type ? (
+                            <>
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              Buscando...
+                            </>
+                          ) : (
+                            <>
+                              <Search className="w-3 h-3" />
+                              Buscar
+                            </>
+                          )}
+                        </button>
+                      )}
                       <span className="text-[10.5px] text-[#64748B] font-medium">
                         {isActive ? 'Ativo' : 'Pausado'}
                       </span>
@@ -542,6 +1163,11 @@ export default function LeadSources() {
                     </div>
                   )}
                 </div>
+
+                {/* Webhook URL info for LANDING_PAGE */}
+                {src.type === 'LANDING_PAGE' && !src.isComingSoon && tenantId && (
+                  <WebhookURLInfo tenantId={tenantId} />
+                )}
               </div>
             </div>
           );
@@ -639,6 +1265,15 @@ export default function LeadSources() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ═══ CSV Upload Modal ═══ */}
+      {tenantId && (
+        <CSVUploadModal
+          open={showCSVModal}
+          onClose={() => setShowCSVModal(false)}
+          tenantId={tenantId}
+        />
       )}
     </div>
   );

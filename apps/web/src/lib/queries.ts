@@ -166,6 +166,21 @@ export const leadsQueries = {
     return { data: list, nextCursor: null, totalCount: count ?? 0, error: null };
   },
 
+  /** List client referrals (source = REFERRAL) */
+  listClientReferrals: async (tenantId: string) => {
+    const { data, error } = await supabase
+      .from('leads')
+      .select('id, name, whatsapp, profession, age_estimate, fit_score, status, metadata, created_at, closed_at')
+      .eq('tenant_id', tenantId)
+      .eq('source', 'REFERRAL')
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (error) return { data: [], error: mapError(error) };
+    return { data: data ?? [], error: null };
+  },
+
   /** Count leads by status — used for dashboard cards */
   count: async (tenantId: string, filters: Omit<LeadFilters, 'limit' | 'cursor' | 'offset'> = {}) => {
     const { status: _status, profession, campaign_id, fit_score_gte, search } = filters;
@@ -518,6 +533,19 @@ export const campaignsQueries = {
       .eq('tenant_id', tenantId)
       .maybeSingle();
 
+    if (error) return { data: null, error: mapError(error) };
+    return { data, error: null };
+  },
+
+  /** Get active campaigns using a specific script */
+  getByScript: async (tenantId: string, scriptId: string) => {
+    const { data, error } = await supabase
+      .from('campaigns')
+      .select('id, name, status, profession, cities')
+      .eq('tenant_id', tenantId)
+      .eq('active_script_id', scriptId)
+      .eq('status', 'ACTIVE');
+      
     if (error) return { data: null, error: mapError(error) };
     return { data, error: null };
   },
@@ -1273,8 +1301,10 @@ export const scriptsQueries = {
   /** Update a script (and optionally replace variations) */
   update: async (tenantId: string, id: string, updateData: {
     name?: string;
+    category?: string;
     baseMessage?: string;
     status?: ScriptStatus;
+    aiTools?: string[];
     flow?: Record<string, unknown>;
     variations?: Array<{ content: string; message?: string; weight?: number }>;
   }) => {
@@ -1291,8 +1321,10 @@ export const scriptsQueries = {
 
     const updatePayload: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (updateData.name !== undefined) updatePayload.name = updateData.name;
+    if (updateData.category !== undefined) updatePayload.category = updateData.category;
     if (updateData.baseMessage !== undefined) updatePayload.base_message = updateData.baseMessage;
     if (updateData.status !== undefined) updatePayload.status = updateData.status;
+    if (updateData.aiTools !== undefined) updatePayload.ai_tools = updateData.aiTools;
     if (updateData.flow !== undefined) updatePayload.flow = updateData.flow;
 
     await supabase.from('scripts').update(updatePayload as any).eq('id', id);

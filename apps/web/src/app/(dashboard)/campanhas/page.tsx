@@ -85,10 +85,10 @@ const SEGMENTS = [
 const CAPTURE_SOURCES = [
   { id: 'GOOGLE_MAPS', label: 'Google Maps Places', icon: '📍', description: 'Busca por especialidade e geolocalização.' },
   { id: 'CNPJ_MINER', label: 'CNPJ Miner (Receita Federal)', icon: '🔍', description: 'Empresas abertas recentemente na base da RF.' },
-  { id: 'DOCTORALIA', label: 'Doctoralia', icon: '🩺', description: 'Médicos, dentistas e clínicas locais.' },
-  { id: 'COMPRASNET', label: 'Comprasnet Licitações', icon: '⚖️', description: 'Ganhadoras de licitações públicas para Seguro Garantia.' },
-  { id: 'VIVAREAL', label: 'VivaReal Imóveis', icon: '🏢', description: 'Anúncios de aluguel comercial para Seguro Fiança.' },
-  { id: 'INSTAGRAM', label: 'Instagram Scraper', icon: '📸', description: 'Perfis profissionais locais com contatos expostos.' },
+  { id: 'DOCTORALIA', label: 'Doctoralia', icon: '🩺', description: 'Médicos, dentistas e clínicas locais.', isComingSoon: true },
+  { id: 'COMPRASNET', label: 'Comprasnet Licitações', icon: '⚖️', description: 'Ganhadoras de licitações públicas para Seguro Garantia.', isComingSoon: true },
+  { id: 'VIVAREAL', label: 'VivaReal Imóveis', icon: '🏢', description: 'Anúncios de aluguel comercial para Seguro Fiança.', isComingSoon: true },
+  { id: 'INSTAGRAM', label: 'Instagram Scraper', icon: '📸', description: 'Perfis profissionais locais com contatos expostos.', isComingSoon: true },
 ];
 
 const PROF_ICON: Record<string, string> = {
@@ -610,8 +610,8 @@ export default function Campaigns() {
                   className="w-full h-9 pl-3 pr-8 rounded-lg bg-[#F9FAFB] border border-[#E5E7EB] text-[13px] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none appearance-none cursor-pointer font-medium text-[#0F172A]"
                 >
                   {CAPTURE_SOURCES.map(source => (
-                    <option key={source.id} value={source.id}>
-                      {source.icon} {source.label}
+                    <option key={source.id} value={source.id} disabled={source.isComingSoon}>
+                      {source.icon} {source.label} {source.isComingSoon ? '(Em breve)' : ''}
                     </option>
                   ))}
                 </select>

@@ -684,17 +684,17 @@ export default function HomePage() {
         <div className="p-4">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {[
-              { num: '✓', name: 'Captura', desc: 'Busca no Google Maps', count: totalCaptured, style: 'done' },
-              { num: '✓', name: 'Qualificação', desc: 'Valida WhatsApp e perfil', count: stats.funnelData?.[1]?.value || 0, style: 'done' },
-              { num: '●', name: 'Conversa IA', desc: 'WhatsApp com sua linguagem', count: stats.pendingConversations, style: 'active' },
-              { num: '4', name: 'Reunião marcada', desc: 'Cai na sua agenda', count: stats.todayMeetings, style: 'pending' },
+              { num: '✓', name: 'Captura', desc: 'Google Maps, Scraping e Referrals', count: totalCaptured, style: 'done' },
+              { num: '✓', name: 'Super Enriquecimento', desc: '10+ bases (CNPJ, Custo) e Fit Score', count: stats.funnelData?.[1]?.value || 0, style: 'done' },
+              { num: '●', name: 'Conversão IA', desc: 'Contorna objeções no WhatsApp', count: stats.pendingConversations, style: 'active' },
+              { num: '4', name: 'Loop de Indicações', desc: 'Agenda reunião e aciona motor 24h', count: stats.todayMeetings, style: 'pending' },
             ].map((stage, i) => (
               <div key={i} className="relative bg-[#F1F3F6] border border-[#EEF0F3] rounded-lg p-3 text-center cursor-pointer transition-all hover:border-[#1B3A6B] hover:-translate-y-0.5">
                 <div className={`absolute -top-2.5 left-1/2 -translate-x-1/2 w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold border-2 border-white text-white ${
                   stage.style === 'done' ? 'bg-[#039855]' : stage.style === 'active' ? 'bg-[#E8981C]' : 'bg-[#1B3A6B]'
                 }`}>{stage.num}</div>
                 <div className="text-[12.5px] font-semibold text-[#0F172A] mt-1">{stage.name}</div>
-                <div className="text-[11px] text-[#475569] mt-0.5">{stage.desc}</div>
+                <div className="text-[11px] text-[#475569] mt-0.5 leading-tight">{stage.desc}</div>
                 <div className={`text-[17px] font-bold font-mono mt-1.5 ${
                   stage.style === 'done' ? 'text-[#039855]' : stage.style === 'active' ? 'text-[#A56B0A]' : 'text-[#1B3A6B]'
                 }`}>{stage.count.toLocaleString('pt-BR')}</div>
@@ -703,7 +703,7 @@ export default function HomePage() {
           </div>
           <div className="mt-3.5 px-3.5 py-2.5 bg-[rgba(27,58,107,0.04)] rounded-lg text-[12px] text-[#475569] flex items-center gap-2">
             <Info className="w-4 h-4 text-[#1B3A6B] shrink-0" />
-            <div><strong className="text-[#0F172A]">Antes:</strong> você ligava 100 para falar com 10. <strong className="text-[#0F172A]">Agora:</strong> a IA fala com {totalCaptured} e te entrega {stats.todayMeetings} prontas.</div>
+            <div className="leading-relaxed">A engrenagem perfeita: Pescamos de diversas fontes, <strong className="text-[#0F172A]">enriquecemos tudo</strong>, a IA aborda quem tem <strong className="text-[#0F172A]">Fit Score alto</strong>, e 24h após fechar a reunião, <strong className="text-[#0F172A]">roda o motor automático</strong> de indicações no Whatsapp.</div>
           </div>
         </div>
       </div>

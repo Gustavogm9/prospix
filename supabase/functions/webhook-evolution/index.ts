@@ -75,6 +75,26 @@ async function callOpenAI(
   return { content, tokensIn, tokensOut, latencyMs };
 }
 
+// ── Referral Extraction ──────────────────────────────────────────────────────
+async function extractReferrals(messageContent: string): Promise<Array<{ name: string; phone: string }>> {
+  const prompt = `Você é um extrator de contatos.
+O usuário acabou de mandar uma mensagem com indicações (nomes e telefones).
+Extraia todos os contatos fornecidos na mensagem.
+RETORNE APENAS UM JSON ARRAY VÁLIDO. Sem formatação markdown, sem crases, sem texto adicional.
+O array deve ter o formato:
+[{"name": "Nome da pessoa", "phone": "Número de telefone"}]
+Se não encontrar nada, retorne [].`;
+
+  const result = await callOpenAI(prompt, messageContent, 0.1, 150);
+  try {
+    const cleanContent = result.content.replace(/```json/gi, "").replace(/```/g, "").trim();
+    return JSON.parse(cleanContent);
+  } catch (err) {
+    console.error("Failed to parse referrals JSON", result.content);
+    return [];
+  }
+}
+
 // ── Intent Classification ───────────────────────────────────────────────────
 const CLASSIFIER_PROMPT = `Você é um classificador de intenções para prospecção B2B de seguros.
 Classifique a mensagem do lead em UMA das categorias:
@@ -84,6 +104,7 @@ Classifique a mensagem do lead em UMA das categorias:
 - OBJECTION: levanta objeção (preço, já tem, não precisa)
 - CALLBACK_REQUEST: pede para ligar, falar com humano
 - GREETING: saudação simples (oi, bom dia)
+- REFERRAL_PROVIDED: envia nomes e números de telefone de indicações (amigos, sócios, colegas)
 Responda APENAS com a categoria.`;
 
 const VALID_INTENTS = [
@@ -93,6 +114,7 @@ const VALID_INTENTS = [
   "OBJECTION",
   "CALLBACK_REQUEST",
   "GREETING",
+  "REFERRAL_PROVIDED",
 ];
 
 async function classifyIntent(
@@ -113,7 +135,7 @@ async function classifyIntent(
 }
 
 // ── Response Generation ─────────────────────────────────────────────────────
-function buildResponsePrompt(scriptBaseMessage: string | null): string {
+function buildResponsePrompt(scriptBaseMessage: string | null, aiTools?: string[] | null): string {
   let prompt = `Você é um consultor de seguros profissional e simpático.
 Você está prospectando via WhatsApp.
 Responda de forma natural, curta (máx 2 parágrafos), e consultiva.
@@ -124,6 +146,22 @@ Se o lead não tem interesse, agradeça educadamente.`;
 
   if (scriptBaseMessage) {
     prompt += `\n\nRoteiro base:\n${scriptBaseMessage}`;
+  }
+
+  if (aiTools && aiTools.length > 0) {
+    prompt += `\n\n### FERRAMENTAS AUTORIZADAS (Você pode avisar o lead que usará estas ferramentas se necessário):`;
+    if (aiTools.includes('CALENDAR_READ')) {
+      prompt += `\n- CONSULTAR AGENDA: Você tem acesso à agenda e pode dizer algo como "Vou verificar a agenda do Giovane e te passo opções de horários."`;
+    }
+    if (aiTools.includes('CALENDAR_WRITE')) {
+      prompt += `\n- AGENDAR REUNIÃO: Você está autorizado a agendar reuniões se o lead confirmar um horário: "Vou deixar esse horário reservado na agenda!"`;
+    }
+    if (aiTools.includes('SEND_PDF')) {
+      prompt += `\n- ENVIAR PDF: Você pode enviar o PDF institucional se solicitado: "Posso enviar nosso material em PDF se quiser conhecer mais." (Apenas avise, o sistema enviará o arquivo na próxima mensagem).`;
+    }
+    if (aiTools.includes('ESCALATE')) {
+      prompt += `\n- ENCAMINHAR PARA HUMANO: Você tem autorização para passar a conversa para um especialista humano (Giovane) se o lead quiser ligação ou fizer perguntas complexas: "Vou pedir pro Giovane te ligar ou continuar o atendimento por aqui."`;
+    }
   }
 
   return prompt;
@@ -500,6 +538,55 @@ serve(async (req: Request) => {
       });
     }
 
+    // If REFERRAL_PROVIDED, extract the referrals and create new leads
+    if (classification.intent === "REFERRAL_PROVIDED") {
+      console.log("  🤝 Referral detected! Extracting...");
+      const referrals = await extractReferrals(messageContent);
+      if (referrals.length > 0) {
+        console.log(`  🎉 Extracted ${referrals.length} referrals!`);
+        for (const ref of referrals) {
+          await supabase.from("leads").insert({
+            tenant_id: tenantId,
+            name: ref.name,
+            whatsapp: ref.phone,
+            source: "REFERRAL",
+            metadata: {
+              referred_by_id: lead.id,
+              referred_by_name: lead.name
+            }
+          });
+        }
+        
+        await supabase.from("lead_events").insert({
+          tenant_id: tenantId,
+          lead_id: lead.id,
+          event_type: "referrals_provided",
+          payload: { count: referrals.length, referrals },
+          created_at: now,
+        });
+
+        const reply = "Muito obrigado pelas indicações! Vou entrar em contato com eles. Pode deixar que não serei chato haha. Mais alguma coisa que eu possa ajudar?";
+        
+        await supabase.from("pending_outbound").insert({
+          tenant_id: tenantId,
+          conversation_id: conversation.id,
+          content: reply,
+          idempotency_key: `ref_ack_${inboundMsgId}`,
+          scheduled_for: new Date(Date.now() + 5000).toISOString(),
+          attempts: 0,
+        });
+
+        return new Response(JSON.stringify({
+          ok: true,
+          message_id: inboundMsgId,
+          intent: classification.intent,
+          referrals_extracted: referrals.length
+        }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    }
+
     // ── Step 4: Generate AI response ─────────────────────────
     // Fetch last 10 messages for context
     const { data: recentMessages } = await supabase
@@ -511,16 +598,18 @@ serve(async (req: Request) => {
 
     // Fetch the active script for context
     let scriptBaseMessage: string | null = null;
+    let aiTools: string[] | null = [];
     if (conversation.script_id) {
       const { data: script } = await supabase
         .from("scripts")
-        .select("base_message, name")
+        .select("base_message, name, ai_tools")
         .eq("id", conversation.script_id)
         .single();
       scriptBaseMessage = script?.base_message || null;
+      aiTools = script?.ai_tools || [];
     }
 
-    const responsePrompt = buildResponsePrompt(scriptBaseMessage);
+    const responsePrompt = buildResponsePrompt(scriptBaseMessage, aiTools);
     const conversationCtx = buildConversationContext(recentMessages || [], lead.name || "");
 
     const aiResponse = await callOpenAI(responsePrompt, conversationCtx, 0.7, 300);

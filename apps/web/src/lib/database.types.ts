@@ -1247,6 +1247,7 @@ export type Database = {
           archived_at: string | null
           base_message: string | null
           category: Database["public"]["Enums"]["ScriptCategory"]
+          ai_tools: string[] | null
           cloned_from_template_id: string | null
           conversion_rate: number | null
           created_at: string
@@ -1265,6 +1266,7 @@ export type Database = {
           archived_at?: string | null
           base_message?: string | null
           category: Database["public"]["Enums"]["ScriptCategory"]
+          ai_tools?: string[] | null
           cloned_from_template_id?: string | null
           conversion_rate?: number | null
           created_at?: string
@@ -1283,6 +1285,7 @@ export type Database = {
           archived_at?: string | null
           base_message?: string | null
           category?: Database["public"]["Enums"]["ScriptCategory"]
+          ai_tools?: string[] | null
           cloned_from_template_id?: string | null
           conversion_rate?: number | null
           created_at?: string
