@@ -46,11 +46,11 @@ const nodeTypes = {
         <span className="font-bold text-[14px] text-gray-900">{data.title as string}</span>
         <span className="text-[10px] font-bold text-gray-500 bg-gray-200 px-2 py-0.5 rounded-full ml-auto">ESPERA</span>
       </div>
-      {data.content && (
+      {data.content ? (
         <div className="px-5 pb-4 text-[13px] text-gray-600">
           {data.content as string}
         </div>
-      )}
+      ) : null}
       <Handle type="source" position={Position.Bottom} className="w-3 h-3 border-2 border-[#E5E7EB] bg-white" />
     </div>
   ),
@@ -71,12 +71,12 @@ const nodeTypes = {
           <div className={`bg-[#F3EFE9] p-4 rounded-xl text-[13px] text-gray-700 italic border-l-4 ${data.styleVariant === 'green' ? 'border-gray-400' : 'border-green-500'}`}>
             {data.message as string}
           </div>
-          {(data.variations || data.responseRate) && (
+          {(data.variations || data.responseRate) ? (
             <div className="mt-4 flex items-center gap-4 text-[12px] font-bold text-gray-500">
-              {data.variations && <span className="flex items-center gap-1"><GitBranch className="w-3 h-3 text-orange-400" /> {data.variations} variações</span>}
-              {data.responseRate && <span className="text-green-600">{data.responseRate} resposta</span>}
+              {data.variations ? <span className="flex items-center gap-1"><GitBranch className="w-3 h-3 text-orange-400" /> {data.variations as React.ReactNode} variações</span> : null}
+              {data.responseRate ? <span className="text-green-600">{data.responseRate as React.ReactNode} resposta</span> : null}
             </div>
-          )}
+          ) : null}
         </div>
         <Handle type="source" position={Position.Bottom} className={`w-3 h-3 border-2 ${borderColor} bg-white`} />
       </div>
@@ -135,7 +135,7 @@ const CustomEdge = ({ id: _id, sourceX, sourceY, targetX, targetY, sourcePositio
   return (
     <>
       <BaseEdge path={edgePath} style={{ stroke: '#CBD5E1', strokeWidth: 2 }} />
-      {data?.label && (
+      {data?.label ? (
         <EdgeLabelRenderer>
           <div
             style={{
@@ -154,7 +154,7 @@ const CustomEdge = ({ id: _id, sourceX, sourceY, targetX, targetY, sourcePositio
             </div>
           </div>
         </EdgeLabelRenderer>
-      )}
+      ) : null}
     </>
   );
 };
