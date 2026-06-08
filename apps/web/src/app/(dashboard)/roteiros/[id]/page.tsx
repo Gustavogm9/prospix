@@ -5,13 +5,14 @@ import { useRouter, useParams } from 'next/navigation';
 import { Button, Input, Textarea, toast, Badge } from '@prospix/ui';
 import { 
   Sparkles, MessageSquare, Plus, Save, Trash2, Wand2, X, 
-  ChevronDown, CheckCircle2, Bot, Send, ShieldAlert, GitBranch
+  ChevronDown, CheckCircle2, Bot, Send, ShieldAlert, GitBranch, ArrowLeft
 } from 'lucide-react';
 import { scriptsQueries } from '@/lib/queries';
 import { useAuthStore } from '@/store/auth-store';
 import { apiFetch } from '@/lib/api-fetch';
+import { ScriptFlowBuilder } from './ScriptFlowBuilder';
 
-type ActiveTab = 'ACTIVE' | 'VARIANTS' | 'SIMULATION';
+type ActiveTab = 'FLUXO' | 'ACTIVE' | 'VARIANTS' | 'SIMULATION';
 
 interface ScriptVariation {
   id: string;
@@ -28,7 +29,7 @@ export default function ScriptDetailsPage() {
   const scriptId = params.id as string;
   const tenantId = useAuthStore(state => state.tenantId);
   
-  const [activeTab, setActiveTab] = useState<ActiveTab>('ACTIVE');
+  const [activeTab, setActiveTab] = useState<ActiveTab>('FLUXO');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -263,13 +264,18 @@ export default function ScriptDetailsPage() {
       <div className="max-w-[1100px] mx-auto w-full">
         
         {/* Banner Header */}
-        <div className="bg-[#F0F4F8] border border-[#D5E1F2] rounded-xl p-4 mb-6 flex items-start gap-3 shadow-sm">
-          <MessageSquare className="w-5 h-5 text-[#1B3A6B] mt-0.5 shrink-0" />
-          <div>
-            <h3 className="text-[14px] font-bold text-[#0F172A] mb-1">Roteiros definem a personalidade da IA.</h3>
-            <p className="text-[13px] text-[#475569]">
-              Crie variantes para testar qual abordagem converte mais. A IA faz testes A/B automaticamente e mostra resultados em Performance.
-            </p>
+        <div className="flex items-center gap-3 mb-6">
+          <button onClick={() => router.push('/roteiros')} className="w-12 h-12 flex items-center justify-center shrink-0 rounded-xl bg-white border border-[#E5E7EB] hover:bg-[#F8F9FB] shadow-sm transition-colors text-[#64748B] hover:text-[#1B3A6B]">
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+          <div className="bg-[#F0F4F8] border border-[#D5E1F2] rounded-xl p-4 flex-1 flex items-start gap-3 shadow-sm">
+            <MessageSquare className="w-5 h-5 text-[#1B3A6B] mt-0.5 shrink-0" />
+            <div>
+              <h3 className="text-[14px] font-bold text-[#0F172A] mb-1">Roteiros definem a personalidade da IA.</h3>
+              <p className="text-[13px] text-[#475569]">
+                Crie variantes para testar qual abordagem converte mais. A IA faz testes A/B automaticamente e mostra resultados em Performance.
+              </p>
+            </div>
           </div>
         </div>
 
@@ -278,16 +284,22 @@ export default function ScriptDetailsPage() {
           {/* Tabs */}
           <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-[#E5E7EB] shadow-sm">
             <button 
+              onClick={() => setActiveTab('FLUXO')}
+              className={`px-5 py-2 rounded-lg text-[13px] font-bold transition-all ${activeTab === 'FLUXO' ? 'bg-[#1B3A6B] text-white shadow' : 'text-[#64748B] hover:bg-[#F8F9FB]'}`}
+            >
+              Fluxo
+            </button>
+            <button 
               onClick={() => setActiveTab('ACTIVE')}
               className={`px-5 py-2 rounded-lg text-[13px] font-bold transition-all ${activeTab === 'ACTIVE' ? 'bg-[#1B3A6B] text-white shadow' : 'text-[#64748B] hover:bg-[#F8F9FB]'}`}
             >
-              Roteiro ativo
+              Mensagem Base
             </button>
             <button 
               onClick={() => setActiveTab('VARIANTS')}
               className={`px-5 py-2 rounded-lg text-[13px] font-bold transition-all ${activeTab === 'VARIANTS' ? 'bg-[#1B3A6B] text-white shadow' : 'text-[#64748B] hover:bg-[#F8F9FB]'}`}
             >
-              Variantes
+              Variantes & Insights
             </button>
             <button 
               onClick={() => setActiveTab('SIMULATION')}
@@ -350,6 +362,14 @@ export default function ScriptDetailsPage() {
             </Button>
           </div>
         </div>
+
+        {/* --- TABS CONTENT --- */}
+        
+        {activeTab === 'FLUXO' && (
+          <div className="animate-fadeIn">
+            <ScriptFlowBuilder />
+          </div>
+        )}
 
         {/* Content Area */}
         {activeTab === 'ACTIVE' && (
@@ -528,9 +548,27 @@ export default function ScriptDetailsPage() {
                 )}
               </div>
 
-              <div className="bg-[#FEF9F0] border border-[#FDEBCE] rounded-2xl p-6 shadow-sm text-[12px] leading-relaxed text-[#935D0B]">
-                <h4 className="font-bold flex items-center gap-1.5 mb-2"><Sparkles className="w-4 h-4" /> Como funciona o A/B</h4>
-                <p>O robô irá alternar as mensagens selecionadas acima de acordo com o peso de distribuição definido. Analise a aba Performance para decidir a vencedora após ~100 envios.</p>
+              <div className="bg-gradient-to-br from-[#1B3A6B] to-[#142C52] border border-[#142C52] rounded-2xl p-6 shadow-md text-white">
+                <h4 className="font-bold flex items-center gap-1.5 mb-3 text-[14px]">
+                  <Sparkles className="w-4 h-4 text-yellow-400" /> Insights da IA
+                </h4>
+                <div className="space-y-3">
+                  <div className="bg-white/10 rounded-xl p-3 backdrop-blur-sm border border-white/10">
+                    <p className="text-[12px] leading-relaxed text-white/90">
+                      A <strong className="text-white">Variação A</strong> tem uma estimativa de <strong>15% maior conversão</strong> por usar gatilhos de prova social logo na primeira linha.
+                    </p>
+                  </div>
+                  <div className="bg-white/10 rounded-xl p-3 backdrop-blur-sm border border-white/10">
+                    <p className="text-[12px] leading-relaxed text-white/90">
+                      Sugerimos testar a <strong className="text-white">Variação B</strong> para validar a recepção de um tom mais informal e direto.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-[#FEF9F0] border border-[#FDEBCE] rounded-2xl p-5 shadow-sm text-[12px] leading-relaxed text-[#935D0B]">
+                <h4 className="font-bold flex items-center gap-1.5 mb-2"><Bot className="w-4 h-4" /> Como funciona o A/B</h4>
+                <p>O robô irá alternar as mensagens de acordo com o peso. Analise a aba Performance para decidir a vencedora.</p>
               </div>
             </div>
           </div>
