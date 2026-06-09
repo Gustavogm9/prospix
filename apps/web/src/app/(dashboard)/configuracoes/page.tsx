@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Button, Input, Badge, toast } from '@prospix/ui';
 import { Settings as SettingsIcon, Shield, CreditCard, Key, Calendar, Phone, Loader2, CheckCircle2, AlertCircle, RefreshCw, FileText, ExternalLink, Bell } from 'lucide-react';
@@ -192,7 +192,7 @@ export default function Settings() {
     return new Date(value).toLocaleDateString('pt-BR');
   };
 
-  const fetchProfile = async () => {
+  const fetchProfile = useCallback(async () => {
     if (!user?.id || !tenantId) return;
     setIsProfileLoading(true);
     try {
@@ -211,7 +211,7 @@ export default function Settings() {
     } finally {
       setIsProfileLoading(false);
     }
-  };
+  }, [user?.id, tenantId]);
 
   const handleSaveProfile = async () => {
     const parsed = profileSchema.safeParse({ name, email, susep });
@@ -250,7 +250,7 @@ export default function Settings() {
     }
   };
 
-  const fetchCredentialState = async () => {
+  const fetchCredentialState = useCallback(async () => {
     setIsCredentialsLoading(true);
     try {
       const res = await apiFetch('/api/integrations/credentials');
@@ -268,9 +268,9 @@ export default function Settings() {
     } finally {
       setIsCredentialsLoading(false);
     }
-  };
+  }, []);
 
-  const fetchBilling = async () => {
+  const fetchBilling = useCallback(async () => {
     if (!tenantId) return;
     setIsBillingLoading(true);
     try {
@@ -287,7 +287,7 @@ export default function Settings() {
     } finally {
       setIsBillingLoading(false);
     }
-  };
+  }, [tenantId]);
 
   const handleSaveCredentials = async () => {
     if (!canManageCredentials) {
@@ -357,7 +357,7 @@ export default function Settings() {
     }
   };
 
-  const checkStatus = async (silent = false) => {
+  const checkStatus = useCallback(async (silent = false) => {
     if (!silent) setWhatsappStatus('loading');
     try {
       const res = await apiFetch('/api/integrations/whatsapp/status');
@@ -378,7 +378,7 @@ export default function Settings() {
       console.error('Error checking WhatsApp status:', err);
       if (!silent) setWhatsappStatus('disconnected');
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (activeTab === 'perfil') {

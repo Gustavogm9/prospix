@@ -1,7 +1,7 @@
 'use client';
 
 import { Target, Plus, Pause, Edit2, Copy, Play, Loader2, Info, X, Trash2, ChevronDown, Lock, Zap, Tag, ChevronRight } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { campaignsQueries, tenantAddonsQueries } from '@/lib/queries';
 import { useAuthStore } from '@/store/auth-store';
@@ -170,7 +170,7 @@ export default function Campaigns() {
   });
 
   // ── Data fetching ──────────────────────────────────────────────────────
-  const fetchCampaigns = async () => {
+  const fetchCampaigns = useCallback(async () => {
     if (!tenantId) return;
     try {
       const result = await campaignsQueries.list(tenantId);
@@ -190,17 +190,17 @@ export default function Campaigns() {
       toast.error('Erro ao carregar', 'Não foi possível carregar as campanhas.');
       setCampaigns([]);
     } finally { setLoading(false); }
-  };
+  }, [tenantId]);
 
-  const fetchLimit = async () => {
+  const fetchLimit = useCallback(async () => {
     if (!tenantId) return;
     try {
       const limit = await campaignsQueries.getLimit(tenantId);
       setCampaignLimit(limit);
     } catch (err) { console.error(err); }
-  };
+  }, [tenantId]);
 
-  useEffect(() => { fetchCampaigns(); fetchLimit(); }, [tenantId]);
+  useEffect(() => { fetchCampaigns(); fetchLimit(); }, [fetchCampaigns, fetchLimit]);
 
   // ── Handlers ───────────────────────────────────────────────────────────
   const handlePause = async (id: string) => {
