@@ -1071,18 +1071,15 @@ async function discoverComprasnet(
 // ══════════════════════════════════════════════════════════════════════════════
 
 async function discoverVivaReal(
-  _config: DiscoverRequest["config"]
+  tenant_id: string,
+  config: DiscoverRequest["config"]
 ): Promise<DiscoveredLead[]> {
-  console.log("🏠 VivaReal: Fonte temporariamente indisponível.");
-
-  // VivaReal uses Cloudflare protection that blocks automated access.
-  // Direct HTTP scraping returns 403/challenge pages instead of real content.
-  // This source needs a scraping proxy (e.g., Apify, ScrapingBee) to work.
-  throw new Error(
-    "VivaReal protegido por Cloudflare — requer proxy de scraping (Apify/ScrapingBee). " +
-    "Configure a integração com proxy e reative esta fonte. " +
-    "Alternativa: use CNPJ_MINER com CNAE imobiliário para encontrar imobiliárias."
-  );
+  console.log("🏠 VivaReal: Fonte bloqueada por Cloudflare. Fazendo fallback para Tavily B2B Search...");
+  return discoverTavily(tenant_id, {
+    ...config,
+    profession: "imobiliária ou corretor de imóveis",
+    search_tags: ["imobiliária", "corretor de imóveis", "venda de imóveis"]
+  });
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1090,18 +1087,15 @@ async function discoverVivaReal(
 // ══════════════════════════════════════════════════════════════════════════════
 
 async function discoverCrmSp(
-  _config: DiscoverRequest["config"]
+  tenant_id: string,
+  config: DiscoverRequest["config"]
 ): Promise<DiscoveredLead[]> {
-  console.log("⚕️ CRM-SP: Fonte temporariamente indisponível.");
-
-  // CFM uses CAPTCHA/Cloudflare and CREMESP has SSL certificate issues
-  // Direct HTTP scraping returns generic portal HTML or fails TLS handshake.
-  // This source needs a scraping proxy (e.g., Apify, ScrapingBee) to work.
-  throw new Error(
-    "CRM/CFM bloqueiam acesso automatizado (WAF/Captcha/SSL). " +
-    "Requer Apify ou automação de navegador para funcionar. " +
-    "Alternativa: use DOCTORALIA com profession=DOCTOR para encontrar médicos."
-  );
+  console.log("⚕️ CRM-SP: Fonte bloqueada (WAF/CAPTCHA). Fazendo fallback para Tavily B2B Search...");
+  return discoverTavily(tenant_id, {
+    ...config,
+    profession: "médico ou clínica médica",
+    search_tags: ["médico", "clínica médica", "consultório médico"]
+  });
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1109,18 +1103,15 @@ async function discoverCrmSp(
 // ══════════════════════════════════════════════════════════════════════════════
 
 async function discoverOabSp(
-  _config: DiscoverRequest["config"]
+  tenant_id: string,
+  config: DiscoverRequest["config"]
 ): Promise<DiscoveredLead[]> {
-  console.log("⚖️ OAB-SP: Fonte temporariamente indisponível.");
-
-  // OAB CNA site is an Angular SPA and its API is protected (CORS/Tokens).
-  // Direct HTTP scraping only returns the empty app shell, not the data.
-  // This source needs a scraping proxy (e.g., Apify, ScrapingBee) with browser rendering to work.
-  throw new Error(
-    "OAB CNA bloqueia acesso automatizado direto (API/SPA). " +
-    "Requer Apify ou automação de navegador (Puppeteer/Playwright) para funcionar. " +
-    "Alternativa: use CNPJ_MINER com CNAE de advocacia para encontrar escritórios."
-  );
+  console.log("⚖️ OAB-SP: SPA/API bloqueada. Fazendo fallback para Tavily B2B Search...");
+  return discoverTavily(tenant_id, {
+    ...config,
+    profession: "advogado ou escritório de advocacia",
+    search_tags: ["advogado", "escritório de advocacia", "advocacia"]
+  });
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1128,18 +1119,99 @@ async function discoverOabSp(
 // ══════════════════════════════════════════════════════════════════════════════
 
 async function discoverCroSp(
-  _config: DiscoverRequest["config"]
+  tenant_id: string,
+  config: DiscoverRequest["config"]
 ): Promise<DiscoveredLead[]> {
-  console.log("🦷 CRO-SP: Fonte temporariamente indisponível.");
+  console.log("🦷 CRO-SP: WAF bloqueando. Fazendo fallback para Tavily B2B Search...");
+  return discoverTavily(tenant_id, {
+    ...config,
+    profession: "dentista ou clínica odontológica",
+    search_tags: ["dentista", "clínica odontológica", "consultório odontológico"]
+  });
+}
 
-  // CRO-SP website blocks automated access (timeout after ~12s).
-  // The site likely uses WAF/bot protection that prevents direct scraping.
-  // This source needs Apify or a similar browser automation tool to work.
-  throw new Error(
-    "CRO-SP bloqueia acesso automatizado (timeout/WAF). " +
-    "Requer Apify ou automação de navegador para funcionar. " +
-    "Alternativa: use DOCTORALIA com profession=DENTIST para encontrar dentistas."
-  );
+// ══════════════════════════════════════════════════════════════════════════════
+// HANDLER 9: TAVILY_B2B_SEARCH
+// ══════════════════════════════════════════════════════════════════════════════
+
+async function discoverTavily(
+  tenant_id: string,
+  config: DiscoverRequest["config"]
+): Promise<DiscoveredLead[]> {
+  console.log("🌐 Tavily: Iniciando busca...");
+
+  const { data: secrets } = await supabase
+    .from("tenant_secrets")
+    .select("tavily_api_key_encrypted")
+    .eq("tenant_id", tenant_id)
+    .single();
+
+  const tavilyKey = secrets?.tavily_api_key_encrypted;
+  if (!tavilyKey) {
+    throw new Error("API key do Tavily não configurada neste tenant.");
+  }
+
+  const cities = config.cities || [];
+  const tags = config.search_tags || [];
+  const dailyLimit = config.daily_limit || 10;
+  const leads: DiscoveredLead[] = [];
+
+  for (const city of cities) {
+    if (leads.length >= dailyLimit) break;
+    const queryStr = tags.length > 0 ? tags.join(" OR ") : config.profession || "empresas";
+    const searchQuery = `"${queryStr}" em ${city} brasil contato whatsapp`;
+
+    try {
+      const resp = await safeFetch("https://api.tavily.com/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          api_key: tavilyKey,
+          query: searchQuery,
+          search_depth: "basic",
+          include_answer: false,
+          include_raw_content: false,
+          max_results: Math.max(5, dailyLimit - leads.length),
+        }),
+      });
+
+      // Increment usage
+      await supabase.rpc("increment_tenant_usage", {
+        p_tenant_id: tenant_id,
+        p_tavily_calls: 1,
+      });
+
+      if (!resp.ok) {
+        console.error(`  ❌ Tavily falhou: HTTP ${resp.status}`);
+        continue;
+      }
+
+      const data = await resp.json();
+      const results = data.results || [];
+      console.log(`  📊 ${results.length} resultados no Tavily para ${city}`);
+
+      for (const res of results) {
+        if (leads.length >= dailyLimit) break;
+
+        leads.push({
+          name: res.title?.slice(0, 50) || "Lead (Tavily)",
+          whatsapp: null,
+          source: "TAVILY_B2B_SEARCH",
+          address: { city },
+          website: res.url,
+          metadata: {
+            tavily_content: res.content?.slice(0, 500),
+            search_query: searchQuery,
+            scrape_date: new Date().toISOString(),
+          },
+        });
+      }
+    } catch (err: any) {
+      console.error(`  💥 Erro no Tavily: ${err.message}`);
+    }
+  }
+
+  return leads;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1161,13 +1233,13 @@ async function routeDiscovery(
     case "COMPRASNET":
       return discoverComprasnet(config);
     case "VIVAREAL":
-      return discoverVivaReal(config);
+      return discoverVivaReal(tenant_id, config);
     case "CRM_SP":
-      return discoverCrmSp(config);
+      return discoverCrmSp(tenant_id, config);
     case "OAB_SP":
-      return discoverOabSp(config);
+      return discoverOabSp(tenant_id, config);
     case "CRO_SP":
-      return discoverCroSp(config);
+      return discoverCroSp(tenant_id, config);
     case "TAVILY_B2B_SEARCH":
       return discoverTavily(tenant_id, config);
     default:

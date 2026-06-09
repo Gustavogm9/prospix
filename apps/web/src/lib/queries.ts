@@ -1926,6 +1926,8 @@ export interface DashboardAiUsageData {
   llm_cost_cents: number;
   whatsapp_cost_cents: number;
   maps_cost_cents: number;
+  tavily_cost_cents: number;
+  firecrawl_cost_cents: number;
   total_costs_cents: number;
   limit: {
     max_limit_cents: number;
@@ -2197,6 +2199,8 @@ export const dashboardQueries = {
             llm_cost_cents: Number(r.llm_cost_cents) || 0,
             whatsapp_cost_cents: Number(r.whatsapp_cost_cents) || 0,
             maps_cost_cents: Number(r.maps_cost_cents) || 0,
+            tavily_cost_cents: Number(r.tavily_cost_cents) || 0,
+            firecrawl_cost_cents: Number(r.firecrawl_cost_cents) || 0,
             total_costs_cents: Number(r.total_costs_cents) || 0,
             limit: {
               max_limit_cents: Number(r.max_limit_cents) || 0,
@@ -2221,7 +2225,9 @@ export const dashboardQueries = {
     const llmCost = usage ? Number(usage.llm_cost_cents) : 0;
     const whatsappCost = usage ? Number(usage.whatsapp_cost_cents) : 0;
     const mapsCost = usage ? Number(usage.google_maps_cost_cents) : 0;
-    const totalCost = llmCost + whatsappCost + mapsCost;
+    const tavilyCost = usage ? Number(usage.tavily_cost_cents) : 0;
+    const firecrawlCost = usage ? Number(usage.firecrawl_cost_cents) : 0;
+    const totalCost = llmCost + whatsappCost + mapsCost + tavilyCost + firecrawlCost;
 
     // Fallback plan limits
     const planLimits: Record<string, number> = { STARTER: 5000, STANDARD: 15000, PREMIUM: 50000 };
@@ -2233,6 +2239,8 @@ export const dashboardQueries = {
         llm_cost_cents: llmCost,
         whatsapp_cost_cents: whatsappCost,
         maps_cost_cents: mapsCost,
+        tavily_cost_cents: tavilyCost,
+        firecrawl_cost_cents: firecrawlCost,
         total_costs_cents: totalCost,
         limit: {
           max_limit_cents: maxLimitCents,

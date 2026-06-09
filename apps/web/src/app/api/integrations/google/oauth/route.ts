@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
     // The callback on the API server will validate this.
     const stateValue = `${tenantId}:${state}`;
 
-    const redirectUri = `${process.env.API_URL || process.env.NEXT_PUBLIC_API_URL}/v1/tenant/integrations/google/callback`;
+    const redirectUri = `${process.env.API_URL || process.env.NEXT_PUBLIC_API_URL}/api/integrations/google/callback`;
     const scopes = [
       'https://www.googleapis.com/auth/calendar',
       'https://www.googleapis.com/auth/calendar.events',

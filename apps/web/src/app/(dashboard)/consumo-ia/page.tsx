@@ -10,6 +10,8 @@ interface AIUsageData {
   llm_cost_cents: number;
   whatsapp_cost_cents: number;
   maps_cost_cents: number;
+  tavily_cost_cents: number;
+  firecrawl_cost_cents: number;
   total_costs_cents: number;
   limit: {
     max_limit_cents: number;
@@ -33,6 +35,7 @@ export default function AIConsumption() {
         toast.error('Erro ao carregar', 'Não foi possível carregar dados de consumo.');
         setData({
           llm_cost_cents: 0, whatsapp_cost_cents: 0, maps_cost_cents: 0,
+          tavily_cost_cents: 0, firecrawl_cost_cents: 0,
           total_costs_cents: 0,
           limit: { max_limit_cents: 0, used_percent: 0, remaining_cents: 0 }
         });
@@ -45,13 +48,15 @@ export default function AIConsumption() {
     { label: 'IA (LLM)', value: data?.llm_cost_cents ?? 0, color: '#1B3A6B' },
     { label: 'WhatsApp', value: data?.whatsapp_cost_cents ?? 0, color: '#25D366' },
     { label: 'Google Maps', value: data?.maps_cost_cents ?? 0, color: '#4285F4' },
+    { label: 'Tavily (Busca)', value: data?.tavily_cost_cents ?? 0, color: '#8B5CF6' },
+    { label: 'Firecrawl (Scraping)', value: data?.firecrawl_cost_cents ?? 0, color: '#F97316' },
   ];
 
   return (
     <div className="space-y-5 animate-fadeIn">
       <div className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-[rgba(27,58,107,0.04)] to-[rgba(232,152,28,0.06)] border border-[rgba(27,58,107,0.08)] rounded-xl text-[12.5px] text-[#0F172A]">
         <Cpu className="w-4 h-4 text-[#1B3A6B] shrink-0" />
-        <div><strong>Consumo de IA</strong> mostra quanto sua máquina está gastando com LLM, WhatsApp e Google Maps neste mês.</div>
+        <div><strong>Consumo de IA</strong> mostra quanto sua máquina está gastando com serviços e ferramentas neste mês.</div>
       </div>
 
       {/* Usage meter */}

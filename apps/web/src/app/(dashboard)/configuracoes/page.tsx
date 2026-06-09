@@ -418,7 +418,7 @@ export default function Settings() {
         pollingIntervalRef.current = null;
       }
     };
-  }, [activeTab]);
+  }, [activeTab, fetchProfile, checkStatus, fetchCredentialState, fetchBilling]);
 
   const handleConnectWhatsapp = async () => {
     setIsGeneratingQr(true);
