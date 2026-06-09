@@ -577,25 +577,38 @@ export default function HomePage() {
 
       {/* ═══ Greeting Banner ═══ */}
       <div className="bg-white border border-[#E5E7EB] rounded-xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm">
-        <div>
-          <h1 className="text-[21px] font-bold text-[#0F172A] tracking-tight mb-1">
-            Hoje você só precisa de você em {actionCount} coisas. 👆
-          </h1>
-          <p className="text-[13px] text-[#475569] leading-relaxed">
-            Sua máquina está rodando. A IA já{' '}
-            <strong className="text-[#0F172A]">capturou {stats.newLeadsToday} novos leads</strong>,{' '}
-            mandou <strong className="text-[#0F172A]">{stats.pendingConversations + stats.pendingManualConversations} mensagens</strong> e{' '}
-            conversa com <strong className="text-[#0F172A]">{stats.pendingConversations} pessoas agora</strong>.{' '}
-            Aqui está o que precisa do seu tempo:
-          </p>
-        </div>
-        <div className="flex flex-col items-end gap-0.5 text-right shrink-0">
-          <span className="text-[10px] uppercase tracking-wider text-[#64748B] font-semibold">Receita Projetada · 90d</span>
-          <span className="text-[23px] font-bold text-[#A56B0A] font-mono leading-none">
-            R$ {Math.round((stats.todayMeetings * 30 * 0.35 * 5500) / 1000)}k
-          </span>
-          <span className="text-[11px] text-[#64748B]">{stats.todayMeetings * 30} reuniões × 35% × R$5,5k</span>
-        </div>
+        {totalCaptured === 0 ? (
+          <div>
+            <h1 className="text-[21px] font-bold text-[#0F172A] tracking-tight mb-1">
+              Bem-vindo ao Prospix! 🚀
+            </h1>
+            <p className="text-[13px] text-[#475569] leading-relaxed">
+              Sua máquina de prospecção autônoma está pronta para rodar. Siga o <strong className="text-[#0F172A]">checklist de primeiros passos</strong> abaixo para configurar tudo e começar a capturar leads.
+            </p>
+          </div>
+        ) : (
+          <>
+            <div>
+              <h1 className="text-[21px] font-bold text-[#0F172A] tracking-tight mb-1">
+                Hoje você só precisa de você em {actionCount} coisas. 👆
+              </h1>
+              <p className="text-[13px] text-[#475569] leading-relaxed">
+                Sua máquina está rodando. A IA já{' '}
+                <strong className="text-[#0F172A]">capturou {stats.newLeadsToday} novos leads</strong>,{' '}
+                mandou <strong className="text-[#0F172A]">{stats.pendingConversations + stats.pendingManualConversations} mensagens</strong> e{' '}
+                conversa com <strong className="text-[#0F172A]">{stats.pendingConversations} pessoas agora</strong>.{' '}
+                Aqui está o que precisa do seu tempo:
+              </p>
+            </div>
+            <div className="flex flex-col items-end gap-0.5 text-right shrink-0">
+              <span className="text-[10px] uppercase tracking-wider text-[#64748B] font-semibold">Receita Projetada · 90d</span>
+              <span className="text-[23px] font-bold text-[#A56B0A] font-mono leading-none">
+                R$ {Math.round((stats.todayMeetings * 30 * 0.35 * 5500) / 1000)}k
+              </span>
+              <span className="text-[11px] text-[#64748B]">{stats.todayMeetings * 30} reuniões × 35% × R$5,5k</span>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Onboarding Checklist */}

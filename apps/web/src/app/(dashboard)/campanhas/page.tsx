@@ -5,7 +5,8 @@ import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { campaignsQueries, tenantAddonsQueries } from '@/lib/queries';
 import { useAuthStore } from '@/store/auth-store';
-import { toast } from '@prospix/ui';
+import { toast, Tooltip } from '@prospix/ui';
+import { apiFetch } from '@/lib/api-fetch';
 
 interface Campaign {
   id: string;
@@ -300,7 +301,18 @@ export default function Campaigns() {
     setActionLoading(null);
   };
 
-  const handleOpenCreate = () => {
+  const handleOpenCreate = async () => {
+    try {
+      const res = await apiFetch('/api/integrations/whatsapp/status');
+      const data = await res.json();
+      if (!data?.data?.connected) {
+        toast.error('WhatsApp Desconectado', 'Antes de criar campanhas, conecte seu WhatsApp na tela de Configurações para que a IA possa enviar mensagens.');
+        return;
+      }
+    } catch {
+      // Falhou na checagem, deixar passar ou alertar? Vamos deixar passar por precaução
+    }
+
     if (campaignLimit && !campaignLimit.canCreate) {
       setShowAddonModal(true);
       return;
@@ -673,8 +685,12 @@ export default function Campaigns() {
 
             {/* Capture Sources (multi-select) */}
             <div>
-              <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-1.5">Fontes de Captação</label>
-              <p className="text-[10px] text-[#64748B] mb-2">Selecione quais fontes de descoberta esta campanha usará. Fontes disponíveis mudam conforme o segmento.</p>
+              <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-1.5 flex items-center gap-1.5">
+                Fontes de Captação
+                <Tooltip content="Selecione quais fontes de descoberta esta campanha usará. As opções disponíveis variam conforme o segmento escolhido.">
+                  <Info className="w-3 h-3 text-[#CBD5E1] cursor-help" />
+                </Tooltip>
+              </label>
               <div className="grid grid-cols-1 gap-1.5 max-h-[200px] overflow-y-auto p-2 bg-[#F9FAFB] border border-[#E5E7EB] rounded-lg">
                 {(() => {
                   const seg = SEGMENTS.find(s => s.id === selectedSegment) ?? DEFAULT_SEGMENT;
@@ -770,16 +786,21 @@ export default function Campaigns() {
                     <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-2">Pesos dos critérios</label>
                     <div className="grid grid-cols-2 gap-2">
                       {[
-                        { key: 'icpWeightProfession', label: 'Segmento bate', icon: '🎯' },
-                        { key: 'icpWeightWhatsapp', label: 'WhatsApp válido', icon: '📱' },
-                        { key: 'icpWeightOwner', label: 'Sócio/proprietário', icon: '👤' },
-                        { key: 'icpWeightArea', label: 'Bairro premium', icon: '📍' },
-                        { key: 'icpWeightCnpjYears', label: 'Tempo de atuação', icon: '📅' },
-                        { key: 'icpWeightGoogle', label: 'Reputação Google', icon: '⭐' },
-                      ].map(({ key, label, icon }) => (
+                        { key: 'icpWeightProfession', label: 'Segmento bate', icon: '🎯', tip: 'Aumente se for crítico o lead ser do nicho exato.' },
+                        { key: 'icpWeightWhatsapp', label: 'WhatsApp válido', icon: '📱', tip: 'Prioriza leads que já têm WhatsApp confirmado.' },
+                        { key: 'icpWeightOwner', label: 'Sócio/proprietário', icon: '👤', tip: 'Dá peso maior se conseguimos achar os donos.' },
+                        { key: 'icpWeightArea', label: 'Bairro premium', icon: '📍', tip: 'Localizado nas áreas VIPs que você escolheu.' },
+                        { key: 'icpWeightCnpjYears', label: 'Tempo de atuação', icon: '📅', tip: 'Favorece empresas com mais anos de mercado.' },
+                        { key: 'icpWeightGoogle', label: 'Reputação Google', icon: '⭐', tip: 'Dá peso para avaliações e rating alto.' },
+                      ].map(({ key, label, icon, tip }) => (
                         <div key={key} className="flex items-center gap-2 bg-white rounded-lg border border-[#E5E7EB] px-2.5 py-2">
                           <span className="text-[13px]">{icon}</span>
-                          <div className="flex-1 min-w-0"><div className="text-[10.5px] font-medium text-[#0F172A] truncate">{label}</div></div>
+                          <div className="flex-1 min-w-0 flex items-center gap-1">
+                            <div className="text-[10.5px] font-medium text-[#0F172A] truncate">{label}</div>
+                            <Tooltip content={tip}>
+                              <Info className="w-3 h-3 text-[#CBD5E1] hover:text-[#64748B] cursor-help" />
+                            </Tooltip>
+                          </div>
                           <input type="number" min="0" max="5" step="1" value={(newCamp as any)[key]} onChange={e => setNewCamp(p => ({...p, [key]: e.target.value}))} className="w-10 h-7 text-center rounded bg-[#F9FAFB] border border-[#E5E7EB] text-[12px] font-bold text-[#1B3A6B] focus:border-[#1B3A6B] outline-none" />
                         </div>
                       ))}

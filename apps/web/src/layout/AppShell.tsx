@@ -78,6 +78,19 @@ export default function AppShell({ children }: AppShellProps) {
   ] : [];
 
   useEffect(() => {
+    // Verificar se o tour já foi visto
+    const hasSeenTour = localStorage.getItem('prospix-tour-v1');
+    if (!hasSeenTour) {
+      // Abre automaticamente após 1 segundo
+      const timer = setTimeout(() => {
+        setIsTutorialOpen(true);
+        localStorage.setItem('prospix-tour-v1', 'true');
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, []);
+
+  useEffect(() => {
     let isMounted = true;
 
     const fetchCounters = async () => {
