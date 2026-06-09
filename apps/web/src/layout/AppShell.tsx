@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { Avatar, Dropdown, DropdownItem } from '@prospix/ui';
 import { apiFetch } from '../lib/api-fetch';
+import { TutorialModal } from '../components/TutorialModal';
 
 interface AppShellCounters {
   conversations: number;
@@ -68,6 +69,7 @@ export default function AppShell({ children }: AppShellProps) {
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [notifications, setNotifications] = useState<Array<{id: string; title: string; body: string; readAt: string | null; createdAt: string; link?: string}>>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [isTutorialOpen, setIsTutorialOpen] = useState(false);
 
   const searchResults = globalSearch.trim().length > 1 ? [
     { type: 'lead', label: `Buscar "${globalSearch}" em Leads`, path: `/leads?search=${encodeURIComponent(globalSearch)}` },
@@ -233,7 +235,10 @@ export default function AppShell({ children }: AppShellProps) {
         </nav>
 
         {/* How it works card */}
-        <div className="mx-3 mb-3 p-3 bg-gradient-to-br from-primary to-[#142C52] rounded-xl text-white cursor-pointer hover:-translate-y-0.5 transition-transform">
+        <div 
+          onClick={() => setIsTutorialOpen(true)}
+          className="mx-3 mb-3 p-3 bg-gradient-to-br from-primary to-[#142C52] rounded-xl text-white cursor-pointer hover:-translate-y-0.5 transition-transform"
+        >
           <div className="text-[12px] font-semibold flex items-center gap-1.5 mb-1">
             <Lightbulb className="w-3.5 h-3.5 text-[#E8981C]" />
             Como funciona?
@@ -371,6 +376,7 @@ export default function AppShell({ children }: AppShellProps) {
           <div className="flex items-center gap-3">
             {/* Tour button */}
             <button
+              onClick={() => setIsTutorialOpen(true)}
               className="hidden sm:inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-[12.5px] font-semibold text-[#855600] bg-[rgba(232,152,28,0.14)] border border-[rgba(232,152,28,0.3)] hover:bg-[rgba(232,152,28,0.22)] transition-all hover:-translate-y-0.5"
             >
               <HelpCircle className="w-3.5 h-3.5" />
@@ -479,6 +485,8 @@ export default function AppShell({ children }: AppShellProps) {
           {children}
         </main>
       </div>
+      
+      <TutorialModal isOpen={isTutorialOpen} onClose={() => setIsTutorialOpen(false)} />
     </div>
     </ErrorBoundary>
   );
