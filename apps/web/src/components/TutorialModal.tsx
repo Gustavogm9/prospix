@@ -71,6 +71,7 @@ export function TutorialModal({ isOpen, onClose }: TutorialModalProps) {
   };
 
   const step = STEPS[currentStep];
+  if (!step) return null;
   const Icon = step.icon;
 
   return (
