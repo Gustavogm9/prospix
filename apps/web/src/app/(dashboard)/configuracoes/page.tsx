@@ -358,6 +358,21 @@ export default function Settings() {
     }
   };
 
+  const handleDisconnectGoogle = async () => {
+    try {
+      const res = await apiFetch('/api/integrations/google/disconnect', { method: 'POST' });
+      if (res.ok) {
+        toast.success('Agenda Desconectada', 'Sua agenda do Google foi desconectada.');
+        fetchCredentialState(); // Refresh state
+      } else {
+        toast.error('Erro', 'Não foi possível desconectar a agenda.');
+      }
+    } catch (err) {
+      console.error('Error disconnecting Google Calendar:', err);
+      toast.error('Erro de Conexão', 'Erro ao desconectar o Google Agenda.');
+    }
+  };
+
   const checkStatus = useCallback(async (silent = false) => {
     if (!silent) setWhatsappStatus('loading');
     try {
@@ -946,20 +961,42 @@ export default function Settings() {
                   <div className="text-[11px] text-[#64748B] mt-0.5">Sincronize reuniões e agendamentos com seu calendário pessoal.</div>
                 </div>
                 <div className="p-5">
-                  <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-[#F8FAFC] border border-[#E5E7EB] rounded-xl p-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-[#4285F4]/10 flex items-center justify-center">
-                        <Calendar className="w-5 h-5 text-[#4285F4]" />
+                  {credentialState.google.calendarConnected ? (
+                    <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-[#ECFDF3] border border-[#A7F3D0] rounded-xl p-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-lg bg-[#059669]/10 flex items-center justify-center">
+                          <CheckCircle2 className="w-5 h-5 text-[#059669]" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h4 className="text-[13px] font-bold text-[#0F172A]">Google Agenda Ativa</h4>
+                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-[#059669] text-white uppercase tracking-wider">
+                              Sincronizado
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-[#059669] mt-0.5">A IA do Prospix está autorizada a ler conflitos e agendar reuniões.</p>
+                        </div>
                       </div>
-                      <div>
-                        <h4 className="text-[13px] font-bold text-[#0F172A]">Google Calendar API</h4>
-                        <p className="text-[11px] text-[#64748B] mt-0.5">Permite checar conflitos e marcar slots de 30min.</p>
-                      </div>
+                      <Button onClick={handleDisconnectGoogle} className="bg-[#FEF3F2] hover:bg-[#FEE4E2] text-[#D92D20] text-[12px] font-semibold px-4 h-9 rounded-xl transition-colors border border-[#FEE4E2]">
+                        Desconectar Agenda
+                      </Button>
                     </div>
-                    <Button onClick={handleGoogleConnect} className="bg-[#1B3A6B] hover:bg-[#15305A] text-white text-[12px] font-semibold px-4 h-9 rounded-xl shadow-lg shadow-[#1B3A6B]/10">
-                      Conectar Agenda
-                    </Button>
-                  </div>
+                  ) : (
+                    <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-[#F8FAFC] border border-[#E5E7EB] rounded-xl p-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-lg bg-[#4285F4]/10 flex items-center justify-center">
+                          <Calendar className="w-5 h-5 text-[#4285F4]" />
+                        </div>
+                        <div>
+                          <h4 className="text-[13px] font-bold text-[#0F172A]">Google Calendar API</h4>
+                          <p className="text-[11px] text-[#64748B] mt-0.5">Permite checar conflitos e marcar slots de 30min.</p>
+                        </div>
+                      </div>
+                      <Button onClick={handleGoogleConnect} className="bg-[#1B3A6B] hover:bg-[#15305A] text-white text-[12px] font-semibold px-4 h-9 rounded-xl shadow-lg shadow-[#1B3A6B]/10">
+                        Conectar Agenda
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </div>
             </>
