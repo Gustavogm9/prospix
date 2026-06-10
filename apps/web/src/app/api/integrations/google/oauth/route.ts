@@ -16,7 +16,11 @@ export async function GET(request: NextRequest) {
     // The callback on the API server will validate this.
     const stateValue = `${tenantId}:${state}`;
 
-    const redirectUri = `${process.env.API_URL || process.env.NEXT_PUBLIC_API_URL}/api/integrations/google/callback`;
+    // Use the actual origin from the incoming request so the redirect_uri perfectly matches the domain the user is browsing on.
+    const origin = request.headers.get('x-forwarded-host') 
+      ? `https://${request.headers.get('x-forwarded-host')}` 
+      : request.nextUrl.origin;
+    const redirectUri = `${origin}/api/integrations/google/callback`;
     const scopes = [
       'https://www.googleapis.com/auth/calendar',
       'https://www.googleapis.com/auth/calendar.events',

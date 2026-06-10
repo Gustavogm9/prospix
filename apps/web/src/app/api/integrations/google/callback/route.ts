@@ -21,7 +21,10 @@ export async function GET(request: NextRequest) {
   const tenantId = state.split(':')[0];
 
   try {
-    const redirectUri = `${process.env.API_URL || process.env.NEXT_PUBLIC_API_URL}/api/integrations/google/callback`;
+    const origin = request.headers.get('x-forwarded-host') 
+      ? `https://${request.headers.get('x-forwarded-host')}` 
+      : request.nextUrl.origin;
+    const redirectUri = `${origin}/api/integrations/google/callback`;
 
     // 1. Trocar o authorization code por access_token e refresh_token
     const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
