@@ -28,8 +28,16 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // Skip non-GET and API calls
-  if (request.method !== 'GET' || url.pathname.startsWith('/v1/')) {
+  // Skip non-GET, APIs, and Next.js Server Components (RSC payloads)
+  if (
+    request.method !== 'GET' || 
+    url.pathname.startsWith('/api/') || 
+    url.pathname.startsWith('/v1/') || 
+    request.headers.has('RSC') || 
+    request.headers.has('Next-Router-Prefetch') || 
+    request.headers.has('Next-Router-State-Tree') ||
+    url.searchParams.has('_rsc')
+  ) {
     return;
   }
 
@@ -41,18 +49,28 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // For assets: cache-first
+  // Only aggressively cache static assets
+  const isStaticAsset = url.pathname.startsWith('/_next/static/') || url.pathname.match(/\.(png|jpg|jpeg|svg|webp|ico|woff2?|css)$/);
+
+  if (isStaticAsset) {
+    event.respondWith(
+      caches.match(request).then((cached) => {
+        if (cached) return cached;
+        return fetch(request).then((response) => {
+          if (response.ok && url.origin === self.location.origin) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+          }
+          return response;
+        });
+      })
+    );
+    return;
+  }
+
+  // For all other requests (like external images or other resources), do Network-First
   event.respondWith(
-    caches.match(request).then((cached) => {
-      if (cached) return cached;
-      return fetch(request).then((response) => {
-        if (response.ok && url.origin === self.location.origin) {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-        }
-        return response;
-      });
-    })
+    fetch(request).catch(() => caches.match(request))
   );
 });
 
