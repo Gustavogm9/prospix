@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticateRequest, supabaseAdmin } from '../../_lib/supabase-admin';
 
+export const dynamic = 'force-dynamic';
+
 // GET /api/integrations/credentials — Safe credential status for Settings
 export async function GET(request: NextRequest) {
   const auth = await authenticateRequest(request);

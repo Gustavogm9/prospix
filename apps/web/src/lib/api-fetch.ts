@@ -35,6 +35,7 @@ export async function apiFetch(
   const response = await fetch(path, {
     ...options,
     headers,
+    cache: 'no-store',
   });
 
   // Auto-redirect on 401 (session expired)
