@@ -400,6 +400,30 @@ export default function Settings() {
         .catch(() => { /* endpoint may not exist yet, keep defaults */ });
     }
 
+    // Handle OAuth redirects
+    const errorMsg = searchParams.get('error');
+    const successMsg = searchParams.get('success');
+    if (errorMsg) {
+      setTimeout(() => {
+        if (errorMsg === 'no_refresh_token') {
+          toast.error('Erro de Permissão', 'O Google não enviou o token de atualização. Por favor, remova o acesso do Prospix na sua conta Google e tente novamente.');
+        } else if (errorMsg === 'google_token_exchange_failed') {
+          toast.error('Erro de Configuração', 'Falha ao trocar o código. Verifique se o GOOGLE_CLIENT_SECRET está correto na Vercel.');
+        } else {
+          toast.error('Erro na Conexão', `Não foi possível conectar a agenda (${errorMsg}).`);
+        }
+        // Clean URL
+        window.history.replaceState({}, document.title, '/configuracoes?tab=integracoes');
+        setActiveTab('integracoes');
+      }, 500);
+    } else if (successMsg === 'google_connected') {
+      setTimeout(() => {
+        toast.success('Agenda Conectada!', 'Sua agenda do Google foi vinculada com sucesso.');
+        window.history.replaceState({}, document.title, '/configuracoes?tab=integracoes');
+        setActiveTab('integracoes');
+      }, 500);
+    }
+
     if (activeTab === 'integracoes') {
       checkStatus();
       fetchCredentialState();
