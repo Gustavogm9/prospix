@@ -150,6 +150,7 @@ export default function Settings() {
   const [whatsappStatus, setWhatsappStatus] = useState<'connected' | 'disconnected' | 'loading'>('loading');
   const [instanceName, setInstanceName] = useState<string | null>(null);
   const [qrCode, setQrCode] = useState<string | null>(null);
+  const [qrCountdown, setQrCountdown] = useState<number>(0);
   const [isGeneratingQr, setIsGeneratingQr] = useState(false);
   const [isConfirmingDisconnect, setIsConfirmingDisconnect] = useState(false);
   const [credentialState, setCredentialState] = useState<CredentialState>(emptyCredentialState);
@@ -420,6 +421,21 @@ export default function Settings() {
     };
   }, [activeTab, fetchProfile, checkStatus, fetchCredentialState, fetchBilling]);
 
+  useEffect(() => {
+    if (qrCountdown <= 0 || !qrCode) return;
+    const t = setInterval(() => {
+      setQrCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(t);
+          handleConnectWhatsapp(); // Auto-refresh QR code
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(t);
+  }, [qrCountdown, qrCode]);
+
   const handleConnectWhatsapp = async () => {
     setIsGeneratingQr(true);
     setQrCode(null);
@@ -428,6 +444,7 @@ export default function Settings() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.message || 'Erro ao conectar');
       setQrCode(data.qrcode);
+      setQrCountdown(40); // Set 40 seconds timer
       setInstanceName(data.instanceName);
       setIsGeneratingQr(false);
       
@@ -861,10 +878,11 @@ export default function Settings() {
                             {qrCode && (
                               <Button
                                 onClick={handleConnectWhatsapp}
-                                className="mt-3.5 text-[10px] font-bold h-7 px-3 rounded-lg border border-[#E5E7EB] bg-white hover:bg-[#F8FAFC] text-[#64748B]"
+                                disabled={isGeneratingQr}
+                                className="mt-3.5 text-[10px] font-bold h-7 px-3 rounded-lg border border-[#E5E7EB] bg-white hover:bg-[#F8FAFC] text-[#64748B] disabled:opacity-50"
                               >
-                                <RefreshCw className="w-3 h-3 mr-1.5" />
-                                Atualizar QR Code
+                                <RefreshCw className={`w-3 h-3 mr-1.5 ${isGeneratingQr ? 'animate-spin' : ''}`} />
+                                {isGeneratingQr ? 'Gerando...' : qrCountdown > 0 ? `Atualizar automático em ${qrCountdown}s` : 'Atualizar QR Code'}
                               </Button>
                             )}
                           </div>
