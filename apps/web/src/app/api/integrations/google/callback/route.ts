@@ -58,33 +58,21 @@ export async function GET(request: NextRequest) {
     // 2. Gravar o token no tenant_secrets
     const supabaseAdmin = getSupabaseAdmin();
     
-    // Usamos um upsert padrão ou checagem como nos outros endpoints
-    const { data: existingSecret } = await supabaseAdmin
+    // Gravar o token no tenant_secrets com upsert para evitar erros de colunas inexistentes
+    const { error: upsertError } = await supabaseAdmin
       .from('tenant_secrets')
-      .select('id')
-      .eq('tenant_id', tenantId)
-      .maybeSingle();
-
-    if (existingSecret) {
-      const { error: updateError } = await supabaseAdmin
-        .from('tenant_secrets')
-        .update({
-          google_oauth_refresh_encrypted: refresh_token,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('tenant_id', tenantId);
-
-      if (updateError) throw updateError;
-    } else {
-      const { error: insertError } = await supabaseAdmin
-        .from('tenant_secrets')
-        .insert({
+      .upsert(
+        {
           tenant_id: tenantId,
           google_oauth_refresh_encrypted: refresh_token,
           updated_at: new Date().toISOString(),
-        });
+        },
+        { onConflict: 'tenant_id' }
+      );
 
-      if (insertError) throw insertError;
+    if (upsertError) {
+      console.error('Supabase Upsert Error:', upsertError);
+      throw upsertError;
     }
 
     // Redireciona de volta com sucesso
