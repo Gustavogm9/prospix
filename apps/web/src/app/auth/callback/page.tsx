@@ -82,7 +82,7 @@ function LoginCallbackInner() {
   }, [searchParams, router, setSession]);
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-zinc-950 text-zinc-50 relative overflow-hidden px-4">
+    <div className="min-h-[100dvh] flex items-center justify-center bg-zinc-950 text-zinc-50 relative overflow-hidden px-4">
       {/* Background lights */}
       <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full bg-blue-500/10 blur-[120px] pointer-events-none" />
       <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] rounded-full bg-emerald-500/10 blur-[120px] pointer-events-none" />
@@ -146,7 +146,7 @@ function LoginCallbackInner() {
 export default function LoginCallback() {
   return (
     <Suspense fallback={
-      <div className="min-h-screen flex items-center justify-center bg-zinc-950">
+      <div className="min-h-[100dvh] flex items-center justify-center bg-zinc-950">
         <div className="w-10 h-10 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
       </div>
     }>

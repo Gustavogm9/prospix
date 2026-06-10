@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Button, Input, toast } from '@prospix/ui';
-import { MessageSquare, Send, Bot, User, Phone, ChevronRight, Filter, ArrowUpDown, LayoutList, Columns3, X, Award, Clock } from 'lucide-react';
+import { MessageSquare, Send, Bot, User, Phone, ChevronRight, Filter, ArrowUpDown, LayoutList, Columns3, X, Award, Clock, Plus } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { conversationsQueries, meetingsQueries, leadsQueries } from '@/lib/queries';
 
 import { useRealtimeEvents } from '@/hooks/useRealtimeEvents';
@@ -99,6 +100,7 @@ type FilterType = 'all' | 'hot' | 'wait' | 'scheduled';
 
 export default function Conversations() {
   const { tenantId } = useAuthStore();
+  const router = useRouter();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedConv, setSelectedConv] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -713,11 +715,30 @@ export default function Conversations() {
         {/* Lead rows */}
         <div>
           {sortedConversations.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-center space-y-3">
-              <MessageSquare className="w-12 h-12 text-[#64748B]/40" />
-              <p className="text-sm text-[#475569] font-medium">Nenhuma conversa encontrada</p>
-              <p className="text-xs text-[#64748B]">Ajuste os filtros ou aguarde novas conversas.</p>
-            </div>
+            activeFilter === 'all' && professionFilter === 'all' && conversations.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center space-y-3">
+                <div className="w-16 h-16 bg-[#EFF6FF] rounded-full flex items-center justify-center mb-2">
+                  <MessageSquare className="w-8 h-8 text-[#1B3A6B]" />
+                </div>
+                <h3 className="text-[16px] font-bold text-[#0F172A] mb-1">Caixa de entrada vazia</h3>
+                <p className="text-[13px] text-[#475569] max-w-md mb-4 leading-relaxed">
+                  Quando a inteligência artificial começar a conversar com seus leads, as mensagens aparecerão aqui. Crie uma campanha para começar a prospecção!
+                </p>
+                <button 
+                  onClick={() => router.push('/campanhas')}
+                  className="h-10 px-6 bg-[#1B3A6B] text-white text-[13px] font-semibold rounded-lg hover:bg-[#142C52] transition-all flex items-center gap-2"
+                >
+                  <Plus className="w-4 h-4" />
+                  Criar Nova Campanha
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-16 text-center space-y-3">
+                <MessageSquare className="w-12 h-12 text-[#64748B]/40" />
+                <p className="text-sm text-[#475569] font-medium">Nenhuma conversa encontrada</p>
+                <p className="text-xs text-[#64748B]">Ajuste os filtros ou aguarde novas conversas.</p>
+              </div>
+            )
           ) : (
             sortedConversations.map((conv, idx) => (
               <div
@@ -835,7 +856,7 @@ export default function Conversations() {
             onClick={() => setSelectedConv(null)}
           />
           {/* Drawer */}
-          <div className="fixed top-0 right-0 h-screen w-full sm:w-[580px] sm:max-w-[90vw] bg-white shadow-xl z-[89] flex flex-col overflow-hidden animate-slideIn">
+          <div className="fixed top-0 right-0 h-[100dvh] w-full sm:w-[580px] sm:max-w-[90vw] bg-white shadow-xl z-[89] flex flex-col overflow-hidden animate-slideIn">
             {/* Drawer header - enriched like prototype */}
             <div className="px-5 py-4 border-b border-[#E5E7EB] shrink-0">
               <div className="flex items-center gap-[13px]">

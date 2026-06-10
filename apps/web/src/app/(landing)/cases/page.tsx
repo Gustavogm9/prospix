@@ -4,7 +4,7 @@ import React from 'react';
 
 export default function CasesPage() {
   return (
-    <div className="min-h-screen bg-bg font-sans text-text">
+    <div className="min-h-[100dvh] bg-bg font-sans text-text">
       <header className="bg-surface border-b border-border py-6 sticky top-0 z-40 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 flex items-center justify-between">
           <a href="/" className="flex items-center gap-2">

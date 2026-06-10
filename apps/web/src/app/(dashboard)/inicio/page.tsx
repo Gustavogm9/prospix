@@ -889,7 +889,7 @@ export default function HomePage() {
             onClick={() => setSelectedConv(null)}
           />
           {/* Drawer */}
-          <div className="fixed top-0 right-0 h-screen w-full sm:w-[580px] sm:max-w-[90vw] bg-white shadow-xl z-[89] flex flex-col overflow-hidden animate-slideIn">
+          <div className="fixed top-0 right-0 h-[100dvh] w-full sm:w-[580px] sm:max-w-[90vw] bg-white shadow-xl z-[89] flex flex-col overflow-hidden animate-slideIn">
             {/* Drawer header */}
             <div className="px-5 py-4 border-b border-[#E5E7EB] shrink-0">
               <div className="flex items-center gap-[13px]">

@@ -4,7 +4,7 @@ import React from 'react';
 
 export default function PrivacidadePage() {
   return (
-    <div className="min-h-screen bg-bg font-sans text-text py-12 px-4">
+    <div className="min-h-[100dvh] bg-bg font-sans text-text py-12 px-4">
       <div className="max-w-3xl mx-auto bg-surface rounded-lg border border-border p-8 sm:p-12 shadow-sm">
         <h1 className="text-xl sm:text-2xl font-bold text-primary">Políticas de Privacidade</h1>
         <p className="text-2xs text-text-muted mt-1">Última atualização: 21 de Maio de 2026</p>

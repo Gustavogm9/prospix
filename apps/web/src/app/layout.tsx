@@ -38,7 +38,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="pt-BR">
-      <body className="antialiased min-h-screen bg-bg text-text">
+      <body className="antialiased min-h-[100dvh] bg-bg text-text">
         {children}
         <GlobalToast />
       </body>

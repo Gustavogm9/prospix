@@ -29,6 +29,7 @@ import {
   Star,
   HelpCircle,
   Smartphone,
+  AlertTriangle,
 } from 'lucide-react';
 import { Avatar, Dropdown, DropdownItem } from '@prospix/ui';
 import { apiFetch } from '../lib/api-fetch';
@@ -70,6 +71,7 @@ export default function AppShell({ children }: AppShellProps) {
   const [notifications, setNotifications] = useState<Array<{id: string; title: string; body: string; readAt: string | null; createdAt: string; link?: string}>>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isTutorialOpen, setIsTutorialOpen] = useState(false);
+  const [isWhatsappConnected, setIsWhatsappConnected] = useState<boolean | null>(null);
 
   const searchResults = globalSearch.trim().length > 1 ? [
     { type: 'lead', label: `Buscar "${globalSearch}" em Leads`, path: `/leads?search=${encodeURIComponent(globalSearch)}` },
@@ -116,6 +118,18 @@ export default function AppShell({ children }: AppShellProps) {
     };
 
     fetchCounters();
+
+    const fetchWhatsappStatus = async () => {
+      try {
+        const res = await apiFetch('/api/integrations/whatsapp/status');
+        const json = await res.json();
+        setIsWhatsappConnected(json?.data?.connected ?? true);
+      } catch {
+        // Fallback to true so we don't annoy the user if API fails
+        setIsWhatsappConnected(true);
+      }
+    };
+    fetchWhatsappStatus();
 
     return () => {
       isMounted = false;
@@ -217,9 +231,9 @@ export default function AppShell({ children }: AppShellProps) {
 
   return (
     <ErrorBoundary>
-    <div className="min-h-screen bg-bg flex relative">
+    <div className="min-h-[100dvh] bg-bg flex relative">
       {/* ── Desktop Sidebar (236px) ────────────────────────────────────────── */}
-      <aside className="hidden md:flex flex-col w-[236px] bg-surface border-r border-border h-screen sticky top-0 shrink-0 z-20">
+      <aside className="hidden md:flex flex-col w-[236px] bg-surface border-r border-border h-[100dvh] sticky top-0 shrink-0 z-20">
         {/* Sidebar Header */}
         <div className="h-[60px] border-b border-border flex items-center px-4 gap-3">
           <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center shadow-lg shadow-primary/10">
@@ -320,7 +334,7 @@ export default function AppShell({ children }: AppShellProps) {
               ))}
             </nav>
 
-            <div className="pt-4 border-t border-border mt-auto p-4">
+            <div className="pt-4 border-t border-border mt-auto p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
               <button
                 onClick={handleLogout}
                 className="flex items-center gap-2.5 w-full px-3 py-2.5 text-sm font-medium text-red-600 hover:bg-red-500/5 rounded-lg transition-all"
@@ -334,7 +348,7 @@ export default function AppShell({ children }: AppShellProps) {
       )}
 
       {/* ── Main Area ──────────────────────────────────────────────────────── */}
-      <div className="flex-1 flex flex-col min-w-0 min-h-screen">
+      <div className="flex-1 flex flex-col min-w-0 min-h-[100dvh]">
         {/* Topbar (60px) */}
         <header className="h-[60px] border-b border-border bg-surface/50 backdrop-blur-md sticky top-0 z-30 flex items-center justify-between px-5 shrink-0">
           <div className="flex items-center gap-4">
@@ -493,8 +507,25 @@ export default function AppShell({ children }: AppShellProps) {
           </div>
         </header>
 
+        {isWhatsappConnected === false && (
+          <div className="bg-[#FEF3F2] border-b border-[#FEE4E2] px-5 py-2.5 flex items-center justify-between z-20 sticky top-[60px]">
+            <div className="flex items-center gap-2.5">
+              <AlertTriangle className="w-4 h-4 text-[#D92D20] shrink-0" />
+              <p className="text-[12px] text-[#B42318] font-medium leading-tight">
+                <strong className="font-bold">Atenção:</strong> Seu WhatsApp está desconectado. A IA está paralisada e não pode enviar mensagens.
+              </p>
+            </div>
+            <Link 
+              href="/configuracoes" 
+              className="text-[11px] font-bold text-[#D92D20] uppercase tracking-wider hover:underline shrink-0 ml-4"
+            >
+              Reconectar →
+            </Link>
+          </div>
+        )}
+
         {/* Page Content */}
-        <main className="flex-1 p-5 md:p-6 overflow-y-auto max-w-[1400px] w-full mx-auto">
+        <main className="flex-1 p-5 md:p-6 pb-[calc(1.25rem+env(safe-area-inset-bottom))] overflow-y-auto max-w-[1400px] w-full mx-auto">
           {children}
         </main>
       </div>

@@ -141,7 +141,7 @@ function SignupDetailsInner() {
 
   if (isSuccess) {
     return (
-      <div className="auth-dark min-h-screen flex items-center justify-center bg-bg text-text relative overflow-hidden px-4">
+      <div className="auth-dark min-h-[100dvh] flex items-center justify-center bg-bg text-text relative overflow-hidden px-4">
         <div className="absolute top-[-20%] right-[-10%] w-[50%] h-[50%] rounded-full bg-emerald-500/10 blur-[120px] pointer-events-none" />
         
         <div className="w-full max-w-[460px] bg-surface backdrop-blur-md border border-border p-8 rounded-2xl shadow-2xl relative z-10 text-center space-y-6 animate-fadeIn">
@@ -174,7 +174,7 @@ function SignupDetailsInner() {
   }
 
   return (
-    <div className="auth-dark min-h-screen flex items-center justify-center bg-bg text-text relative overflow-hidden py-12 px-4">
+    <div className="auth-dark min-h-[100dvh] flex items-center justify-center bg-bg text-text relative overflow-hidden py-12 px-4">
       {/* Lights */}
       <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-blue-500/10 blur-[100px] pointer-events-none" />
       <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-emerald-500/10 blur-[100px] pointer-events-none" />
@@ -370,7 +370,7 @@ function SignupDetailsInner() {
 export default function SignupDetails() {
   return (
     <Suspense fallback={
-      <div className="min-h-screen flex items-center justify-center bg-bg">
+      <div className="min-h-[100dvh] flex items-center justify-center bg-bg">
         <div className="w-10 h-10 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
       </div>
     }>

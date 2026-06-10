@@ -84,7 +84,7 @@ export default function LandingPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-bg font-sans overflow-x-hidden selection:bg-primary/20">
+    <div className="min-h-[100dvh] bg-bg font-sans overflow-x-hidden selection:bg-primary/20">
       {/* ── 1. NAV ─────────────────────────────────────────────────────────── */}
       <header className="sticky top-0 bg-surface/80 backdrop-blur-md border-b border-border z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">

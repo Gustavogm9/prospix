@@ -15,7 +15,7 @@ export default function GlobalError({
 
   return (
     <html lang="pt-BR">
-      <body className="min-h-screen bg-zinc-950 text-zinc-50 flex items-center justify-center p-4">
+      <body className="min-h-[100dvh] bg-zinc-950 text-zinc-50 flex items-center justify-center p-4">
         <div className="w-full max-w-md bg-zinc-900/80 border border-zinc-800 p-8 rounded-2xl text-center space-y-4">
           <div className="h-14 w-14 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center mx-auto">
             <svg className="h-7 w-7 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

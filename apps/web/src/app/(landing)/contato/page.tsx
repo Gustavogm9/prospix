@@ -12,7 +12,7 @@ export default function ContatoPage() {
   };
 
   return (
-    <div className="min-h-screen bg-bg font-sans text-text py-12 px-4">
+    <div className="min-h-[100dvh] bg-bg font-sans text-text py-12 px-4">
       <div className="max-w-xl mx-auto bg-surface rounded-lg border border-border p-8 shadow-sm">
         <h1 className="text-xl font-bold text-primary">Contato & Suporte</h1>
         <p className="text-xs text-text-secondary mt-2">

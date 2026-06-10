@@ -146,9 +146,9 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
     });
 
   return (
-    <div className="min-h-screen bg-bg flex relative">
+    <div className="min-h-[100dvh] bg-bg flex relative">
       {/* ── Desktop Sidebar (236px) ────────────────────────────────────────── */}
-      <aside className="hidden md:flex flex-col w-[236px] bg-surface border-r border-border h-screen sticky top-0 shrink-0 z-20">
+      <aside className="hidden md:flex flex-col w-[236px] bg-surface border-r border-border h-[100dvh] sticky top-0 shrink-0 z-20">
         {/* Sidebar Header */}
         <div className="h-[60px] border-b border-border flex items-center px-4 gap-3">
           <div className="h-8 w-8 rounded-lg bg-gradient-to-tr from-amber-500 to-red-500 flex items-center justify-center shadow-lg shadow-amber-500/10">
@@ -236,7 +236,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
               ))}
             </nav>
 
-            <div className="pt-4 border-t border-border mt-auto p-4">
+            <div className="pt-4 border-t border-border mt-auto p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
               <button
                 onClick={handleLogout}
                 className="flex items-center gap-2.5 w-full px-3 py-2.5 text-sm font-medium text-red-600 hover:bg-red-500/5 rounded-lg transition-all"
@@ -250,7 +250,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
       )}
 
       {/* ── Main Area ──────────────────────────────────────────────────────── */}
-      <div className="flex-1 flex flex-col min-w-0 min-h-screen">
+      <div className="flex-1 flex flex-col min-w-0 min-h-[100dvh]">
         {/* Topbar (60px) */}
         <header className="h-[60px] border-b border-border bg-surface/50 backdrop-blur-md sticky top-0 z-30 flex items-center justify-between px-5 shrink-0">
           <div className="flex items-center gap-4">
@@ -314,7 +314,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
         </header>
 
         {/* Page Content */}
-        <main className="flex-1 p-5 md:p-6 overflow-y-auto max-w-[1400px] w-full mx-auto">
+        <main className="flex-1 p-5 md:p-6 pb-[calc(1.25rem+env(safe-area-inset-bottom))] overflow-y-auto max-w-[1400px] w-full mx-auto">
           {children}
         </main>
       </div>

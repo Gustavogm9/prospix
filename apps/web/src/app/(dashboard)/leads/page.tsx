@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { toast } from '@prospix/ui';
-import { Download, RefreshCw, ChevronRight, ChevronLeft, Info, Search, X } from 'lucide-react';
+import { Download, RefreshCw, ChevronRight, ChevronLeft, Info, Search, X, Plus } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { leadsQueries, campaignsQueries } from '@/lib/queries';
 import { useAuthStore } from '@/store/auth-store';
 import LeadDrawer from '../funil/lead-drawer';
@@ -93,6 +94,7 @@ const mapBackendLead = (lead: any): Lead => {
 // ═══════════════════════════════════════════════════════════════════════════
 export default function Leads() {
   const tenantId = useAuthStore(state => state.tenantId);
+  const router = useRouter();
 
   // Data
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -431,6 +433,23 @@ export default function Leads() {
               </div>
             </div>
           ))
+        ) : activeFilterCount === 0 && statusCounts?.total === 0 ? (
+          <div className="p-12 text-center flex flex-col items-center">
+            <div className="w-16 h-16 bg-[#EFF6FF] rounded-full flex items-center justify-center mb-4">
+              <Search className="w-8 h-8 text-[#1B3A6B]" />
+            </div>
+            <h3 className="text-[16px] font-bold text-[#0F172A] mb-2">Nenhum lead por aqui... ainda!</h3>
+            <p className="text-[13px] text-[#475569] max-w-md mb-6 leading-relaxed">
+              O Prospix trabalha encontrando os melhores leads para você automaticamente. Para começar, crie sua primeira campanha de prospecção.
+            </p>
+            <button 
+              onClick={() => router.push('/campanhas')}
+              className="h-10 px-6 bg-[#1B3A6B] text-white text-[13px] font-semibold rounded-lg hover:bg-[#142C52] transition-all flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              Criar Nova Campanha
+            </button>
+          </div>
         ) : (
           <div className="p-12 text-center text-[12.5px] text-[#64748B]">Nenhum lead encontrado com os filtros selecionados.</div>
         )}

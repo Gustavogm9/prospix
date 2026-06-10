@@ -155,6 +155,8 @@ export default function Campaigns() {
   const [campaignLimit, setCampaignLimit] = useState<CampaignLimit | null>(null);
   const [showAddonModal, setShowAddonModal] = useState(false);
   const [purchasingAddon, setPurchasingAddon] = useState(false);
+  const [campaignToDelete, setCampaignToDelete] = useState<Campaign | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
 
   // Form state
   const [selectedSegment, setSelectedSegment] = useState('health');
@@ -289,11 +291,24 @@ export default function Campaigns() {
   };
 
   const handleDelete = async (camp: Campaign) => {
-    if (!window.confirm(`Tem certeza que deseja excluir a campanha "${camp.name}"? Esta ação não pode ser desfeita.`)) return;
+    setCampaignToDelete(camp);
+    setDeleteConfirmText('');
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!campaignToDelete) return;
+    if (deleteConfirmText !== 'EXCLUIR') {
+      toast.error('Erro', 'Digite EXCLUIR para confirmar.');
+      return;
+    }
     if (!tenantId) return;
-    setActionLoading(camp.id);
+    
+    const campId = campaignToDelete.id;
+    setActionLoading(campId);
+    setCampaignToDelete(null);
+    
     try {
-      const result = await campaignsQueries.delete(tenantId, camp.id);
+      const result = await campaignsQueries.delete(tenantId, campId);
       if (result.error) throw new Error(result.error.message);
       toast.success('Campanha excluída');
       await fetchCampaigns(); await fetchLimit();
@@ -351,6 +366,13 @@ export default function Campaigns() {
   const handleCreateOrEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCamp.name.trim()) { toast.error('Nome obrigatório', 'Dê um nome à campanha.'); return; }
+    const dailyLimitNum = Number(newCamp.dailyLimit) || 20;
+    if (dailyLimitNum > 100) { toast.error('Volume muito alto', 'Para evitar bloqueios no WhatsApp, o limite máximo é de 100 leads por dia.'); return; }
+    
+    const hStart = Number(newCamp.hourStart) || 8;
+    const hEnd = Number(newCamp.hourEnd) || 18;
+    if (hEnd <= hStart) { toast.error('Horário inválido', 'O horário de fim deve ser posterior ao de início.'); return; }
+
     if (!tenantId) return;
     setIsCreating(true);
     const segment = SEGMENTS.find(s => s.id === selectedSegment) ?? DEFAULT_SEGMENT;
@@ -748,19 +770,35 @@ export default function Campaigns() {
             </div>
 
             {/* Volume */}
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">Leads/dia</label>
-                <input type="number" value={newCamp.dailyLimit} onChange={e => setNewCamp(p => ({...p, dailyLimit: e.target.value}))} className="w-full h-9 px-3 rounded-lg bg-[#F9FAFB] border border-[#E5E7EB] text-[13px] focus:border-[#1B3A6B] outline-none" />
+            <div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">Leads/dia</label>
+                  <input type="number" min="1" max="100" value={newCamp.dailyLimit} onChange={e => setNewCamp(p => ({...p, dailyLimit: e.target.value}))} className="w-full h-9 px-3 rounded-lg bg-[#F9FAFB] border border-[#E5E7EB] text-[13px] focus:border-[#1B3A6B] outline-none" />
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">Início</label>
+                  <div className="relative">
+                    <select value={newCamp.hourStart} onChange={e => setNewCamp(p => ({...p, hourStart: e.target.value}))} className="w-full h-9 pl-3 pr-8 rounded-lg bg-[#F9FAFB] border border-[#E5E7EB] text-[13px] focus:border-[#1B3A6B] outline-none appearance-none cursor-pointer">
+                      {Array.from({length: 24}).map((_, i) => <option key={i} value={i}>{String(i).padStart(2, '0')}:00</option>)}
+                    </select>
+                    <ChevronDown className="w-4 h-4 absolute right-2.5 top-2.5 text-[#64748B] pointer-events-none" />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">Fim</label>
+                  <div className="relative">
+                    <select value={newCamp.hourEnd} onChange={e => setNewCamp(p => ({...p, hourEnd: e.target.value}))} className="w-full h-9 pl-3 pr-8 rounded-lg bg-[#F9FAFB] border border-[#E5E7EB] text-[13px] focus:border-[#1B3A6B] outline-none appearance-none cursor-pointer">
+                      {Array.from({length: 24}).map((_, i) => <option key={i} value={i}>{String(i).padStart(2, '0')}:00</option>)}
+                    </select>
+                    <ChevronDown className="w-4 h-4 absolute right-2.5 top-2.5 text-[#64748B] pointer-events-none" />
+                  </div>
+                </div>
               </div>
-              <div>
-                <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">Início</label>
-                <input type="number" min="0" max="23" value={newCamp.hourStart} onChange={e => setNewCamp(p => ({...p, hourStart: e.target.value}))} className="w-full h-9 px-3 rounded-lg bg-[#F9FAFB] border border-[#E5E7EB] text-[13px] focus:border-[#1B3A6B] outline-none" />
-              </div>
-              <div>
-                <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">Fim</label>
-                <input type="number" min="0" max="23" value={newCamp.hourEnd} onChange={e => setNewCamp(p => ({...p, hourEnd: e.target.value}))} className="w-full h-9 px-3 rounded-lg bg-[#F9FAFB] border border-[#E5E7EB] text-[13px] focus:border-[#1B3A6B] outline-none" />
-              </div>
+              {parseInt(newCamp.hourEnd) <= parseInt(newCamp.hourStart) && (
+                 <p className="text-[10px] text-[#D92D20] mt-1.5 font-bold">O horário de fim deve ser posterior ao de início.</p>
+              )}
+              <p className="text-[10px] text-[#64748B] mt-1.5 font-medium">Recomendamos no máximo 100 leads por dia para manter a saúde do seu WhatsApp.</p>
             </div>
 
             {/* ICP Section */}
@@ -866,6 +904,52 @@ export default function Campaigns() {
               {purchasingAddon ? 'Processando...' : 'Contratar Add-on'}
             </button>
             <p className="text-[10px] text-center text-[#94A3B8]">O valor será adicionado à sua próxima fatura</p>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ Safe Delete Modal ═══ */}
+      {campaignToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setCampaignToDelete(null)}>
+          <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 space-y-4 animate-fadeIn">
+            <div className="flex items-center justify-between">
+              <h3 className="text-[16px] font-bold text-[#D92D20] flex items-center gap-2">
+                <Trash2 className="w-4 h-4" />
+                Excluir Campanha
+              </h3>
+              <button onClick={() => setCampaignToDelete(null)} className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-[#F1F3F6] text-[#64748B]"><X className="w-4 h-4" /></button>
+            </div>
+            
+            <p className="text-[13px] text-[#475569] leading-relaxed">
+              Você tem certeza que deseja excluir a campanha <strong>&quot;{campaignToDelete.name}&quot;</strong>? Esta ação apagará as configurações de busca, mas manterá os leads já capturados.
+            </p>
+            
+            <div>
+              <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">
+                Para confirmar, digite <strong>EXCLUIR</strong>
+              </label>
+              <input 
+                type="text" 
+                value={deleteConfirmText}
+                onChange={e => setDeleteConfirmText(e.target.value.toUpperCase())}
+                placeholder="EXCLUIR"
+                className="w-full h-9 px-3 rounded-lg bg-[#F9FAFB] border border-[#E5E7EB] text-[13px] focus:border-[#D92D20] focus:ring-1 focus:ring-[#D92D20] outline-none font-bold text-center"
+                autoFocus
+              />
+            </div>
+            
+            <div className="flex gap-3 mt-4">
+              <button onClick={() => setCampaignToDelete(null)} className="flex-1 h-10 rounded-lg text-[13px] font-semibold bg-[#F1F3F6] text-[#0F172A] hover:bg-[#E5E7EB] transition-all">
+                Cancelar
+              </button>
+              <button 
+                onClick={handleConfirmDelete}
+                disabled={deleteConfirmText !== 'EXCLUIR'}
+                className="flex-1 h-10 rounded-lg text-[13px] font-semibold bg-[#D92D20] text-white hover:bg-[#B42318] transition-all disabled:opacity-50"
+              >
+                Confirmar Exclusão
+              </button>
+            </div>
           </div>
         </div>
       )}

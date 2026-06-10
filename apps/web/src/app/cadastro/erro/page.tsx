@@ -42,7 +42,7 @@ function InvitationErrorInner() {
   const content = getErrorContent();
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-zinc-950 text-zinc-50 relative overflow-hidden px-4">
+    <div className="min-h-[100dvh] flex items-center justify-center bg-zinc-950 text-zinc-50 relative overflow-hidden px-4">
       {/* Background lights */}
       <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full bg-red-500/5 blur-[120px] pointer-events-none" />
       <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] rounded-full bg-zinc-500/5 blur-[120px] pointer-events-none" />
@@ -105,7 +105,7 @@ function InvitationErrorInner() {
 export default function InvitationError() {
   return (
     <Suspense fallback={
-      <div className="min-h-screen flex items-center justify-center bg-zinc-950">
+      <div className="min-h-[100dvh] flex items-center justify-center bg-zinc-950">
         <div className="w-10 h-10 border-4 border-red-500/30 border-t-red-500 rounded-full animate-spin" />
       </div>
     }>

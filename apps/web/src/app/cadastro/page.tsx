@@ -91,7 +91,7 @@ export default function SignupCode() {
   };
 
   return (
-    <div className="auth-dark min-h-screen flex items-center justify-center bg-bg text-text relative overflow-hidden px-4">
+    <div className="auth-dark min-h-[100dvh] flex items-center justify-center bg-bg text-text relative overflow-hidden px-4">
       {/* Visual background lights */}
       <div className="absolute top-[-20%] right-[-10%] w-[50%] h-[50%] rounded-full bg-blue-500/10 blur-[120px] pointer-events-none" />
       <div className="absolute bottom-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full bg-emerald-500/10 blur-[120px] pointer-events-none" />
