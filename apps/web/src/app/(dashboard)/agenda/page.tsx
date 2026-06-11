@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, Button, Badge, Input, toast } from '@prospix/ui';
-import { Clock, Phone, Mail, Calendar, X, Plus, Info, Settings, RefreshCw, Lock } from 'lucide-react';
+import { Clock, Phone, Mail, Calendar, X, Plus, Info, Settings, RefreshCw, MapPin, ExternalLink, Users, Video } from 'lucide-react';
 import { meetingsQueries, leadsQueries } from '@/lib/queries';
 import { useAuthStore } from '@/store/auth-store';
 import { apiFetch } from '@/lib/api-fetch';
@@ -33,9 +33,16 @@ interface SelectedSlot {
 }
 
 interface BusySlot {
+  id?: string;
   start: string;
   end: string;
   summary?: string;
+  description?: string;
+  location?: string;
+  htmlLink?: string;
+  hangoutLink?: string;
+  organizer?: { email: string; displayName?: string; self?: boolean };
+  attendees?: Array<{ email: string; displayName?: string; responseStatus?: string }>;
   isProspixEvent?: boolean;
 }
 
@@ -139,6 +146,7 @@ export default function Schedule() {
   const [meetingDuration, setMeetingDuration] = useState(30);
   const [isLoadingLeads, setIsLoadingLeads] = useState(false);
   const [isCreatingMeeting, setIsCreatingMeeting] = useState(false);
+  const [selectedGoogleEvent, setSelectedGoogleEvent] = useState<BusySlot | null>(null);
 
   // Check if a slot is blocked by a Google Calendar event
   const getBusyAtSlot = (day: number, slot: string) => {
@@ -459,15 +467,22 @@ export default function Schedule() {
                         </span>
                       </button>
                     ) : busy ? (
-                      <div
-                        className="w-full rounded-lg border border-dashed border-[#CBD5E1] bg-[#F1F5F9] flex items-center justify-center gap-1 cursor-default"
+                      <button
+                        onClick={() => setSelectedGoogleEvent(busy)}
+                        className="w-full rounded-lg border border-[#CBD5E1] bg-[#F1F5F9] hover:bg-[#E8EDF3] hover:border-[#94A3B8] transition-all text-left p-1.5 flex flex-col justify-center gap-0.5 cursor-pointer"
                         title={busy.summary || 'Horário ocupado no Google Calendar'}
                       >
-                        <Lock className="w-3 h-3 text-[#94A3B8]" />
-                        <span className="text-[9px] text-[#94A3B8] font-medium truncate max-w-[80%]">
-                          {busy.summary || 'Ocupado'}
+                        <div className="flex items-center gap-1">
+                          <Calendar className="w-2.5 h-2.5 text-[#4285F4] shrink-0" />
+                          <span className="text-[9px] text-[#475569] font-semibold truncate">
+                            {busy.summary || 'Ocupado'}
+                          </span>
+                        </div>
+                        <span className="text-[8px] text-[#94A3B8] font-medium pl-3.5">
+                          {busy.start ? new Date(busy.start).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : ''}
+                          {busy.end ? ` – ${new Date(busy.end).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : ''}
                         </span>
-                      </div>
+                      </button>
                     ) : (
                       <button
                         onClick={() => openCreateMeeting(dayValue, slot)}
@@ -722,6 +737,173 @@ export default function Schedule() {
             >
               Fechar
             </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Google Calendar Event Detail Modal */}
+      {selectedGoogleEvent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-slate-900/40 backdrop-blur-sm">
+          <div className="bg-white border border-border rounded-2xl w-full max-w-[500px] p-6 space-y-5 shadow-2xl animate-scaleIn">
+            <div className="flex justify-between items-start">
+              <div className="flex gap-3">
+                <div className="p-3 bg-[#4285F4]/10 border border-[#4285F4]/20 text-[#4285F4] rounded-xl">
+                  <Calendar className="w-6 h-6" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-base font-bold font-heading text-text truncate">
+                    {selectedGoogleEvent.summary || 'Evento do Google Calendar'}
+                  </h3>
+                  <p className="text-xs text-text-secondary leading-none mt-1 flex items-center gap-1">
+                    <span className="inline-block w-2 h-2 rounded-full bg-[#4285F4]"></span>
+                    Google Calendar
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedGoogleEvent(null)}
+                className="p-1 rounded-lg hover:bg-surface-sunken text-text-secondary hover:text-text transition-colors"
+                aria-label="Fechar detalhes do evento"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {/* Time */}
+              <div className="bg-surface-sunken p-3.5 border border-border rounded-xl space-y-1">
+                <span className="text-[9px] font-semibold text-text-secondary uppercase tracking-wider block">Horário</span>
+                <div className="flex items-center gap-2 text-xs font-medium text-text">
+                  <Clock className="w-3.5 h-3.5 text-[#4285F4]" />
+                  <span className="font-mono">
+                    {selectedGoogleEvent.start
+                      ? new Date(selectedGoogleEvent.start).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })
+                      : '—'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-xs font-mono text-text pl-5">
+                  {selectedGoogleEvent.start
+                    ? new Date(selectedGoogleEvent.start).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+                    : ''}
+                  {selectedGoogleEvent.end
+                    ? ` — ${new Date(selectedGoogleEvent.end).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
+                    : ''}
+                </div>
+              </div>
+
+              {/* Location */}
+              {selectedGoogleEvent.location && (
+                <div className="bg-surface-sunken p-3.5 border border-border rounded-xl space-y-1">
+                  <span className="text-[9px] font-semibold text-text-secondary uppercase tracking-wider block">Local</span>
+                  <div className="flex items-center gap-2 text-xs text-text">
+                    <MapPin className="w-3.5 h-3.5 text-text-secondary/70 shrink-0" />
+                    <span>{selectedGoogleEvent.location}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Google Meet link */}
+              {selectedGoogleEvent.hangoutLink && (
+                <a
+                  href={selectedGoogleEvent.hangoutLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2.5 bg-[#EEF7FF] border border-[#B8DEFF] rounded-xl p-3.5 hover:bg-[#DCEEFF] transition-colors"
+                >
+                  <Video className="w-4 h-4 text-[#1a73e8]" />
+                  <div>
+                    <span className="text-[11px] font-bold text-[#1a73e8] block">Entrar na videoconferência</span>
+                    <span className="text-[9px] text-[#1a73e8]/70">Google Meet</span>
+                  </div>
+                  <ExternalLink className="w-3 h-3 text-[#1a73e8] ml-auto" />
+                </a>
+              )}
+
+              {/* Description */}
+              {selectedGoogleEvent.description && (
+                <div className="bg-surface-sunken p-3.5 border border-border rounded-xl space-y-1">
+                  <span className="text-[9px] font-semibold text-text-secondary uppercase tracking-wider block">Descrição</span>
+                  <p className="text-[11px] text-text whitespace-pre-wrap leading-relaxed max-h-32 overflow-y-auto">
+                    {selectedGoogleEvent.description}
+                  </p>
+                </div>
+              )}
+
+              {/* Attendees */}
+              {selectedGoogleEvent.attendees && selectedGoogleEvent.attendees.length > 0 && (
+                <div className="bg-surface-sunken p-3.5 border border-border rounded-xl space-y-2">
+                  <span className="text-[9px] font-semibold text-text-secondary uppercase tracking-wider flex items-center gap-1">
+                    <Users className="w-3 h-3" />
+                    Participantes ({selectedGoogleEvent.attendees.length})
+                  </span>
+                  <div className="space-y-1.5 max-h-28 overflow-y-auto">
+                    {selectedGoogleEvent.attendees.map((att, i) => (
+                      <div key={i} className="flex items-center gap-2 text-[11px]">
+                        <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold text-white ${
+                          att.responseStatus === 'accepted' ? 'bg-[#059669]'
+                          : att.responseStatus === 'declined' ? 'bg-[#DC2626]'
+                          : att.responseStatus === 'tentative' ? 'bg-[#D97706]'
+                          : 'bg-[#6B7280]'
+                        }`}>
+                          {(att.displayName || att.email || '?').charAt(0).toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <span className="font-medium text-text truncate block">
+                            {att.displayName || att.email}
+                          </span>
+                          {att.displayName && (
+                            <span className="text-[9px] text-text-secondary truncate block">{att.email}</span>
+                          )}
+                        </div>
+                        <span className={`text-[8px] font-bold uppercase px-1.5 py-0.5 rounded-md ${
+                          att.responseStatus === 'accepted' ? 'bg-[#ECFDF3] text-[#059669]'
+                          : att.responseStatus === 'declined' ? 'bg-[#FEF2F2] text-[#DC2626]'
+                          : att.responseStatus === 'tentative' ? 'bg-[#FFFBEB] text-[#D97706]'
+                          : 'bg-[#F3F4F6] text-[#6B7280]'
+                        }`}>
+                          {att.responseStatus === 'accepted' ? 'Confirmado'
+                          : att.responseStatus === 'declined' ? 'Recusado'
+                          : att.responseStatus === 'tentative' ? 'Talvez'
+                          : 'Pendente'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Organizer */}
+              {selectedGoogleEvent.organizer && !selectedGoogleEvent.organizer.self && (
+                <div className="bg-surface-sunken p-3.5 border border-border rounded-xl space-y-1">
+                  <span className="text-[9px] font-semibold text-text-secondary uppercase tracking-wider block">Organizador</span>
+                  <div className="flex items-center gap-2 text-xs text-text">
+                    <Mail className="w-3.5 h-3.5 text-text-secondary/70" />
+                    <span>{selectedGoogleEvent.organizer.displayName || selectedGoogleEvent.organizer.email}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-2">
+              {selectedGoogleEvent.htmlLink && (
+                <a
+                  href={selectedGoogleEvent.htmlLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-1 bg-[#4285F4] hover:bg-[#3367D6] text-white text-xs font-semibold h-11 rounded-xl transition-all flex items-center justify-center gap-2"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  Abrir no Google Calendar
+                </a>
+              )}
+              <Button
+                onClick={() => setSelectedGoogleEvent(null)}
+                className="flex-1 bg-surface-sunken hover:bg-border text-text border border-border/80 font-semibold h-11 rounded-xl transition-all"
+              >
+                Fechar
+              </Button>
+            </div>
           </div>
         </div>
       )}

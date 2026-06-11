@@ -71,6 +71,12 @@ export async function POST(request: NextRequest) {
       summary: ev.summary,
       start: ev.start,
       end: ev.end,
+      description: ev.description,
+      location: ev.location,
+      htmlLink: ev.htmlLink,
+      hangoutLink: ev.hangoutLink,
+      organizer: ev.organizer,
+      attendees: ev.attendees,
       isProspixEvent: ev.description?.includes('Prospix') ?? false,
     }));
 

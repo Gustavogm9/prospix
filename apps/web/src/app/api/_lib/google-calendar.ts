@@ -35,6 +35,12 @@ export interface CalendarEvent {
   end: string;
   status: string;
   description?: string;
+  location?: string;
+  htmlLink?: string;
+  hangoutLink?: string;
+  organizer?: { email: string; displayName?: string; self?: boolean };
+  attendees?: Array<{ email: string; displayName?: string; responseStatus?: string }>;
+  colorId?: string;
 }
 
 export interface BusyPeriod {
@@ -291,6 +297,20 @@ export async function listEvents(
       end: ev.end?.dateTime || ev.end?.date || '',
       status: ev.status || 'confirmed',
       description: ev.description,
+      location: ev.location,
+      htmlLink: ev.htmlLink,
+      hangoutLink: ev.hangoutLink,
+      organizer: ev.organizer ? {
+        email: ev.organizer.email,
+        displayName: ev.organizer.displayName,
+        self: ev.organizer.self,
+      } : undefined,
+      attendees: ev.attendees?.map((a: any) => ({
+        email: a.email,
+        displayName: a.displayName,
+        responseStatus: a.responseStatus,
+      })),
+      colorId: ev.colorId,
     }));
 }
 
