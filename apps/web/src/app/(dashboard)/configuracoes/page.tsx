@@ -169,6 +169,9 @@ export default function Settings() {
   const [isCredentialsSaving, setIsCredentialsSaving] = useState(false);
   const [billingData, setBillingData] = useState<TenantBillingData | null>(null);
   const [isBillingLoading, setIsBillingLoading] = useState(false);
+  const [googleCalendars, setGoogleCalendars] = useState<Array<{id: string; summary: string; primary?: boolean; backgroundColor?: string}>>([]);
+  const [selectedCalendarId, setSelectedCalendarId] = useState<string>('primary');
+  const [isLoadingCalendars, setIsLoadingCalendars] = useState(false);
 
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const canManageCredentials = user?.role !== 'ASSISTANT';
@@ -263,6 +266,23 @@ export default function Settings() {
         aiProvider: data.aiProvider || 'GUILDS_SHARED',
         evolutionBaseUrl: '',
       }));
+
+      // If Google Calendar is connected, load calendar list
+      if (data.google?.calendarConnected) {
+        setSelectedCalendarId(data.google.calendarId || 'primary');
+        setIsLoadingCalendars(true);
+        try {
+          const calRes = await apiFetch('/api/integrations/calendar/calendars');
+          if (calRes.ok) {
+            const calJson = await calRes.json();
+            setGoogleCalendars(calJson.calendars || []);
+          }
+        } catch (calErr) {
+          console.warn('Failed to load Google Calendars:', calErr);
+        } finally {
+          setIsLoadingCalendars(false);
+        }
+      }
     } catch (err: unknown) {
       console.error('Error loading credentials:', err);
       toast.error('Erro ao carregar credenciais', 'Não foi possível carregar o estado das credenciais.');
@@ -962,24 +982,65 @@ export default function Settings() {
                 </div>
                 <div className="p-5">
                   {credentialState.google.calendarConnected ? (
-                    <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-[#ECFDF3] border border-[#A7F3D0] rounded-xl p-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-lg bg-[#059669]/10 flex items-center justify-center">
-                          <CheckCircle2 className="w-5 h-5 text-[#059669]" />
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h4 className="text-[13px] font-bold text-[#0F172A]">Google Agenda Ativa</h4>
-                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-[#059669] text-white uppercase tracking-wider">
-                              Sincronizado
-                            </span>
+                    <div className="space-y-4">
+                      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-[#ECFDF3] border border-[#A7F3D0] rounded-xl p-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-lg bg-[#059669]/10 flex items-center justify-center">
+                            <CheckCircle2 className="w-5 h-5 text-[#059669]" />
                           </div>
-                          <p className="text-[11px] text-[#059669] mt-0.5">A IA do Prospix está autorizada a ler conflitos e agendar reuniões.</p>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h4 className="text-[13px] font-bold text-[#0F172A]">Google Agenda Ativa</h4>
+                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-[#059669] text-white uppercase tracking-wider">
+                                Sincronizado
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-[#059669] mt-0.5">A IA do Prospix está autorizada a ler conflitos e agendar reuniões.</p>
+                          </div>
                         </div>
+                        <Button onClick={handleDisconnectGoogle} className="bg-[#FEF3F2] hover:bg-[#FEE4E2] text-[#D92D20] text-[12px] font-semibold px-4 h-9 rounded-xl transition-colors border border-[#FEE4E2]">
+                          Desconectar Agenda
+                        </Button>
                       </div>
-                      <Button onClick={handleDisconnectGoogle} className="bg-[#FEF3F2] hover:bg-[#FEE4E2] text-[#D92D20] text-[12px] font-semibold px-4 h-9 rounded-xl transition-colors border border-[#FEE4E2]">
-                        Desconectar Agenda
-                      </Button>
+
+                      {/* Calendar selector */}
+                      <div className="bg-[#F8FAFC] border border-[#E5E7EB] rounded-xl p-4">
+                        <label className="block space-y-2">
+                          <span className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider">Calendário para sincronização</span>
+                          <select
+                            value={selectedCalendarId}
+                            onChange={async (e) => {
+                              const newId = e.target.value;
+                              setSelectedCalendarId(newId);
+                              try {
+                                await apiFetch('/api/integrations/credentials', {
+                                  method: 'PATCH',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ googleCalendarId: newId }),
+                                });
+                                toast.success('Calendário atualizado', 'A sincronização usará este calendário.');
+                              } catch {
+                                toast.error('Erro', 'Não foi possível salvar a preferência de calendário.');
+                              }
+                            }}
+                            disabled={isLoadingCalendars}
+                            className="w-full bg-white border border-[#E5E7EB] text-[12px] rounded-xl px-3 h-10 text-[#0F172A] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none disabled:opacity-60"
+                          >
+                            {isLoadingCalendars ? (
+                              <option>Carregando calendários...</option>
+                            ) : googleCalendars.length > 0 ? (
+                              googleCalendars.map((cal) => (
+                                <option key={cal.id} value={cal.id}>
+                                  {cal.summary}{cal.primary ? ' (Principal)' : ''}
+                                </option>
+                              ))
+                            ) : (
+                              <option value="primary">Calendário principal</option>
+                            )}
+                          </select>
+                          <p className="text-[10px] text-[#94A3B8]">A IA agendará reuniões e verificará conflitos neste calendário.</p>
+                        </label>
+                      </div>
                     </div>
                   ) : (
                     <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-[#F8FAFC] border border-[#E5E7EB] rounded-xl p-4">

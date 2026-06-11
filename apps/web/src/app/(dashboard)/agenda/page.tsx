@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, Button, Badge, Input, toast } from '@prospix/ui';
-import { Clock, Phone, Mail, Calendar, X, Plus, Info, Settings } from 'lucide-react';
+import { Clock, Phone, Mail, Calendar, X, Plus, Info, Settings, RefreshCw, Lock } from 'lucide-react';
 import { meetingsQueries, leadsQueries } from '@/lib/queries';
 import { useAuthStore } from '@/store/auth-store';
 import { apiFetch } from '@/lib/api-fetch';
@@ -30,6 +30,13 @@ interface LeadOption {
 interface SelectedSlot {
   day: number;
   slot: string;
+}
+
+interface BusySlot {
+  start: string;
+  end: string;
+  summary?: string;
+  isProspixEvent?: boolean;
 }
 
 const TIME_SLOTS = [
@@ -96,6 +103,8 @@ export default function Schedule() {
   const [calendarConnected, setCalendarConnected] = useState<boolean | null>(null);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [weekOffset, setWeekOffset] = useState(0);
+  const [busySlots, setBusySlots] = useState<BusySlot[]>([]);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   const getWeekMonday = (offset: number) => {
     const now = new Date();
@@ -131,6 +140,22 @@ export default function Schedule() {
   const [isLoadingLeads, setIsLoadingLeads] = useState(false);
   const [isCreatingMeeting, setIsCreatingMeeting] = useState(false);
 
+  // Check if a slot is blocked by a Google Calendar event
+  const getBusyAtSlot = (day: number, slot: string) => {
+    const [hours, minutes] = slot.split(':').map(Number);
+    const slotDate = new Date(weekMonday);
+    slotDate.setDate(slotDate.getDate() + (day - 1));
+    slotDate.setHours(hours ?? 0, minutes ?? 0, 0, 0);
+    const slotEnd = new Date(slotDate.getTime() + 30 * 60000);
+
+    return busySlots.find(b => {
+      if (b.isProspixEvent) return false; // Don't double-block Prospix events
+      const bStart = new Date(b.start);
+      const bEnd = new Date(b.end);
+      return bStart < slotEnd && bEnd > slotDate;
+    });
+  };
+
   const getMeetingAtSlot = (day: number, slot: string) => {
     return meetings.find(m => m.dayOfWeek === day && m.timeSlot === slot);
   };
@@ -148,19 +173,40 @@ export default function Schedule() {
     }
   }, [tenantId]);
 
-  // Check calendar connection status on mount
+  const syncGoogleCalendar = useCallback(async (silent = false) => {
+    if (!silent) setIsSyncing(true);
+    try {
+      const res = await apiFetch('/api/integrations/calendar/sync', { method: 'POST' });
+      if (res.ok) {
+        const json = await res.json();
+        setBusySlots(json.events || []);
+        if (!silent) toast.success('Sincronizado!', 'Google Calendar atualizado com sucesso.');
+      }
+    } catch (err) {
+      console.error('Error syncing Google Calendar:', err);
+      if (!silent) toast.error('Erro de Sync', 'Não foi possível sincronizar com o Google Calendar.');
+    } finally {
+      setIsSyncing(false);
+    }
+  }, []);
+
+  // Check calendar connection status on mount and auto-sync
   useEffect(() => {
     fetchMeetings();
     (async () => {
       try {
         const res = await apiFetch('/api/integrations/credentials');
         const json = await res.json();
-        setCalendarConnected(json?.data?.google?.calendarConnected ?? false);
+        const connected = json?.data?.google?.calendarConnected ?? false;
+        setCalendarConnected(connected);
+        if (connected) {
+          syncGoogleCalendar(true); // silent auto-sync
+        }
       } catch {
         setCalendarConnected(false);
       }
     })();
-  }, [fetchMeetings]);
+  }, [fetchMeetings, syncGoogleCalendar]);
 
   const fetchLeadOptions = async () => {
     if (!tenantId) return;
@@ -220,12 +266,28 @@ export default function Schedule() {
       });
       if (result.error) throw new Error(result.error.message);
 
-      toast.success('Reunião agendada', 'O compromisso foi salvo e enviado para sincronização.');
+      // Push to Google Calendar if connected
+      const meetingId = result.data?.id;
+      if (calendarConnected && meetingId) {
+        try {
+          await apiFetch('/api/integrations/calendar/push-event', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ meetingId }),
+          });
+        } catch (pushErr) {
+          console.warn('Failed to push to Google Calendar:', pushErr);
+          // Don't fail the meeting creation if push fails
+        }
+      }
+
+      toast.success('Reunião agendada', calendarConnected ? 'Compromisso salvo e sincronizado com Google Calendar.' : 'Compromisso salvo com sucesso.');
       setIsCreateMeetingOpen(false);
       setSelectedSlot(null);
       setMeetingLocation('');
       setMeetingDuration(30);
       await fetchMeetings();
+      if (calendarConnected) syncGoogleCalendar(true);
     } catch (error: unknown) {
       const message = error instanceof Error
         ? error.message || 'Não foi possível criar a reunião no servidor.'
@@ -251,6 +313,19 @@ export default function Schedule() {
     try {
       const result = await meetingsQueries.update(tenantId, meetingId, { status: STATUS_TO_API[newStatus] as any });
       if (result.error) throw new Error(result.error.message);
+
+      // If cancelling, also remove from Google Calendar
+      if (newStatus === 'cancelada' && calendarConnected) {
+        try {
+          await apiFetch('/api/integrations/calendar/cancel-event', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ meetingId }),
+          });
+        } catch (cancelErr) {
+          console.warn('Failed to cancel Google Calendar event:', cancelErr);
+        }
+      }
     } catch {
       setMeetings(previousMeetings);
       setSelectedMeeting(previousSelectedMeeting);
@@ -276,19 +351,12 @@ export default function Schedule() {
         <button
           onClick={async () => {
             if (calendarConnected === false) {
-              // Redirect to settings integrations tab
               router.push('/configuracoes?tab=integracoes');
               return;
             }
-            try {
-              await apiFetch('/api/integrations/calendar/sync', { method: 'POST' });
-              toast.success('Sincronizado!', 'Google Calendar atualizado com sucesso.');
-              await fetchMeetings();
-            } catch {
-              // API returned 400 = not configured
-              router.push('/configuracoes?tab=integracoes');
-            }
+            await syncGoogleCalendar();
           }}
+          disabled={isSyncing}
           className={`h-8 px-3 rounded-md text-[12px] font-medium flex items-center gap-1.5 transition-all ${
             calendarConnected === false
               ? 'text-[#E8981C] border border-[#E8981C]/30 bg-[#FFF8F0] hover:bg-[#FFF1E0]'
@@ -302,8 +370,8 @@ export default function Schedule() {
             </>
           ) : (
             <>
-              <Calendar className="w-3 h-3" />
-              Sync Google Calendar
+              <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />
+              {isSyncing ? 'Sincronizando...' : 'Sync Google Calendar'}
             </>
           )}
         </button>
@@ -370,6 +438,7 @@ export default function Schedule() {
 
               {[1, 2, 3, 4, 5].map((dayValue) => {
                 const meeting = getMeetingAtSlot(dayValue, slot);
+                const busy = getBusyAtSlot(dayValue, slot);
                 return (
                   <div
                     key={dayValue}
@@ -389,6 +458,16 @@ export default function Schedule() {
                           {meeting.company}
                         </span>
                       </button>
+                    ) : busy ? (
+                      <div
+                        className="w-full rounded-lg border border-dashed border-[#CBD5E1] bg-[#F1F5F9] flex items-center justify-center gap-1 cursor-default"
+                        title={busy.summary || 'Horário ocupado no Google Calendar'}
+                      >
+                        <Lock className="w-3 h-3 text-[#94A3B8]" />
+                        <span className="text-[9px] text-[#94A3B8] font-medium truncate max-w-[80%]">
+                          {busy.summary || 'Ocupado'}
+                        </span>
+                      </div>
                     ) : (
                       <button
                         onClick={() => openCreateMeeting(dayValue, slot)}

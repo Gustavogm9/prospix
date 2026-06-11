@@ -73,6 +73,7 @@ export async function PATCH(request: NextRequest) {
   if (body.evolutionApiKey !== undefined) updateData.evolution_api_key_encrypted = body.evolutionApiKey || null;
   if (body.tavilyApiKey !== undefined) updateData.tavily_api_key_encrypted = body.tavilyApiKey || null;
   if (body.firecrawlApiKey !== undefined) updateData.firecrawl_api_key_encrypted = body.firecrawlApiKey || null;
+  if (body.googleCalendarId !== undefined) updateData.google_calendar_id = body.googleCalendarId || null;
 
   // Auto-set ai_provider to TENANT_OWN if any key is provided
   const hasTenantOwnedKey = Boolean(
