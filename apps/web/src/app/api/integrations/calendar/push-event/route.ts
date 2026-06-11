@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { meetingId } = body;
+    const { meetingId, withMeet } = body;
 
     if (!meetingId) {
       return NextResponse.json(
@@ -88,26 +88,26 @@ export async function POST(request: NextRequest) {
       end: endISO,
       location: meeting.location || undefined,
       attendees: lead?.email ? [{ email: lead.email }] : undefined,
+      withMeet: withMeet === true,
     };
 
     // 4. Push event to Google Calendar
-    const eventId = await createEvent(refreshToken, calendarId, eventData);
+    const result = await createEvent(refreshToken, calendarId, eventData);
 
     // 5. Store the google_event_id on the meeting row
     const { error: updateError } = await supabaseAdmin
       .from('meetings')
       .update({
-        google_event_id: eventId,
+        google_event_id: result.eventId,
         updated_at: new Date().toISOString(),
       })
       .eq('id', meetingId);
 
     if (updateError) {
       console.error('Failed to update meeting with google_event_id:', updateError);
-      // The event was created successfully, so we still return success
     }
 
-    return NextResponse.json({ success: true, eventId });
+    return NextResponse.json({ success: true, eventId: result.eventId, meetLink: result.meetLink || null });
   } catch (err) {
     console.error('Error pushing event to Google Calendar:', err);
     return NextResponse.json(

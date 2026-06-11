@@ -146,6 +146,7 @@ export default function Schedule() {
   const [meetingDuration, setMeetingDuration] = useState(30);
   const [isLoadingLeads, setIsLoadingLeads] = useState(false);
   const [isCreatingMeeting, setIsCreatingMeeting] = useState(false);
+  const [withMeet, setWithMeet] = useState(false);
   const [selectedGoogleEvent, setSelectedGoogleEvent] = useState<BusySlot | null>(null);
 
   // Check if a slot is blocked by a Google Calendar event
@@ -281,7 +282,7 @@ export default function Schedule() {
           await apiFetch('/api/integrations/calendar/push-event', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ meetingId }),
+            body: JSON.stringify({ meetingId, withMeet }),
           });
         } catch (pushErr) {
           console.warn('Failed to push to Google Calendar:', pushErr);
@@ -294,6 +295,7 @@ export default function Schedule() {
       setSelectedSlot(null);
       setMeetingLocation('');
       setMeetingDuration(30);
+      setWithMeet(false);
       await fetchMeetings();
       if (calendarConnected) syncGoogleCalendar(true);
     } catch (error: unknown) {
@@ -626,6 +628,42 @@ export default function Schedule() {
                   />
                 </label>
               </div>
+
+              {/* Google Meet Toggle */}
+              {calendarConnected && (
+                <button
+                  type="button"
+                  onClick={() => setWithMeet(!withMeet)}
+                  className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all ${
+                    withMeet
+                      ? 'bg-[#EEF7FF] border-[#B8DEFF]'
+                      : 'bg-surface-sunken border-border hover:border-[#94A3B8]'
+                  }`}
+                >
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                    withMeet ? 'bg-[#1a73e8] text-white' : 'bg-white border border-border text-text-secondary'
+                  }`}>
+                    <Video className="w-4 h-4" />
+                  </div>
+                  <div className="text-left flex-1">
+                    <span className={`text-[11px] font-bold block ${
+                      withMeet ? 'text-[#1a73e8]' : 'text-text'
+                    }`}>
+                      Google Meet
+                    </span>
+                    <span className="text-[9px] text-text-secondary">
+                      {withMeet ? 'Link será gerado automaticamente' : 'Adicionar videoconferência'}
+                    </span>
+                  </div>
+                  <div className={`w-9 h-5 rounded-full transition-all relative ${
+                    withMeet ? 'bg-[#1a73e8]' : 'bg-[#CBD5E1]'
+                  }`}>
+                    <div className={`w-4 h-4 rounded-full bg-white shadow-sm absolute top-0.5 transition-all ${
+                      withMeet ? 'left-[18px]' : 'left-0.5'
+                    }`} />
+                  </div>
+                </button>
+              )}
             </div>
 
             <div className="flex justify-end gap-2 pt-2">

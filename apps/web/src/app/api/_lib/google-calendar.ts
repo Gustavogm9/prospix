@@ -26,6 +26,12 @@ export interface CalendarEventInput {
   end: string;      // ISO-8601 dateTime
   attendees?: Array<{ email: string }>;
   location?: string;
+  withMeet?: boolean; // If true, creates a Google Meet conference
+}
+
+export interface CreateEventResult {
+  eventId: string;
+  meetLink?: string;
 }
 
 export interface CalendarEvent {
@@ -123,7 +129,7 @@ export async function createEvent(
   refreshToken: string,
   calendarId: string,
   eventData: CalendarEventInput
-): Promise<string> {
+): Promise<CreateEventResult> {
   const accessToken = await getAccessToken(refreshToken);
 
   const body: Record<string, any> = {
@@ -150,8 +156,21 @@ export async function createEvent(
     body.location = eventData.location;
   }
 
+  // Add Google Meet conference if requested
+  if (eventData.withMeet) {
+    body.conferenceData = {
+      createRequest: {
+        requestId: `prospix-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        conferenceSolutionKey: { type: 'hangoutsMeet' },
+      },
+    };
+  }
+
+  // conferenceDataVersion=1 is required when setting conferenceData
+  const queryParams = eventData.withMeet ? '?conferenceDataVersion=1' : '';
+
   const res = await fetch(
-    `${GOOGLE_API_BASE}/calendars/${encodeURIComponent(calendarId)}/events`,
+    `${GOOGLE_API_BASE}/calendars/${encodeURIComponent(calendarId)}/events${queryParams}`,
     {
       method: 'POST',
       headers: {
@@ -169,7 +188,10 @@ export async function createEvent(
   }
 
   const created = await res.json();
-  return created.id as string;
+  return {
+    eventId: created.id as string,
+    meetLink: created.hangoutLink || created.conferenceData?.entryPoints?.find((ep: any) => ep.entryPointType === 'video')?.uri || undefined,
+  };
 }
 
 // ---------------------------------------------------------------------------
