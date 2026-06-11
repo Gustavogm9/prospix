@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
     ).toISOString();
 
     const eventData = {
-      summary: `Reunião Prospix — ${lead?.name || 'Lead'}`,
+      summary: `Prospix - ${lead?.name || 'Lead'}`,
       description: [
         `📋 Lead: ${lead?.name || '—'}`,
         `📱 WhatsApp: ${lead?.whatsapp || '—'}`,
