@@ -25,6 +25,7 @@ interface LeadOption {
   name: string;
   company: string;
   whatsapp: string;
+  email: string;
 }
 
 interface SelectedSlot {
@@ -147,6 +148,7 @@ export default function Schedule() {
   const [isLoadingLeads, setIsLoadingLeads] = useState(false);
   const [isCreatingMeeting, setIsCreatingMeeting] = useState(false);
   const [withMeet, setWithMeet] = useState(false);
+  const [sendInvite, setSendInvite] = useState(true);
   const [selectedGoogleEvent, setSelectedGoogleEvent] = useState<BusySlot | null>(null);
 
   // Check if a slot is blocked by a Google Calendar event
@@ -228,6 +230,7 @@ export default function Schedule() {
         name: lead.name || 'Sem nome',
         company: lead.metadata?.cnpj_info?.nomeFantasia || lead.metadata?.cnpj_info?.razaoSocial || (lead.source_raw_data as any)?.name || lead.name || '',
         whatsapp: lead.whatsapp || '',
+        email: lead.email || '',
       }));
       setLeadOptions(options);
       setSelectedLeadId((current) => current || options[0]?.id || '');
@@ -282,7 +285,7 @@ export default function Schedule() {
           await apiFetch('/api/integrations/calendar/push-event', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ meetingId, withMeet }),
+            body: JSON.stringify({ meetingId, withMeet, sendInvite }),
           });
         } catch (pushErr) {
           console.warn('Failed to push to Google Calendar:', pushErr);
@@ -296,6 +299,7 @@ export default function Schedule() {
       setMeetingLocation('');
       setMeetingDuration(30);
       setWithMeet(false);
+      setSendInvite(true);
       await fetchMeetings();
       if (calendarConnected) syncGoogleCalendar(true);
     } catch (error: unknown) {
@@ -664,6 +668,56 @@ export default function Schedule() {
                   </div>
                 </button>
               )}
+
+              {/* Email Invite Toggle */}
+              {calendarConnected && (() => {
+                const selectedLead = leadOptions.find(l => l.id === selectedLeadId);
+                const leadEmail = selectedLead?.email;
+                return leadEmail ? (
+                  <button
+                    type="button"
+                    onClick={() => setSendInvite(!sendInvite)}
+                    className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all ${
+                      sendInvite
+                        ? 'bg-[#ECFDF3] border-[#A7F3D0]'
+                        : 'bg-surface-sunken border-border hover:border-[#94A3B8]'
+                    }`}
+                  >
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                      sendInvite ? 'bg-[#059669] text-white' : 'bg-white border border-border text-text-secondary'
+                    }`}>
+                      <Mail className="w-4 h-4" />
+                    </div>
+                    <div className="text-left flex-1 min-w-0">
+                      <span className={`text-[11px] font-bold block ${
+                        sendInvite ? 'text-[#059669]' : 'text-text'
+                      }`}>
+                        Enviar convite por email
+                      </span>
+                      <span className="text-[9px] text-text-secondary truncate block">
+                        {leadEmail}
+                      </span>
+                    </div>
+                    <div className={`w-9 h-5 rounded-full transition-all relative ${
+                      sendInvite ? 'bg-[#059669]' : 'bg-[#CBD5E1]'
+                    }`}>
+                      <div className={`w-4 h-4 rounded-full bg-white shadow-sm absolute top-0.5 transition-all ${
+                        sendInvite ? 'left-[18px]' : 'left-0.5'
+                      }`} />
+                    </div>
+                  </button>
+                ) : (
+                  <div className="w-full flex items-center gap-3 p-3 rounded-xl border border-border bg-surface-sunken opacity-60">
+                    <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-white border border-border text-text-secondary">
+                      <Mail className="w-4 h-4" />
+                    </div>
+                    <div className="text-left flex-1">
+                      <span className="text-[11px] font-bold text-text-secondary block">Sem email cadastrado</span>
+                      <span className="text-[9px] text-text-secondary">Adicione um email ao lead para enviar convites</span>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             <div className="flex justify-end gap-2 pt-2">

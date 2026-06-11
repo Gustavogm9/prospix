@@ -166,8 +166,11 @@ export async function createEvent(
     };
   }
 
-  // conferenceDataVersion=1 is required when setting conferenceData
-  const queryParams = eventData.withMeet ? '?conferenceDataVersion=1' : '';
+  // Build query params
+  const params = new URLSearchParams();
+  if (eventData.withMeet) params.set('conferenceDataVersion', '1');
+  if (eventData.attendees && eventData.attendees.length > 0) params.set('sendNotifications', 'true');
+  const queryParams = params.toString() ? `?${params}` : '';
 
   const res = await fetch(
     `${GOOGLE_API_BASE}/calendars/${encodeURIComponent(calendarId)}/events${queryParams}`,

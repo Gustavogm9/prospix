@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { meetingId, withMeet } = body;
+    const { meetingId, withMeet, sendInvite } = body;
 
     if (!meetingId) {
       return NextResponse.json(
@@ -87,7 +87,7 @@ export async function POST(request: NextRequest) {
       start: startISO,
       end: endISO,
       location: meeting.location || undefined,
-      attendees: lead?.email ? [{ email: lead.email }] : undefined,
+      attendees: (sendInvite !== false && lead?.email) ? [{ email: lead.email }] : undefined,
       withMeet: withMeet === true,
     };
 
