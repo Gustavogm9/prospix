@@ -68,7 +68,7 @@ export default function AppShell({ children }: AppShellProps) {
   const [counters, setCounters] = useState<AppShellCounters | null>(null);
   const [globalSearch, setGlobalSearch] = useState('');
   const [isSearchFocused, setIsSearchFocused] = useState(false);
-  const [notifications, setNotifications] = useState<Array<{id: string; title: string; body: string; readAt: string | null; createdAt: string; link?: string}>>([]);
+  const [notifications, setNotifications] = useState<Array<{id: string; title: string; body: string; read_at: string | null; created_at: string; link?: string}>>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isTutorialOpen, setIsTutorialOpen] = useState(false);
   const [isWhatsappConnected, setIsWhatsappConnected] = useState<boolean | null>(null);
@@ -451,21 +451,27 @@ export default function AppShell({ children }: AppShellProps) {
                     {notifications.length > 0 ? (
                       <div className="divide-y divide-border max-h-64 overflow-y-auto">
                         {notifications.slice(0, 8).map(n => (
-                          <div key={n.id} className={`py-2.5 px-1 cursor-pointer hover:bg-[#F9FAFB] rounded-lg transition-colors ${!n.readAt ? 'bg-[rgba(27,58,107,0.03)]' : ''}`}
+                          <div key={n.id} className={`py-2.5 px-1 cursor-pointer hover:bg-[#F9FAFB] rounded-lg transition-colors ${!n.read_at ? 'bg-[rgba(27,58,107,0.03)]' : ''}`}
                             onClick={async () => {
-                              if (!n.readAt) {
+                              if (!n.read_at) {
                                 try { await apiFetch(`/api/notifications/${n.id}/read`, { method: 'PATCH' }); fetchNotifications(); } catch { /* non-blocking */ }
                               }
-                              if (n.link) router.push(n.link);
+                              if (n.link) {
+                                let path = n.link;
+                                if (path === '/' || path === '/inicio') path = '/inicio';
+                                else if (path === '/minha-agenda') path = '/agenda';
+                                else if (path.includes('relatorio')) path = '/performance';
+                                router.push(path);
+                              }
                               setIsNotificationsOpen(false);
                             }}
                           >
                             <div className="flex items-start gap-2">
-                              {!n.readAt && <span className="w-2 h-2 rounded-full bg-[#1B3A6B] mt-1 shrink-0" />}
+                              {!n.read_at && <span className="w-2 h-2 rounded-full bg-[#1B3A6B] mt-1 shrink-0" />}
                               <div className="min-w-0">
                                 <p className="text-xs font-semibold text-[#0F172A] truncate">{n.title}</p>
                                 <p className="text-[11px] text-[#475569] line-clamp-2">{n.body}</p>
-                                <p className="text-[10px] text-[#94A3B8] mt-0.5">{new Date(n.createdAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</p>
+                                <p className="text-[10px] text-[#94A3B8] mt-0.5">{n.created_at ? new Date(n.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'Data inválida'}</p>
                               </div>
                             </div>
                           </div>

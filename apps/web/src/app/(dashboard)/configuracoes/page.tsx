@@ -847,6 +847,40 @@ export default function Settings() {
                           </div>
                         </div>
                       </div>
+
+                      {/* Anti-ban Info */}
+                      <div className="p-5 rounded-xl border border-[#E5E7EB] bg-white">
+                        <div className="flex items-center gap-2 mb-3">
+                          <Shield className="w-4 h-4 text-[#1B3A6B]" />
+                          <h4 className="text-[13px] font-bold text-[#0F172A]">Proteção Anti-banimento Automática</h4>
+                        </div>
+                        <p className="text-[12px] text-[#64748B] mb-4 leading-relaxed">
+                          Diferente de outras ferramentas, o Prospix já possui um motor antiban nativo que roda 100% no backend. Não é necessário configurar intervalos manualmente.
+                        </p>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                          <div>
+                            <span className="text-[10px] text-[#64748B] font-bold uppercase tracking-wider block mb-1">Limite Diário de Envios</span>
+                            <div className="text-[12px] text-[#0F172A] font-semibold">Configurado por Campanha</div>
+                            <p className="text-[10px] text-[#64748B] mt-1">A IA para automaticamente ao atingir o limite definido nas suas campanhas.</p>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-[#64748B] font-bold uppercase tracking-wider block mb-1">Intervalo entre Mensagens</span>
+                            <div className="text-[12px] text-[#0F172A] font-semibold">45 a 90 segundos (Aleatório)</div>
+                            <p className="text-[10px] text-[#64748B] mt-1">O motor sorteia um tempo diferente a cada envio para imitar comportamento humano.</p>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-[#64748B] font-bold uppercase tracking-wider block mb-1">Aquecimento Gradual</span>
+                            <div className="flex items-center gap-1.5 mt-1">
+                              <div className="w-7 h-4 bg-[#039855] rounded-full relative shadow-inner">
+                                <div className="absolute right-0.5 top-0.5 w-3 h-3 bg-white rounded-full shadow" />
+                              </div>
+                              <span className="text-[12px] text-[#039855] font-bold">Sempre Ativo</span>
+                            </div>
+                            <p className="text-[10px] text-[#64748B] mt-1">O fluxo fracionado garante que a sua instância "esquente" naturalmente.</p>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   )}
 
