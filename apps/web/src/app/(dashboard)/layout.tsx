@@ -5,11 +5,14 @@ import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/store/auth-store';
 import { supabase } from '@/lib/supabase';
 import AppShell from '@/layout/AppShell';
+import { Button } from '@prospix/ui';
+import { AlertTriangle } from 'lucide-react';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { user, tenantId, clearSession, initialized, setInitialized } = useAuthStore();
   const [hasHydrated, setHasHydrated] = useState(false);
+  const [isSessionExpired, setIsSessionExpired] = useState(false);
 
   // Wait for Zustand to hydrate from localStorage
   useEffect(() => {
@@ -45,9 +48,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event) => {
-        if (event === 'SIGNED_OUT') {
-          clearSession();
-          router.replace('/login');
+        if (event === 'SIGNED_OUT' || (event as string) === 'TOKEN_REFRESH_FAILED') {
+          setIsSessionExpired(true);
         }
       }
     );
@@ -83,6 +85,34 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   return (
-    <AppShell>{children}</AppShell>
+    <>
+      <AppShell>{children}</AppShell>
+
+      {/* Session Expired Forced Modal */}
+      {isSessionExpired && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm px-4">
+          <div className="bg-white border border-border rounded-2xl w-full max-w-sm p-6 shadow-2xl flex flex-col items-center text-center animate-scaleIn">
+            <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mb-4 border-4 border-amber-50">
+              <AlertTriangle className="w-6 h-6" />
+            </div>
+            <h3 className="text-lg font-bold font-heading text-text mb-2">
+              Sessão Expirada
+            </h3>
+            <p className="text-sm text-text-secondary mb-6 leading-relaxed">
+              Por segurança, sua sessão foi encerrada. Por favor, faça login novamente para continuar acessando o Prospix.
+            </p>
+            <Button
+              onClick={() => {
+                clearSession();
+                router.replace('/login');
+              }}
+              className="w-full h-11 text-sm font-semibold rounded-xl bg-primary hover:bg-primary-hover text-white shadow-sm"
+            >
+              Fazer Login Novamente
+            </Button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
