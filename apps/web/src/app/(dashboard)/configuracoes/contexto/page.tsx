@@ -1,16 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useSupabase } from "@/components/providers/supabase-provider";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { toast } from "sonner";
+import { Button, Input, Textarea, Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, toast } from "@prospix/ui";
 import { BrainCircuit, Save, User, Briefcase, MessagesSquare, Target, Mic } from "lucide-react";
+import { supabase } from "@/lib/supabase";
+import { useAuthStore } from "@/store/auth-store";
 
 export default function AIContextPage() {
-  const { supabase, session } = useSupabase();
+  const { tenantId } = useAuthStore();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   
@@ -24,29 +21,22 @@ export default function AIContextPage() {
   });
 
   useEffect(() => {
-    if (session?.user?.id) {
+    if (tenantId) {
       loadContext();
     }
-  }, [session]);
+  }, [tenantId]);
 
   const loadContext = async () => {
     try {
       setLoading(true);
       
-      const { data: userData } = await supabase
-        .from('users')
-        .select('tenant_id')
-        .eq('id', session?.user?.id)
+      const { data, error } = await supabase
+        .from('tenant_business_context')
+        .select('*')
+        .eq('tenant_id', tenantId)
         .single();
         
-      if (userData?.tenant_id) {
-        const { data, error } = await supabase
-          .from('tenant_business_context')
-          .select('*')
-          .eq('tenant_id', userData.tenant_id)
-          .single();
-          
-        if (data) {
+      if (data) {
           setFormData({
             persona_name: data.persona_name || "",
             persona_role: data.persona_role || "",
@@ -72,19 +62,12 @@ export default function AIContextPage() {
   const handleSave = async () => {
     try {
       setSaving(true);
-      
-      const { data: userData } = await supabase
-        .from('users')
-        .select('tenant_id')
-        .eq('id', session?.user?.id)
-        .single();
-        
-      if (!userData?.tenant_id) throw new Error("Tenant ID não encontrado");
+      if (!tenantId) throw new Error("Tenant ID não encontrado");
 
       const { error } = await supabase
         .from('tenant_business_context')
         .upsert({
-          tenant_id: userData.tenant_id,
+          tenant_id: tenantId,
           ...formData,
           updated_at: new Date().toISOString()
         }, { onConflict: 'tenant_id' });
