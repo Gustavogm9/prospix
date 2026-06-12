@@ -556,7 +556,7 @@ serve(async (req: Request) => {
     }
 
     // ── Step 3: Handle special intents ───────────────────────
-    // If NOT_INTERESTED, add to optouts
+    // Se for NOT_INTERESTED, ativa o Guardião 1 (Radar Opt-Out)
     if (classification.intent === "NOT_INTERESTED") {
       await supabase.from("optouts").upsert({
         tenant_id: tenantId,
@@ -564,6 +564,32 @@ serve(async (req: Request) => {
         reason: "Lead respondeu que não tem interesse",
         source: "ai_classification",
       }, { onConflict: "tenant_id,whatsapp" });
+
+      await supabase.from("conversations").update({
+        ai_handling: false, // Desliga a IA para este lead
+        status: "CLOSED",
+      }).eq("id", conversation.id);
+
+      const reply = "Entendo perfeitamente. Agradeço pela atenção e não entrarei mais em contato! Desejo sucesso para você e sua empresa.";
+      await supabase.from("pending_outbound").insert({
+        id: uuid(),
+        tenant_id: tenantId,
+        conversation_id: conversation.id,
+        content: reply,
+        idempotency_key: `optout_${inboundMsgId}`,
+        scheduled_for: new Date(Date.now() + 5000).toISOString(),
+        attempts: 0,
+      });
+
+      console.log("  🛑 Guardião 1: Opt-Out ativado. IA desligada e mensagem de saída enfileirada.");
+      return new Response(JSON.stringify({
+        ok: true,
+        message_id: inboundMsgId,
+        intent: classification.intent,
+        action: "optout_processed",
+      }), {
+        headers: { "Content-Type": "application/json" },
+      });
     }
 
     if (classification.intent === "CALLBACK_REQUEST") {
@@ -593,6 +619,37 @@ serve(async (req: Request) => {
         message_id: inboundMsgId,
         intent: classification.intent,
         action: "escalated_to_human",
+      }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // ── Anti-Loop Guardian ─────────────────────────────
+    // Se a conversa já teve 10 mensagens (5 trocas) e não agendou, desliga IA e escala.
+    if ((conversation.message_count || 0) >= 10 && lead.status !== "MEETING_SCHEDULED" && classification.intent !== "SCHEDULED") {
+      await supabase.from("conversations").update({
+        ai_handling: false,
+        status: "ESCALATED",
+        escalated_reason: "Limite de mensagens atingido (Anti-Loop)",
+      }).eq("id", conversation.id);
+
+      console.log("  🛑 Guardião Anti-Loop ativado. Escalonando para humano.");
+      
+      const reply = "Essa é uma ótima pergunta! Vou pedir pro Giovane te explicar certinho por áudio em breve, ok?";
+      await supabase.from("pending_outbound").insert({
+        id: uuid(),
+        tenant_id: tenantId,
+        conversation_id: conversation.id,
+        content: reply,
+        idempotency_key: `antiloop_${inboundMsgId}`,
+        scheduled_for: new Date(Date.now() + 5000).toISOString(),
+        attempts: 0,
+      });
+
+      return new Response(JSON.stringify({
+        ok: true,
+        message_id: inboundMsgId,
+        action: "anti_loop_escalated",
       }), {
         headers: { "Content-Type": "application/json" },
       });
@@ -681,6 +738,68 @@ serve(async (req: Request) => {
       }
     }
 
+    // ── Camada 3: Guardiões Injetados ────────────────────────
+    
+    // Buscar o Contexto de Negócio do Tenant
+    const { data: businessContext } = await supabase
+      .from("tenant_business_context")
+      .select("*")
+      .eq("tenant_id", tenantId)
+      .single();
+
+    if (businessContext) {
+      let personaGuardrail = "\n\n### 🧬 CONTEXTO DO NEGÓCIO & PERSONALIDADE:\n";
+      if (businessContext.persona_name) personaGuardrail += `- **Seu Nome**: ${businessContext.persona_name}\n`;
+      if (businessContext.persona_role) personaGuardrail += `- **Seu Cargo**: ${businessContext.persona_role}\n`;
+      if (businessContext.business_description) personaGuardrail += `- **Sobre o Negócio/Diferencial**: ${businessContext.business_description}\n`;
+      if (businessContext.tone_of_voice) personaGuardrail += `- **Tom de Voz OBRIGATÓRIO**: ${businessContext.tone_of_voice}\n`;
+      if (businessContext.common_objections) personaGuardrail += `- **Como lidar com objeções**: ${businessContext.common_objections}\n`;
+      if (businessContext.standard_approaches) personaGuardrail += `- **Abordagens de Ouro**: ${businessContext.standard_approaches}\n`;
+      
+      aiInstructions = (aiInstructions || "") + personaGuardrail;
+      console.log("  🧬 Contexto de Negócio injetado no prompt.");
+    }
+
+    if (classification.intent === "OBJECTION") {
+      const objectionGuardrail = "\n\n### 🛡️ GUARDIÃO DE OBJEÇÃO ATIVADO:\nO lead acabou de fazer uma objeção (preço, já tem seguro, falta de tempo, etc). \n1. Aja com EMPATIA (ex: 'Entendo perfeitamente a correria'). \n2. Use a técnica do 'É exatamente por isso...' (ex: 'É exatamente por isso que nosso modelo foi desenhado para não tomar tempo...'). \n3. Não bata de frente. Redirecione o valor e tente o fechamento/agendamento. Siga as instruções de objeções da sua persona, se houver.";
+      aiInstructions = (aiInstructions || "") + objectionGuardrail;
+      console.log("  🛡️ Guardião 2: Framework de Objeção injetado no prompt.");
+    }
+
+    if (classification.intent === "INTERESTED" || classification.intent === "QUESTION") {
+      // Guardião BANT / Qualificação
+      const bantGuardrail = "\n\n### 🛡️ GUARDIÃO DE QUALIFICAÇÃO (BANT):\nO lead fez uma pergunta ou demonstrou interesse inicial.\n- NÃO VOMITE A AGENDA IMEDIATAMENTE.\n- Se ele ainda não passou pelo filtro de dor, responda a dúvida dele e DEVOLVA com 1 PERGUNTA CURTA E ABERTA sobre o cenário atual dele (qual a maior dificuldade que ele enfrenta com isso hoje?).\n- Só ofereça a agenda se a dor dele já estiver clara na conversa.";
+      aiInstructions = (aiInstructions || "") + bantGuardrail;
+      console.log("  🛡️ Guardião 4: BANT Injetado no prompt.");
+
+      const agendaGuardrail = "\n\n### 🛡️ GUARDIÃO DE AGENDA (TEMPO REAL):\nSe a conversa já avançou e é o momento certo de propor agenda:\n- NUNCA marque no fim de semana (agenda bloqueada).\n- Ofereça SOMENTE os próximos horários livres reais: Segunda-feira às 10h, 14h ou 16h.\n- Seja consultivo: 'Tenho um espaço na segunda às 10h ou 14h, qual fica melhor?'";
+      aiInstructions = (aiInstructions || "") + agendaGuardrail;
+      console.log("  🛡️ Guardião 3: Contexto Vivo de Agenda injetado no prompt.");
+    }
+
+    // Sleep Mode Guardrail
+    // Get current hour in UTC-3 (BRT)
+    const currentHourBRT = new Date().getUTCHours() - 3; 
+    const normalizedHour = currentHourBRT < 0 ? currentHourBRT + 24 : currentHourBRT;
+    let isSleepMode = false;
+    let scheduledTime = new Date(Date.now() + 5000);
+
+    if (normalizedHour >= 20 || normalizedHour < 8) {
+      isSleepMode = true;
+      const sleepModeGuardrail = `\n\n### 🌙 GUARDIÃO DE HORÁRIO COMERCIAL (SLEEP MODE):\nATENÇÃO: Você está recebendo essa mensagem fora do horário comercial (${normalizedHour}h). \n- Aja como se tivesse visto a mensagem no dia seguinte de manhã.\n- OBRIGATÓRIO COMEÇAR A MENSAGEM COM: 'Bom dia! Desculpe a demora, já não estava no escritório ontem...'\n- Depois disso, siga a resposta normalmente.`;
+      aiInstructions = (aiInstructions || "") + sleepModeGuardrail;
+      console.log(`  🌙 Guardião Sleep Mode Ativado (Hora BRT: ${normalizedHour}h).`);
+      
+      // Calculate delay to next 08:00 AM BRT
+      // BRT is UTC-3, so 08:00 BRT is 11:00 UTC
+      const nextSend = new Date();
+      nextSend.setUTCHours(11, 0, 0, 0); // 08:00 AM BRT
+      if (normalizedHour >= 20) {
+        nextSend.setUTCDate(nextSend.getUTCDate() + 1);
+      }
+      scheduledTime = nextSend;
+    }
+
     const { data: tenantAiConfig } = await supabase
       .from("tenant_ai_configs")
       .select("system_model, system_temperature")
@@ -703,12 +822,27 @@ serve(async (req: Request) => {
           parameters: {
             type: "object",
             properties: {
-              confirmation_message: {
-                type: "string",
-                description: "A mensagem que acompanhará o PDF."
-              }
+              confirmation_message: { type: "string", description: "A mensagem que acompanhará o PDF." }
             },
             required: ["confirmation_message"]
+          }
+        }
+      });
+    }
+
+    if (aiTools?.includes("CALENDAR_WRITE")) {
+      openAiTools.push({
+        type: "function",
+        function: {
+          name: "schedule_meeting",
+          description: "Agenda a reunião confirmada com o lead e gera o Dossiê de Pré-Reunião para o Humano.",
+          parameters: {
+            type: "object",
+            properties: {
+              confirmation_message: { type: "string", description: "Mensagem final agradecendo e confirmando o agendamento." },
+              dossier_summary: { type: "string", description: "Resumo em tópicos das dores, objeções superadas e perfil do cliente para o humano ler antes da reunião." }
+            },
+            required: ["confirmation_message", "dossier_summary"]
           }
         }
       });
@@ -729,6 +863,38 @@ serve(async (req: Request) => {
             mediaType = "document";
           } catch(e) {}
         }
+        
+        if (call.function?.name === "schedule_meeting") {
+          try {
+            const args = JSON.parse(call.function.arguments);
+            responseText = args.confirmation_message || "Agendado com sucesso! Nos falamos em breve.";
+            
+            // Camada 4: Dossiê Pós-Agendamento
+            const dossier = args.dossier_summary;
+            
+            // Update Lead and Conversation Status
+            await supabase.from("leads").update({ status: "MEETING_SCHEDULED" }).eq("id", lead.id);
+            await supabase.from("conversations").update({ status: "SCHEDULED", ai_handling: false }).eq("id", conversation.id);
+            
+            // Create Notification with Dossier
+            const { data: tenantAdmin } = await supabase.from("users").select("id").eq("tenant_id", tenantId).limit(1).single();
+            if (tenantAdmin && dossier) {
+              await supabase.from("notifications").insert({
+                id: uuid(),
+                tenant_id: tenantId,
+                user_id: tenantAdmin.id,
+                title: `Reunião Agendada: ${lead.name}`,
+                body: `Dossiê da IA: ${dossier.slice(0, 200)}...`,
+                type: "meeting_scheduled",
+                link: `/inbox?conversation=${conversation.id}`
+              });
+            }
+            
+            console.log(`  📅 Guardião 4: Dossiê Gerado e Reunião Agendada!`);
+          } catch(e) {
+            console.error("Error processing schedule_meeting tool:", e);
+          }
+        }
       }
     }
 
@@ -736,7 +902,7 @@ serve(async (req: Request) => {
 
     // ── Step 5: Queue in pending_outbound with delay ─────────
     const delaySec = randomDelay(30, 120);
-    const scheduledFor = new Date(Date.now() + delaySec * 1000).toISOString();
+    const scheduledFor = isSleepMode ? scheduledTime.toISOString() : new Date(Date.now() + delaySec * 1000).toISOString();
     const idempotencyKey = `ai-${conversation.id}-${inboundMsgId}`;
 
     await supabase.from("pending_outbound").insert({

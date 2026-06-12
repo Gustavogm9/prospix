@@ -10,7 +10,11 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 // ── Config ──────────────────────────────────────────────────────────────────
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")!;
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
+const MODEL = "gpt-4o-mini";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 function sleep(ms: number) {
@@ -62,6 +66,59 @@ async function loadEvoConfig(tenantId: string): Promise<EvoConfig | null> {
   }
 }
 
+// ── OpenAI Helper ───────────────────────────────────────────────────────────
+async function callOpenAI(systemPrompt: string, userMessage: string, maxTokens = 100): Promise<string> {
+  try {
+    const payload = {
+      model: MODEL,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMessage },
+      ],
+      temperature: 0.7,
+      max_tokens: maxTokens,
+    };
+
+    const resp = await fetch(OPENAI_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!resp.ok) return "";
+    const data = await resp.json();
+    return data.choices?.[0]?.message?.content?.trim() || "";
+  } catch (err) {
+    console.error("OpenAI Error:", err);
+    return "";
+  }
+}
+
+// ── Intelligence: Pré-Abordagem (Icebreaker) ────────────────────────────────
+async function generateIcebreaker(lead: any): Promise<string> {
+  // If the lead is generic and has no QSA, fallback to standard
+  const hasQsa = lead.metadata?.cnpj_info?.qsa?.length > 0;
+  if (!hasQsa && !lead.metadata?.cnpj_info?.cnae_principal) return "";
+
+  const qsaNames = lead.metadata?.cnpj_info?.qsa?.map((q: any) => q.nome).join(", ");
+  const cnaeDesc = lead.metadata?.cnpj_info?.cnae_principal?.descricao || lead.profession || "empresa";
+  const empresaNome = lead.metadata?.cnpj_info?.nomeFantasia || lead.metadata?.cnpj_info?.razaoSocial || lead.name;
+  const dataAbertura = lead.metadata?.cnpj_info?.dataAbertura || "";
+
+  const systemPrompt = `Você é um SDR gerador de quebra-gelos curtos.
+Sua missão é ler os dados públicos de uma empresa e gerar UMA ÚNICA FRASE de elogio ou reconhecimento profissional para iniciar uma conversa no WhatsApp.
+Exemplo: "Vi que vocês já estão há 5 anos consolidados no mercado de advocacia em São Paulo..." ou "Parabéns pelo trabalho na Amorim Assessoria!".
+NÃO faça perguntas, NÃO se apresente. APENAS gere a frase (curta, simpática e profissional).`;
+
+  const userPrompt = `Empresa: ${empresaNome}\nRamo/CNAE: ${cnaeDesc}\nSócios: ${qsaNames}\nData de Abertura: ${dataAbertura}`;
+
+  const icebreaker = await callOpenAI(systemPrompt, userPrompt, 50);
+  return icebreaker;
+}
+
 // ── Send WhatsApp Message via Evolution API ─────────────────────────────────
 async function sendWhatsApp(
   evoConfig: EvoConfig,
@@ -110,11 +167,54 @@ async function sendWhatsApp(
 }
 
 // ── Variable Substitution ───────────────────────────────────────────────────
-function substituteVariables(message: string, lead: any): string {
+async function substituteVariables(message: string, lead: any): Promise<string> {
   let result = message;
-  result = result.replace(/\[Nome\]/g, lead.name || "");
-  result = result.replace(/\[Empresa\]/g, lead.name || "");
-  result = result.replace(/\[Cidade\]/g, lead.address?.city?.split(" - ")?.[0]?.trim() || "");
+  
+  // Try to find a real person's name (Partner/Socio) in the enriched CNPJ QSA
+  let personName = "";
+  if (lead.metadata && lead.metadata.cnpj_info && lead.metadata.cnpj_info.qsa && lead.metadata.cnpj_info.qsa.length > 0) {
+    const socio = lead.metadata.cnpj_info.qsa[0].nome;
+    if (socio) personName = socio;
+  }
+  
+  // If no socio found, check if lead.name looks like a generic company name
+  const leadName = lead.name || "";
+  let firstName = "";
+  
+  if (personName) {
+    // Take the first name of the partner and capitalize it
+    const parts = personName.split(" ");
+    firstName = parts[0];
+    firstName = firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase();
+  } else {
+    // Fallback logic
+    const lowerName = leadName.toLowerCase();
+    const genericTerms = ['advocacia', 'advogado', 'advogados', 'assessoria', 'consultoria', 'escritório', 'clínica', 'centro', 'instituto', 'odontologia', 'saúde'];
+    const isGeneric = genericTerms.some(term => lowerName.includes(term));
+    
+    if (isGeneric) {
+      firstName = "Responsável"; // Fallback to "Responsável" if it's a generic company name
+    } else {
+      firstName = leadName.split(" ")[0] || "";
+      firstName = firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase();
+    }
+  }
+
+  const company = lead.metadata?.cnpj_info?.nomeFantasia || lead.metadata?.cnpj_info?.razaoSocial || lead.name || "";
+  const city = lead.address?.city?.split(" - ")?.[0]?.trim() || "";
+
+  // Support both [Nome], [nome], {Nome}, {nome}
+  result = result.replace(/(\[|\{)Nome(\]|\})/gi, firstName || leadName);
+  result = result.replace(/(\[|\{)Empresa(\]|\})/gi, company);
+  result = result.replace(/(\[|\{)Cidade(\]|\})/gi, city);
+
+  // Icebreaker Logic
+  if (result.match(/(\[|\{)Icebreaker(\]|\})/gi) || result.match(/(\[|\{)Quebra-gelo(\]|\})/gi)) {
+    const icebreaker = await generateIcebreaker(lead);
+    result = result.replace(/(\[|\{)Icebreaker(\]|\})/gi, icebreaker);
+    result = result.replace(/(\[|\{)Quebra-gelo(\]|\})/gi, icebreaker);
+  }
+  
   return result;
 }
 
@@ -271,7 +371,7 @@ async function processFirstTouch(): Promise<{
       .is("contacted_at", null)
       .not("whatsapp", "is", null)
       .order("fit_score", { ascending: false })
-      .limit(remaining);
+      .limit(1); // 1 lead per campaign per execution (natural 60s pacing via cron)
 
     if (!leads?.length) {
       console.log("  📭 No enriched leads to contact");
@@ -307,7 +407,7 @@ async function processFirstTouch(): Promise<{
         }
 
         // Substitute variables
-        const messageContent = substituteVariables(variation.message, lead);
+        const messageContent = await substituteVariables(variation.message, lead);
 
         // Create conversation
         const conversationId = uuid();

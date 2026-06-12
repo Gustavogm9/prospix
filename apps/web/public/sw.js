@@ -28,11 +28,13 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // Skip non-GET, APIs, and Next.js Server Components (RSC payloads)
+  // Skip non-GET, APIs, Next.js Server Components (RSC payloads), and Supabase APIs
   if (
     request.method !== 'GET' || 
     url.pathname.startsWith('/api/') || 
     url.pathname.startsWith('/v1/') || 
+    url.pathname.startsWith('/rest/v1/') || 
+    url.hostname.includes('supabase.co') ||
     request.headers.has('RSC') || 
     request.headers.has('Next-Router-Prefetch') || 
     request.headers.has('Next-Router-State-Tree') ||

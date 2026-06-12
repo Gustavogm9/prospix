@@ -9,6 +9,7 @@ import { profileQueries, billingQueries } from '@/lib/queries';
 import { apiFetch } from '@/lib/api-fetch';
 import { z } from 'zod';
 import PrivacyTab from './settings/PrivacyTab';
+import AIContextPage from './contexto/page';
 
 const profileSchema = z.object({
   name: z.string().trim().min(2, 'Informe o nome completo (mínimo 2 caracteres).').max(120, 'Nome muito longo (máximo 120).'),
@@ -108,10 +109,13 @@ type TenantBillingData = {
   invoices: BillingInvoice[];
 };
 
-type TabKey = 'perfil' | 'integracoes' | 'agenda' | 'credenciais' | 'financeiro' | 'privacidade';
+type TabKey = 'perfil' | 'integracoes' | 'agenda' | 'credenciais' | 'financeiro' | 'privacidade' | 'contexto';
+
+import { BrainCircuit } from 'lucide-react';
 
 const tabConfig: { key: TabKey; label: string; icon: React.ElementType }[] = [
   { key: 'perfil', label: 'Meu Perfil', icon: SettingsIcon },
+  { key: 'contexto', label: 'Contexto IA', icon: BrainCircuit },
   { key: 'integracoes', label: 'Conexões', icon: Shield },
   { key: 'agenda', label: 'Agenda', icon: Calendar },
   { key: 'credenciais', label: 'Credenciais & APIs', icon: Key },
@@ -122,9 +126,9 @@ const tabConfig: { key: TabKey; label: string; icon: React.ElementType }[] = [
 export default function Settings() {
   const { user, tenantId } = useAuthStore();
   const searchParams = useSearchParams();
-  const [activeTab, setActiveTab] = useState(() => {
+  const [activeTab, setActiveTab] = useState<string>(() => {
     const tab = searchParams.get('tab');
-    if (tab && ['perfil', 'integracoes', 'agenda', 'credenciais', 'financeiro', 'privacidade'].includes(tab)) {
+    if (tab && ['perfil', 'contexto', 'integracoes', 'agenda', 'credenciais', 'financeiro', 'privacidade'].includes(tab)) {
       return tab;
     }
     return 'perfil';
@@ -597,6 +601,11 @@ export default function Settings() {
 
         {/* Right content */}
         <div className="flex-1 w-full min-w-0 space-y-5">
+
+          {/* ─── TAB: CONTEXTO IA ─── */}
+          {activeTab === 'contexto' && (
+            <AIContextPage />
+          )}
 
           {/* ─── TAB: PERFIL ─── */}
           {activeTab === 'perfil' && (

@@ -236,6 +236,49 @@ export default function Campaigns() {
     setActionLoading(null);
   };
 
+  const handlePauseAll = async () => {
+    if (!tenantId) return;
+    const activeCamps = campaigns.filter(c => c.status === 'ACTIVE');
+    if (activeCamps.length === 0) return toast.info('Nenhuma campanha ativa para pausar.');
+    setActionLoading('global_pause');
+    try {
+      for (const camp of activeCamps) {
+        await campaignsQueries.pause(tenantId, camp.id);
+      }
+      toast.success('Todas as campanhas foram pausadas!');
+      await fetchCampaigns();
+      await fetchLimit();
+    } catch (err) {
+      console.error(err);
+      toast.error('Erro', 'Houve um problema ao pausar as campanhas.');
+    }
+    setActionLoading(null);
+  };
+
+  const handleResumeAll = async () => {
+    if (!tenantId) return;
+    const pausedCamps = campaigns.filter(c => c.status === 'PAUSED');
+    if (pausedCamps.length === 0) return toast.info('Nenhuma campanha pausada para ativar.');
+    setActionLoading('global_resume');
+    try {
+      // Basic limit check
+      if (campaignLimit && (campaignLimit.currentActive + pausedCamps.length > campaignLimit.maxActive)) {
+        toast.error('Limite excedido', `Seu plano permite no máximo ${campaignLimit.maxActive} campanhas ativas simultâneas.`);
+        return;
+      }
+      for (const camp of pausedCamps) {
+        await campaignsQueries.resume(tenantId, camp.id);
+      }
+      toast.success('Todas as campanhas foram reativadas!');
+      await fetchCampaigns();
+      await fetchLimit();
+    } catch (err) {
+      console.error(err);
+      toast.error('Erro', 'Houve um problema ao reativar as campanhas.');
+    }
+    setActionLoading(null);
+  };
+
   const handleDuplicate = async (camp: Campaign) => {
     if (!tenantId) return;
     setActionLoading(camp.id);
@@ -489,9 +532,21 @@ export default function Campaigns() {
         <button onClick={() => setFilter('ACTIVE')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${filter === 'ACTIVE' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Ativas · {activeCount}</button>
         <button onClick={() => setFilter('PAUSED')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${filter === 'PAUSED' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Pausadas · {pausedCount}</button>
         <button onClick={() => setFilter('DRAFT')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${filter === 'DRAFT' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Rascunhos · {draftCount}</button>
-        <button onClick={handleOpenCreate} className="h-8 px-3.5 rounded-md text-[12px] font-semibold bg-[#1B3A6B] text-white ml-auto flex items-center gap-1.5 hover:bg-[#142C52] transition-all shadow-sm">
-          <Plus className="w-3.5 h-3.5" /> Nova campanha
-        </button>
+        <div className="ml-auto flex items-center gap-2">
+          {activeCount > 0 && (
+            <button onClick={handlePauseAll} disabled={actionLoading === 'global_pause'} className="h-8 px-3.5 rounded-md text-[12px] font-semibold bg-[#FFF4ED] text-[#C4320A] border border-[#FEE4E2] flex items-center gap-1.5 hover:bg-[#FEE4E2] transition-all shadow-sm disabled:opacity-50">
+              {actionLoading === 'global_pause' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Pause className="w-3.5 h-3.5" />} Pausar Fila IA
+            </button>
+          )}
+          {pausedCount > 0 && (
+            <button onClick={handleResumeAll} disabled={actionLoading === 'global_resume'} className="h-8 px-3.5 rounded-md text-[12px] font-semibold bg-[#ECFDF3] text-[#027A48] border border-[#A7F3D0] flex items-center gap-1.5 hover:bg-[#D1FAE5] transition-all shadow-sm disabled:opacity-50">
+              {actionLoading === 'global_resume' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />} Retomar Fila IA
+            </button>
+          )}
+          <button onClick={handleOpenCreate} className="h-8 px-3.5 rounded-md text-[12px] font-semibold bg-[#1B3A6B] text-white flex items-center gap-1.5 hover:bg-[#142C52] transition-all shadow-sm">
+            <Plus className="w-3.5 h-3.5" /> Nova campanha
+          </button>
+        </div>
       </div>
 
       {/* Campaign cards */}
