@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Button, Input, Textarea, Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, toast } from "@prospix/ui";
-import { BrainCircuit, Save, User, Briefcase, MessagesSquare, Target, Mic } from "lucide-react";
+import { Save, User, Briefcase, MessagesSquare, Target } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAuthStore } from "@/store/auth-store";
 
