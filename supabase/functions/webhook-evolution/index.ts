@@ -801,18 +801,40 @@ serve(async (req: Request) => {
     }
 
     if (classification.intent === "OBJECTION") {
-      const objectionGuardrail = "\n\n### 🛡️ GUARDIÃO DE OBJEÇÃO ATIVADO:\nO lead acabou de fazer uma objeção (preço, já tem seguro, falta de tempo, etc). \n1. Aja com EMPATIA (ex: 'Entendo perfeitamente a correria'). \n2. Use a técnica do 'É exatamente por isso...' (ex: 'É exatamente por isso que nosso modelo foi desenhado para não tomar tempo...'). \n3. Não bata de frente. Redirecione o valor e tente o fechamento/agendamento. Siga as instruções de objeções da sua persona, se houver.";
+      const objectionGuardrail = `
+
+### 🛡️ GUARDIÃO DE OBJEÇÕES (Framework JEB BLOUNT - Objections):
+O lead acabou de apresentar uma objeção (tempo, preço, status quo, já tem fornecedor, etc).
+APLIQUE IMEDIATAMENTE O FRAMEWORK L-D-A (Ledge, Disrupt, Ask) de Jeb Blount:
+1. **Ledge (Apoio/Empatia):** Concorde ou valide a objeção rapidamente. Nunca bata de frente. (Ex: "Entendo perfeitamente a correria", "Faz todo sentido você já estar satisfeito com seu fornecedor atual").
+2. **Disrupt (Ruptura):** Use um padrão de interrupção (ex técnica do "É exatamente por isso..."). (Ex: "É exatamente por isso que eu estou te chamando, a maioria dos nossos clientes também pensava assim até descobrir que...").
+3. **Ask (Pergunta para Retomar Controle):** Feche a mensagem sempre com uma pergunta focada em resolver o problema dele.
+REGRA DE OURO (Prospecção Fanática): Não compre a objeção como um "não" definitivo. É apenas um reflexo. Mantenha a energia e avance para o próximo passo.`;
       aiInstructions = (aiInstructions || "") + objectionGuardrail;
-      console.log("  🛡️ Guardião 2: Framework de Objeção injetado no prompt.");
+      console.log("  🛡️ Guardião 2: Framework de Objeção (Jeb Blount) injetado no prompt.");
     }
 
     if (classification.intent === "INTERESTED" || classification.intent === "QUESTION") {
-      // Guardião BANT / Qualificação
-      const bantGuardrail = "\n\n### 🛡️ GUARDIÃO DE QUALIFICAÇÃO (BANT):\nO lead fez uma pergunta ou demonstrou interesse inicial.\n- NÃO VOMITE A AGENDA IMEDIATAMENTE.\n- Se ele ainda não passou pelo filtro de dor, responda a dúvida dele e DEVOLVA com 1 PERGUNTA CURTA E ABERTA sobre o cenário atual dele (qual a maior dificuldade que ele enfrenta com isso hoje?).\n- Só ofereça a agenda se a dor dele já estiver clara na conversa.";
-      aiInstructions = (aiInstructions || "") + bantGuardrail;
-      console.log("  🛡️ Guardião 4: BANT Injetado no prompt.");
+      // Guardião SPIN / BANT / Receita Previsível
+      const salesFrameworkGuardrail = `
 
-      const agendaGuardrail = "\n\n### 🛡️ GUARDIÃO DE AGENDA (TEMPO REAL):\nSe a conversa já avançou e é o momento certo de propor agenda:\n- NUNCA marque no fim de semana (agenda bloqueada).\n- Ofereça SOMENTE os próximos horários livres reais: Segunda-feira às 10h, 14h ou 16h.\n- Seja consultivo: 'Tenho um espaço na segunda às 10h ou 14h, qual fica melhor?'";
+### 🛡️ GUARDIÃO DE QUALIFICAÇÃO E DIAGNÓSTICO (SPIN / BANT / Receita Previsível):
+O lead demonstrou interesse inicial ou fez uma pergunta. 
+NÃO VOMITE A AGENDA NEM DETALHES DO PRODUTO IMEDIATAMENTE.
+Use as seguintes técnicas combinadas:
+1. **Receita Previsível (Aaron Ross):** Mantenha mensagens CURTAS (formato "Spear-phishing"). Responda a dúvida dele de forma muito direta e passe a bola de volta. Se houver dúvida sobre quem decide, pergunte sutilmente: "Normalmente, você é a pessoa que lidera esses projetos por aí?"
+2. **SPIN Selling (Neil Rackham):** Comece a mapear a dor. Se a dor não estiver clara, faça 1 (apenas uma) pergunta de PROBLEMA ou IMPLICAÇÃO. (Ex: "Como você tem lidado com [Problema X] hoje?" ou "Qual impacto isso tem gerado na operação?").
+3. **BANT:** O objetivo final é entender Budget, Authority, Need e Timeframe, mas não pareça um interrogatório. Faça no máximo UMA pergunta por mensagem.
+REGRA: Responda a pergunta do lead em 1 frase. Em seguida, faça UMA pergunta SPIN focada em mapear o cenário atual (Need/Problema).`;
+      aiInstructions = (aiInstructions || "") + salesFrameworkGuardrail;
+      console.log("  🛡️ Guardião 4: SPIN/BANT/Receita Previsível Injetado no prompt.");
+
+      const agendaGuardrail = `
+
+### 🛡️ GUARDIÃO DE AGENDA (FECHAMENTO):
+Só proponha a agenda se: 1) O lead pedir, OU 2) A dor (Need do BANT) já estiver clara após as perguntas do SPIN.
+- Quando propuser agenda, use o fechamento direto: "Faz sentido batermos um papo rápido de 15 min? Tenho uma brecha na Segunda às 10h ou às 14h, qual fica melhor?"
+- Nunca marque fim de semana.`;
       aiInstructions = (aiInstructions || "") + agendaGuardrail;
       console.log("  🛡️ Guardião 3: Contexto Vivo de Agenda injetado no prompt.");
     }
