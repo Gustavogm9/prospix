@@ -321,12 +321,7 @@ serve(async (req: Request) => {
     const fromMe = messageData.key?.fromMe || false;
     const whatsappMessageId = messageData.key?.id || "";
 
-    // Skip outbound messages (sent by us)
-    if (fromMe) {
-      return new Response(JSON.stringify({ ok: true, skipped: true, reason: "outbound message" }), {
-        headers: { "Content-Type": "application/json" },
-      });
-    }
+    // (Removed fromMe check here, moved down to handle manual messages)
 
     // Skip group messages
     if (remoteJid.includes("@g.us")) {
@@ -438,9 +433,54 @@ serve(async (req: Request) => {
       });
     }
 
-    // ── Insert inbound message ───────────────────────────────
-    const inboundMsgId = uuid();
+    // ── Insert message ───────────────────────────────
     const now = new Date().toISOString();
+
+    if (fromMe) {
+      // Check if we already have this message (sent by our UI/AI)
+      const { data: existingMsg } = await supabase
+        .from("messages")
+        .select("id")
+        .eq("conversation_id", conversation.id)
+        .or(`whatsapp_message_id.eq.${whatsappMessageId},content.eq.${messageContent}`)
+        .limit(1)
+        .maybeSingle();
+
+      if (existingMsg) {
+        // We already know about this message
+        return new Response(JSON.stringify({ ok: true, skipped: true, reason: "outbound message already logged" }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      // If not found, it's a manual message from Giovane's phone!
+      const outMsgId = uuid();
+      await supabase.from("messages").insert({
+        id: outMsgId,
+        tenant_id: tenantId,
+        conversation_id: conversation.id,
+        direction: "OUTBOUND",
+        sender: "USER",
+        content: messageContent,
+        delivery_status: "DELIVERED",
+        whatsapp_message_id: whatsappMessageId,
+      });
+
+      // Update conversation and turn OFF AI handling
+      await supabase.from("conversations").update({
+        last_message_at: now,
+        last_outbound_at: now,
+        ai_handling: false, // Turn off AI because the human took over on their phone!
+        message_count: (conversation.message_count || 0) + 1,
+      }).eq("id", conversation.id);
+
+      return new Response(JSON.stringify({ ok: true, skipped: true, reason: "manual outbound message saved" }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // ── Proceed with inbound message processing ─────────────────
+    const inboundMsgId = uuid();
 
     await supabase.from("messages").insert({
       id: inboundMsgId,

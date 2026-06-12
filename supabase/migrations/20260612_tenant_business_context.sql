@@ -35,5 +35,7 @@ CREATE POLICY "Users can insert their tenant's business context"
     ));
 
 -- Add trigger for updated_at
+CREATE EXTENSION IF NOT EXISTS moddatetime SCHEMA extensions;
+
 CREATE TRIGGER handle_updated_at BEFORE UPDATE ON public.tenant_business_context
   FOR EACH ROW EXECUTE PROCEDURE moddatetime (updated_at);
