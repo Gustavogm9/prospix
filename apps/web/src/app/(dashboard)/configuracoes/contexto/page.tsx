@@ -195,7 +195,7 @@ export default function AIContextPage() {
             />
           </CardContent>
           <CardFooter className="flex justify-end pt-4 border-t">
-            <Button onClick={handleSave} disabled={saving} size="lg" className="gap-2">
+            <Button onClick={handleSave} disabled={saving} size="large" className="gap-2">
               <Save className="h-4 w-4" />
               {saving ? "Salvando..." : "Salvar Configurações da IA"}
             </Button>
