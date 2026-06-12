@@ -30,7 +30,7 @@ export default function AIContextPage() {
     try {
       setLoading(true);
       
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('tenant_business_context')
         .select('*')
         .eq('tenant_id', tenantId)
