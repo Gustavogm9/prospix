@@ -46,7 +46,6 @@ export default function AIContextPage() {
             tone_of_voice: data.tone_of_voice || "",
           });
         }
-      }
     } catch (error) {
       console.error("Error loading context:", error);
     } finally {
