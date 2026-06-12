@@ -423,6 +423,7 @@ async function processFirstTouch(): Promise<{
           current_node_id: null,
           message_count: 1,
           started_at: now,
+          last_message: messageContent.substring(0, 200),
           last_message_at: now,
           last_outbound_at: now,
         });
@@ -650,6 +651,7 @@ async function processPendingOutbound(): Promise<{
 
         // Update conversation
         await supabase.from("conversations").update({
+          last_message: item.content.substring(0, 200),
           last_message_at: now,
           last_outbound_at: now,
           message_count: (conversation.message_count || 0) + 1,

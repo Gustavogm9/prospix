@@ -648,17 +648,17 @@ export default function HomePage() {
           <div className="text-[12px] font-semibold text-[#1B3A6B] mt-3 flex items-center gap-1">Ver conversas →</div>
         </div>
 
-        {/* Pediu ligação - RED urgent */}
+        {/* Sem resposta - ORANGE warning */}
         <div
-          className="bg-white border border-[rgba(217,45,32,0.35)] rounded-xl p-4 cursor-pointer transition-all hover:-translate-y-[3px] hover:shadow-md shadow-sm bg-gradient-to-b from-[#FEF3F2] to-white"
-          onClick={() => router.push('/conversas')}
+          className="bg-white border border-[rgba(232,152,28,0.35)] rounded-xl p-4 cursor-pointer transition-all hover:-translate-y-[3px] hover:shadow-md shadow-sm bg-gradient-to-b from-[rgba(232,152,28,0.06)] to-white"
+          onClick={() => router.push('/conversas?filter=waiting')}
         >
-          <div className="w-10 h-10 rounded-lg bg-[#FEF3F2] text-[#D92D20] flex items-center justify-center mb-3">
-            <Phone className="w-5 h-5" />
+          <div className="w-10 h-10 rounded-lg bg-[rgba(232,152,28,0.12)] text-[#B8740E] flex items-center justify-center mb-3">
+            <Clock className="w-5 h-5" />
           </div>
           <div className="text-[28px] font-bold text-[#0F172A] font-mono leading-none">{stats.needsAttention}</div>
-          <div className="text-[13.5px] font-semibold text-[#0F172A] mt-1.5">Pediu ligação direta</div>
-          <div className="text-[12px] text-[#475569] mt-1 leading-relaxed">Leads que querem falar com você hoje.</div>
+          <div className="text-[13.5px] font-semibold text-[#0F172A] mt-1.5">Sem resposta ainda</div>
+          <div className="text-[12px] text-[#475569] mt-1 leading-relaxed">Leads contactados que ainda não responderam.</div>
           <div className="text-[12px] font-semibold text-[#1B3A6B] mt-3 flex items-center gap-1">Ver detalhes →</div>
         </div>
 

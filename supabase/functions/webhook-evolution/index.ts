@@ -468,6 +468,7 @@ serve(async (req: Request) => {
 
       // Update conversation and turn OFF AI handling
       await supabase.from("conversations").update({
+        last_message: messageContent.substring(0, 200),
         last_message_at: now,
         last_outbound_at: now,
         ai_handling: false, // Turn off AI because the human took over on their phone!
@@ -493,8 +494,9 @@ serve(async (req: Request) => {
       whatsapp_message_id: whatsappMessageId,
     });
 
-    // Update conversation timestamps
+    // Update conversation timestamps + last message preview
     await supabase.from("conversations").update({
+      last_message: messageContent.substring(0, 200),
       last_message_at: now,
       last_inbound_at: now,
       message_count: (conversation.message_count || 0) + 1,
