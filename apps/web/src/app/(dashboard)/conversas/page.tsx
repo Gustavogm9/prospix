@@ -957,6 +957,11 @@ export default function Conversations() {
                               IA Prospix
                             </div>
                           )}
+                          {msg.sender === 'agent' && (
+                            <div className="text-[9px] uppercase tracking-wider text-[#1B3A6B] font-bold mb-[3px]">
+                              Você
+                            </div>
+                          )}
                           {msg.content}
                           <div className="text-[9.5px] text-[#64748B] text-right mt-[3px] font-mono">
                             {msg.timestamp}
