@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
 
     const instanceName = secretRecord!.evolution_instance_name!;
     const baseUrl = secretRecord!.evolution_base_url || process.env.EVOLUTION_BASE_URL;
-    const apiKey = process.env.EVOLUTION_GUILDS_API_KEY || '';
+    const apiKey = secretRecord!.evolution_api_key_encrypted || process.env.EVOLUTION_GUILDS_API_KEY || '';
 
     // Create instance on Evolution API
     await fetch(`${baseUrl}/instance/create`, {

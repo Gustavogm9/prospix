@@ -295,6 +295,27 @@ export default function Settings() {
     }
   }, []);
 
+  const fetchAgendaSettings = useCallback(async () => {
+    try {
+      const res = await apiFetch('/api/integrations/agenda');
+      const json = await res.json();
+      const data = json?.data;
+      if (data) {
+        setAgendaSettings({
+          availableDays: data.availableDays || [1, 2, 3, 4, 5],
+          startHour: data.startHour || '09:00',
+          endHour: data.endHour || '18:00',
+          lunchStart: data.lunchStart || '12:00',
+          lunchEnd: data.lunchEnd || '13:30',
+          defaultDuration: data.defaultDuration || 30,
+          bufferMinutes: data.bufferMinutes || 15,
+        });
+      }
+    } catch (err) {
+      console.error('Error loading agenda settings:', err);
+    }
+  }, []);
+
   const fetchBilling = useCallback(async () => {
     if (!tenantId) return;
     setIsBillingLoading(true);
@@ -396,7 +417,6 @@ export default function Settings() {
       toast.error('Erro de Conexão', 'Erro ao desconectar o Google Agenda.');
     }
   };
-
   const checkStatus = useCallback(async (silent = false) => {
     if (!silent) setWhatsappStatus('loading');
     try {
@@ -472,6 +492,10 @@ export default function Settings() {
       fetchCredentialState();
     }
 
+    if (activeTab === 'agenda') {
+      fetchAgendaSettings();
+    }
+
     if (activeTab === 'financeiro') {
       fetchBilling();
     }
@@ -482,7 +506,7 @@ export default function Settings() {
         pollingIntervalRef.current = null;
       }
     };
-  }, [activeTab, fetchProfile, checkStatus, fetchCredentialState, fetchBilling]);
+  }, [activeTab, fetchProfile, checkStatus, fetchCredentialState, fetchBilling, fetchAgendaSettings]);
 
   useEffect(() => {
     if (qrCountdown <= 0 || !qrCode) return;
@@ -1261,13 +1285,17 @@ export default function Settings() {
                     onClick={async () => {
                       setIsAgendaSaving(true);
                       try {
-                        await apiFetch('/api/integrations/credentials', {
+                        const res = await apiFetch('/api/integrations/agenda', {
                           method: 'PATCH',
                           body: JSON.stringify({ agendaSettings }),
                         });
+                        if (!res.ok) {
+                          const errData = await res.json().catch(() => ({}));
+                          throw new Error(errData?.message || 'Erro ao processar requisição no servidor.');
+                        }
                         toast.success('Agenda configurada', 'Seus horários de disponibilidade foram salvos.');
-                      } catch {
-                        toast.error('Erro ao salvar', 'Não foi possível salvar as configurações de agenda.');
+                      } catch (err: any) {
+                        toast.error('Erro ao salvar', err?.message || 'Não foi possível salvar as configurações de agenda.');
                       } finally {
                         setIsAgendaSaving(false);
                       }

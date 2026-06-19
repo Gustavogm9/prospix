@@ -743,6 +743,9 @@ export default function HomePage() {
                 className="px-5 py-3 border-b border-[#EEF0F3] flex items-center gap-3 cursor-pointer transition-all hover:bg-[rgba(27,58,107,0.04)] border-l-[3px] border-l-transparent hover:border-l-[#1B3A6B]"
                 onClick={async () => {
                   if (!tenantId) return;
+                  setMessages([]);
+                  setLeadEvents([]);
+                  setNotes([]);
                   setIsLoadingDrawer(true);
                   try {
                     const res = await conversationsQueries.create(tenantId, lead.id);

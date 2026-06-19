@@ -51,9 +51,12 @@ const STATUS_CONFIG: Record<string, { label: string; emoji: string; color: strin
   ENRICHED:           { label: 'Enriquecidos',  emoji: '🔍', color: 'text-[#1B3A6B]', bg: 'bg-[#EFF6FF]', border: 'border-[#93C5FD]' },
   CONTACTED:          { label: 'Contatados',    emoji: '💬', color: 'text-[#B8740E]', bg: 'bg-[#FFF8F0]', border: 'border-[#FDE68A]' },
   IN_CONVERSATION:    { label: 'Em conversa',   emoji: '🗣️', color: 'text-[#7C3AED]', bg: 'bg-[#F5F3FF]', border: 'border-[#C4B5FD]' },
+  CONVERSING:         { label: 'Em conversa',   emoji: '🗣️', color: 'text-[#7C3AED]', bg: 'bg-[#F5F3FF]', border: 'border-[#C4B5FD]' },
   MEETING_SCHEDULED:  { label: 'Reunião',       emoji: '📅', color: 'text-[#0891B2]', bg: 'bg-[#ECFEFF]', border: 'border-[#67E8F9]' },
   WON:                { label: 'Ganhos',        emoji: '✅', color: 'text-[#027A48]', bg: 'bg-[#ECFDF3]', border: 'border-[#A7F3D0]' },
+  CLOSED_WON:         { label: 'Ganhos',        emoji: '✅', color: 'text-[#027A48]', bg: 'bg-[#ECFDF3]', border: 'border-[#A7F3D0]' },
   LOST:               { label: 'Perdidos',      emoji: '❌', color: 'text-[#D92D20]', bg: 'bg-[#FEF3F2]', border: 'border-[#FECACA]' },
+  CLOSED_LOST:        { label: 'Perdidos',      emoji: '❌', color: 'text-[#D92D20]', bg: 'bg-[#FEF3F2]', border: 'border-[#FECACA]' },
 };
 
 const SCORE_OPTIONS = [

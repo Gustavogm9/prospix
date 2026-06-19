@@ -89,6 +89,7 @@ export type Database = {
           total_conversing: number
           total_scheduled: number
           updated_at: string
+          icp_id: string
         }
         Insert: {
           active_script_id?: string | null
@@ -110,6 +111,7 @@ export type Database = {
           total_conversing?: number
           total_scheduled?: number
           updated_at: string
+          icp_id: string
         }
         Update: {
           active_script_id?: string | null
@@ -131,6 +133,7 @@ export type Database = {
           total_conversing?: number
           total_scheduled?: number
           updated_at?: string
+          icp_id?: string
         }
         Relationships: [
           {
@@ -138,6 +141,13 @@ export type Database = {
             columns: ["active_script_id"]
             isOneToOne: false
             referencedRelation: "scripts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "campaigns_icp_id_fkey"
+            columns: ["icp_id"]
+            isOneToOne: false
+            referencedRelation: "icps"
             referencedColumns: ["id"]
           },
           {
@@ -1188,6 +1198,53 @@ export type Database = {
         }
         Relationships: []
       }
+      icps: {
+        Row: {
+          id: string
+          tenant_id: string
+          name: string
+          min_fit_score: number
+          weights: Json
+          high_value_areas: string[]
+          min_google_rating: number
+          min_reviews: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          tenant_id: string
+          name: string
+          min_fit_score?: number
+          weights?: Json
+          high_value_areas?: string[]
+          min_google_rating?: number
+          min_reviews?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          tenant_id?: string
+          name?: string
+          min_fit_score?: number
+          weights?: Json
+          high_value_areas?: string[]
+          min_google_rating?: number
+          min_reviews?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "icps_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
       script_variations: {
         Row: {
           active: boolean
@@ -1274,6 +1331,9 @@ export type Database = {
           total_usages: number
           updated_at: string
           variables: string[] | null
+          restrictions: string | null
+          context_documents: Json | null
+          guardians_config: Json
         }
         Insert: {
           archived_at?: string | null
@@ -1294,6 +1354,9 @@ export type Database = {
           total_usages?: number
           updated_at: string
           variables?: string[] | null
+          restrictions?: string | null
+          context_documents?: Json | null
+          guardians_config?: Json
         }
         Update: {
           archived_at?: string | null
@@ -1314,6 +1377,9 @@ export type Database = {
           total_usages?: number
           updated_at?: string
           variables?: string[] | null
+          restrictions?: string | null
+          context_documents?: Json | null
+          guardians_config?: Json
         }
         Relationships: [
           {
@@ -1330,6 +1396,54 @@ export type Database = {
             referencedRelation: "tenants"
             referencedColumns: ["id"]
           },
+        ]
+      }
+      objections: {
+        Row: {
+          id: string
+          tenant_id: string
+          script_id: string | null
+          title: string
+          pattern: string
+          response: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          tenant_id: string
+          script_id?: string | null
+          title: string
+          pattern: string
+          response: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          tenant_id?: string
+          script_id?: string | null
+          title?: string
+          pattern?: string
+          response?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "objections_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "objections_script_id_fkey"
+            columns: ["script_id"]
+            isOneToOne: false
+            referencedRelation: "scripts"
+            referencedColumns: ["id"]
+          }
         ]
       }
       sessions: {

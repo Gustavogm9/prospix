@@ -1,9 +1,10 @@
 'use client';
 
-import { Target, Plus, Pause, Edit2, Copy, Play, Loader2, Info, X, Trash2, ChevronDown, Lock, Zap, Tag, ChevronRight } from 'lucide-react';
+import { Target, Plus, Pause, Edit2, Copy, Play, Loader2, Info, X, Trash2, ChevronDown, Lock, Zap, Tag, ChevronRight, AlertTriangle, ArrowRight } from 'lucide-react';
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { campaignsQueries, tenantAddonsQueries } from '@/lib/queries';
+import { campaignsQueries, tenantAddonsQueries, icpsQueries, scriptsQueries } from '@/lib/queries';
+import type { ICP } from '@/lib/queries';
 import { useAuthStore } from '@/store/auth-store';
 import { toast, Tooltip } from '@prospix/ui';
 import { apiFetch } from '@/lib/api-fetch';
@@ -23,6 +24,8 @@ interface Campaign {
   searchTags?: string[];
   captureSources?: string[];
   state?: string;
+  icpId: string;
+  icpName?: string;
 }
 
 const BRAZILIAN_STATES = [
@@ -151,12 +154,28 @@ export default function Campaigns() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null);
-  const [icpOpen, setIcpOpen] = useState(false);
   const [campaignLimit, setCampaignLimit] = useState<CampaignLimit | null>(null);
   const [showAddonModal, setShowAddonModal] = useState(false);
   const [purchasingAddon, setPurchasingAddon] = useState(false);
   const [campaignToDelete, setCampaignToDelete] = useState<Campaign | null>(null);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
+
+  // Onboarding Guardrail states
+  const [hasScripts, setHasScripts] = useState<boolean | null>(null);
+  const [showGuardrailModal, setShowGuardrailModal] = useState(false);
+  const [guardrailTitle, setGuardrailTitle] = useState('');
+  const [guardrailDesc, setGuardrailDesc] = useState('');
+  const [guardrailActionText, setGuardrailActionText] = useState('');
+  const [guardrailActionUrl, setGuardrailActionUrl] = useState('');
+
+  // ICP Data state
+  const [icps, setIcps] = useState<ICP[]>([]);
+  const [loadingIcps, setLoadingIcps] = useState(false);
+  const [selectedIcpId, setSelectedIcpId] = useState<string>('');
+
+  // Script (Roteiro) state
+  const [scripts, setScripts] = useState<any[]>([]);
+  const [selectedScriptId, setSelectedScriptId] = useState<string>('');
 
   // Form state
   const [selectedSegment, setSelectedSegment] = useState('health');
@@ -166,10 +185,10 @@ export default function Campaigns() {
   const [tagInput, setTagInput] = useState('');
   const [newCamp, setNewCamp] = useState({
     name: '', cities: '', dailyLimit: '20', hourStart: '8', hourEnd: '18',
-    icpMinScore: '3',
-    icpWeightProfession: '3', icpWeightWhatsapp: '2', icpWeightOwner: '2',
-    icpWeightArea: '1', icpWeightCnpjYears: '1', icpWeightGoogle: '1',
-    icpHighValueAreas: '', icpMinGoogleRating: '4', icpMinReviews: '5',
+    icpMinScore: '',
+    icpWeightProfession: '', icpWeightWhatsapp: '', icpWeightOwner: '',
+    icpWeightArea: '', icpWeightCnpjYears: '', icpWeightGoogle: '',
+    icpHighValueAreas: '', icpMinGoogleRating: '', icpMinReviews: '',
   });
 
   // ── Data fetching ──────────────────────────────────────────────────────
@@ -187,6 +206,8 @@ export default function Campaigns() {
         searchTags: c.search_tags || [],
         captureSources: c.capture_sources || ['GOOGLE_MAPS'],
         state: c.state || 'SP',
+        icpId: c.icp_id,
+        icpName: c.icps?.name || 'Padrão',
       })));
     } catch (err) {
       console.error('Failed to fetch campaigns', err);
@@ -203,7 +224,41 @@ export default function Campaigns() {
     } catch (err) { console.error(err); }
   }, [tenantId]);
 
-  useEffect(() => { fetchCampaigns(); fetchLimit(); }, [fetchCampaigns, fetchLimit]);
+  const fetchIcps = useCallback(async () => {
+    if (!tenantId) return;
+    setLoadingIcps(true);
+    try {
+      const result = await icpsQueries.list(tenantId);
+      if (result.error) throw new Error(result.error.message);
+      setIcps(result.data || []);
+    } catch (err) {
+      console.error('Failed to fetch ICPs', err);
+      toast.error('Erro ao carregar', 'Não foi possível carregar os perfis de cliente ideal (ICP).');
+    } finally {
+      setLoadingIcps(false);
+    }
+  }, [tenantId]);
+
+  const fetchScriptsCheck = useCallback(async () => {
+    if (!tenantId) return;
+    try {
+      const result = await scriptsQueries.list(tenantId);
+      const list = result.data || [];
+      setScripts(list);
+      setHasScripts(list.length > 0);
+    } catch (err) {
+      console.error(err);
+      setScripts([]);
+      setHasScripts(false);
+    }
+  }, [tenantId]);
+
+  useEffect(() => {
+    fetchCampaigns();
+    fetchLimit();
+    fetchIcps();
+    fetchScriptsCheck();
+  }, [fetchCampaigns, fetchLimit, fetchIcps, fetchScriptsCheck]);
 
   // ── Handlers ───────────────────────────────────────────────────────────
   const handlePause = async (id: string) => {
@@ -291,6 +346,7 @@ export default function Campaigns() {
         dailyLimit: camp.dailyLimit,
         hourWindowStart: camp.hourWindowStart,
         hourWindowEnd: camp.hourWindowEnd,
+        icpId: camp.icpId,
         filters: camp.filters,
         searchTags: camp.searchTags || [],
         captureSources: camp.captureSources || ['GOOGLE_MAPS'],
@@ -305,8 +361,6 @@ export default function Campaigns() {
 
   const handleEdit = (camp: Campaign) => {
     setEditingCampaign(camp);
-    const f = camp.filters || {} as any;
-    const w = f.weights || {};
     const seg = SEGMENTS.find(s => s.profession === camp.profession) ?? DEFAULT_SEGMENT;
     setSelectedSegment(seg.id);
     setSearchTags(camp.searchTags || seg.suggestedTags);
@@ -316,20 +370,21 @@ export default function Campaigns() {
       dailyLimit: String(camp.dailyLimit),
       hourStart: String(camp.hourWindowStart),
       hourEnd: String(camp.hourWindowEnd),
-      icpMinScore: String(f.min_fit_score ?? 3),
-      icpWeightProfession: String(w.profession_match ?? 3),
-      icpWeightWhatsapp: String(w.whatsapp_valid ?? 2),
-      icpWeightOwner: String(w.is_owner ?? 2),
-      icpWeightArea: String(w.high_value_area ?? 1),
-      icpWeightCnpjYears: String(w.cnpj_years ?? 1),
-      icpWeightGoogle: String(w.google_reputation ?? 1),
-      icpHighValueAreas: (f.high_value_areas || []).join(', '),
-      icpMinGoogleRating: String(f.min_google_rating ?? 4),
-      icpMinReviews: String(f.min_reviews ?? 5),
+      icpMinScore: '',
+      icpWeightProfession: '',
+      icpWeightWhatsapp: '',
+      icpWeightOwner: '',
+      icpWeightArea: '',
+      icpWeightCnpjYears: '',
+      icpWeightGoogle: '',
+      icpHighValueAreas: '',
+      icpMinGoogleRating: '',
+      icpMinReviews: '',
     });
-    setCaptureSources(camp.captureSources || [f.capture_source || 'GOOGLE_MAPS']);
+    setSelectedIcpId(camp.icpId || '');
+    setSelectedScriptId((camp as any).active_script_id || (camp as any).activeScriptId || '');
+    setCaptureSources(camp.captureSources || []);
     setCampState(camp.state || 'SP');
-    setIcpOpen(true);
     setIsCreateOpen(true);
   };
 
@@ -360,6 +415,15 @@ export default function Campaigns() {
   };
 
   const handleOpenCreate = async () => {
+    if (hasScripts === false) {
+      setGuardrailTitle('Roteiro de IA Necessário');
+      setGuardrailDesc('Você precisa possuir pelo menos um Roteiro de IA configurado antes de criar uma campanha de prospecção ativa, para que a IA saiba como conduzir a conversa pelo WhatsApp.');
+      setGuardrailActionText('Configurar meu primeiro Roteiro');
+      setGuardrailActionUrl('/roteiros');
+      setShowGuardrailModal(true);
+      return;
+    }
+
     try {
       const res = await apiFetch('/api/integrations/whatsapp/status');
       const data = await res.json();
@@ -376,6 +440,11 @@ export default function Campaigns() {
       return;
     }
     resetForm();
+    if (icps.length > 0) {
+      setSelectedIcpId(icps[0]?.id || '');
+    } else {
+      setSelectedIcpId('');
+    }
     setIsCreateOpen(true);
   };
 
@@ -384,10 +453,11 @@ export default function Campaigns() {
     setSelectedSegment('health');
     setSearchTags(DEFAULT_SEGMENT.suggestedTags);
     setTagInput('');
-    setNewCamp({ name: '', cities: '', dailyLimit: '20', hourStart: '8', hourEnd: '18', icpMinScore: '3', icpWeightProfession: '3', icpWeightWhatsapp: '2', icpWeightOwner: '2', icpWeightArea: '1', icpWeightCnpjYears: '1', icpWeightGoogle: '1', icpHighValueAreas: '', icpMinGoogleRating: '4', icpMinReviews: '5' });
+    setNewCamp({ name: '', cities: '', dailyLimit: '20', hourStart: '8', hourEnd: '18', icpMinScore: '', icpWeightProfession: '', icpWeightWhatsapp: '', icpWeightOwner: '', icpWeightArea: '', icpWeightCnpjYears: '', icpWeightGoogle: '', icpHighValueAreas: '', icpMinGoogleRating: '', icpMinReviews: '' });
+    setSelectedIcpId(icps[0]?.id || '');
+    setSelectedScriptId('');
     setCaptureSources(['GOOGLE_MAPS']);
     setCampState('SP');
-    setIcpOpen(false);
   };
 
   const handleSegmentChange = (segId: string) => {
@@ -416,6 +486,11 @@ export default function Campaigns() {
     const hEnd = Number(newCamp.hourEnd) || 18;
     if (hEnd <= hStart) { toast.error('Horário inválido', 'O horário de fim deve ser posterior ao de início.'); return; }
 
+    if (!selectedIcpId) {
+      toast.error('ICP Obrigatório', 'Selecione um Perfil de Cliente Ideal (ICP) para a campanha.');
+      return;
+    }
+
     if (!tenantId) return;
     setIsCreating(true);
     const segment = SEGMENTS.find(s => s.id === selectedSegment) ?? DEFAULT_SEGMENT;
@@ -429,19 +504,10 @@ export default function Campaigns() {
       searchTags,
       captureSources,
       state: campState,
+      icpId: selectedIcpId,
+      activeScriptId: selectedScriptId || undefined,
       filters: {
-        min_fit_score: Number(newCamp.icpMinScore) || 3,
-        weights: {
-          profession_match: Number(newCamp.icpWeightProfession) || 3,
-          whatsapp_valid: Number(newCamp.icpWeightWhatsapp) || 2,
-          is_owner: Number(newCamp.icpWeightOwner) || 2,
-          high_value_area: Number(newCamp.icpWeightArea) || 1,
-          cnpj_years: Number(newCamp.icpWeightCnpjYears) || 1,
-          google_reputation: Number(newCamp.icpWeightGoogle) || 1,
-        },
-        high_value_areas: newCamp.icpHighValueAreas.split(',').map(s => s.trim()).filter(Boolean),
-        min_google_rating: Number(newCamp.icpMinGoogleRating) || 4,
-        min_reviews: Number(newCamp.icpMinReviews) || 5,
+        min_fit_score: 3,
       },
     };
     try {
@@ -543,6 +609,12 @@ export default function Campaigns() {
               {actionLoading === 'global_resume' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />} Retomar Fila IA
             </button>
           )}
+          <button
+            onClick={() => router.push('/icps')}
+            className="h-8 px-3.5 rounded-md text-[12px] font-semibold bg-white text-[#1B3A6B] border border-[#1B3A6B]/20 flex items-center gap-1.5 hover:bg-[#1B3A6B]/5 transition-all shadow-sm"
+          >
+            <Target className="w-3.5 h-3.5" /> Configurar ICPs
+          </button>
           <button onClick={handleOpenCreate} className="h-8 px-3.5 rounded-md text-[12px] font-semibold bg-[#1B3A6B] text-white flex items-center gap-1.5 hover:bg-[#142C52] transition-all shadow-sm">
             <Plus className="w-3.5 h-3.5" /> Nova campanha
           </button>
@@ -603,18 +675,26 @@ export default function Campaigns() {
 
               {/* Body */}
               <div className="p-4">
-                <div className="grid grid-cols-3 gap-3 mb-3 pb-3 border-b border-[#EEF0F3]">
-                  <div>
-                    <div className="text-[10px] uppercase tracking-wider text-[#64748B] font-semibold">Segmento</div>
-                    <div className="text-[13px] font-semibold text-[#0F172A] mt-0.5">{PROF_LABEL[camp.profession] || camp.profession}</div>
+                <div className="grid grid-cols-2 gap-3 mb-3 pb-3 border-b border-[#EEF0F3]">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider text-[#64748B] font-semibold">Segmento</div>
+                      <div className="text-[13px] font-semibold text-[#0F172A] mt-0.5">{PROF_LABEL[camp.profession] || camp.profession}</div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider text-[#64748B] font-semibold">Perfil ICP</div>
+                      <div className="text-[13px] font-semibold text-[#1B3A6B] mt-0.5 truncate" title={camp.icpName}>{camp.icpName || 'Padrão'}</div>
+                    </div>
                   </div>
-                  <div>
-                    <div className="text-[10px] uppercase tracking-wider text-[#64748B] font-semibold">Cidades</div>
-                    <div className="text-[13px] font-semibold text-[#0F172A] mt-0.5">{camp.cities?.join(', ') || '-'}</div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] uppercase tracking-wider text-[#64748B] font-semibold">Meta diária</div>
-                    <div className="text-[15px] font-bold text-[#027A48] font-mono mt-0.5">{camp.dailyLimit}</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider text-[#64748B] font-semibold">Cidades</div>
+                      <div className="text-[13px] font-semibold text-[#0F172A] mt-0.5 truncate">{camp.cities?.join(', ') || '-'}</div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider text-[#64748B] font-semibold">Meta diária</div>
+                      <div className="text-[15px] font-bold text-[#027A48] font-mono mt-0.5">{camp.dailyLimit}</div>
+                    </div>
                   </div>
                 </div>
 
@@ -856,65 +936,76 @@ export default function Campaigns() {
               <p className="text-[10px] text-[#64748B] mt-1.5 font-medium">Recomendamos no máximo 100 leads por dia para manter a saúde do seu WhatsApp.</p>
             </div>
 
-            {/* ICP Section */}
-            <div className="border border-[#E5E7EB] rounded-xl overflow-hidden">
-              <button type="button" onClick={() => setIcpOpen(!icpOpen)} className="w-full flex items-center justify-between px-4 py-3 bg-gradient-to-r from-[rgba(27,58,107,0.03)] to-[rgba(232,152,28,0.04)] hover:from-[rgba(27,58,107,0.06)] hover:to-[rgba(232,152,28,0.08)] transition-all">
-                <div className="flex items-center gap-2">
-                  <span className="text-[14px]">⚡</span>
-                  <span className="text-[12px] font-semibold text-[#0F172A]">Perfil de Cliente Ideal (ICP)</span>
+            {/* ICP Selection */}
+            {/* Roteiro da Campanha */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider flex items-center gap-1.5">
+                📝 Roteiro de Conversa (IA)
+              </label>
+              <div className="relative">
+                <select
+                  value={selectedScriptId}
+                  onChange={e => setSelectedScriptId(e.target.value)}
+                  className="w-full h-9 pl-3 pr-8 rounded-lg bg-[#F9FAFB] border border-[#E5E7EB] text-[13px] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none appearance-none cursor-pointer font-medium text-[#0F172A]"
+                >
+                  <option value="">Associar automaticamente por profissão</option>
+                  {scripts.map(script => (
+                    <option key={script.id} value={script.id}>
+                      {script.name} ({script.status === 'ACTIVE' ? 'Ativo' : 'Rascunho'})
+                    </option>
+                  ))}
+                </select>
+                <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-[#64748B]">
+                  <ChevronDown className="w-4 h-4" />
                 </div>
-                <ChevronDown className={`w-4 h-4 text-[#64748B] transition-transform ${icpOpen ? 'rotate-180' : ''}`} />
-              </button>
-              {icpOpen && (
-                <div className="px-4 py-3 space-y-3.5 border-t border-[#EEF0F3] bg-[#FAFBFC]">
-                  <div>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider">Score mínimo</label>
-                      <span className="text-[13px] font-bold text-[#1B3A6B] font-mono bg-[rgba(27,58,107,0.08)] px-2 py-0.5 rounded">{newCamp.icpMinScore}</span>
-                    </div>
-                    <input type="range" min="0" max="10" step="1" value={newCamp.icpMinScore} onChange={e => setNewCamp(p => ({...p, icpMinScore: e.target.value}))} className="w-full h-2 rounded-full appearance-none cursor-pointer accent-[#1B3A6B] bg-[#E5E7EB]" />
-                    <div className="flex justify-between text-[9px] text-[#94A3B8] mt-0.5"><span>0 — aceita todos</span><span>10 — muito restritivo</span></div>
-                  </div>
-                  <div>
-                    <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-2">Pesos dos critérios</label>
-                    <div className="grid grid-cols-2 gap-2">
-                      {[
-                        { key: 'icpWeightProfession', label: 'Segmento bate', icon: '🎯', tip: 'Aumente se for crítico o lead ser do nicho exato.' },
-                        { key: 'icpWeightWhatsapp', label: 'WhatsApp válido', icon: '📱', tip: 'Prioriza leads que já têm WhatsApp confirmado.' },
-                        { key: 'icpWeightOwner', label: 'Sócio/proprietário', icon: '👤', tip: 'Dá peso maior se conseguimos achar os donos.' },
-                        { key: 'icpWeightArea', label: 'Bairro premium', icon: '📍', tip: 'Localizado nas áreas VIPs que você escolheu.' },
-                        { key: 'icpWeightCnpjYears', label: 'Tempo de atuação', icon: '📅', tip: 'Favorece empresas com mais anos de mercado.' },
-                        { key: 'icpWeightGoogle', label: 'Reputação Google', icon: '⭐', tip: 'Dá peso para avaliações e rating alto.' },
-                      ].map(({ key, label, icon, tip }) => (
-                        <div key={key} className="flex items-center gap-2 bg-white rounded-lg border border-[#E5E7EB] px-2.5 py-2">
-                          <span className="text-[13px]">{icon}</span>
-                          <div className="flex-1 min-w-0 flex items-center gap-1">
-                            <div className="text-[10.5px] font-medium text-[#0F172A] truncate">{label}</div>
-                            <Tooltip content={tip}>
-                              <Info className="w-3 h-3 text-[#CBD5E1] hover:text-[#64748B] cursor-help" />
-                            </Tooltip>
-                          </div>
-                          <input type="number" min="0" max="5" step="1" value={(newCamp as any)[key]} onChange={e => setNewCamp(p => ({...p, [key]: e.target.value}))} className="w-10 h-7 text-center rounded bg-[#F9FAFB] border border-[#E5E7EB] text-[12px] font-bold text-[#1B3A6B] focus:border-[#1B3A6B] outline-none" />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">Bairros de alto valor</label>
-                    <input value={newCamp.icpHighValueAreas} onChange={e => setNewCamp(p => ({...p, icpHighValueAreas: e.target.value}))} placeholder="Centro, Jardim Paulista" className="w-full h-8 px-3 rounded-lg bg-white border border-[#E5E7EB] text-[12px] focus:border-[#1B3A6B] outline-none" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[10px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">Rating mín. Google</label>
-                      <input type="number" min="0" max="5" step="0.5" value={newCamp.icpMinGoogleRating} onChange={e => setNewCamp(p => ({...p, icpMinGoogleRating: e.target.value}))} className="w-full h-8 px-3 rounded-lg bg-white border border-[#E5E7EB] text-[12px] focus:border-[#1B3A6B] outline-none" />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-semibold text-[#475569] uppercase tracking-wider block mb-1">Avaliações mín.</label>
-                      <input type="number" min="0" max="100" value={newCamp.icpMinReviews} onChange={e => setNewCamp(p => ({...p, icpMinReviews: e.target.value}))} className="w-full h-8 px-3 rounded-lg bg-white border border-[#E5E7EB] text-[12px] focus:border-[#1B3A6B] outline-none" />
-                    </div>
-                  </div>
+              </div>
+              <p className="text-[10px] text-[#64748B] mt-1">
+                Escolha o roteiro específico que a IA usará. Se omitido, a plataforma buscará um roteiro ativo compatível com a profissão.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold text-[#475569] uppercase tracking-wider flex items-center gap-1.5">
+                  ⚡ Perfil de Cliente Ideal (ICP)
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsCreateOpen(false);
+                    router.push('/icps');
+                  }}
+                  className="text-[10.5px] font-semibold text-[#1B3A6B] hover:underline flex items-center gap-0.5"
+                >
+                  + Gerenciar ICPs
+                </button>
+              </div>
+              <div className="relative">
+                <select
+                  value={selectedIcpId}
+                  onChange={e => setSelectedIcpId(e.target.value)}
+                  className="w-full h-9 pl-3 pr-8 rounded-lg bg-[#F9FAFB] border border-[#E5E7EB] text-[13px] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none appearance-none cursor-pointer font-medium text-[#0F172A]"
+                  disabled={loadingIcps}
+                >
+                  <option value="" disabled>Selecione um perfil de cliente ideal...</option>
+                  {icps.map(icp => (
+                    <option key={icp.id} value={icp.id}>
+                      {icp.name} (Min. Score: {icp.min_fit_score})
+                    </option>
+                  ))}
+                </select>
+                <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-[#64748B]">
+                  {loadingIcps ? <Loader2 className="w-4 h-4 animate-spin" /> : <ChevronDown className="w-4 h-4" />}
                 </div>
+              </div>
+              {icps.length === 0 && !loadingIcps && (
+                <p className="text-[10px] text-[#D92D20] mt-1 font-medium">
+                  ⚠ Você não possui nenhum ICP cadastrado. <span className="underline cursor-pointer" onClick={() => { setIsCreateOpen(false); router.push('/icps'); }}>Clique aqui para criar um</span> antes de salvar a campanha.
+                </p>
               )}
+              <p className="text-[10px] text-[#64748B] mt-1">
+                O ICP define as regras de qualificação de leads (pesos, bairros premium, reputação mínima) que a IA usará.
+              </p>
             </div>
 
             <button type="submit" disabled={isCreating} className="w-full h-10 rounded-lg text-[13px] font-semibold bg-[#1B3A6B] text-white hover:bg-[#142C52] transition-all disabled:opacity-50 flex items-center justify-center gap-2">
@@ -1003,6 +1094,40 @@ export default function Campaigns() {
                 className="flex-1 h-10 rounded-lg text-[13px] font-semibold bg-[#D92D20] text-white hover:bg-[#B42318] transition-all disabled:opacity-50"
               >
                 Confirmar Exclusão
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Onboarding Guardrail Modal */}
+      {showGuardrailModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 backdrop-blur-sm px-4">
+          <div className="bg-white rounded-2xl w-full max-w-[420px] p-6 shadow-2xl border border-[#EEF0F3] animate-scaleIn space-y-4 text-center">
+            <div className="w-12 h-12 bg-amber-50 rounded-full flex items-center justify-center mx-auto text-amber-600 border border-amber-100">
+              <AlertTriangle className="w-6 h-6" />
+            </div>
+            <div className="space-y-1.5">
+              <h3 className="font-bold text-[16px] text-[#0F172A]">{guardrailTitle}</h3>
+              <p className="text-[12.5px] text-[#64748B] leading-relaxed">{guardrailDesc}</p>
+            </div>
+            <div className="pt-2 flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowGuardrailModal(false);
+                  router.push(guardrailActionUrl);
+                }}
+                className="w-full h-10 rounded-xl text-[13px] font-semibold bg-[#1B3A6B] text-white hover:bg-[#142C52] transition-all flex items-center justify-center gap-1.5 shadow-sm"
+              >
+                {guardrailActionText} <ArrowRight className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowGuardrailModal(false)}
+                className="w-full h-9 rounded-xl text-[12.5px] font-semibold bg-white border border-[#E5E7EB] hover:bg-[#F8F9FB] text-[#475569] transition-colors"
+              >
+                Voltar
               </button>
             </div>
           </div>

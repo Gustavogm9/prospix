@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Button, Input, toast } from '@prospix/ui';
 import { MessageSquare, Send, Bot, User, Phone, ChevronRight, Filter, ArrowUpDown, LayoutList, Columns3, X, Award, Clock, Plus } from 'lucide-react';
 import { useRouter } from 'next/navigation';
@@ -464,33 +464,37 @@ export default function Conversations() {
   const liveCount = conversations.filter(c => c.aiHandling).length;
 
   // Filtered + sorted conversations
-  const sortedConversations = conversations
-    .filter(c => {
-      const matchesTab = (() => {
-        switch (activeFilter) {
-          case 'hot': return c.fitScore >= 9.0;
-          case 'wait': return c.tagType === 'warning' || c.unread;
-          case 'scheduled': return c.tagType === 'success';
-          default: return true;
+  const sortedConversations = useMemo(() => {
+    return conversations
+      .filter(c => {
+        const matchesTab = (() => {
+          switch (activeFilter) {
+            case 'hot': return c.fitScore >= 9.0;
+            case 'wait': return c.tagType === 'warning' || c.unread;
+            case 'scheduled': return c.tagType === 'success';
+            default: return true;
+          }
+        })();
+        const matchesProf = professionFilter === 'all' || c.professionKey === professionFilter;
+        return matchesTab && matchesProf;
+      })
+      .sort((a, b) => {
+        switch (sortBy) {
+          case 'temperature':
+          case 'score':
+            return b.fitScore - a.fitScore;
+          case 'name':
+            return a.leadName.localeCompare(b.leadName, 'pt-BR');
+          case 'recent':
+          default:
+            return 0; // Already sorted by last_message_at from DB
         }
-      })();
-      const matchesProf = professionFilter === 'all' || c.professionKey === professionFilter;
-      return matchesTab && matchesProf;
-    })
-    .sort((a, b) => {
-      switch (sortBy) {
-        case 'temperature':
-        case 'score':
-          return b.fitScore - a.fitScore;
-        case 'name':
-          return a.leadName.localeCompare(b.leadName, 'pt-BR');
-        case 'recent':
-        default:
-          return 0; // Already sorted by last_message_at from DB
-      }
-    });
+      });
+  }, [conversations, activeFilter, professionFilter, sortBy]);
 
   const handleSelectConv = (conv: Conversation) => {
+    setMessages([]);
+    setLeadEvents([]);
     setSelectedConv(conv);
     setDrawerTab('chat');
   };

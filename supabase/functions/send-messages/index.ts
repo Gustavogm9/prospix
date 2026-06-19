@@ -621,6 +621,24 @@ async function processPendingOutbound(): Promise<{
         continue;
       }
 
+      // Buscar o script_variation_id da primeira mensagem outbound se houver
+      let scriptVariationId: string | null = null;
+      try {
+        const { data: firstOutbound } = await supabase
+          .from("messages")
+          .select("script_variation_id")
+          .eq("conversation_id", item.conversation_id)
+          .not("script_variation_id", "is", null)
+          .order("created_at", { ascending: true })
+          .limit(1)
+          .maybeSingle();
+        if (firstOutbound?.script_variation_id) {
+          scriptVariationId = firstOutbound.script_variation_id;
+        }
+      } catch (err) {
+        console.error("Erro ao buscar script_variation_id da conversa:", err);
+      }
+
       const phone = (conversation.leads as any).whatsapp;
       const leadName = (conversation.leads as any).name || "Lead";
 
@@ -647,6 +665,9 @@ async function processPendingOutbound(): Promise<{
           media_type: item.media_type,
           delivery_status: "SENT",
           whatsapp_message_id: sendResult.whatsappMsgId || null,
+          script_id: conversation.script_id || null,
+          script_node_id: conversation.current_node_id || null,
+          script_variation_id: scriptVariationId || null,
         });
 
         // Update conversation

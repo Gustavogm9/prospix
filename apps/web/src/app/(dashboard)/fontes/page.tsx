@@ -447,6 +447,7 @@ function CSVUploadModal({
           whatsapp: phone,
           source: 'IMPORTED',
           status: 'CAPTURED',
+          updated_at: new Date().toISOString(),
           metadata: {
             email: email || undefined,
             company: company || undefined,

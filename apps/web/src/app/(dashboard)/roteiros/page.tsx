@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Badge } from '@prospix/ui';
-import { MessageSquare, ShieldAlert, BookOpen, CheckCircle, Plus, Wand2, ArrowRight } from 'lucide-react';
-import { scriptsQueries } from '@/lib/queries';
+import { MessageSquare, ShieldAlert, BookOpen, CheckCircle, Plus, Wand2, ArrowRight, AlertTriangle } from 'lucide-react';
+import { scriptsQueries, icpsQueries } from '@/lib/queries';
 import { useAuthStore } from '@/store/auth-store';
+import { apiFetch } from '@/lib/api-fetch';
 
 type CategoryFilter = 'ALL' | 'APPROACH' | 'OBJECTION' | 'EDUCATION' | 'CLOSING';
 
@@ -23,41 +24,104 @@ export default function ScriptsListPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<CategoryFilter>('ALL');
 
-  useEffect(() => {
+  // Onboarding Guardrail states
+  const [hasIcps, setHasIcps] = useState<boolean | null>(null);
+  const [showGuardrailModal, setShowGuardrailModal] = useState(false);
+  const [guardrailTitle, setGuardrailTitle] = useState('');
+  const [guardrailDesc, setGuardrailDesc] = useState('');
+  const [guardrailActionText, setGuardrailActionText] = useState('');
+  const [guardrailActionUrl, setGuardrailActionUrl] = useState('');
+
+  const fetchScripts = useCallback(async () => {
     if (!tenantId) return;
-    const fetchScripts = async () => {
-      try {
-        const { data, error } = await scriptsQueries.list(tenantId);
-        if (!error && data) {
-          setScripts(data);
-        }
-      } catch (err) {
-        console.error('Error fetching scripts', err);
-      } finally {
-        setIsLoading(false);
+    try {
+      const { data, error } = await scriptsQueries.list(tenantId);
+      if (!error && data) {
+        setScripts(data);
       }
-    };
-    fetchScripts();
+    } catch (err) {
+      console.error('Error fetching scripts', err);
+    } finally {
+      setIsLoading(false);
+    }
   }, [tenantId]);
+
+  const fetchIcpsCheck = useCallback(async () => {
+    if (!tenantId) return;
+    try {
+      const { data } = await icpsQueries.list(tenantId);
+      setHasIcps((data || []).length > 0);
+    } catch (err) {
+      console.error('Error checking ICPs', err);
+      setHasIcps(false);
+    }
+  }, [tenantId]);
+
+  useEffect(() => {
+    fetchScripts();
+    fetchIcpsCheck();
+  }, [fetchScripts, fetchIcpsCheck]);
 
   const filteredScripts = scripts.filter(s => {
     if (activeTab === 'ALL') return true;
     return s.category === activeTab;
   });
 
-  const handleCreateNew = async () => {
+  const handleCreateNew = async (generateWithAi = false) => {
     if (!tenantId) return;
+    setIsLoading(true);
     try {
+      let baseMessage = '';
+      let variationsPayload: any[] = [];
+
+      if (generateWithAi) {
+        try {
+          const res = await apiFetch('/api/scripts/generate', {
+            method: 'POST',
+            body: JSON.stringify({ niche: 'DOCTOR', product: 'DIT', tone: 'CONSULTATIVE' }),
+          });
+          const json = await res.json();
+          if (res.ok && json?.data) {
+            baseMessage = json.data.baseMessage || '';
+            variationsPayload = (json.data.variations || []).map((v: any, i: number) => ({
+              name: `Variação ${String.fromCharCode(65 + i)}`,
+              weight: v.weight || Math.floor(100 / (json.data.variations.length || 1)),
+              content: v.content || v.message || '',
+              active: true,
+            }));
+          }
+        } catch (err) {
+          console.error('Erro ao gerar com IA', err);
+        }
+      }
+
       const { data, error } = await scriptsQueries.create(tenantId, {
-        name: 'Novo Roteiro',
+        name: generateWithAi ? 'Roteiro IA (Gerado)' : 'Novo Roteiro',
         category: 'APPROACH',
-        baseMessage: '',
+        baseMessage: baseMessage,
       });
+
       if (!error && data?.id) {
+        if (generateWithAi && variationsPayload.length > 0) {
+          await scriptsQueries.update(tenantId, data.id, {
+            variations: variationsPayload
+          });
+        }
         router.push(`/roteiros/${data.id}`);
       }
     } catch (err) {
       console.error(err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleGuardrailAction = () => {
+    setShowGuardrailModal(false);
+    if (guardrailActionUrl === 'GENERATE_WITH_AI') {
+      handleCreateNew(true);
+    } else {
+      router.push(guardrailActionUrl);
     }
   };
 
@@ -71,15 +135,37 @@ export default function ScriptsListPage() {
         </div>
         <div className="flex items-center gap-3">
           <Button
-            onClick={() => {}} // Will hook this up to AI modal later
+            onClick={() => {
+              if (hasIcps === false) {
+                setGuardrailTitle('Criação de ICP Requerida');
+                setGuardrailDesc('Para criar um Roteiro de IA, você precisa definir antes o seu Perfil de Cliente Ideal (ICP). O ICP orienta as preferências e regras que a IA utilizará na conversa.');
+                setGuardrailActionText('Configurar meu primeiro ICP');
+                setGuardrailActionUrl('/icps');
+                setShowGuardrailModal(true);
+              } else {
+                handleCreateNew(true);
+              }
+            }}
             className="bg-[#F8F9FB] hover:bg-[#EEF0F3] text-[#0F172A] border border-[#E5E7EB] h-10 px-4 rounded-xl font-semibold shadow-sm flex items-center gap-2 transition-all"
           >
             <Wand2 className="w-4 h-4 text-[#1B3A6B]" />
             Gerar com IA
           </Button>
           <Button
-            onClick={handleCreateNew}
-            className="bg-[#1B3A6B] hover:bg-[#142C52] text-white h-10 px-4 rounded-xl font-semibold shadow-md shadow-[#1B3A6B]/20 flex items-center gap-2 transition-all"
+            onClick={() => {
+              if (scripts.length === 0) return;
+              if (hasIcps === false) {
+                setGuardrailTitle('Criação de ICP Requerida');
+                setGuardrailDesc('Para criar um Roteiro de IA, você precisa definir antes o seu Perfil de Cliente Ideal (ICP). O ICP orienta as preferências e regras que a IA utilizará na conversa.');
+                setGuardrailActionText('Configurar meu primeiro ICP');
+                setGuardrailActionUrl('/icps');
+                setShowGuardrailModal(true);
+              } else {
+                handleCreateNew(false);
+              }
+            }}
+            disabled={scripts.length === 0}
+            className="bg-[#1B3A6B] hover:bg-[#142C52] text-white h-10 px-4 rounded-xl font-semibold shadow-md shadow-[#1B3A6B]/20 flex items-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Plus className="w-4 h-4" />
             Novo Roteiro
@@ -135,7 +221,20 @@ export default function ScriptsListPage() {
           <p className="text-sm text-[#64748B] max-w-[400px] mb-6">
             Você ainda não possui roteiros configurados para esta categoria. Crie um novo para treinar sua IA.
           </p>
-          <Button onClick={handleCreateNew} className="bg-[#1B3A6B] text-white h-10 px-6 rounded-xl font-semibold shadow-md">
+          <Button
+            onClick={() => {
+              if (hasIcps === false) {
+                setGuardrailTitle('Criação de ICP Requerida');
+                setGuardrailDesc('Para criar um Roteiro de IA, você precisa definir antes o seu Perfil de Cliente Ideal (ICP). O ICP orienta as preferências e regras que a IA utilizará na conversa.');
+                setGuardrailActionText('Configurar meu primeiro ICP');
+                setGuardrailActionUrl('/icps');
+                setShowGuardrailModal(true);
+              } else {
+                handleCreateNew(true);
+              }
+            }}
+            className="bg-[#1B3A6B] text-white h-10 px-6 rounded-xl font-semibold shadow-md"
+          >
             Criar Primeiro Roteiro
           </Button>
         </div>
@@ -171,6 +270,9 @@ export default function ScriptsListPage() {
                       <div className="flex items-center gap-1.5 mt-0.5">
                         <Badge className="bg-[#F8F9FB] text-[#475569] border-[#E5E7EB] text-[10px] font-semibold px-1.5 py-0">
                           {catConf?.label || ''}
+                        </Badge>
+                        <Badge className={`text-[10px] font-bold px-1.5 py-0 ${script.status === 'ACTIVE' ? 'bg-[#ECFDF3] text-[#039855] border-[#D1FADF]' : 'bg-[#F1F3F6] text-[#475569] border-[#E5E7EB]'}`}>
+                          {script.status === 'ACTIVE' ? 'Ativo' : 'Rascunho'}
                         </Badge>
                         {variationsCount > 0 && (
                           <span className="text-[11px] text-[#64748B] font-medium">
@@ -213,6 +315,37 @@ export default function ScriptsListPage() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Onboarding Guardrail Modal */}
+      {showGuardrailModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 backdrop-blur-sm px-4">
+          <div className="bg-white rounded-2xl w-full max-w-[420px] p-6 shadow-2xl border border-[#EEF0F3] animate-scaleIn space-y-4 text-center">
+            <div className="w-12 h-12 bg-amber-50 rounded-full flex items-center justify-center mx-auto text-amber-600 border border-amber-100">
+              <AlertTriangle className="w-6 h-6" />
+            </div>
+            <div className="space-y-1.5">
+              <h3 className="font-bold text-[16px] text-[#0F172A]">{guardrailTitle}</h3>
+              <p className="text-[12.5px] text-[#64748B] leading-relaxed">{guardrailDesc}</p>
+            </div>
+            <div className="pt-2 flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={handleGuardrailAction}
+                className="w-full h-10 rounded-xl text-[13px] font-semibold bg-[#1B3A6B] text-white hover:bg-[#142C52] transition-all flex items-center justify-center gap-1.5 shadow-sm"
+              >
+                {guardrailActionText} <ArrowRight className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowGuardrailModal(false)}
+                className="w-full h-9 rounded-xl text-[12.5px] font-semibold bg-white border border-[#E5E7EB] hover:bg-[#F8F9FB] text-[#475569] transition-colors"
+              >
+                Voltar
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

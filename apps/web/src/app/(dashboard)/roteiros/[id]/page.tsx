@@ -8,12 +8,11 @@ import {
   Bot, ShieldAlert, GitBranch, ArrowLeft, BarChart2, Settings,
   ToggleRight, ToggleLeft, Copy
 } from 'lucide-react';
-import { scriptsQueries } from '@/lib/queries';
+import { scriptsQueries, objectionsQueries, Objection, icpsQueries } from '@/lib/queries';
 import { useAuthStore } from '@/store/auth-store';
-import { apiFetch } from '@/lib/api-fetch';
 import { ScriptFlowBuilder } from './ScriptFlowBuilder';
 
-type ActiveTab = 'FLUXO' | 'MESSAGES' | 'PERFORMANCE' | 'CONFIG';
+type ActiveTab = 'FLUXO' | 'MESSAGES' | 'PERFORMANCE' | 'CONFIG' | 'OBJECTIONS';
 
 interface ScriptVariation {
   id: string;
@@ -43,13 +42,29 @@ export default function ScriptDetailsPage() {
   const [variations, setVariations] = useState<ScriptVariation[]>([]);
   const [aiTools, setAiTools] = useState<string[]>(['calendar', 'forward']);
   const [flowData, setFlowData] = useState<{nodes: any[], edges: any[]} | null>(null);
+  const [restrictions, setRestrictions] = useState('');
+  const [contextDocuments, setContextDocuments] = useState<Array<{ title: string; url: string }>>([]);
+  const [newDocTitle, setNewDocTitle] = useState('');
+  const [newDocUrl, setNewDocUrl] = useState('');
 
-  // AI Gen State
-  const [isAiModalOpen, setIsAiModalOpen] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [selectedNiche, setSelectedNiche] = useState('DOCTOR');
-  const [selectedProduct, setSelectedProduct] = useState('DIT');
+  // Guardians State
+  const [guardiansConfig, setGuardiansConfig] = useState<Record<string, boolean>>({
+    objections_enabled: true,
+    qualification_enabled: true,
+    short_responses_enabled: true,
+  });
+
+  // Objections State
+  const [objections, setObjections] = useState<Objection[]>([]);
+  const [isObjectionsLoading, setIsObjectionsLoading] = useState(false);
+  const [newObjTitle, setNewObjTitle] = useState('');
+  const [newObjPattern, setNewObjPattern] = useState('');
+  const [newObjResponse, setNewObjResponse] = useState('');
+  const [isCreatingObjection, setIsCreatingObjection] = useState(false);
+  const [editingObjectionId, setEditingObjectionId] = useState<string | null>(null);
+
   const [performanceStats, setPerformanceStats] = useState<any>(null);
+  const [nodePerformanceStats, setNodePerformanceStats] = useState<any[]>([]);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -58,6 +73,17 @@ export default function ScriptDetailsPage() {
     
     const fetchScript = async () => {
       try {
+        // Trava: Verificar se possui ICPs cadastrados antes de tudo
+        const { data: icpsData } = await icpsQueries.list(tenantId);
+        if (!icpsData || icpsData.length === 0) {
+          toast.error(
+            'Criação de ICP Requerida',
+            'Para configurar um Roteiro de IA, você precisa definir antes o seu Perfil de Cliente Ideal (ICP).'
+          );
+          router.push('/icps');
+          return;
+        }
+
         const { data, error } = await scriptsQueries.list(tenantId);
         if (!error && data) {
           
@@ -76,6 +102,13 @@ export default function ScriptDetailsPage() {
             setFlowData((script.flow as any) || null);
             // in a real scenario ai_instructions would be fetched from DB
             setAiInstructions(script.ai_instructions || 'Você é um consultor MetLife focado em fechar reuniões de 10 min. Seja direto e não mande áudios.');
+            setRestrictions(script.restrictions || '');
+            setContextDocuments(Array.isArray(script.context_documents) ? (script.context_documents as any) : []);
+            setGuardiansConfig(script.guardians_config ? (script.guardians_config as any) : {
+              objections_enabled: true,
+              qualification_enabled: true,
+              short_responses_enabled: true,
+            });
 
             const vars = script.variations || [];
             if (vars.length > 0) {
@@ -92,6 +125,14 @@ export default function ScriptDetailsPage() {
             if (!perfRes.error && perfRes.data) {
               setPerformanceStats(perfRes.data);
             }
+
+            // Fetch node performance
+            const nodePerfRes = await scriptsQueries.getNodePerformance(tenantId, script.id);
+            if (!nodePerfRes.error && nodePerfRes.data) {
+              setNodePerformanceStats(nodePerfRes.data);
+            }
+
+
           } else {
             toast.error('Roteiro não encontrado');
             router.push('/roteiros');
@@ -109,6 +150,7 @@ export default function ScriptDetailsPage() {
   const handleSave = async () => {
     if (!tenantId) return;
     
+
     if (variations.length > 0) {
       const totalWeight = variations.reduce((acc, v) => acc + v.weight, 0);
       if (totalWeight !== 100) {
@@ -129,17 +171,17 @@ export default function ScriptDetailsPage() {
       // aiTools and aiInstructions should be passed here in a real scenario
       if (scriptId === 'new') {
         const { data, error } = await scriptsQueries.create(tenantId, {
-          name, category, baseMessage, aiInstructions
+          name, category, baseMessage, aiInstructions, restrictions, contextDocuments, guardiansConfig
         });
         if (data?.id) {
-          await scriptsQueries.update(tenantId, data.id, { status, aiTools, variations: mappedVariations });
+          await scriptsQueries.update(tenantId, data.id, { status, aiTools, variations: mappedVariations, restrictions, contextDocuments, guardiansConfig });
         }
         if (error) throw error;
         toast.success('Roteiro salvo com sucesso');
         router.replace(`/roteiros/${data?.id}`);
       } else {
         const { error } = await scriptsQueries.update(tenantId, scriptId, {
-          name, category, baseMessage, variations: mappedVariations, status, aiTools, aiInstructions
+          name, category, baseMessage, variations: mappedVariations, status, aiTools, aiInstructions, restrictions, contextDocuments, guardiansConfig
         });
         if (error) throw error;
         toast.success('Roteiro atualizado com sucesso');
@@ -157,6 +199,7 @@ export default function ScriptDetailsPage() {
       toast.error('Erro', 'Salve o roteiro antes de configurar o fluxo visual.');
       return;
     }
+
     setIsSaving(true);
     try {
       const { error } = await scriptsQueries.update(tenantId, scriptId, { flow });
@@ -171,34 +214,7 @@ export default function ScriptDetailsPage() {
     }
   };
 
-  const handleGenerateAI = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsGenerating(true);
-    try {
-      const res = await apiFetch('/api/scripts/generate', {
-        method: 'POST',
-        body: JSON.stringify({ niche: selectedNiche, product: selectedProduct, tone: 'CONSULTATIVE' }),
-      });
-      const json = await res.json();
-      if (json?.data) {
-        setBaseMessage(json.data.baseMessage);
-        const mapped = (json.data.variations || []).map((v: any, i: number) => ({
-          id: `temp_${Date.now()}_${i}`,
-          name: `Variação ${String.fromCharCode(65 + i)}`,
-          weight: v.weight || Math.floor(100 / (json.data.variations.length || 1)),
-          content: v.content || '',
-        }));
-        setVariations(mapped);
-        toast.success('Variantes geradas!');
-        setIsAiModalOpen(false);
-        if (activeTab !== 'MESSAGES') setActiveTab('MESSAGES');
-      }
-    } catch {
-      toast.error('Erro ao gerar com IA');
-    } finally {
-      setIsGenerating(false);
-    }
-  };
+
 
   const handleAddVariation = () => {
     if (variations.length >= 4) {
@@ -217,6 +233,115 @@ export default function ScriptDetailsPage() {
     } else {
       setAiTools([...aiTools, tool]);
     }
+  };
+
+  const handleAddDoc = () => {
+    if (!newDocTitle.trim() || !newDocUrl.trim()) {
+      toast.error('Preencha o título e o link do documento');
+      return;
+    }
+    if (!newDocUrl.startsWith('http://') && !newDocUrl.startsWith('https://')) {
+      toast.error('O link deve começar com http:// ou https://');
+      return;
+    }
+    setContextDocuments(prev => [...prev, { title: newDocTitle.trim(), url: newDocUrl.trim() }]);
+    setNewDocTitle('');
+    setNewDocUrl('');
+    toast.success('Material de apoio adicionado');
+  };
+
+  const handleRemoveDoc = (index: number) => {
+    setContextDocuments(prev => prev.filter((_, i) => i !== index));
+    toast.success('Material de apoio removido');
+  };
+
+  useEffect(() => {
+    if (!tenantId || !scriptId || scriptId === 'new') return;
+
+    const fetchObjections = async () => {
+      setIsObjectionsLoading(true);
+      try {
+        const { data, error } = await objectionsQueries.list(tenantId, scriptId);
+        if (!error && data) {
+          setObjections(data);
+        }
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setIsObjectionsLoading(false);
+      }
+    };
+
+    fetchObjections();
+  }, [tenantId, scriptId, activeTab]);
+
+  const handleCreateObjection = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tenantId || !scriptId) return;
+    if (!newObjTitle.trim() || !newObjPattern.trim() || !newObjResponse.trim()) {
+      toast.error('Preencha todos os campos da objeção');
+      return;
+    }
+
+    setIsCreatingObjection(true);
+    try {
+      if (editingObjectionId) {
+        const { data, error } = await objectionsQueries.update(tenantId, editingObjectionId, {
+          title: newObjTitle.trim(),
+          pattern: newObjPattern.trim(),
+          response: newObjResponse.trim(),
+        });
+        if (error) throw error;
+        toast.success('Objeção atualizada com sucesso');
+        setObjections(prev => prev.map(o => o.id === editingObjectionId ? data! : o));
+        setEditingObjectionId(null);
+      } else {
+        const { data, error } = await objectionsQueries.create(tenantId, {
+          scriptId: scriptId === 'new' ? null : scriptId,
+          title: newObjTitle.trim(),
+          pattern: newObjPattern.trim(),
+          response: newObjResponse.trim(),
+        });
+        if (error) throw error;
+        toast.success('Objeção cadastrada com sucesso');
+        setObjections(prev => [data!, ...prev]);
+      }
+      setNewObjTitle('');
+      setNewObjPattern('');
+      setNewObjResponse('');
+    } catch (err) {
+      console.error(err);
+      toast.error('Erro ao salvar objeção');
+    } finally {
+      setIsCreatingObjection(false);
+    }
+  };
+
+  const handleDeleteObjection = async (id: string) => {
+    if (!tenantId) return;
+    try {
+      const { error } = await objectionsQueries.delete(tenantId, id);
+      if (error) throw error;
+      toast.success('Objeção excluída');
+      setObjections(prev => prev.filter(o => o.id !== id));
+    } catch (err) {
+      console.error(err);
+      toast.error('Erro ao excluir objeção');
+    }
+  };
+
+  const startEditObjection = (obj: Objection) => {
+    setEditingObjectionId(obj.id);
+    setNewObjTitle(obj.title);
+    setNewObjPattern(obj.pattern);
+    setNewObjResponse(obj.response);
+  };
+
+  const cancelEditObjection = () => {
+    setEditingObjectionId(null);
+    setNewObjTitle('');
+    setNewObjPattern('');
+    setNewObjResponse('');
   };
 
   const insertVariable = (variable: string) => {
@@ -292,6 +417,12 @@ export default function ScriptDetailsPage() {
             className={`pb-3 text-[13px] font-bold border-b-2 transition-all flex items-center gap-2 ${activeTab === 'CONFIG' ? 'border-[#1B3A6B] text-[#1B3A6B]' : 'border-transparent text-[#64748B] hover:text-[#0F172A]'}`}
           >
             <Settings className="w-4 h-4" /> Configurações
+          </button>
+          <button 
+            onClick={() => setActiveTab('OBJECTIONS')}
+            className={`pb-3 text-[13px] font-bold border-b-2 transition-all flex items-center gap-2 ${activeTab === 'OBJECTIONS' ? 'border-[#1B3A6B] text-[#1B3A6B]' : 'border-transparent text-[#64748B] hover:text-[#0F172A]'}`}
+          >
+            <ShieldAlert className="w-4 h-4" /> Objeções
           </button>
         </div>
       </div>
@@ -513,6 +644,54 @@ export default function ScriptDetailsPage() {
                 )}
               </div>
             </div>
+
+            <div className="bg-white border border-[#E5E7EB] rounded-2xl p-6 shadow-sm">
+              <div className="mb-6 border-b border-[#F1F3F6] pb-4">
+                <h3 className="text-[16px] font-bold text-[#0F172A]">Performance por Etapa do Fluxo (Funil)</h3>
+                <p className="text-[12px] text-[#64748B] mt-1">Métricas de transição e abandono de contatos em cada etapa do roteiro</p>
+              </div>
+
+              <div className="space-y-6">
+                {nodePerformanceStats && nodePerformanceStats.length > 0 ? (
+                  nodePerformanceStats.map((node: any) => (
+                    <div key={node.nodeId} className="border border-[#F1F3F6] rounded-xl p-4 hover:border-[#E5E7EB] transition-all">
+                      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-[13px] text-[#0F172A]">{node.nodeTitle}</span>
+                          <span className="text-[10px] bg-[#F8F9FB] border border-[#E5E7EB] text-[#64748B] font-bold px-2 py-0.5 rounded-full">
+                            {node.totalReached} contatos
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-4 text-[12px]">
+                          <span className="text-[#039855] font-bold">{node.conversionRate}% avançaram</span>
+                          <span className="text-[#D92D20] font-bold">{node.abandonmentRate}% pararam</span>
+                        </div>
+                      </div>
+                      
+                      <div className="w-full h-2.5 bg-[#EEF0F3] rounded-full overflow-hidden flex">
+                        <div 
+                          className="h-full bg-[#039855] transition-all" 
+                          style={{ width: `${node.conversionRate}%` }} 
+                        />
+                        <div 
+                          className="h-full bg-[#D92D20] transition-all" 
+                          style={{ width: `${node.abandonmentRate}%` }} 
+                        />
+                      </div>
+
+                      <div className="flex justify-between text-[11px] text-[#64748B] mt-2">
+                        <span>Avançaram: {node.advanced}</span>
+                        <span>Pararam aqui: {node.abandoned}</span>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-sm text-[#64748B] text-center py-6">
+                    Ainda não há dados analíticos de fluxo para este roteiro.
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
 
@@ -589,6 +768,74 @@ export default function ScriptDetailsPage() {
             </div>
 
             <div className="bg-white border border-[#E5E7EB] rounded-2xl p-6 shadow-sm">
+              <h3 className="text-[16px] font-bold text-[#0F172A] mb-6">Restrições da IA (Limitações de Comportamento)</h3>
+              <p className="text-[12px] text-[#64748B] mb-4">Defina o que a IA está expressamente PROIBIDA de falar ou fazer (ex: não falar de preços, não citar concorrentes, não agendar fds).</p>
+              
+              <Textarea 
+                value={restrictions}
+                onChange={e => setRestrictions(e.target.value)}
+                className="w-full min-h-[120px] bg-[#F8F9FB] border-[#EEF0F3] text-[13px] leading-relaxed text-[#334155] rounded-xl focus:border-[#1B3A6B] p-4 resize-none"
+                placeholder="Ex: Nunca dê descontos maiores que 10%. Nunca mencione que somos parceiros de concorrentes. Não passe preços de planos corporativos por WhatsApp..."
+              />
+            </div>
+
+            <div className="bg-white border border-[#E5E7EB] rounded-2xl p-6 shadow-sm">
+              <h3 className="text-[16px] font-bold text-[#0F172A] mb-6">Materiais de Apoio (Documentos e Links)</h3>
+              <p className="text-[12px] text-[#64748B] mb-4">Adicione links de materiais, tabelas ou sites oficiais para a IA consultar quando o lead fizer perguntas técnicas.</p>
+              
+              {contextDocuments.length > 0 ? (
+                <div className="space-y-2 mb-6">
+                  {contextDocuments.map((doc, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-3 bg-[#F8F9FB] border border-[#EEF0F3] rounded-xl">
+                      <div className="flex flex-col min-w-0 flex-1 mr-4">
+                        <span className="text-[13px] font-bold text-[#0F172A] truncate">{doc.title}</span>
+                        <a href={doc.url} target="_blank" rel="noopener noreferrer" className="text-[11px] text-[#1B3A6B] underline truncate hover:text-[#142C52]">
+                          {doc.url}
+                        </a>
+                      </div>
+                      <button 
+                        onClick={() => handleRemoveDoc(idx)}
+                        className="text-[#94A3B8] hover:text-[#D92D20] p-1.5 rounded-lg hover:bg-red-50 transition-colors flex-shrink-0"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-6 border border-dashed border-[#E5E7EB] rounded-xl mb-6 bg-[#F8F9FB]/50">
+                  <span className="text-[12px] text-[#94A3B8]">Nenhum material de apoio adicionado.</span>
+                </div>
+              )}
+
+              <div className="space-y-3 p-4 bg-[#F8F9FB] rounded-xl border border-[#EEF0F3]">
+                <span className="text-[12px] font-bold text-[#475569]">Adicionar novo material</span>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <Input 
+                    placeholder="Título (ex: Tabela de Preços DIT)"
+                    value={newDocTitle}
+                    onChange={e => setNewDocTitle(e.target.value)}
+                    className="h-9 text-[12px] border-[#E5E7EB] rounded-lg bg-white"
+                  />
+                  <Input 
+                    placeholder="URL (ex: https://site.com/tabela.pdf)"
+                    value={newDocUrl}
+                    onChange={e => setNewDocUrl(e.target.value)}
+                    className="h-9 text-[12px] border-[#E5E7EB] rounded-lg bg-white"
+                  />
+                </div>
+                <div className="flex justify-end pt-1">
+                  <Button 
+                    onClick={handleAddDoc}
+                    className="bg-[#1B3A6B] hover:bg-[#142C52] text-white font-bold h-8 px-4 rounded-lg text-[12px] flex items-center gap-1 shadow-sm"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Adicionar
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white border border-[#E5E7EB] rounded-2xl p-6 shadow-sm">
               <h3 className="text-[16px] font-bold text-[#0F172A] mb-6">Ferramentas que a IA pode usar neste roteiro</h3>
               
               <div className="space-y-6">
@@ -633,6 +880,183 @@ export default function ScriptDetailsPage() {
                 </div>
               </div>
             </div>
+
+            <div className="bg-white border border-[#E5E7EB] rounded-2xl p-6 shadow-sm">
+              <h3 className="text-[16px] font-bold text-[#0F172A] mb-6">Guardiões da IA (Filtros de Comportamento)</h3>
+              
+              <div className="space-y-6">
+                <div className="flex items-center justify-between border-b border-[#F1F3F6] pb-5">
+                  <div>
+                    <label className="text-[13px] font-bold text-[#0F172A] block">Guardião de Objeções (Framework Jeb Blount L-D-A)</label>
+                    <span className="text-[11px] text-[#94A3B8] block mt-0.5">Detecta quando o lead faz uma objeção e força a IA a contorná-la estruturadamente</span>
+                  </div>
+                  <button onClick={() => setGuardiansConfig(prev => ({ ...prev, objections_enabled: !prev.objections_enabled }))}>
+                    {guardiansConfig.objections_enabled ? <ToggleRight className="w-10 h-10 text-[#1B3A6B]" /> : <ToggleLeft className="w-10 h-10 text-[#CBD5E1]" />}
+                  </button>
+                </div>
+                
+                <div className="flex items-center justify-between border-b border-[#F1F3F6] pb-5">
+                  <div>
+                    <label className="text-[13px] font-bold text-[#0F172A] block">Guardião de Qualificação & Tom de Voz (SPIN / BANT)</label>
+                    <span className="text-[11px] text-[#94A3B8] block mt-0.5">Conduz o lead sutilmente por perguntas de diagnóstico e dor sem parecer um interrogatório</span>
+                  </div>
+                  <button onClick={() => setGuardiansConfig(prev => ({ ...prev, qualification_enabled: !prev.qualification_enabled }))}>
+                    {guardiansConfig.qualification_enabled ? <ToggleRight className="w-10 h-10 text-[#1B3A6B]" /> : <ToggleLeft className="w-10 h-10 text-[#CBD5E1]" />}
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="text-[13px] font-bold text-[#0F172A] block">Guardião de Respostas Curtas (Aaron Ross - Spear-phishing)</label>
+                    <span className="text-[11px] text-[#94A3B8] block mt-0.5">Garante mensagens concisas de no máximo 2 parágrafos curtos para parecer humano</span>
+                  </div>
+                  <button onClick={() => setGuardiansConfig(prev => ({ ...prev, short_responses_enabled: !prev.short_responses_enabled }))}>
+                    {guardiansConfig.short_responses_enabled ? <ToggleRight className="w-10 h-10 text-[#1B3A6B]" /> : <ToggleLeft className="w-10 h-10 text-[#CBD5E1]" />}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'OBJECTIONS' && (
+          <div className="animate-fadeIn max-w-[1200px] mx-auto w-full grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-6">
+            {/* Lista de Objeções */}
+            <div className="space-y-4">
+              <div className="bg-white border border-[#E5E7EB] rounded-2xl p-6 shadow-sm">
+                <h3 className="text-[16px] font-bold text-[#0F172A] mb-2">Base de Objeções do Roteiro</h3>
+                <p className="text-[12px] text-[#64748B] mb-6">
+                  Cadastre as principais barreiras ou dúvidas dos leads (ex: "está muito caro", "não tenho tempo") e a resposta recomendada de contorno para a IA utilizar de forma contextual.
+                </p>
+
+                {isObjectionsLoading ? (
+                  <div className="text-center py-12 text-[#64748B] text-[13px]">Carregando base de objeções...</div>
+                ) : objections.length > 0 ? (
+                  <div className="space-y-4">
+                    {objections.map(obj => (
+                      <div key={obj.id} className="border border-[#E5E7EB] rounded-xl p-5 hover:border-[#1B3A6B] transition-all bg-[#F8F9FB]/50">
+                        <div className="flex items-start justify-between gap-4 mb-3">
+                          <div>
+                            <span className="text-[13px] font-bold text-[#0F172A]">{obj.title}</span>
+                            {obj.script_id ? (
+                              <Badge className="bg-[#E0F2FE] text-[#0369A1] text-[10px] font-bold border-none px-2 py-0.5 ml-2">Específica</Badge>
+                            ) : (
+                              <Badge className="bg-[#F3F4F6] text-[#4B5563] text-[10px] font-bold border-none px-2 py-0.5 ml-2">Global</Badge>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button 
+                              onClick={() => startEditObjection(obj)}
+                              className="text-[#1B3A6B] hover:text-[#142C52] text-[12px] font-bold px-2 py-1 rounded-lg hover:bg-blue-50 transition-colors"
+                            >
+                              Editar
+                            </button>
+                            <button 
+                              onClick={() => handleDeleteObjection(obj.id)}
+                              className="text-[#94A3B8] hover:text-[#D92D20] p-1.5 rounded-lg hover:bg-red-50 transition-colors"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="space-y-3">
+                          <div className="grid grid-cols-[80px_1fr] text-[12px]">
+                            <span className="font-bold text-[#64748B]">Se o lead disser:</span>
+                            <span className="text-[#334155] bg-white px-2 py-1 rounded border border-[#E5E7EB] italic font-medium">"{obj.pattern}"</span>
+                          </div>
+                          <div className="grid grid-cols-[80px_1fr] text-[12px]">
+                            <span className="font-bold text-[#64748B]">IA responde:</span>
+                            <span className="text-[#0F172A] bg-[#ECFDF3]/40 border border-[#D1FADF] px-3 py-1.5 rounded font-medium leading-relaxed">
+                              {obj.response}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-12 border border-dashed border-[#E5E7EB] rounded-xl bg-[#F8F9FB]/50">
+                    <ShieldAlert className="w-8 h-8 text-[#94A3B8] mx-auto mb-2" />
+                    <span className="text-[13px] text-[#94A3B8] block font-medium">Nenhuma objeção cadastrada para este roteiro.</span>
+                    <span className="text-[11px] text-[#CBD5E1] block mt-1">Use o formulário ao lado para cadastrar a primeira.</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Formulário de Cadastro / Edição */}
+            <div className="space-y-4">
+              <div className="bg-white border border-[#E5E7EB] rounded-2xl p-6 shadow-sm sticky top-6">
+                <h3 className="text-[15px] font-bold text-[#0F172A] mb-1">
+                  {editingObjectionId ? 'Editar Objeção' : 'Nova Objeção'}
+                </h3>
+                <p className="text-[11px] text-[#64748B] mb-5">
+                  {editingObjectionId ? 'Modifique os detalhes do contorno de objeção.' : 'Cadastre uma nova regra de contorno para este roteiro.'}
+                </p>
+
+                <form onSubmit={handleCreateObjection} className="space-y-4">
+                  <div className="space-y-1.5">
+                    <label className="text-[12px] font-bold text-[#475569] uppercase">Título amigável</label>
+                    <Input 
+                      placeholder="Ex: Objeção de Preço / Muito Caro"
+                      value={newObjTitle}
+                      onChange={e => setNewObjTitle(e.target.value)}
+                      className="h-10 text-[13px] border-[#E5E7EB] rounded-xl bg-[#F8F9FB] focus:bg-white transition-colors"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[12px] font-bold text-[#475569] uppercase">Padrão da objeção (O que o lead fala)</label>
+                    <Input 
+                      placeholder="Ex: está muito caro, não tenho dinheiro agora"
+                      value={newObjPattern}
+                      onChange={e => setNewObjPattern(e.target.value)}
+                      className="h-10 text-[13px] border-[#E5E7EB] rounded-xl bg-[#F8F9FB] focus:bg-white transition-colors"
+                      required
+                    />
+                    <span className="text-[10px] text-[#94A3B8] block">Palavras ou termos comuns que identificam a objeção.</span>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[12px] font-bold text-[#475569] uppercase">Resposta / Contorno recomendado</label>
+                    <Textarea 
+                      placeholder="Ex: Entendo perfeitamente, o valor do investimento é proporcional ao retorno. Podemos fazer uma simulação de 5 minutos..."
+                      value={newObjResponse}
+                      onChange={e => setNewObjResponse(e.target.value)}
+                      className="min-h-[140px] text-[13px] leading-relaxed border-[#E5E7EB] rounded-xl bg-[#F8F9FB] focus:bg-white p-3 resize-none transition-colors"
+                      required
+                    />
+                  </div>
+
+                  <div className="flex gap-2 pt-2">
+                    {editingObjectionId && (
+                      <Button 
+                        type="button" 
+                        onClick={cancelEditObjection}
+                        className="flex-1 bg-white hover:bg-[#F8F9FB] text-[#0F172A] border border-[#E5E7EB] font-bold h-10 rounded-xl text-[13px] shadow-sm"
+                      >
+                        Cancelar
+                      </Button>
+                    )}
+                    <Button 
+                      type="submit" 
+                      disabled={isCreatingObjection}
+                      className="flex-1 bg-[#1B3A6B] hover:bg-[#142C52] text-white font-bold h-10 rounded-xl text-[13px] shadow-md transition-all flex items-center justify-center gap-2"
+                    >
+                      {isCreatingObjection ? (
+                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      ) : editingObjectionId ? (
+                        'Salvar'
+                      ) : (
+                        'Cadastrar'
+                      )}
+                    </Button>
+                  </div>
+                </form>
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -642,59 +1066,21 @@ export default function ScriptDetailsPage() {
         <Button className="bg-white hover:bg-[#F8F9FB] text-[#0F172A] border border-[#E5E7EB] font-bold h-10 px-5 rounded-xl shadow-sm flex items-center gap-2">
           <Copy className="w-4 h-4" /> Duplicar
         </Button>
-        <Button className="bg-white hover:bg-[#F8F9FB] text-[#0F172A] border border-[#E5E7EB] font-bold h-10 px-5 rounded-xl shadow-sm">
+        <Button 
+          onClick={() => router.push('/roteiros')} 
+          className="bg-white hover:bg-[#F8F9FB] text-[#0F172A] border border-[#E5E7EB] font-bold h-10 px-5 rounded-xl shadow-sm"
+        >
           Cancelar
         </Button>
-        <Button onClick={handleSave} disabled={isSaving} className="bg-[#1B3A6B] hover:bg-[#142C52] text-white font-bold h-10 px-6 rounded-xl shadow-md transition-all flex items-center gap-2">
+        <Button 
+          onClick={handleSave} 
+          disabled={isSaving} 
+          className="bg-[#1B3A6B] hover:bg-[#142C52] text-white font-bold h-10 px-6 rounded-xl shadow-md transition-all flex items-center gap-2"
+        >
           {isSaving ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Save className="w-4 h-4" />}
           Salvar e treinar IA
         </Button>
       </div>
-
-      {/* AI Generate Modal */}
-      {isAiModalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
-          <div className="bg-white rounded-2xl w-full max-w-[500px] p-6 shadow-2xl animate-scaleIn">
-            <div className="flex justify-between items-center mb-5">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-[#ECFDF3] rounded-xl flex items-center justify-center">
-                  <Wand2 className="w-5 h-5 text-[#039855]" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-[#0F172A]">Gerar Variações</h3>
-                  <p className="text-[11px] text-[#64748B]">IA especializada em alta conversão</p>
-                </div>
-              </div>
-              <button onClick={() => setIsAiModalOpen(false)} className="text-[#94A3B8] hover:text-[#0F172A]">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <form onSubmit={handleGenerateAI} className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="text-[12px] font-bold text-[#475569] uppercase">Público-alvo</label>
-                <select value={selectedNiche} onChange={e => setSelectedNiche(e.target.value)} className="w-full h-10 border border-[#E5E7EB] rounded-xl px-3 text-[13px] outline-none">
-                  <option value="DOCTOR">Médicos</option>
-                  <option value="LAWYER">Advogados</option>
-                  <option value="BUSINESS_OWNER">Empresários</option>
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-[12px] font-bold text-[#475569] uppercase">Produto Foco</label>
-                <select value={selectedProduct} onChange={e => setSelectedProduct(e.target.value)} className="w-full h-10 border border-[#E5E7EB] rounded-xl px-3 text-[13px] outline-none">
-                  <option value="DIT">Seguro DIT</option>
-                  <option value="KEYMAN">Homem-Chave / Sucessão</option>
-                </select>
-              </div>
-              <div className="pt-2">
-                <Button type="submit" disabled={isGenerating} className="w-full bg-[#1B3A6B] hover:bg-[#142C52] text-white h-11 rounded-xl font-bold flex items-center justify-center gap-2">
-                  {isGenerating ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Wand2 className="w-4 h-4" />}
-                  Gerar 3 Variações
-                </Button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

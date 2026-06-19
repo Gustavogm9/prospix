@@ -243,8 +243,13 @@ export default function CampaignDetail() {
   }
 
   const statusBadge = CAMPAIGN_STATUS_BADGE[campaign.status] ?? { label: campaign.status, class: 'bg-[#F1F3F6] text-[#475569]' };
-  const filters = (campaign.filters || {}) as Record<string, any>;
-  const weights = filters.weights || {};
+  const icp = campaign.icps || {};
+  const icpName = icp.name || 'Padrão';
+  const minFitScore = icp.min_fit_score !== undefined ? icp.min_fit_score : (campaign.filters?.min_fit_score ?? 3);
+  const weights = icp.weights || campaign.filters?.weights || {};
+  const highValueAreas = icp.high_value_areas || campaign.filters?.high_value_areas || [];
+  const minGoogleRating = icp.min_google_rating !== undefined ? icp.min_google_rating : (campaign.filters?.min_google_rating ?? 4);
+  const minReviews = icp.min_reviews !== undefined ? icp.min_reviews : (campaign.filters?.min_reviews ?? 5);
 
   // ═══════════════════════════════════════════════════════════════════════
   // RENDER
@@ -331,7 +336,17 @@ export default function CampaignDetail() {
           fetchLeads={fetchLeads}
         />
       )}
-      {activeTab === 'config' && <ConfigTab campaign={campaign} filters={filters} weights={weights} />}
+      {activeTab === 'config' && (
+        <ConfigTab
+          campaign={campaign}
+          icpName={icpName}
+          minFitScore={minFitScore}
+          weights={weights}
+          highValueAreas={highValueAreas}
+          minGoogleRating={minGoogleRating}
+          minReviews={minReviews}
+        />
+      )}
       {activeTab === 'history' && <HistoryTab campaign={campaign} stats={stats} />}
 
       {/* ── Lead Drawer ──────────────────────────────────────────────── */}
@@ -609,7 +624,23 @@ const CAPTURE_SOURCES: Record<string, { label: string; icon: string }> = {
 // ═══════════════════════════════════════════════════════════════════════════
 // TAB: CONFIGURAÇÃO
 // ═══════════════════════════════════════════════════════════════════════════
-function ConfigTab({ campaign, filters, weights }: { campaign: any; filters: Record<string, any>; weights: Record<string, any> }) {
+function ConfigTab({
+  campaign,
+  icpName,
+  minFitScore,
+  weights,
+  highValueAreas,
+  minGoogleRating,
+  minReviews,
+}: {
+  campaign: any;
+  icpName: string;
+  minFitScore: number;
+  weights: Record<string, any>;
+  highValueAreas: string[];
+  minGoogleRating: number;
+  minReviews: number;
+}) {
   return (
     <div className="space-y-4">
       {/* General settings */}
@@ -620,9 +651,12 @@ function ConfigTab({ campaign, filters, weights }: { campaign: any; filters: Rec
         </div>
         <div className="space-y-3">
           <ConfigRow label="Nome" value={campaign.name} />
-          <ConfigRow label="Fonte de Captação" value={(() => {
-            const src = CAPTURE_SOURCES[filters.capture_source || 'GOOGLE_MAPS'];
-            return src ? `${src.icon} ${src.label}` : '📍 Google Maps Places';
+          <ConfigRow label="Fontes de Captação" value={(() => {
+            const sources = campaign.capture_sources || ['GOOGLE_MAPS'];
+            return sources.map((s: string) => {
+              const src = CAPTURE_SOURCES[s];
+              return src ? `${src.icon} ${src.label}` : s;
+            }).join(', ');
           })()} />
           <ConfigRow label="Segmento / Profissão" value={PROFESSION_LABELS[campaign.profession] || campaign.profession || '—'} />
           <ConfigRow label="Cidades" value={(campaign.cities || []).join(', ') || '—'} />
@@ -651,7 +685,8 @@ function ConfigTab({ campaign, filters, weights }: { campaign: any; filters: Rec
           Perfil de Cliente Ideal (ICP)
         </div>
         <div className="space-y-3">
-          <ConfigRow label="Score mínimo" value={String(filters.min_fit_score ?? 3)} />
+          <ConfigRow label="Perfil ICP Vinculado" value={icpName} />
+          <ConfigRow label="Score mínimo" value={String(minFitScore)} />
           <div>
             <div className="text-[10px] text-[#64748B] font-semibold uppercase tracking-wider mb-1.5">Pesos dos critérios</div>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -674,8 +709,8 @@ function ConfigTab({ campaign, filters, weights }: { campaign: any; filters: Rec
           <div>
             <div className="text-[10px] text-[#64748B] font-semibold uppercase tracking-wider mb-1.5">Bairros de alto valor</div>
             <div className="flex flex-wrap gap-1.5">
-              {(filters.high_value_areas || []).length > 0 ? (
-                (filters.high_value_areas as string[]).map((area: string) => (
+              {highValueAreas.length > 0 ? (
+                highValueAreas.map((area: string) => (
                   <span key={area} className="text-[11px] font-medium px-2.5 py-1 rounded-full bg-[#FFF8F0] text-[#B8740E] border border-[#FDE68A]">{area}</span>
                 ))
               ) : (
@@ -683,8 +718,8 @@ function ConfigTab({ campaign, filters, weights }: { campaign: any; filters: Rec
               )}
             </div>
           </div>
-          <ConfigRow label="Rating mínimo Google" value={String(filters.min_google_rating ?? 4)} />
-          <ConfigRow label="Avaliações mínimas" value={String(filters.min_reviews ?? 5)} />
+          <ConfigRow label="Rating mínimo Google" value={String(minGoogleRating)} />
+          <ConfigRow label="Avaliações mínimas" value={String(minReviews)} />
         </div>
       </div>
 

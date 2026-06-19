@@ -33,6 +33,12 @@ export type Script = Tables['scripts']['Row'];
 export type ScriptInsert = Tables['scripts']['Insert'];
 export type ScriptUpdate = Tables['scripts']['Update'];
 export type ScriptVariation = Tables['script_variations']['Row'];
+export type Objection = Tables['objections']['Row'];
+export type ObjectionInsert = Tables['objections']['Insert'];
+export type ObjectionUpdate = Tables['objections']['Update'];
+export type ICP = Tables['icps']['Row'];
+export type ICPInsert = Tables['icps']['Insert'];
+export type ICPUpdate = Tables['icps']['Update'];
 export type Notification = Tables['notifications']['Row'];
 export type NotificationPreference = Tables['notification_preferences']['Row'];
 export type TenantBilling = Tables['tenant_billing']['Row'];
@@ -102,6 +108,25 @@ function mapError(error: unknown): QueryError {
   return { message: 'Unknown error' };
 }
 
+function mapLeadStatusToBackend(status?: string): string | undefined {
+  if (!status) return undefined;
+  const mapping: Record<string, string> = {
+    'IN_CONVERSATION': 'CONVERSING',
+    'WON': 'CLOSED_WON',
+    'LOST': 'CLOSED_LOST'
+  };
+  return mapping[status] || status;
+}
+
+function mapSourceTypeToBackend(sourceType: string): string {
+  const mapping: Record<string, string> = {
+    'CNPJ_MINER': 'RECEITA_FEDERAL',
+    'TAVILY_B2B_SEARCH': 'CNPJ_PREMIUM',
+    'FIRECRAWL_ENRICHMENT': 'SOCIO_CONTACT'
+  };
+  return mapping[sourceType] || sourceType;
+}
+
 function startOfMonth(date = new Date()): string {
   const d = new Date(date);
   d.setUTCDate(1);
@@ -144,7 +169,8 @@ export const leadsQueries = {
       .order('created_at', { ascending: false })
       .limit(limit);
 
-    if (status) query = query.eq('status', status);
+    const backendStatus = mapLeadStatusToBackend(status);
+    if (backendStatus) query = query.eq('status', backendStatus);
     if (profession) query = query.eq('profession', profession);
     if (campaign_id) query = query.eq('campaign_id', campaign_id);
     if (fit_score_gte !== undefined) query = query.gte('fit_score', fit_score_gte);
@@ -192,7 +218,8 @@ export const leadsQueries = {
         .eq('tenant_id', tenantId)
         .is('deleted_at', null);
 
-      if (statusFilter) q = q.eq('status', statusFilter);
+      const backendStatus = mapLeadStatusToBackend(statusFilter);
+      if (backendStatus) q = q.eq('status', backendStatus);
       if (profession) q = q.eq('profession', profession);
       if (campaign_id) q = q.eq('campaign_id', campaign_id);
       if (fit_score_gte !== undefined) q = q.gte('fit_score', fit_score_gte);
@@ -200,7 +227,7 @@ export const leadsQueries = {
       return q;
     };
 
-    const [total, captured, enriched, contacted, inConversation, meetingScheduled, won, lost] = await Promise.all([
+    const [total, captured, enriched, contacted, conversing, meetingScheduled, closedWon, closedLost] = await Promise.all([
       buildQuery(),
       buildQuery('CAPTURED'),
       buildQuery('ENRICHED'),
@@ -216,10 +243,10 @@ export const leadsQueries = {
       CAPTURED: captured.count ?? 0,
       ENRICHED: enriched.count ?? 0,
       CONTACTED: contacted.count ?? 0,
-      IN_CONVERSATION: inConversation.count ?? 0,
+      IN_CONVERSATION: conversing.count ?? 0,
       MEETING_SCHEDULED: meetingScheduled.count ?? 0,
-      WON: won.count ?? 0,
-      LOST: lost.count ?? 0,
+      WON: closedWon.count ?? 0,
+      LOST: closedLost.count ?? 0,
     };
   },
 
@@ -240,7 +267,8 @@ export const leadsQueries = {
         .order('created_at', { ascending: false })
         .range(from, from + batchSize - 1);
 
-      if (status) query = query.eq('status', status);
+      const backendStatus = mapLeadStatusToBackend(status);
+      if (backendStatus) query = query.eq('status', backendStatus);
       if (profession) query = query.eq('profession', profession);
       if (campaign_id) query = query.eq('campaign_id', campaign_id);
       if (fit_score_gte !== undefined) query = query.gte('fit_score', fit_score_gte);
@@ -360,7 +388,7 @@ export const leadsQueries = {
         name: updateData.name,
         profession: updateData.profession,
         email: updateData.email,
-        status: updateData.status,
+        status: mapLeadStatusToBackend(updateData.status) as any,
         partner_or_owner: updateData.partnerOrOwner,
         years_of_practice: updateData.yearsOfPractice,
         address: updateData.address as any,
@@ -515,7 +543,7 @@ export const campaignsQueries = {
   list: async (tenantId: string) => {
     const { data, error } = await supabase
       .from('campaigns')
-      .select('*')
+      .select('*, icps:icp_id(*)')
       .eq('tenant_id', tenantId)
       .neq('status', 'ARCHIVED' as CampaignStatus)
       .order('created_at', { ascending: false });
@@ -528,7 +556,7 @@ export const campaignsQueries = {
   getById: async (tenantId: string, id: string) => {
     const { data, error } = await supabase
       .from('campaigns')
-      .select('*')
+      .select('*, icps:icp_id(*)')
       .eq('id', id)
       .eq('tenant_id', tenantId)
       .maybeSingle();
@@ -560,6 +588,7 @@ export const campaignsQueries = {
     hourWindowStart?: number;
     hourWindowEnd?: number;
     activeScriptId?: string;
+    icpId: string;
     filters?: Record<string, unknown>;
     searchTags?: string[];
     captureSources?: string[];
@@ -578,6 +607,7 @@ export const campaignsQueries = {
         hour_window_start: campaignData.hourWindowStart ?? 9,
         hour_window_end: campaignData.hourWindowEnd ?? 18,
         active_script_id: campaignData.activeScriptId,
+        icp_id: campaignData.icpId,
         filters: (campaignData.filters || { min_fit_score: 3 }) as any,
         search_tags: campaignData.searchTags || [],
         capture_sources: campaignData.captureSources || ['GOOGLE_MAPS'],
@@ -602,6 +632,7 @@ export const campaignsQueries = {
     hourWindowStart?: number;
     hourWindowEnd?: number;
     activeScriptId?: string;
+    icpId?: string;
     filters?: Record<string, unknown>;
     searchTags?: string[];
     captureSources?: string[];
@@ -629,6 +660,7 @@ export const campaignsQueries = {
     if (updateData.hourWindowStart !== undefined) updatePayload.hour_window_start = updateData.hourWindowStart;
     if (updateData.hourWindowEnd !== undefined) updatePayload.hour_window_end = updateData.hourWindowEnd;
     if (updateData.activeScriptId !== undefined) updatePayload.active_script_id = updateData.activeScriptId;
+    if (updateData.icpId !== undefined) updatePayload.icp_id = updateData.icpId;
     if (updateData.searchTags !== undefined) updatePayload.search_tags = updateData.searchTags;
     if (updateData.captureSources !== undefined) updatePayload.capture_sources = updateData.captureSources;
     if (updateData.state !== undefined) updatePayload.state = updateData.state;
@@ -751,11 +783,13 @@ export const campaignsQueries = {
 
   /** Get campaign stats — KPIs and funnel */
   getStats: async (tenantId: string, campaignId: string) => {
-    const buildCount = (status: string) =>
-      supabase.from('leads').select('id', { count: 'exact', head: true })
-        .eq('tenant_id', tenantId).eq('campaign_id', campaignId).eq('status', status).is('deleted_at', null);
+    const buildCount = (statusFilter: string) => {
+      const backendStatus = mapLeadStatusToBackend(statusFilter) || statusFilter;
+      return supabase.from('leads').select('id', { count: 'exact', head: true })
+        .eq('tenant_id', tenantId).eq('campaign_id', campaignId).eq('status', backendStatus).is('deleted_at', null);
+    };
 
-    const [captured, enriched, contacted, inConversation, meetingScheduled, won, lost, total] = await Promise.all([
+    const [captured, enriched, contacted, conversing, meetingScheduled, closedWon, closedLost, total] = await Promise.all([
       buildCount('CAPTURED'),
       buildCount('ENRICHED'),
       buildCount('CONTACTED'),
@@ -772,12 +806,122 @@ export const campaignsQueries = {
       CAPTURED: captured.count ?? 0,
       ENRICHED: enriched.count ?? 0,
       CONTACTED: contacted.count ?? 0,
-      IN_CONVERSATION: inConversation.count ?? 0,
+      IN_CONVERSATION: conversing.count ?? 0,
       MEETING_SCHEDULED: meetingScheduled.count ?? 0,
-      WON: won.count ?? 0,
-      LOST: lost.count ?? 0,
+      WON: closedWon.count ?? 0,
+      LOST: closedLost.count ?? 0,
     };
   },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ICPS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export const icpsQueries = {
+  /** List all ICPs for a tenant */
+  list: async (tenantId: string) => {
+    const { data, error } = await supabase
+      .from('icps')
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .order('created_at', { ascending: false });
+
+    if (error) return { data: [], error: mapError(error) };
+    return { data: data ?? [], error: null };
+  },
+
+  /** Get a single ICP by ID */
+  getById: async (tenantId: string, id: string) => {
+    const { data, error } = await supabase
+      .from('icps')
+      .select('*')
+      .eq('id', id)
+      .eq('tenant_id', tenantId)
+      .maybeSingle();
+
+    if (error) return { data: null, error: mapError(error) };
+    return { data, error: null };
+  },
+
+  /** Create a new ICP */
+  create: async (tenantId: string, icpData: {
+    name: string;
+    minFitScore?: number;
+    weights?: Record<string, number>;
+    highValueAreas?: string[];
+    minGoogleRating?: number;
+    minReviews?: number;
+  }) => {
+    const { data, error } = await supabase
+      .from('icps')
+      .insert({
+        id: crypto.randomUUID(),
+        tenant_id: tenantId,
+        name: icpData.name,
+        min_fit_score: icpData.minFitScore ?? 3,
+        weights: (icpData.weights || {
+          profession_match: 3,
+          whatsapp_valid: 2,
+          is_owner: 2,
+          high_value_area: 1,
+          cnpj_years: 1,
+          google_reputation: 1
+        }) as any,
+        high_value_areas: icpData.highValueAreas || [],
+        min_google_rating: icpData.minGoogleRating ?? 4.0,
+        min_reviews: icpData.minReviews ?? 5,
+        updated_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+
+    if (error) return { data: null, error: mapError(error) };
+    return { data, error: null };
+  },
+
+  /** Update an existing ICP */
+  update: async (tenantId: string, id: string, updateData: {
+    name?: string;
+    minFitScore?: number;
+    weights?: Record<string, number>;
+    highValueAreas?: string[];
+    minGoogleRating?: number;
+    minReviews?: number;
+  }) => {
+    const updatePayload: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+    };
+    if (updateData.name !== undefined) updatePayload.name = updateData.name;
+    if (updateData.minFitScore !== undefined) updatePayload.min_fit_score = updateData.minFitScore;
+    if (updateData.weights !== undefined) updatePayload.weights = updateData.weights as any;
+    if (updateData.highValueAreas !== undefined) updatePayload.high_value_areas = updateData.highValueAreas;
+    if (updateData.minGoogleRating !== undefined) updatePayload.min_google_rating = updateData.minGoogleRating;
+    if (updateData.minReviews !== undefined) updatePayload.min_reviews = updateData.minReviews;
+
+    const { data, error } = await supabase
+      .from('icps')
+      .update(updatePayload)
+      .eq('id', id)
+      .eq('tenant_id', tenantId)
+      .select()
+      .single();
+
+    if (error) return { data: null, error: mapError(error) };
+    return { data, error: null };
+  },
+
+  /** Delete an ICP */
+  delete: async (tenantId: string, id: string) => {
+    const { error } = await supabase
+      .from('icps')
+      .delete()
+      .eq('id', id)
+      .eq('tenant_id', tenantId);
+
+    if (error) return { error: mapError(error) };
+    return { error: null };
+  }
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1185,6 +1329,20 @@ export const meetingsQueries = {
           commission_cents: updateData.commission_cents,
         } as any,
       });
+    } else if (updateData.status === 'CANCELLED') {
+      const now = new Date().toISOString();
+      await supabase
+        .from('leads')
+        .update({ status: 'CONTACTED' as const, updated_at: now })
+        .eq('id', meeting.lead_id);
+
+      await supabase.from('lead_events').insert({
+        tenant_id: tenantId,
+        lead_id: meeting.lead_id,
+        event_type: 'meeting_cancelled',
+        actor_id: userId || null,
+        payload: { meeting_id: id } as any,
+      });
     }
 
     return { data, error: null };
@@ -1227,6 +1385,12 @@ export const meetingsQueries = {
       .single();
 
     if (error) return { data: null, error: mapError(error) };
+
+    // Ensure lead status is MEETING_SCHEDULED
+    await supabase
+      .from('leads')
+      .update({ status: 'MEETING_SCHEDULED' as const, updated_at: new Date().toISOString() })
+      .eq('id', oldMeeting.lead_id);
 
     await supabase.from('lead_events').insert({
       tenant_id: tenantId,
@@ -1283,6 +1447,9 @@ export const scriptsQueries = {
     targetProfession?: Profession;
     variables?: string[];
     aiInstructions?: string;
+    restrictions?: string;
+    contextDocuments?: any;
+    guardiansConfig?: any;
   }) => {
     const scriptId = crypto.randomUUID();
     const { data, error } = await supabase
@@ -1297,6 +1464,9 @@ export const scriptsQueries = {
         ai_instructions: scriptData.aiInstructions || null,
         status: 'DRAFT' as const,
         variables: scriptData.variables || [],
+        restrictions: scriptData.restrictions || null,
+        context_documents: scriptData.contextDocuments || null,
+        guardians_config: scriptData.guardiansConfig || {},
         updated_at: new Date().toISOString(),
       })
       .select('*, script_variations(*)')
@@ -1318,6 +1488,9 @@ export const scriptsQueries = {
     status?: ScriptStatus;
     aiTools?: string[];
     flow?: Record<string, unknown>;
+    restrictions?: string;
+    contextDocuments?: any;
+    guardiansConfig?: any;
     variations?: Array<{ content: string; message?: string; weight?: number }>;
   }) => {
     // Verify script exists
@@ -1339,6 +1512,9 @@ export const scriptsQueries = {
     if (updateData.status !== undefined) updatePayload.status = updateData.status;
     if (updateData.aiTools !== undefined) updatePayload.ai_tools = updateData.aiTools;
     if (updateData.flow !== undefined) updatePayload.flow = updateData.flow;
+    if (updateData.restrictions !== undefined) updatePayload.restrictions = updateData.restrictions;
+    if (updateData.contextDocuments !== undefined) updatePayload.context_documents = updateData.contextDocuments;
+    if (updateData.guardiansConfig !== undefined) updatePayload.guardians_config = updateData.guardiansConfig;
 
     await supabase.from('scripts').update(updatePayload as any).eq('id', id);
 
@@ -1474,6 +1650,99 @@ export const scriptsQueries = {
       },
       error: null
     };
+  },
+
+  getNodePerformance: async (tenantId: string, scriptId: string) => {
+    // 1. Fetch script flow to get the list of nodes
+    const { data: script, error: scriptErr } = await supabase
+      .from('scripts')
+      .select('flow')
+      .eq('id', scriptId)
+      .eq('tenant_id', tenantId)
+      .single();
+
+    if (scriptErr) return { data: null, error: mapError(scriptErr) };
+
+    const flow = script?.flow as any;
+    if (!flow || !flow.nodes || !Array.isArray(flow.nodes)) {
+      return { data: [], error: null };
+    }
+
+    // 2. Fetch conversations using this script
+    const { data: conversations, error: convErr } = await supabase
+      .from('conversations')
+      .select('id, current_node_id, status, last_message_at')
+      .eq('script_id', scriptId)
+      .eq('tenant_id', tenantId);
+
+    if (convErr) return { data: null, error: mapError(convErr) };
+
+    // 3. Fetch messages for these conversations that have script_node_id
+    const convIds = (conversations || []).map(c => c.id);
+    let messages: any[] = [];
+    if (convIds.length > 0) {
+      const { data: msgs, error: msgErr } = await supabase
+        .from('messages')
+        .select('conversation_id, direction, script_node_id')
+        .in('conversation_id', convIds)
+        .not('script_node_id', 'is', null);
+      if (!msgErr && msgs) {
+        messages = msgs;
+      }
+    }
+
+    // 4. Calculate metrics per node
+    const nodesPerformance = flow.nodes
+      .filter((node: any) => node.type !== 'start' && node.type !== 'trigger')
+      .map((node: any) => {
+        const nodeId = node.id;
+        const nodeTitle = node.data?.title || node.type || nodeId;
+
+        // Conversations that reached this node:
+        // Either they currently are on this node, OR they have at least one message logged at this node
+        const reachedConvIds = new Set<string>();
+        
+        conversations?.forEach(c => {
+          if (c.current_node_id === nodeId) {
+            reachedConvIds.add(c.id);
+          }
+        });
+
+        messages.forEach(m => {
+          if (m.script_node_id === nodeId) {
+            reachedConvIds.add(m.conversation_id);
+          }
+        });
+
+        const totalReached = reachedConvIds.size;
+
+        // Of those who reached, how many are currently stopped on this node?
+        let stoppedHere = 0;
+        reachedConvIds.forEach(cid => {
+          const conv = conversations?.find(c => c.id === cid);
+          if (conv && conv.current_node_id === nodeId) {
+            stoppedHere++;
+          }
+        });
+
+        const abandoned = stoppedHere;
+        const advanced = totalReached - abandoned;
+
+        const abandonmentRate = totalReached > 0 ? Math.round((abandoned / totalReached) * 100) : 0;
+        const conversionRate = totalReached > 0 ? Math.round((advanced / totalReached) * 100) : 0;
+
+        return {
+          nodeId,
+          nodeTitle,
+          totalReached,
+          abandoned,
+          advanced,
+          abandonmentRate,
+          conversionRate,
+        };
+      });
+
+    return { data: nodesPerformance, error: null };
   },
 };
 
@@ -2500,11 +2769,12 @@ export const leadSourcesQueries = {
   },
 
   toggle: async (tenantId: string, sourceType: string, status: 'ACTIVE' | 'PAUSED') => {
+    const backendSourceType = mapSourceTypeToBackend(sourceType);
     const { data: existing } = await supabase
       .from('lead_sources' as any)
       .select('*')
       .eq('tenant_id', tenantId)
-      .eq('source_type', sourceType)
+      .eq('source_type', backendSourceType)
       .maybeSingle();
 
     if (existing) {
@@ -2512,7 +2782,7 @@ export const leadSourcesQueries = {
         .from('lead_sources' as any)
         .update({ status, updated_at: new Date().toISOString() } as any)
         .eq('tenant_id', tenantId)
-        .eq('source_type', sourceType)
+        .eq('source_type', backendSourceType)
         .select()
         .single();
       if (error) return { data: null, error: mapError(error) };
@@ -2522,7 +2792,7 @@ export const leadSourcesQueries = {
         .from('lead_sources' as any)
         .insert({
           tenant_id: tenantId,
-          source_type: sourceType,
+          source_type: backendSourceType,
           status,
         } as any)
         .select()
@@ -2544,7 +2814,10 @@ export const leadSourcesQueries = {
       | 'FLEET_TRACKER'
       | 'JUDICIAL_TRACKER'
       | 'TECHNOGRAPHIC'
+      | 'TAVILY_B2B_SEARCH'
+      | 'FIRECRAWL_ENRICHMENT'
   ) => {
+    const backendSourceType = mapSourceTypeToBackend(sourceType);
     const prices: Record<string, number> = { 
       CNPJ_PREMIUM: 14900, 
       SOCIO_CONTACT: 19900, 
@@ -2556,7 +2829,7 @@ export const leadSourcesQueries = {
       JUDICIAL_TRACKER: 24900,
       TECHNOGRAPHIC: 9900,
     };
-    const priceCents = prices[sourceType] || 0;
+    const priceCents = prices[backendSourceType] || 0;
     
     const addonMapping: Record<string, string> = {
       CNPJ_PREMIUM: 'source_cnpj_premium',
@@ -2569,7 +2842,7 @@ export const leadSourcesQueries = {
       JUDICIAL_TRACKER: 'source_judicial_tracker',
       TECHNOGRAPHIC: 'source_technographic',
     };
-    const addonType = addonMapping[sourceType] || '';
+    const addonType = addonMapping[backendSourceType] || '';
 
     if (!addonType) {
       return { data: null, error: { message: 'Invalid premium source type' } };
@@ -2595,7 +2868,7 @@ export const leadSourcesQueries = {
       .from('lead_sources' as any)
       .select('*')
       .eq('tenant_id', tenantId)
-      .eq('source_type', sourceType)
+      .eq('source_type', backendSourceType)
       .maybeSingle();
 
     if (existing) {
@@ -2603,7 +2876,7 @@ export const leadSourcesQueries = {
         .from('lead_sources' as any)
         .update({ status: 'ACTIVE', addon_id: addonId, updated_at: new Date().toISOString() } as any)
         .eq('tenant_id', tenantId)
-        .eq('source_type', sourceType)
+        .eq('source_type', backendSourceType)
         .select()
         .single();
       if (error) return { data: null, error: mapError(error) };
@@ -2613,7 +2886,7 @@ export const leadSourcesQueries = {
         .from('lead_sources' as any)
         .insert({
           tenant_id: tenantId,
-          source_type: sourceType,
+          source_type: backendSourceType,
           status: 'ACTIVE',
           addon_id: addonId,
         } as any)
@@ -2622,5 +2895,85 @@ export const leadSourcesQueries = {
       if (error) return { data: null, error: mapError(error) };
       return { data: { leadSource: data, addon }, error: null };
     }
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// OBJECTIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export const objectionsQueries = {
+  list: async (tenantId: string, scriptId?: string) => {
+    let query = supabase
+      .from('objections')
+      .select('*')
+      .eq('tenant_id', tenantId);
+    
+    if (scriptId) {
+      query = query.or(`script_id.eq.${scriptId},script_id.is.null`);
+    }
+
+    const { data, error } = await query.order('created_at', { ascending: false });
+
+    if (error) return { data: [], error: mapError(error) };
+    return { data: (data ?? []) as Objection[], error: null };
+  },
+
+  create: async (tenantId: string, objectionData: {
+    scriptId?: string | null;
+    title: string;
+    pattern: string;
+    response: string;
+  }) => {
+    const { data, error } = await supabase
+      .from('objections')
+      .insert({
+        tenant_id: tenantId,
+        script_id: objectionData.scriptId || null,
+        title: objectionData.title,
+        pattern: objectionData.pattern,
+        response: objectionData.response,
+        updated_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+
+    if (error) return { data: null, error: mapError(error) };
+    return { data: data as Objection, error: null };
+  },
+
+  update: async (tenantId: string, id: string, objectionData: {
+    scriptId?: string | null;
+    title?: string;
+    pattern?: string;
+    response?: string;
+  }) => {
+    const updatePayload: Record<string, any> = { updated_at: new Date().toISOString() };
+    if (objectionData.scriptId !== undefined) updatePayload.script_id = objectionData.scriptId;
+    if (objectionData.title !== undefined) updatePayload.title = objectionData.title;
+    if (objectionData.pattern !== undefined) updatePayload.pattern = objectionData.pattern;
+    if (objectionData.response !== undefined) updatePayload.response = objectionData.response;
+
+    const { data, error } = await supabase
+      .from('objections')
+      .update(updatePayload)
+      .eq('id', id)
+      .eq('tenant_id', tenantId)
+      .select()
+      .single();
+
+    if (error) return { data: null, error: mapError(error) };
+    return { data: data as Objection, error: null };
+  },
+
+  delete: async (tenantId: string, id: string) => {
+    const { error } = await supabase
+      .from('objections')
+      .delete()
+      .eq('id', id)
+      .eq('tenant_id', tenantId);
+
+    if (error) return { success: false, error: mapError(error) };
+    return { success: true, error: null };
   }
 };

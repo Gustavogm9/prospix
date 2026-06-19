@@ -543,23 +543,47 @@ async function crawlWebsite(urlStr: string | null | undefined): Promise<CrawlRes
 }
 
 // ── Fit Score Calculator ────────────────────────────────────────────────────
-function calcFitScore(lead: any, campaign: any, highValueAreas: string[], activeSources: Set<string>): number {
+function calcFitScore(lead: any, campaign: any, icp: any, activeSources: Set<string>): number {
   let score = 0;
+  const weights = icp?.weights || {
+    profession_match: 3.0,
+    whatsapp_valid: 2.0,
+    is_owner: 2.0,
+    high_value_area: 1.0,
+    cnpj_years: 1.0,
+    google_reputation: 1.0
+  };
 
-  if (lead.profession && lead.profession === campaign.profession) score += 3.0;
-  if (lead.whatsapp_valid === true) score += 2.0;
-  else if (lead.whatsapp) score += 1.0;
-  if (lead.partner_or_owner) score += 2.0;
+  if (lead.profession && lead.profession === campaign.profession) {
+    score += Number(weights.profession_match ?? 3.0);
+  }
+  if (lead.whatsapp_valid === true) {
+    score += Number(weights.whatsapp_valid ?? 2.0);
+  } else if (lead.whatsapp) {
+    score += 1.0;
+  }
+  if (lead.partner_or_owner) {
+    score += Number(weights.is_owner ?? 2.0);
+  }
 
   const nb = lead.address?.neighborhood;
-  if (nb && highValueAreas.some((a: string) => a.toLowerCase().trim() === nb.toLowerCase().trim())) score += 1.0;
+  const highValueAreas = icp?.high_value_areas || [];
+  if (nb && highValueAreas.some((a: string) => a.toLowerCase().trim() === nb.toLowerCase().trim())) {
+    score += Number(weights.high_value_area ?? 1.0);
+  }
 
   const years = lead.years_of_practice || lead.metadata?.cnpj_age_years || 0;
-  score += Math.min(years / 5, 1.0);
+  if (years > 0) {
+    score += Math.min(years / 5, 1.0) * Number(weights.cnpj_years ?? 1.0);
+  }
 
   const rating = Number(lead.google_rating || 0);
   const reviews = lead.google_reviews_count || 0;
-  if (rating >= 4.5 && reviews >= 10) score += 1.0;
+  const minRating = Number(icp?.min_google_rating ?? 4.0);
+  const minReviews = Number(icp?.min_reviews ?? 5);
+  if (rating >= minRating && reviews >= minReviews) {
+    score += Number(weights.google_reputation ?? 1.0);
+  }
 
   // ── Premium Add-ons ──
   // 1. Instagram / Social Linker (+1.0 point if followers found)
@@ -679,7 +703,10 @@ serve(async (req: Request) => {
 
       console.log(`  📋 ${leads.length} leads to enrich`);
 
-      const { data: campaigns } = await supabase.from("campaigns").select("*").eq("tenant_id", tid);
+      const { data: campaigns } = await supabase
+        .from("campaigns")
+        .select("*, icps:icp_id(*)")
+        .eq("tenant_id", tid);
       const campaignMap = Object.fromEntries((campaigns || []).map((c: any) => [c.id, c]));
 
       const { data: tenant } = await supabase.from("tenants").select("*").eq("id", tid).single();
@@ -1518,23 +1545,46 @@ serve(async (req: Request) => {
 
           // ── Step C: Recalculate fit score ───────────────────────
           const campaign = campaignMap[lead.campaign_id] || { profession: lead.profession || "" };
-          const filters = campaign.filters || {};
-          const highValueAreas: string[] = filters.high_value_areas || tenant?.high_value_areas || [];
-          const minFitScore: number = filters.min_fit_score ?? 5;
+          const icp = campaign.icps || campaign.filters || {};
+          const weights = icp.weights || {
+            profession_match: 3.0,
+            whatsapp_valid: 2.0,
+            is_owner: 2.0,
+            high_value_area: 1.0,
+            cnpj_years: 1.0,
+            google_reputation: 1.0
+          };
+          const highValueAreas: string[] = icp.high_value_areas || tenant?.high_value_areas || [];
+          const minFitScore: number = icp.min_fit_score ?? 5;
 
           // Calculate individual score components for transparency
           const scoreBreakdown: Record<string, number> = {};
-          if (lead.profession && lead.profession === campaign.profession) scoreBreakdown["profissao_match"] = 3.0;
-          if (whatsappValid === true) scoreBreakdown["whatsapp_valido"] = 2.0;
-          else if (lead.whatsapp) scoreBreakdown["tem_telefone"] = 1.0;
-          if (partnerOrOwner) scoreBreakdown["socio_ou_dono"] = 2.0;
+          if (lead.profession && lead.profession === campaign.profession) {
+            scoreBreakdown["profissao_match"] = Number(weights.profession_match ?? 3.0);
+          }
+          if (whatsappValid === true) {
+            scoreBreakdown["whatsapp_valido"] = Number(weights.whatsapp_valid ?? 2.0);
+          } else if (lead.whatsapp) {
+            scoreBreakdown["tem_telefone"] = 1.0;
+          }
+          if (partnerOrOwner) {
+            scoreBreakdown["socio_ou_dono"] = Number(weights.is_owner ?? 2.0);
+          }
           const nb = lead.address?.neighborhood;
-          if (nb && highValueAreas.some((a: string) => a.toLowerCase().trim() === nb.toLowerCase().trim())) scoreBreakdown["bairro_premium"] = 1.0;
+          if (nb && highValueAreas.some((a: string) => a.toLowerCase().trim() === nb.toLowerCase().trim())) {
+            scoreBreakdown["bairro_premium"] = Number(weights.high_value_area ?? 1.0);
+          }
           const years = yearsOfPractice;
-          if (years > 0) scoreBreakdown["tempo_mercado"] = Math.min(years / 5, 1.0);
+          if (years > 0) {
+            scoreBreakdown["tempo_mercado"] = Math.min(years / 5, 1.0) * Number(weights.cnpj_years ?? 1.0);
+          }
           const rating = Number(lead.google_rating || 0);
           const reviews = lead.google_reviews_count || 0;
-          if (rating >= 4.5 && reviews >= 10) scoreBreakdown["avaliacao_google"] = 1.0;
+          const minRating = Number(icp.min_google_rating ?? 4.0);
+          const minReviews = Number(icp.min_reviews ?? 5);
+          if (rating >= minRating && reviews >= minReviews) {
+            scoreBreakdown["avaliacao_google"] = Number(weights.google_reputation ?? 1.0);
+          }
 
           // ── Premium Add-on score breakdown additions ──
           if (activeSources.has("INSTAGRAM_SCRAPER") && metadata.instagram) {
@@ -1578,7 +1628,7 @@ serve(async (req: Request) => {
             years_of_practice: yearsOfPractice,
             metadata,
           };
-          const fitScore = calcFitScore(enrichedLead, campaign, highValueAreas, activeSources);
+          const fitScore = calcFitScore(enrichedLead, campaign, icp, activeSources);
           const finalStatus = fitScore >= minFitScore ? "ENRICHED" : "ARCHIVED";
 
           events.push({

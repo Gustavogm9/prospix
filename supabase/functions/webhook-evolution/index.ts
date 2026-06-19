@@ -188,6 +188,60 @@ function buildConversationContext(messages: any[], leadName: string): string {
   return ctx;
 }
 
+function buildLeadEnrichedPrompt(lead: any): string {
+  if (!lead) return "";
+  
+  let prompt = "\n\n### 👤 DADOS ENRIQUECIDOS DO LEAD (Use para contextualizar e personalizar a abordagem):\n";
+  
+  const firstName = lead.name ? lead.name.split(" ")[0] : "Lead";
+  prompt += `- **Nome de tratamento**: ${firstName}\n`;
+  
+  if (lead.profession) {
+    prompt += `- **Profissão/Nicho**: ${lead.profession}\n`;
+  }
+  
+  if (lead.partner_or_owner !== null) {
+    prompt += `- **Cargo/Socio-proprietário**: ${lead.partner_or_owner ? "Sim" : "Não"}\n`;
+  }
+  
+  if (lead.years_of_practice) {
+    prompt += `- **Tempo de atuação**: ${lead.years_of_practice} anos\n`;
+  }
+
+  if (lead.fit_score) {
+    prompt += `- **Score de Qualificação Interno**: ${lead.fit_score}/100\n`;
+  }
+
+  if (lead.metadata) {
+    const meta = typeof lead.metadata === "string" ? JSON.parse(lead.metadata) : lead.metadata;
+    if (meta.company_name) {
+      prompt += `- **Nome da Empresa**: ${meta.company_name}\n`;
+    }
+    if (meta.segment) {
+      prompt += `- **Segmento da Empresa**: ${meta.segment}\n`;
+    }
+    if (meta.revenue_range || meta.estimated_revenue) {
+      prompt += `- **Faturamento estimado**: ${meta.revenue_range || meta.estimated_revenue}\n`;
+    }
+    if (meta.employee_count) {
+      prompt += `- **Número de funcionários**: ${meta.employee_count}\n`;
+    }
+    if (meta.city || meta.state) {
+      prompt += `- **Localização**: ${meta.city || ""}${meta.city && meta.state ? "/" : ""}${meta.state || ""}\n`;
+    }
+  }
+
+  if (lead.email) {
+    const parts = lead.email.split("@");
+    if (parts.length === 2) {
+      const maskedEmail = parts[0].slice(0, 3) + "***@" + parts[1];
+      prompt += `- **E-mail (mascarado)**: ${maskedEmail}\n`;
+    }
+  }
+
+  return prompt;
+}
+
 // ── Guardrails ──────────────────────────────────────────────────────────────
 function applyGuardrails(text: string): string {
   let cleaned = text.replace(/<[^>]*>?/gm, ''); // remove html
@@ -207,6 +261,69 @@ function applyGuardrails(text: string): string {
   }
 
   return cleaned.trim();
+}
+
+function getStartNode(flow: any): any {
+  if (!flow || !flow.nodes || !Array.isArray(flow.nodes) || flow.nodes.length === 0) return null;
+  const nodes = flow.nodes;
+  
+  const startNode = nodes.find((n: any) => 
+    n.type === 'trigger' || 
+    n.type === 'start' || 
+    String(n.id).toLowerCase().includes('start') || 
+    String(n.id).toLowerCase().includes('trigger')
+  );
+  if (startNode) return startNode;
+  
+  const edges = flow.edges || [];
+  const targetIds = new Set(edges.map((e: any) => e.target));
+  const noIncoming = nodes.find((n: any) => !targetIds.has(n.id));
+  if (noIncoming) return noIncoming;
+
+  return nodes[0];
+}
+
+async function classifyNextNode(
+  leadMessage: string,
+  currentNode: any,
+  outgoingEdges: any[],
+  nodes: any[]
+): Promise<string | null> {
+  if (!outgoingEdges || outgoingEdges.length === 0) return null;
+  if (outgoingEdges.length === 1) {
+    return outgoingEdges[0].target;
+  }
+
+  const options = outgoingEdges.map((e, idx) => {
+    const targetNode = nodes.find(n => n.id === e.target);
+    const label = e.data?.label || e.label || `Avançar para ${targetNode?.data?.title || targetNode?.type || e.target}`;
+    return `${idx + 1}. ID: ${e.target} - Condição: "${label}"`;
+  }).join("\n");
+
+  const prompt = `Você é um motor de máquina de estados de conversação B2B.
+O lead está na etapa: "${currentNode.data?.title || currentNode.type || currentNode.id}"
+A mensagem que o lead enviou é: "${leadMessage}"
+
+Temos as seguintes transições de saída possíveis a partir deste nó:
+${options}
+
+Qual opção de saída (ou seja, o ID do nó de destino) descreve melhor a resposta do lead?
+Responda APENAS com o ID do nó escolhido (ex: "node_1234"). Se nenhuma opção se adequar bem, responda com o ID da opção que parecer mais razoável ou que represente um fluxo padrão de avanço.`;
+
+  try {
+    const result = await callOpenAI(prompt, leadMessage, 0.1, 100);
+    const matchedId = result.content.trim();
+    
+    const isValid = outgoingEdges.some(e => e.target === matchedId);
+    if (isValid) return matchedId;
+
+    const found = outgoingEdges.find(e => matchedId.includes(e.target));
+    if (found) return found.target;
+  } catch (err) {
+    console.error("Erro ao classificar transição de nó:", err);
+  }
+
+  return outgoingEdges[0].target;
 }
 
 function parseFlowToPrompt(flow: any): string {
@@ -433,6 +550,24 @@ serve(async (req: Request) => {
       });
     }
 
+    // Buscar o script_variation_id da primeira mensagem outbound se houver
+    let scriptVariationId: string | null = null;
+    try {
+      const { data: firstOutbound } = await supabase
+        .from("messages")
+        .select("script_variation_id")
+        .eq("conversation_id", conversation.id)
+        .not("script_variation_id", "is", null)
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (firstOutbound?.script_variation_id) {
+        scriptVariationId = firstOutbound.script_variation_id;
+      }
+    } catch (err) {
+      console.error("Erro ao buscar script_variation_id da conversa:", err);
+    }
+
     // ── Insert message ───────────────────────────────
     const now = new Date().toISOString();
 
@@ -464,6 +599,9 @@ serve(async (req: Request) => {
         content: messageContent,
         delivery_status: "DELIVERED",
         whatsapp_message_id: whatsappMessageId,
+        script_id: conversation.script_id || null,
+        script_node_id: conversation.current_node_id || null,
+        script_variation_id: scriptVariationId || null,
       });
 
       // Update conversation and turn OFF AI handling
@@ -492,6 +630,9 @@ serve(async (req: Request) => {
       content: messageContent,
       delivery_status: "DELIVERED",
       whatsapp_message_id: whatsappMessageId,
+      script_id: conversation.script_id || null,
+      script_node_id: conversation.current_node_id || null,
+      script_variation_id: scriptVariationId || null,
     });
 
     // Update conversation timestamps + last message preview
@@ -760,20 +901,91 @@ serve(async (req: Request) => {
     let aiTools: string[] | null = [];
     let aiInstructions: string | null = null;
     let scriptFlow: any = null;
+    let guardiansConfig: any = null;
     
     if (conversation.script_id) {
       const { data: script } = await supabase
         .from("scripts")
-        .select("base_message, name, ai_tools, ai_instructions, flow")
+        .select("base_message, name, ai_tools, ai_instructions, flow, restrictions, context_documents, guardians_config")
         .eq("id", conversation.script_id)
         .single();
       scriptBaseMessage = script?.base_message || null;
       aiTools = script?.ai_tools || [];
       aiInstructions = script?.ai_instructions || null;
       scriptFlow = script?.flow || null;
+      guardiansConfig = script?.guardians_config || null;
+
+      if (script?.restrictions) {
+        aiInstructions = (aiInstructions || "") + "\n\n### ⛔ RESTRIÇÕES DA IA (O que você NUNCA deve falar/fazer):\n" + script.restrictions;
+      }
+      if (script?.context_documents && Array.isArray(script.context_documents) && script.context_documents.length > 0) {
+        let docsPrompt = "\n\n### 📖 MATERIAIS DE APOIO (Documentos de Referência):\nUse as informações contidas nos links abaixo para tirar dúvidas técnicas do lead se ele perguntar:\n";
+        script.context_documents.forEach((doc: any) => {
+          docsPrompt += `- **${doc.title}**: ${doc.url}\n`;
+        });
+        aiInstructions = (aiInstructions || "") + docsPrompt;
+      }
     }
 
-    if (scriptFlow) {
+    let isStateMachineEnabled = false;
+    try {
+      const { data: flag } = await supabase
+        .from("feature_flags")
+        .select("enabled")
+        .eq("key", "FLAG_SCRIPT_STATE_MACHINE")
+        .or(`tenant_id.eq.${tenantId},tenant_id.is.null`)
+        .order("tenant_id", { nullsFirst: false })
+        .limit(1)
+        .maybeSingle();
+      if (flag?.enabled) {
+        isStateMachineEnabled = true;
+      }
+    } catch (err) {
+      console.error("Erro ao verificar feature flag FLAG_SCRIPT_STATE_MACHINE:", err);
+    }
+
+    if (isStateMachineEnabled && scriptFlow) {
+      const startNode = getStartNode(scriptFlow);
+      let currentNode = scriptFlow.nodes.find((n: any) => n.id === conversation.current_node_id) || startNode;
+
+      if (currentNode) {
+        let currentNodeId = currentNode.id;
+        const outgoingEdges = (scriptFlow.edges || []).filter((e: any) => e.source === currentNode.id);
+
+        if (recentMessages && recentMessages.length > 0 && outgoingEdges.length > 0) {
+          const transitionNodeId = await classifyNextNode(messageContent, currentNode, outgoingEdges, scriptFlow.nodes);
+          if (transitionNodeId) {
+            const nextNode = scriptFlow.nodes.find((n: any) => n.id === transitionNodeId);
+            if (nextNode) {
+              currentNode = nextNode;
+              currentNodeId = nextNode.id;
+              
+              await supabase
+                .from("conversations")
+                .update({ current_node_id: currentNodeId })
+                .eq("id", conversation.id);
+            }
+          }
+        } else if (!conversation.current_node_id) {
+          await supabase
+            .from("conversations")
+            .update({ current_node_id: currentNodeId })
+            .eq("id", conversation.id);
+        }
+
+        const nodeTitle = currentNode.data?.title || currentNode.type || "Etapa Atual";
+        const nodeContent = currentNode.data?.message || currentNode.data?.content || "";
+
+        const stateMachineInstructions = `
+### 🤖 ETAPA DO FLUXO ATIVA (MÁQUINA DE ESTADOS):
+Você está na etapa de conversa: **[${nodeTitle}]**
+Mensagem de referência ou instrução para esta etapa: "${nodeContent}"
+Importante: Gere a resposta para o lead com base nesta etapa atual e garanta que está avançando no fluxo de conversa de forma natural.
+`;
+        aiInstructions = (aiInstructions || "") + "\n" + stateMachineInstructions;
+        console.log(`  🤖 Máquina de Estados: Nó ativo ${nodeTitle} (${currentNodeId}) injetado no prompt.`);
+      }
+    } else if (scriptFlow) {
       const flowInstructions = parseFlowToPrompt(scriptFlow);
       if (flowInstructions) {
         aiInstructions = (aiInstructions || "") + "\n\n" + flowInstructions;
@@ -802,21 +1014,49 @@ serve(async (req: Request) => {
       console.log("  🧬 Contexto de Negócio injetado no prompt.");
     }
 
-    if (classification.intent === "OBJECTION") {
+    const leadEnrichedPrompt = buildLeadEnrichedPrompt(lead);
+    if (leadEnrichedPrompt) {
+      aiInstructions = (aiInstructions || "") + leadEnrichedPrompt;
+      console.log("  👤 Dados Enriquecidos do Lead injetados no prompt.");
+    }
+
+    const objectionsEnabled = guardiansConfig?.objections_enabled !== false;
+    const qualificationEnabled = guardiansConfig?.qualification_enabled !== false;
+    const shortResponsesEnabled = guardiansConfig?.short_responses_enabled !== false;
+
+    if (classification.intent === "OBJECTION" && objectionsEnabled) {
+      let matchedObjectionsText = "";
+      try {
+        const { data: dbObjections } = await supabase
+          .from("objections")
+          .select("title, pattern, response")
+          .eq("tenant_id", tenantId)
+          .or(`script_id.eq.${conversation.script_id},script_id.is.null`);
+
+        if (dbObjections && dbObjections.length > 0) {
+          matchedObjectionsText = "\n\n### 🛡️ RESPOSTAS DE CONTORNO ESPECÍFICAS CADASTRADAS:\nUse as regras de resposta abaixo caso o lead apresente alguma destas objeções:\n";
+          dbObjections.forEach((obj: any) => {
+            matchedObjectionsText += `- Se a objeção for sobre **${obj.title}** (ou semelhante a **"${obj.pattern}"**), use como guia esta resposta: "${obj.response}"\n`;
+          });
+        }
+      } catch (err) {
+        console.error("Erro ao buscar objeções estruturadas:", err);
+      }
+
       const objectionGuardrail = `
 
 ### 🛡️ GUARDIÃO DE OBJEÇÕES (Framework JEB BLOUNT - Objections):
 O lead acabou de apresentar uma objeção (tempo, preço, status quo, já tem fornecedor, etc).
-APLIQUE IMEDIATAMENTE O FRAMEWORK L-D-A (Ledge, Disrupt, Ask) de Jeb Blount:
+APLIQUE IMEDIATAMENTE O FRAMEWORK L-D-A (Ledge, Disrupt, Ask) de Jeb Blount para contornar a objeção:
 1. **Ledge (Apoio/Empatia):** Concorde ou valide a objeção rapidamente. Nunca bata de frente. (Ex: "Entendo perfeitamente a correria", "Faz todo sentido você já estar satisfeito com seu fornecedor atual").
 2. **Disrupt (Ruptura):** Use um padrão de interrupção (ex técnica do "É exatamente por isso..."). (Ex: "É exatamente por isso que eu estou te chamando, a maioria dos nossos clientes também pensava assim até descobrir que...").
-3. **Ask (Pergunta para Retomar Controle):** Feche a mensagem sempre com uma pergunta focada em resolver o problema dele.
-REGRA DE OURO (Prospecção Fanática): Não compre a objeção como um "não" definitivo. É apenas um reflexo. Mantenha a energia e avance para o próximo passo.`;
+3. **Ask (Pergunta para Retomar Controle):** Feche a mensagem sempre com uma pergunta focada em fechar a reunião ou avançar para o próximo passo.
+REGRA DE OURO: Integre as respostas recomendadas de contorno abaixo ao fluxo L-D-A.${matchedObjectionsText}`;
       aiInstructions = (aiInstructions || "") + objectionGuardrail;
-      console.log("  🛡️ Guardião 2: Framework de Objeção (Jeb Blount) injetado no prompt.");
+      console.log("  🛡️ Guardião 2: Framework de Objeção (Jeb Blount) e Objeções Estruturadas injetados no prompt.");
     }
 
-    if (classification.intent === "INTERESTED" || classification.intent === "QUESTION") {
+    if ((classification.intent === "INTERESTED" || classification.intent === "QUESTION") && qualificationEnabled) {
       // Guardião SPIN / BANT / Receita Previsível
       const salesFrameworkGuardrail = `
 
@@ -827,7 +1067,7 @@ Use as seguintes técnicas combinadas:
 1. **Receita Previsível (Aaron Ross):** Mantenha mensagens CURTAS (formato "Spear-phishing"). Responda a dúvida dele de forma muito direta e passe a bola de volta. Se houver dúvida sobre quem decide, pergunte sutilmente: "Normalmente, você é a pessoa que lidera esses projetos por aí?"
 2. **SPIN Selling (Neil Rackham):** Comece a mapear a dor. Se a dor não estiver clara, faça 1 (apenas uma) pergunta de PROBLEMA ou IMPLICAÇÃO. (Ex: "Como você tem lidado com [Problema X] hoje?" ou "Qual impacto isso tem gerado na operação?").
 3. **BANT:** O objetivo final é entender Budget, Authority, Need e Timeframe, mas não pareça um interrogatório. Faça no máximo UMA pergunta por mensagem.
-REGRA: Responda a pergunta do lead em 1 frase. Em seguida, faça UMA pergunta SPIN focada em mapear o cenário atual (Need/Problema).`;
+REGRA: Responda a pergunta do lead in 1 frase. Em seguida, faça UMA pergunta SPIN focada em mapear o cenário atual (Need/Problema).`;
       aiInstructions = (aiInstructions || "") + salesFrameworkGuardrail;
       console.log("  🛡️ Guardião 4: SPIN/BANT/Receita Previsível Injetado no prompt.");
 
@@ -839,6 +1079,15 @@ Só proponha a agenda se: 1) O lead pedir, OU 2) A dor (Need do BANT) já estive
 - Nunca marque fim de semana.`;
       aiInstructions = (aiInstructions || "") + agendaGuardrail;
       console.log("  🛡️ Guardião 3: Contexto Vivo de Agenda injetado no prompt.");
+    }
+
+    if (shortResponsesEnabled) {
+      const shortResponseGuardrail = `
+
+### 🛡️ GUARDIÃO DE RESPOSTAS CURTAS:
+OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágrafos curtos). Nunca mande textos longos ou listas explicativas longas. Simule uma conversa humana fluida.`;
+      aiInstructions = (aiInstructions || "") + shortResponseGuardrail;
+      console.log("  🛡️ Guardião 5: Respostas Curtas (Spear-phishing) injetado no prompt.");
     }
 
     // Sleep Mode Guardrail
