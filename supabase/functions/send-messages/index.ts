@@ -166,6 +166,35 @@ async function sendWhatsApp(
   }
 }
 
+// Helper para inferir o gênero a partir do primeiro nome para fins de saudação (Dr./Dra.)
+function getGenderFromFirstName(name: string): 'M' | 'F' {
+  if (!name) return 'M';
+  const cleanName = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+  
+  const masculineExceptions = [
+    'luca', 'lucas', 'jean', 'george', 'andre', 'felipe', 'alexandre', 'guilherme', 'henrique',
+    'mateus', 'matheus', 'jonas', 'isaias', 'elias', 'josias', 'messias', 'natan', 'natanael',
+    'samuel', 'daniel', 'gabriel', 'rafael', 'miguel', 'murilo', 'danilo', 'angelo', 'otavio',
+    'caio', 'heitor', 'igor', 'yuri', 'enzo', 'davi', 'arthur', 'artur', 'ian', 'caua', 'bento'
+  ];
+  
+  const feminineExceptions = [
+    'beatriz', 'alice', 'yasmin', 'iasmin', 'raquel', 'rachel', 'irene', 'miriam', 'ester', 'esther',
+    'carol', 'caroline', 'carolina', 'nair', 'ines', 'cleide', 'suely', 'sueli', 'elisabeth',
+    'elizabeth', 'elis', 'elisregina', 'ruth', 'rose', 'roseli', 'rosely', 'marlene', 'solange',
+    'gisele', 'giselle', 'lourdes', 'margarida', 'vivian', 'viviane', 'tati', 'tatiane', 'carmen',
+    'carminha', 'luiza', 'luisa', 'isis', 'yara', 'iara', 'ellen', 'helen', 'helena', 'eliane',
+    'elisangela', 'simone', 'denise', 'marise', 'rosane', 'cristiane', 'adriana'
+  ];
+
+  if (feminineExceptions.includes(cleanName)) return 'F';
+  if (masculineExceptions.includes(cleanName)) return 'M';
+  if (cleanName.endsWith('a')) return 'F';
+  if (cleanName.endsWith('y') && !['wesley', 'valdecy', 'roney', 'rudy', 'darcy'].includes(cleanName)) return 'F';
+  
+  return 'M';
+}
+
 // ── Variable Substitution ───────────────────────────────────────────────────
 async function substituteVariables(message: string, lead: any): Promise<string> {
   let result = message;
@@ -195,7 +224,9 @@ async function substituteVariables(message: string, lead: any): Promise<string> 
     if (isGeneric) {
       firstName = "Responsável"; // Fallback to "Responsável" if it's a generic company name
     } else {
-      firstName = leadName.split(" ")[0] || "";
+      // Remove prefixos Dr./Dra. se presentes no nome original do lead para evitar duplicações
+      const cleanLeadName = leadName.replace(/^(dr\.|dra\.|dr|dra)\s+/gi, "");
+      firstName = cleanLeadName.split(" ")[0] || "";
       firstName = firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase();
     }
   }
@@ -203,16 +234,28 @@ async function substituteVariables(message: string, lead: any): Promise<string> 
   const company = lead.metadata?.cnpj_info?.nomeFantasia || lead.metadata?.cnpj_info?.razaoSocial || lead.name || "";
   const city = lead.address?.city?.split(" - ")?.[0]?.trim() || "";
 
-  // Support both [Nome], [nome], {Nome}, {nome}
-  result = result.replace(/(\[|\{)Nome(\]|\})/gi, firstName || leadName);
-  result = result.replace(/(\[|\{)Empresa(\]|\})/gi, company);
-  result = result.replace(/(\[|\{)Cidade(\]|\})/gi, city);
+  // Inferir o gênero do nome destinatário
+  const gender = getGenderFromFirstName(firstName);
+
+  // Ajustar dinamicamente o prefixo Dr. ou Dra. se estiver logo antes do placeholder de Nome
+  if (gender === 'F') {
+    result = result.replace(/Dr\.\s+(?=(\[|\{)+Nome(\]|\})+)/gi, 'Dra. ');
+    result = result.replace(/Dr\b(?!\.)\s+(?=(\[|\{)+Nome(\]|\})+)/gi, 'Dra ');
+  } else {
+    result = result.replace(/Dra\.\s+(?=(\[|\{)+Nome(\]|\})+)/gi, 'Dr. ');
+    result = result.replace(/Dra\b(?!\.)\s+(?=(\[|\{)+Nome(\]|\})+)/gi, 'Dr ');
+  }
+
+  // Support both [Nome], [nome], {Nome}, {nome}, {{Nome}}, {{nome}} (one or more curly braces/brackets)
+  result = result.replace(/(\[|\{)+Nome(\]|\})+/gi, firstName || leadName);
+  result = result.replace(/(\[|\{)+Empresa(\]|\})+/gi, company);
+  result = result.replace(/(\[|\{)+Cidade(\]|\})+/gi, city);
 
   // Icebreaker Logic
-  if (result.match(/(\[|\{)Icebreaker(\]|\})/gi) || result.match(/(\[|\{)Quebra-gelo(\]|\})/gi)) {
+  if (result.match(/(\[|\{)+Icebreaker(\]|\})+/gi) || result.match(/(\[|\{)+Quebra-gelo(\]|\})+/gi)) {
     const icebreaker = await generateIcebreaker(lead);
-    result = result.replace(/(\[|\{)Icebreaker(\]|\})/gi, icebreaker);
-    result = result.replace(/(\[|\{)Quebra-gelo(\]|\})/gi, icebreaker);
+    result = result.replace(/(\[|\{)+Icebreaker(\]|\})+/gi, icebreaker);
+    result = result.replace(/(\[|\{)+Quebra-gelo(\]|\})+/gi, icebreaker);
   }
   
   return result;
