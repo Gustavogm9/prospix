@@ -208,6 +208,7 @@ export default function Campaigns() {
         state: c.state || 'SP',
         icpId: c.icp_id,
         icpName: c.icps?.name || 'Padrão',
+        activeScriptId: c.active_script_id,
       })));
     } catch (err) {
       console.error('Failed to fetch campaigns', err);

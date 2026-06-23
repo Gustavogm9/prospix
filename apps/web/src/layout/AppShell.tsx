@@ -72,6 +72,7 @@ export default function AppShell({ children }: AppShellProps) {
   const [unreadCount, setUnreadCount] = useState(0);
   const [isTutorialOpen, setIsTutorialOpen] = useState(false);
   const [isWhatsappConnected, setIsWhatsappConnected] = useState<boolean | null>(null);
+  const [whatsappDisconnectReason, setWhatsappDisconnectReason] = useState<string | null>(null);
 
   const searchResults = globalSearch.trim().length > 1 ? [
     { type: 'lead', label: `Buscar "${globalSearch}" em Leads`, path: `/leads?search=${encodeURIComponent(globalSearch)}` },
@@ -123,10 +124,12 @@ export default function AppShell({ children }: AppShellProps) {
       try {
         const res = await apiFetch('/api/integrations/whatsapp/status');
         const json = await res.json();
-        setIsWhatsappConnected(json?.data?.connected ?? true);
+        const connected = json?.status === 'connected';
+        setIsWhatsappConnected(connected);
+        setWhatsappDisconnectReason(connected ? null : (json?.reason || 'other'));
       } catch {
-        // Fallback to true so we don't annoy the user if API fails
         setIsWhatsappConnected(true);
+        setWhatsappDisconnectReason(null);
       }
     };
     fetchWhatsappStatus();
@@ -518,11 +521,15 @@ export default function AppShell({ children }: AppShellProps) {
             <div className="flex items-center gap-2.5">
               <AlertTriangle className="w-4 h-4 text-[#D92D20] shrink-0" />
               <p className="text-[12px] text-[#B42318] font-medium leading-tight">
-                <strong className="font-bold">Atenção:</strong> Seu WhatsApp está desconectado. A IA está paralisada e não pode enviar mensagens.
+                <strong className="font-bold">Atenção:</strong> {
+                  whatsappDisconnectReason === 'device_removed'
+                    ? "Seu WhatsApp foi desconectado pelo próprio aparelho celular (Aparelho Removido). A IA está paralisada."
+                    : "Seu WhatsApp está desconectado. A IA está paralisada e não pode enviar mensagens."
+                }
               </p>
             </div>
             <Link 
-              href="/configuracoes" 
+              href="/configuracoes?tab=integracoes" 
               className="text-[11px] font-bold text-[#D92D20] uppercase tracking-wider hover:underline shrink-0 ml-4"
             >
               Reconectar →
