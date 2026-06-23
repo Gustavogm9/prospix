@@ -404,6 +404,41 @@ export default function AppShell({ children }: AppShellProps) {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* WhatsApp Status Indicator */}
+            <Link
+              href="/configuracoes?tab=integracoes"
+              className={`hidden sm:inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-[12.5px] font-semibold border transition-all hover:-translate-y-0.5 ${
+                isWhatsappConnected === null
+                  ? 'text-[#475569] bg-[#F1F5F9] border-[#E2E8F0] hover:bg-[#E2E8F0]'
+                  : isWhatsappConnected
+                  ? 'text-[#15803d] bg-[#f0fdf4] border-[#bbf7d0] hover:bg-[#dcfce7]'
+                  : 'text-[#be123c] bg-[#fff1f2] border-[#fecdd3] hover:bg-[#ffe4e6] animate-pulse'
+              }`}
+            >
+              <span className="relative flex h-2 w-2">
+                {isWhatsappConnected === null ? (
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-[#94A3B8]"></span>
+                ) : isWhatsappConnected ? (
+                  <>
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#4ade80] opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-[#22c55e]"></span>
+                  </>
+                ) : (
+                  <>
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#fb7185] opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-[#f43f5e]"></span>
+                  </>
+                )}
+              </span>
+              <span>
+                {isWhatsappConnected === null
+                  ? 'WhatsApp...'
+                  : isWhatsappConnected
+                  ? 'WhatsApp Conectado'
+                  : 'WhatsApp Desconectado'}
+              </span>
+            </Link>
+
             {/* Tour button */}
             <button
               onClick={() => setIsTutorialOpen(true)}
