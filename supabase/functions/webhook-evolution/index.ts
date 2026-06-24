@@ -25,6 +25,40 @@ function randomDelay(minSec: number, maxSec: number): number {
   return Math.floor(Math.random() * (maxSec - minSec + 1)) + minSec;
 }
 
+/** Split a long response into up to 3 well-formatted blocks */
+function splitMessageIntoBlocks(text: string): string[] {
+  const rawBlocks = text.split(/\n\n+/).map(b => b.trim()).filter(Boolean);
+  if (rawBlocks.length <= 1) return [text];
+  
+  const blocks: string[] = [];
+  let currentBlock = "";
+  
+  for (const block of rawBlocks) {
+    if (blocks.length >= 3) {
+      blocks[blocks.length - 1] = blocks[blocks.length - 1] + "\n\n" + block;
+    } else if (currentBlock.length + block.length > 300) {
+      if (currentBlock) {
+        blocks.push(currentBlock);
+      }
+      currentBlock = block;
+    } else {
+      if (currentBlock) {
+        currentBlock += "\n\n" + block;
+      } else {
+        currentBlock = block;
+      }
+    }
+  }
+  
+  if (currentBlock && blocks.length < 3) {
+    blocks.push(currentBlock);
+  } else if (currentBlock) {
+    blocks[blocks.length - 1] = blocks[blocks.length - 1] + "\n\n" + currentBlock;
+  }
+  
+  return blocks;
+}
+
 /** Normalize Brazilian phone: strip non-digits, ensure 55 prefix */
 function normalizePhone(raw: string): string {
   let phone = raw.replace(/\D/g, "");
@@ -752,7 +786,6 @@ serve(async (req: Request) => {
         ai_handling: false, // Desliga a IA para este lead
         status: "CLOSED",
       }).eq("id", conversation.id);
-
       const reply = "Entendo perfeitamente. Agradeço pela atenção e não entrarei mais em contato! Desejo sucesso para você e sua empresa.";
       await supabase.from("pending_outbound").insert({
         id: uuid(),
@@ -762,8 +795,9 @@ serve(async (req: Request) => {
         idempotency_key: `optout_${inboundMsgId}`,
         scheduled_for: new Date(Date.now() + 5000).toISOString(),
         attempts: 0,
+        message_type: "REACTIVE_REPLY",
+        priority: 1
       });
-
       console.log("  🛑 Guardião 1: Opt-Out ativado. IA desligada e mensagem de saída enfileirada.");
       return new Response(JSON.stringify({
         ok: true,
@@ -817,18 +851,18 @@ serve(async (req: Request) => {
       }).eq("id", conversation.id);
 
       console.log("  🛑 Guardião Anti-Loop ativado. Escalonando para humano.");
-      
-      const reply = "Essa é uma ótima pergunta! Vou pedir pro Giovane te explicar certinho por áudio em breve, ok?";
+            const reply = "Essa é uma ótima pergunta! Vou pedir pro Giovane te explicar certinho por áudio em breve, ok?";
       await supabase.from("pending_outbound").insert({
         id: uuid(),
         tenant_id: tenantId,
         conversation_id: conversation.id,
         content: reply,
-        idempotency_key: `antiloop_${inboundMsgId}`,
+        idempotency_key: "antiloop_" + inboundMsgId,
         scheduled_for: new Date(Date.now() + 5000).toISOString(),
         attempts: 0,
+        message_type: "REACTIVE_REPLY",
+        priority: 1
       });
-
       return new Response(JSON.stringify({
         ok: true,
         message_id: inboundMsgId,
@@ -864,18 +898,18 @@ serve(async (req: Request) => {
           payload: { count: referrals.length, referrals },
           created_at: now,
         });
-
         const reply = "Muito obrigado pelas indicações! Vou entrar em contato com eles. Pode deixar que não serei chato haha. Mais alguma coisa que eu possa ajudar?";
-        
         await supabase.from("pending_outbound").insert({
+          id: uuid(),
           tenant_id: tenantId,
           conversation_id: conversation.id,
           content: reply,
-          idempotency_key: `ref_ack_${inboundMsgId}`,
+          idempotency_key: "ref_ack_" + inboundMsgId,
           scheduled_for: new Date(Date.now() + 5000).toISOString(),
           attempts: 0,
+          message_type: "REACTIVE_REPLY",
+          priority: 1
         });
-
         return new Response(JSON.stringify({
           ok: true,
           message_id: inboundMsgId,
@@ -1212,24 +1246,43 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
     }
 
     console.log(`  💡 AI Response: ${responseText.slice(0, 80)}...`);
-
     // ── Step 5: Queue in pending_outbound with delay ─────────
-    const delaySec = randomDelay(30, 120);
-    const scheduledFor = isSleepMode ? scheduledTime.toISOString() : new Date(Date.now() + delaySec * 1000).toISOString();
-    const idempotencyKey = `ai-${conversation.id}-${inboundMsgId}`;
+    const blocks = splitMessageIntoBlocks(responseText);
+    const hasToolCalls = aiResponse.toolCalls && aiResponse.toolCalls.length > 0;
+    
+    // Calcula o tipo de mensagem inicial
+    const baseMessageType = hasToolCalls ? 'LOOKUP_REPLY' : 'REACTIVE_REPLY';
+    const basePriority = hasToolCalls ? 3 : 1;
 
-    await supabase.from("pending_outbound").insert({
-      id: uuid(),
-      tenant_id: tenantId,
-      conversation_id: conversation.id,
-      content: responseText,
-      media_url: mediaUrl,
-      media_type: mediaType,
-      idempotency_key: idempotencyKey,
-      scheduled_for: scheduledFor,
-      attempts: 0,
-    });
+    for (let idx = 0; idx < blocks.length; idx++) {
+      const blockContent = blocks[idx];
+      const isFirstBlock = idx === 0;
+      
+      const blockDelaySec = isFirstBlock ? 0 : idx * randomDelay(5, 14);
+      
+      const scheduledFor = isSleepMode 
+        ? new Date(scheduledTime.getTime() + blockDelaySec * 1000).toISOString() 
+        : new Date(Date.now() + blockDelaySec * 1000).toISOString();
+        
+      const idempotencyKey = "ai-" + conversation.id + "-" + inboundMsgId + "-" + idx;
+      
+      const mType = isFirstBlock ? baseMessageType : 'CHAT_CONTINUATION';
+      const mPriority = isFirstBlock ? basePriority : 2;
 
+      await supabase.from("pending_outbound").insert({
+        id: uuid(),
+        tenant_id: tenantId,
+        conversation_id: conversation.id,
+        content: blockContent,
+        media_url: isFirstBlock ? mediaUrl : null,
+        media_type: isFirstBlock ? mediaType : null,
+        idempotency_key: idempotencyKey,
+        scheduled_for: scheduledFor,
+        attempts: 0,
+        message_type: mType,
+        priority: mPriority
+      });
+    }
     // Log AI response generated event
     await supabase.from("lead_events").insert({
       tenant_id: tenantId,

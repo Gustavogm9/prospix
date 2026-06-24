@@ -72,17 +72,17 @@ serve(async (req) => {
       const followUpMsg = `Oi ${leadName}, conseguiu dar uma olhadinha na minha última mensagem? Só pra eu saber se podemos prosseguir ou se deixo para falar com você em outro momento!`;
 
       console.log(`📩 Queueing follow-up for ${conv.id} (Lead: ${leadName})`);
-
       await supabase.from("pending_outbound").insert({
         id: uuid(),
         tenant_id: conv.tenant_id,
         conversation_id: conv.id,
         content: followUpMsg,
-        idempotency_key: `followup_${conv.id}_${now.getTime()}`,
+        idempotency_key: "followup_" + conv.id + "_" + now.getTime(),
         scheduled_for: now.toISOString(),
         attempts: 0,
+        message_type: "COMMERCIAL_FOLLOWUP",
+        priority: 5
       });
-
       processed++;
     }
 

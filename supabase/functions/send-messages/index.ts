@@ -281,41 +281,27 @@ function pickVariation(variations: any[]): any {
 // ══════════════════════════════════════════════════════════════════════════════
 // PART 1: Send first-touch messages to ENRICHED leads
 // ══════════════════════════════════════════════════════════════════════════════
-async function processFirstTouch(): Promise<{
-  sent: number;
-  skipped: number;
-  failed: number;
-  details: any[];
-}> {
-  let sent = 0, skipped = 0, failed = 0;
-  const details: any[] = [];
+async function processFirstTouch(tenantId: string): Promise<{ queued: number; failed: number }> {
+  let queued = 0, failed = 0;
   const brtHour = getBrtHour();
   const brtDate = getBrtDateStr();
 
-  console.log(`\n━━━ First-Touch Messages ━━━`);
-  console.log(`  BRT Hour: ${brtHour}, Date: ${brtDate}`);
-
-  // Get all ACTIVE campaigns
+  // Get campaign for this tenant (only ACTIVE campaigns)
   const { data: campaigns } = await supabase
     .from("campaigns")
     .select("*")
+    .eq("tenant_id", tenantId)
     .eq("status", "ACTIVE");
 
   if (!campaigns?.length) {
-    console.log("  No active campaigns");
-    return { sent, skipped, failed, details };
+    return { queued, failed };
   }
 
   for (const campaign of campaigns) {
-    const tenantId = campaign.tenant_id;
-    console.log(`\n  📢 Campaign: ${campaign.name} (${campaign.id})`);
-
     // ── Check hour window (BRT) ──────────────────────────────
     const windowStart = campaign.hour_window_start ?? 8;
     const windowEnd = campaign.hour_window_end ?? 20;
     if (brtHour < windowStart || brtHour >= windowEnd) {
-      console.log(`  ⏰ Outside hour window (${windowStart}-${windowEnd}), current: ${brtHour} BRT`);
-      skipped++;
       continue;
     }
 
@@ -326,26 +312,14 @@ async function processFirstTouch(): Promise<{
       .eq("tenant_id", tenantId)
       .eq("direction", "OUTBOUND")
       .eq("sender", "AI")
-      .gte("created_at", `${brtDate}T00:00:00-03:00`)
-      .lte("created_at", `${brtDate}T23:59:59-03:00`);
+      .gte("created_at", brtDate + "T00:00:00-03:00")
+      .lte("created_at", brtDate + "T23:59:59-03:00");
 
     const dailyLimit = campaign.daily_limit || 50;
     const alreadySent = sentToday || 0;
     const remaining = Math.max(0, dailyLimit - alreadySent);
 
     if (remaining <= 0) {
-      console.log(`  🚫 Daily limit reached (${dailyLimit})`);
-      skipped++;
-      continue;
-    }
-
-    console.log(`  📊 Sent today: ${alreadySent}/${dailyLimit}, remaining: ${remaining}`);
-
-    // ── Load Evolution config ────────────────────────────────
-    const evoConfig = await loadEvoConfig(tenantId);
-    if (!evoConfig) {
-      console.log("  ❌ No Evolution API config for tenant");
-      failed++;
       continue;
     }
 
@@ -363,7 +337,6 @@ async function processFirstTouch(): Promise<{
       script = s;
     }
 
-    // Fallback: find an ACTIVE script matching campaign profession or universal
     if (!script) {
       const { data: scripts } = await supabase
         .from("scripts")
@@ -375,7 +348,6 @@ async function processFirstTouch(): Promise<{
         .limit(5);
 
       if (scripts?.length) {
-        // Prefer one matching the profession, fall back to universal (null target_profession)
         script = scripts.find((s: any) => s.target_profession === campaign.profession)
           || scripts.find((s: any) => !s.target_profession)
           || scripts[0];
@@ -383,12 +355,9 @@ async function processFirstTouch(): Promise<{
     }
 
     if (!script) {
-      console.log("  ❌ No active script found");
       failed++;
       continue;
     }
-
-    console.log(`  📝 Script: ${script.name} (${script.id})`);
 
     // ── Load script variations ───────────────────────────────
     const { data: variations } = await supabase
@@ -398,13 +367,11 @@ async function processFirstTouch(): Promise<{
       .eq("active", true);
 
     if (!variations?.length) {
-      console.log("  ❌ No active script variations");
       failed++;
       continue;
     }
 
     // ── Find ENRICHED leads for this campaign ────────────────
-    // Only leads not yet contacted, with valid whatsapp
     const { data: leads } = await supabase
       .from("leads")
       .select("*")
@@ -412,294 +379,340 @@ async function processFirstTouch(): Promise<{
       .eq("tenant_id", tenantId)
       .eq("status", "ENRICHED")
       .is("contacted_at", null)
+      .is("queued_first_touch_at", null)
       .not("whatsapp", "is", null)
       .order("fit_score", { ascending: false })
-      .limit(1); // 1 lead per campaign per execution (natural 60s pacing via cron)
+      .limit(1);
 
     if (!leads?.length) {
-      console.log("  📭 No enriched leads to contact");
       continue;
     }
 
-    console.log(`  👥 ${leads.length} leads to contact`);
-
     // ── Check optouts ────────────────────────────────────────
-    const phones = leads.map((l: any) => l.whatsapp);
-    const { data: optouts } = await supabase
+    const phone = leads[0].whatsapp;
+    const { data: optout } = await supabase
       .from("optouts")
       .select("whatsapp")
       .eq("tenant_id", tenantId)
-      .in("whatsapp", phones);
-    const optoutSet = new Set((optouts || []).map((o: any) => o.whatsapp));
+      .eq("whatsapp", phone)
+      .maybeSingle();
 
-    // ── Send messages ────────────────────────────────────────
-    for (const lead of leads) {
-      try {
-        if (optoutSet.has(lead.whatsapp)) {
-          console.log(`  ⛔ ${lead.name}: opted out`);
-          skipped++;
-          continue;
-        }
-
-        // Pick a variation by weight
-        const variation = pickVariation(variations);
-        if (!variation) {
-          console.log(`  ⚠️ ${lead.name}: no variation available`);
-          skipped++;
-          continue;
-        }
-
-        // Substitute variables
-        const messageContent = await substituteVariables(variation.message, lead);
-
-        // Create conversation
-        const conversationId = uuid();
-        const now = new Date().toISOString();
-
-        await supabase.from("conversations").insert({
-          id: conversationId,
-          tenant_id: tenantId,
-          lead_id: lead.id,
-          script_id: script.id,
-          status: "ACTIVE",
-          ai_handling: true,
-          current_node_id: null,
-          message_count: 1,
-          started_at: now,
-          last_message: messageContent.substring(0, 200),
-          last_message_at: now,
-          last_outbound_at: now,
-        });
-
-        // Send via Evolution API
-        const sendResult = await sendWhatsApp(evoConfig, lead.whatsapp, messageContent);
-
-        const messageId = uuid();
-        const deliveryStatus = sendResult.ok ? "SENT" : "FAILED";
-
-        // Create message record
-        await supabase.from("messages").insert({
-          id: messageId,
-          tenant_id: tenantId,
-          conversation_id: conversationId,
-          direction: "OUTBOUND",
-          sender: "AI",
-          content: messageContent,
-          delivery_status: deliveryStatus,
-          whatsapp_message_id: sendResult.whatsappMsgId || null,
-          script_id: script.id,
-          script_variation_id: variation.id,
-        });
-
-        if (sendResult.ok) {
-          // Update lead status to CONTACTED
-          await supabase.from("leads").update({
-            status: "CONTACTED",
-            contacted_at: now,
-            updated_at: now,
-          }).eq("id", lead.id);
-
-          // Increment script usage
-          await supabase.from("scripts").update({
-            total_usages: (script.total_usages || 0) + 1,
-          }).eq("id", script.id);
-
-          // Track WhatsApp usage
-          await supabase.rpc("increment_tenant_usage", {
-            p_tenant_id: tenantId,
-            p_llm_tokens_input: 0,
-            p_llm_tokens_output: 0,
-            p_whatsapp_msgs: 1,
-            p_maps_calls: 0
-          });
-
-          // Increment variation stats
-          await supabase.from("script_variations").update({
-            total_sent: (variation.total_sent || 0) + 1,
-            updated_at: now,
-          }).eq("id", variation.id);
-
-          // Log lead_event
-          await supabase.from("lead_events").insert({
-            tenant_id: tenantId,
-            lead_id: lead.id,
-            event_type: "message_sent",
-            payload: {
-              conversation_id: conversationId,
-              message_id: messageId,
-              script_name: script.name,
-              variation: variation.variant_letter,
-              delivery_status: "SENT",
-              reason: `Primeira mensagem enviada via script "${script.name}" (variação ${variation.variant_letter})`,
-            },
-            created_at: now,
-          });
-
-          // Status change event
-          await supabase.from("lead_events").insert({
-            tenant_id: tenantId,
-            lead_id: lead.id,
-            event_type: "status_changed",
-            payload: {
-              from: "ENRICHED",
-              to: "CONTACTED",
-              reason: `Lead contatado via WhatsApp com script "${script.name}"`,
-            },
-            created_at: now,
-          });
-
-          sent++;
-          console.log(`  ✅ ${lead.name} → SENT (${variation.variant_letter})`);
-
-          // Track WhatsApp usage
-          await supabase.rpc("increment_tenant_usage", {
-            p_tenant_id: tenantId,
-            p_llm_tokens_input: 0,
-            p_llm_tokens_output: 0,
-            p_whatsapp_msgs: 1,
-            p_maps_calls: 0
-          });
-        } else {
-          // Log failure
-          await supabase.from("lead_events").insert({
-            tenant_id: tenantId,
-            lead_id: lead.id,
-            event_type: "message_failed",
-            payload: {
-              conversation_id: conversationId,
-              error: sendResult.error,
-              reason: `Falha ao enviar mensagem: ${sendResult.error}`,
-            },
-            created_at: now,
-          });
-
-          failed++;
-          console.log(`  ❌ ${lead.name} → FAILED: ${sendResult.error}`);
-        }
-
-        // Small delay between sends to avoid rate limiting
-        await sleep(1500);
-      } catch (err: any) {
-        console.error(`  💥 ${lead.name}: ${err.message?.slice(0, 100)}`);
-        failed++;
-      }
+    if (optout) {
+      continue;
     }
 
-    details.push({
-      campaign_id: campaign.id,
-      campaign_name: campaign.name,
-      leads_found: leads.length,
-    });
-  }
+    const lead = leads[0];
 
-  return { sent, skipped, failed, details };
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// PART 2: Process pending_outbound (AI delayed responses)
-// ══════════════════════════════════════════════════════════════════════════════
-async function processPendingOutbound(): Promise<{
-  sent: number;
-  failed: number;
-}> {
-  let sent = 0, failed = 0;
-  const now = new Date().toISOString();
-
-  console.log(`\n━━━ Pending Outbound (AI Responses) ━━━`);
-
-  // Find pending messages whose scheduled_for has passed
-  const { data: pending } = await supabase
-    .from("pending_outbound")
-    .select("*")
-    .is("sent_at", null)
-    .is("failed_at", null)
-    .lte("scheduled_for", now)
-    .lt("attempts", 3)
-    .order("scheduled_for", { ascending: true })
-    .limit(50);
-
-  if (!pending?.length) {
-    console.log("  No pending messages");
-    return { sent, failed };
-  }
-
-  console.log(`  📬 ${pending.length} pending messages to send`);
-
-  // Group by tenant for Evolution config loading
-  const tenantIds = [...new Set(pending.map((p: any) => p.tenant_id))];
-  const evoConfigs: Record<string, EvoConfig | null> = {};
-  for (const tid of tenantIds) {
-    evoConfigs[tid] = await loadEvoConfig(tid);
-  }
-
-  for (const item of pending) {
     try {
-      const evoConfig = evoConfigs[item.tenant_id];
-      if (!evoConfig) {
-        console.log(`  ❌ No Evolution config for tenant ${item.tenant_id}`);
-        await supabase.from("pending_outbound").update({
-          failed_at: now,
-          failed_reason: "No Evolution API config",
-          attempts: (item.attempts || 0) + 1,
-        }).eq("id", item.id);
-        failed++;
+      const variation = pickVariation(variations);
+      if (!variation) {
         continue;
       }
 
-      // Get conversation to find the lead's phone
+      const messageContent = await substituteVariables(variation.message, lead);
+      const conversationId = uuid();
+      const nowTime = new Date().toISOString();
+
+      const { error: convErr } = await supabase.from("conversations").insert({
+        id: conversationId,
+        tenant_id: tenantId,
+        lead_id: lead.id,
+        script_id: script.id,
+        status: "ACTIVE",
+        ai_handling: true,
+        current_node_id: null,
+        message_count: 1,
+        started_at: nowTime,
+        last_message: messageContent.substring(0, 200),
+        last_message_at: nowTime,
+        last_outbound_at: nowTime,
+      });
+      if (convErr) throw new Error("Erro ao criar conversação: " + convErr.message);
+
+      const { error: queueErr } = await supabase.from("pending_outbound").insert({
+        id: uuid(),
+        tenant_id: tenantId,
+        conversation_id: conversationId,
+        content: messageContent,
+        idempotency_key: "active-" + lead.id,
+        scheduled_for: nowTime,
+        attempts: 0,
+        message_type: "OUTBOUND_START",
+        priority: 6,
+      });
+      if (queueErr) throw new Error("Erro ao enfileirar mensagem: " + queueErr.message);
+
+      const { error: leadErr } = await supabase.from("leads").update({
+        queued_first_touch_at: nowTime,
+        updated_at: nowTime,
+      }).eq("id", lead.id);
+      if (leadErr) throw new Error("Erro ao atualizar lead: " + leadErr.message);
+
+      const { error: scriptErr } = await supabase.from("scripts").update({
+        total_usages: (script.total_usages || 0) + 1,
+      }).eq("id", script.id);
+      if (scriptErr) throw new Error("Erro ao atualizar script: " + scriptErr.message);
+
+      const { error: variationErr } = await supabase.from("script_variations").update({
+        total_sent: (variation.total_sent || 0) + 1,
+        updated_at: nowTime,
+      }).eq("id", variation.id);
+      if (variationErr) throw new Error("Erro ao atualizar variação de script: " + variationErr.message);
+
+      queued++;
+    } catch (err: any) {
+      console.error("  💥 Erro ao enfileirar lead: " + err.message);
+      failed++;
+    }
+  }
+
+  return { queued, failed };
+}
+
+async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number): Promise<{ sent: number; queued: number; failed: number }> {
+  let sent = 0, queued = 0, failed = 0;
+
+  // 1. Tentar Lock
+  const { data: lockResult, error: lockErr } = await supabase.rpc("try_advisory_lock", { lock_id: tenantId });
+  if (lockErr || !lockResult) {
+    console.log("  🔒 Worker para tenant " + tenantId + " já está rodando em outra instância.");
+    return { sent: 0, queued: 0, failed: 0 };
+  }
+
+  console.log("  🚀 Lock adquirido para tenant " + tenantId + ". Iniciando processamento...");
+
+  try {
+    while (Date.now() < runEndTime) {
+      // 1. Carregar status do Guardião do Tenant
+      let { data: guardianStatus } = await supabase
+        .from("whatsapp_guardian_status")
+        .select("*")
+        .eq("tenant_id", tenantId)
+        .maybeSingle();
+
+      if (!guardianStatus) {
+        const { data: newStatus } = await supabase
+          .from("whatsapp_guardian_status")
+          .insert({ tenant_id: tenantId, status: "NORMAL" })
+          .select("*")
+          .single();
+        guardianStatus = newStatus;
+      }
+
+      const numberState = guardianStatus.status || "NORMAL";
+
+      if (numberState === "PAUSED") {
+        console.log("  ⏸️ Guardião do tenant " + tenantId + " está pausado.");
+        await sleep(5000);
+        continue;
+      }
+
+      // 2. Coletar estatísticas dinâmicas
+      const oneMinuteAgo = new Date(Date.now() - 60 * 1000).toISOString();
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const startOfDay = new Date(new Date().setHours(0,0,0,0)).toISOString();
+
+      const { count: sentLastMinute } = await supabase
+        .from("messages")
+        .select("id", { count: "exact", head: true })
+        .eq("tenant_id", tenantId)
+        .eq("direction", "OUTBOUND")
+        .gte("created_at", oneMinuteAgo);
+
+      const { count: sentLastHour } = await supabase
+        .from("messages")
+        .select("id", { count: "exact", head: true })
+        .eq("tenant_id", tenantId)
+        .eq("direction", "OUTBOUND")
+        .gte("created_at", oneHourAgo);
+
+      const { count: newChatsToday } = await supabase
+        .from("conversations")
+        .select("id", { count: "exact", head: true })
+        .eq("tenant_id", tenantId)
+        .gte("started_at", startOfDay);
+
+      const msgsLastMin = sentLastMinute || 0;
+      const msgsLastHr = sentLastHour || 0;
+      const chatsToday = newChatsToday || 0;
+
+      // 3. Definir limites conforme o Estado do Número
+      let globalMinDelay = 12;
+      let globalDelayRange = { min: 18, max: 45 };
+      let maxMsgsPerMin = 3;
+      let maxMsgsPerHr = 90;
+      let maxNewChatsPerHr = 6;
+      let maxNewChatsPerDay = 80;
+
+      if (numberState === "COLD") {
+        globalMinDelay = 20;
+        globalDelayRange = { min: 45, max: 120 };
+        maxMsgsPerMin = 2;
+        maxMsgsPerHr = 45;
+        maxNewChatsPerHr = 3;
+        maxNewChatsPerDay = 20;
+      } else if (numberState === "HIGH_LOAD") {
+        globalMinDelay = 15;
+        globalDelayRange = { min: 25, max: 70 };
+        maxMsgsPerMin = 3;
+        maxMsgsPerHr = 90;
+        maxNewChatsPerHr = 0;
+      } else if (numberState === "COOLDOWN") {
+        globalMinDelay = 60;
+        globalDelayRange = { min: 120, max: 600 };
+        maxMsgsPerMin = 1;
+        maxMsgsPerHr = 15;
+        maxNewChatsPerHr = 0;
+      }
+
+      // 4. Verificar se há respostas reativas pendentes na fila
+      const { count: reactivePendingCount } = await supabase
+        .from("pending_outbound")
+        .select("id", { count: "exact", head: true })
+        .eq("tenant_id", tenantId)
+        .is("sent_at", null)
+        .is("failed_at", null)
+        .in("message_type", ["REACTIVE_REPLY", "CHAT_CONTINUATION", "LOOKUP_REPLY"]);
+
+      const hasReactivePending = (reactivePendingCount || 0) > 0;
+
+      // 5. Enfileiramento de Novas Abordagens Ativas (se puder)
+      const canQueueNewActive = 
+        numberState !== "COOLDOWN" && 
+        numberState !== "PAUSED" && 
+        !hasReactivePending && 
+        msgsLastHr < maxMsgsPerHr && 
+        chatsToday < maxNewChatsPerDay;
+
+      if (canQueueNewActive) {
+        const { queued: q } = await processFirstTouch(tenantId);
+        queued += q;
+      }
+
+      // 6. Buscar a mensagem mais prioritária na fila a enviar
+      const { data: queueItems } = await supabase
+        .from("pending_outbound")
+        .select("*")
+        .eq("tenant_id", tenantId)
+        .is("sent_at", null)
+        .is("failed_at", null)
+        .lte("scheduled_for", new Date().toISOString())
+        .lt("attempts", 3)
+        .order("priority", { ascending: true })
+        .order("scheduled_for", { ascending: true })
+        .limit(1);
+
+      if (!queueItems || queueItems.length === 0) {
+        await sleep(2000);
+        continue;
+      }
+
+      const item = queueItems[0];
+
+      // Obter detalhes da conversa/telefone do lead
       const { data: conversation } = await supabase
         .from("conversations")
-        .select("*, leads!conversations_lead_id_fkey(whatsapp, name, id)")
+        .select("*, leads!conversations_lead_id_fkey(whatsapp, name, id, status)")
         .eq("id", item.conversation_id)
         .single();
 
       if (!conversation?.leads?.whatsapp) {
-        console.log(`  ⚠️ No phone for conversation ${item.conversation_id}`);
         await supabase.from("pending_outbound").update({
-          failed_at: now,
-          failed_reason: "No phone number found for lead",
-          attempts: (item.attempts || 0) + 1,
+          failed_at: new Date().toISOString(),
+          failed_reason: "Telefone do lead não encontrado",
+          attempts: (item.attempts || 0) + 1
         }).eq("id", item.id);
         failed++;
         continue;
-      }
-
-      // Buscar o script_variation_id da primeira mensagem outbound se houver
-      let scriptVariationId: string | null = null;
-      try {
-        const { data: firstOutbound } = await supabase
-          .from("messages")
-          .select("script_variation_id")
-          .eq("conversation_id", item.conversation_id)
-          .not("script_variation_id", "is", null)
-          .order("created_at", { ascending: true })
-          .limit(1)
-          .maybeSingle();
-        if (firstOutbound?.script_variation_id) {
-          scriptVariationId = firstOutbound.script_variation_id;
-        }
-      } catch (err) {
-        console.error("Erro ao buscar script_variation_id da conversa:", err);
       }
 
       const phone = (conversation.leads as any).whatsapp;
       const leadName = (conversation.leads as any).name || "Lead";
 
-      // Send via Evolution API
+      // 7. Validar limites antes do envio
+      const limitsExceeded = 
+        msgsLastMin >= maxMsgsPerMin || 
+        msgsLastHr >= maxMsgsPerHr || 
+        (item.message_type === "OUTBOUND_START" && chatsToday >= maxNewChatsPerDay);
+
+      if (limitsExceeded) {
+        const newScheduled = new Date(Date.now() + 2 * 60 * 1000).toISOString();
+        await supabase.from("pending_outbound").update({
+          scheduled_for: newScheduled,
+          failed_reason: "Limites de envio excedidos. Adiado pelo Guardião."
+        }).eq("id", item.id);
+        
+        console.log("  ⚠️ Limites excedidos para tenant " + tenantId + ". Mensagem reagendada para " + newScheduled);
+        await sleep(2000);
+        continue;
+      }
+
+      // 8. Aplicar delay global
+      const minRange = globalDelayRange.min;
+      const maxRange = globalDelayRange.max;
+      
+      let calculatedDelay = Math.floor(Math.random() * (maxRange - minRange + 1)) + minRange;
+      const roll = Math.random() * 100;
+      if (roll > 80 && roll <= 95) {
+        calculatedDelay = Math.floor(calculatedDelay * 1.5);
+      } else if (roll > 95) {
+        calculatedDelay = Math.floor(calculatedDelay * 2.5);
+      }
+
+      calculatedDelay = Math.max(globalMinDelay, calculatedDelay);
+
+      if (guardianStatus.last_global_send_at) {
+        const lastSend = new Date(guardianStatus.last_global_send_at).getTime();
+        const diffSec = (Date.now() - lastSend) / 1000;
+        
+        if (diffSec < calculatedDelay) {
+          const sleepSec = Math.ceil(calculatedDelay - diffSec);
+          console.log("  ⏱️ Guardião: Aguardando " + sleepSec + "s de delay global...");
+          await sleep(sleepSec * 1000);
+        }
+      }
+
+      // 9. Enviar via Evolution API
+      const evoConfig = await loadEvoConfig(tenantId);
+      if (!evoConfig) {
+        await supabase.from("pending_outbound").update({
+          failed_at: new Date().toISOString(),
+          failed_reason: "Evolution API Key não configurada",
+          attempts: (item.attempts || 0) + 1
+        }).eq("id", item.id);
+        failed++;
+        continue;
+      }
+
       const sendResult = await sendWhatsApp(evoConfig, phone, item.content, item.media_url, item.media_type);
+      const nowTime = new Date().toISOString();
 
       if (sendResult.ok) {
-        // Mark as sent
         await supabase.from("pending_outbound").update({
-          sent_at: now,
-          attempts: (item.attempts || 0) + 1,
+          sent_at: nowTime,
+          attempts: (item.attempts || 0) + 1
         }).eq("id", item.id);
 
-        // Create message record
         const messageId = uuid();
+
+        let scriptVariationId: string | null = null;
+        try {
+          const { data: firstOutbound } = await supabase
+            .from("messages")
+            .select("script_variation_id")
+            .eq("conversation_id", item.conversation_id)
+            .not("script_variation_id", "is", null)
+            .order("created_at", { ascending: true })
+            .limit(1)
+            .maybeSingle();
+          if (firstOutbound?.script_variation_id) {
+            scriptVariationId = firstOutbound.script_variation_id;
+          }
+        } catch (_) {}
+
         await supabase.from("messages").insert({
           id: messageId,
-          tenant_id: item.tenant_id,
+          tenant_id: tenantId,
           conversation_id: item.conversation_id,
           direction: "OUTBOUND",
           sender: "AI",
@@ -711,85 +724,175 @@ async function processPendingOutbound(): Promise<{
           script_id: conversation.script_id || null,
           script_node_id: conversation.current_node_id || null,
           script_variation_id: scriptVariationId || null,
+          created_at: nowTime,
         });
 
-        // Update conversation
         await supabase.from("conversations").update({
           last_message: item.content.substring(0, 200),
-          last_message_at: now,
-          last_outbound_at: now,
+          last_message_at: nowTime,
+          last_outbound_at: nowTime,
           message_count: (conversation.message_count || 0) + 1,
         }).eq("id", item.conversation_id);
 
-        sent++;
-        console.log(`  ✅ ${leadName} → AI response SENT`);
+        if (item.message_type === "OUTBOUND_START" && conversation.leads?.status === "ENRICHED") {
+          await supabase.from("leads").update({
+            status: "CONTACTED",
+            contacted_at: nowTime,
+            updated_at: nowTime,
+          }).eq("id", conversation.leads.id);
 
-        // Track WhatsApp usage
+          await supabase.from("lead_events").insert({
+            tenant_id: tenantId,
+            lead_id: conversation.leads.id,
+            event_type: "message_sent",
+            payload: {
+              conversation_id: item.conversation_id,
+              message_id: messageId,
+              delivery_status: "SENT",
+              reason: "Primeira mensagem ativa enviada com sucesso pelo Guardião",
+            },
+            created_at: nowTime,
+          });
+
+          await supabase.from("lead_events").insert({
+            tenant_id: tenantId,
+            lead_id: conversation.leads.id,
+            event_type: "status_changed",
+            payload: { from: "ENRICHED", to: "CONTACTED", reason: "Lead contatado pelo Guardião" },
+            created_at: nowTime,
+          });
+        }
+
         await supabase.rpc("increment_tenant_usage", {
-          p_tenant_id: item.tenant_id,
+          p_tenant_id: tenantId,
           p_llm_tokens_input: 0,
           p_llm_tokens_output: 0,
           p_whatsapp_msgs: 1,
           p_maps_calls: 0
         });
+
+        await supabase.from("whatsapp_guardian_status").update({
+          last_global_send_at: nowTime,
+          updated_at: nowTime,
+        }).eq("tenant_id", tenantId);
+
+        sent++;
+        console.log("  ✅ [Guard] Mensagem enviada para " + leadName + " (Tipo: " + item.message_type + ")");
+
+        // Registrar Telemetria
+        try {
+          await supabase.from("whatsapp_guardian_telemetry").insert({
+            tenant_id: tenantId,
+            message_id: messageId,
+            conversation_id: item.conversation_id,
+            message_type: item.message_type,
+            queued_at: item.created_at,
+            scheduled_for: item.scheduled_for,
+            sent_at: nowTime,
+            delay_applied: calculatedDelay,
+            delay_reason: "Delay global de " + calculatedDelay + "s respeitado orgonicamente",
+            number_state: numberState,
+            queue_position: 1,
+            is_reactive: ["REACTIVE_REPLY", "CHAT_CONTINUATION", "LOOKUP_REPLY"].includes(item.message_type || ""),
+            is_followup: item.message_type === "COMMERCIAL_FOLLOWUP",
+            sent_last_minute: msgsLastMin + 1,
+            sent_last_hour: msgsLastHr + 1,
+            new_chats_today: chatsToday + (item.message_type === "OUTBOUND_START" ? 1 : 0),
+          });
+        } catch (telErr) {
+          console.warn("  ⚠️ Falha ao registrar telemetria:", telErr);
+        }
+
       } else {
         const attempts = (item.attempts || 0) + 1;
         const updateData: any = {
           attempts,
-          failed_reason: sendResult.error,
+          failed_reason: sendResult.error
         };
         if (attempts >= 3) {
-          updateData.failed_at = now;
+          updateData.failed_at = nowTime;
         }
         await supabase.from("pending_outbound").update(updateData).eq("id", item.id);
-
         failed++;
-        console.log(`  ❌ ${leadName} → FAILED (attempt ${attempts}): ${sendResult.error}`);
+
+        try {
+          await supabase.from("whatsapp_guardian_telemetry").insert({
+            tenant_id: tenantId,
+            conversation_id: item.conversation_id,
+            message_type: item.message_type,
+            queued_at: item.created_at,
+            scheduled_for: item.scheduled_for,
+            error: sendResult.error,
+            number_state: numberState,
+            is_reactive: ["REACTIVE_REPLY", "CHAT_CONTINUATION", "LOOKUP_REPLY"].includes(item.message_type || ""),
+            is_followup: item.message_type === "COMMERCIAL_FOLLOWUP",
+          });
+        } catch (_) {}
+
+        console.log("  ❌ Falha no envio para " + leadName + " (Tentativa " + attempts + "): " + sendResult.error);
       }
 
-      await sleep(1000);
-    } catch (err: any) {
-      console.error(`  💥 Pending ${item.id}: ${err.message?.slice(0, 100)}`);
-      await supabase.from("pending_outbound").update({
-        attempts: (item.attempts || 0) + 1,
-        failed_reason: err.message?.slice(0, 200),
-      }).eq("id", item.id);
-      failed++;
+      await sleep(1500);
     }
+  } finally {
+    await supabase.rpc("try_advisory_unlock", { lock_id: tenantId });
+    console.log("  🔓 Lock liberado para tenant " + tenantId + ".");
   }
 
-  return { sent, failed };
+  return { sent, queued, failed };
 }
 
-// ── Main Handler ────────────────────────────────────────────────────────────
-serve(async (_req: Request) => {
+serve(async (req: Request) => {
   try {
-    console.log(`📤 ProspIX Send-Messages Worker`);
-    console.log(`   Time: ${new Date().toISOString()}`);
-    console.log(`   BRT:  ${getBrtHour()}h`);
+    console.log("📤 ProspIX WhatsApp Guardian Worker");
+    console.log("   Time: " + new Date().toISOString());
 
-    // Part 1: First-touch messages to ENRICHED leads
-    const firstTouch = await processFirstTouch();
+    const runEndTime = Date.now() + 50 * 1000; // Loop dura até 50 segundos
 
-    // Part 2: Process queued AI responses
-    const outbound = await processPendingOutbound();
+    // Ler payload para saber se processamos um tenant específico ou todos os tenants ativos
+    let targetTenantId: string | null = null;
+    try {
+      const body = await req.json();
+      if (body?.tenant_id) targetTenantId = body.tenant_id;
+    } catch (_) {}
+
+    let tenantIds: string[] = [];
+
+    if (targetTenantId) {
+      tenantIds = [targetTenantId];
+    } else {
+      // Obter todos os tenants ativos que possuem campanhas ativas
+      const { data: activeCampaigns } = await supabase
+        .from("campaigns")
+        .select("tenant_id")
+        .eq("status", "ACTIVE");
+      
+      if (activeCampaigns?.length) {
+        tenantIds = [...new Set(activeCampaigns.map((c: any) => c.tenant_id))];
+      }
+    }
+
+    if (tenantIds.length === 0) {
+      return new Response(JSON.stringify({ ok: true, message: "No active tenants to process" }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    console.log("   Processando tenants: " + tenantIds.join(", "));
+
+    const results = [];
+    for (const tenantId of tenantIds) {
+      const result = await runGuardianWorkerForTenant(tenantId, runEndTime);
+      results.push({ tenant_id: tenantId, ...result });
+    }
 
     const summary = {
       ok: true,
       timestamp: new Date().toISOString(),
-      first_touch: {
-        sent: firstTouch.sent,
-        skipped: firstTouch.skipped,
-        failed: firstTouch.failed,
-        campaigns: firstTouch.details,
-      },
-      pending_outbound: {
-        sent: outbound.sent,
-        failed: outbound.failed,
-      },
+      results
     };
 
-    console.log(`\n🏁 Summary: ${firstTouch.sent} first-touch + ${outbound.sent} AI responses sent`);
+    console.log("\n🏁 Worker finalizado: " + JSON.stringify(summary));
 
     return new Response(JSON.stringify(summary), {
       headers: { "Content-Type": "application/json" },
