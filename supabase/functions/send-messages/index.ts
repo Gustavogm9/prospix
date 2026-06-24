@@ -281,7 +281,7 @@ function pickVariation(variations: any[]): any {
 // ══════════════════════════════════════════════════════════════════════════════
 // PART 1: Send first-touch messages to ENRICHED leads
 // ══════════════════════════════════════════════════════════════════════════════
-async function processFirstTouch(tenantId: string): Promise<{ queued: number; failed: number }> {
+async function processFirstTouch(tenantId: string, processedLeadIds: Set<string>): Promise<{ queued: number; failed: number }> {
   let queued = 0, failed = 0;
   const brtHour = getBrtHour();
   const brtDate = getBrtDateStr();
@@ -372,7 +372,7 @@ async function processFirstTouch(tenantId: string): Promise<{ queued: number; fa
     }
 
     // ── Find ENRICHED leads for this campaign ────────────────
-    const { data: leads } = await supabase
+    let query = supabase
       .from("leads")
       .select("*")
       .eq("campaign_id", campaign.id)
@@ -380,89 +380,145 @@ async function processFirstTouch(tenantId: string): Promise<{ queued: number; fa
       .eq("status", "ENRICHED")
       .is("contacted_at", null)
       .is("queued_first_touch_at", null)
-      .not("whatsapp", "is", null)
+      .not("whatsapp", "is", null);
+
+    if (processedLeadIds.size > 0) {
+      query = query.not("id", "in", `(${Array.from(processedLeadIds).map(id => `'${id}'`).join(",")})`);
+    }
+
+    const { data: leads } = await query
       .order("fit_score", { ascending: false })
-      .limit(1);
+      .limit(5);
 
     if (!leads?.length) {
       continue;
     }
 
-    // ── Check optouts ────────────────────────────────────────
-    const phone = leads[0].whatsapp;
-    const { data: optout } = await supabase
-      .from("optouts")
-      .select("whatsapp")
-      .eq("tenant_id", tenantId)
-      .eq("whatsapp", phone)
-      .maybeSingle();
+    // Iterar sobre os candidatos encontrados até achar um válido
+    for (const lead of leads) {
+      const phone = lead.whatsapp || "";
+      const companyName = (lead.name || "").toLowerCase().trim();
 
-    if (optout) {
-      continue;
-    }
+      // A. Filtro de Telefone Celular Móvel (Regex)
+      const cleanPhone = phone.replace(/\D/g, "");
+      const isCelular = /^55\d{2}9\d{8}$/.test(cleanPhone);
 
-    const lead = leads[0];
-
-    try {
-      const variation = pickVariation(variations);
-      if (!variation) {
+      if (!isCelular) {
+        console.log(`  🚫 [Filtro Celular] Lead "${lead.name}" (ID: ${lead.id}) pulado. Telefone fixo/inválido: ${phone}`);
+        await supabase
+          .from("leads")
+          .update({ 
+            status: "INVALID_NUMBER", 
+            updated_at: new Date().toISOString() 
+          })
+          .eq("id", lead.id);
+        
+        processedLeadIds.add(lead.id); // Evita reprocessar no mesmo loop
         continue;
       }
 
-      const messageContent = await substituteVariables(variation.message, lead);
-      const conversationId = uuid();
-      const nowTime = new Date().toISOString();
+      // B. Filtro de Nomes Comerciais/Empresas (Lista Negra)
+      const scriptProfession = (script.target_profession || "").toLowerCase();
+      const isTargetProfessionLiberal = scriptProfession.includes("médico") || scriptProfession.includes("medico") || scriptProfession.includes("doctor") || scriptProfession.includes("doutor") || scriptProfession.includes("advogado") || scriptProfession.includes("lawyer") || scriptProfession.includes("dentist") || scriptProfession.includes("dentista") || scriptProfession.includes("direito") || scriptProfession.includes("saúde") || scriptProfession.includes("saude");
 
-      const { error: convErr } = await supabase.from("conversations").insert({
-        id: conversationId,
-        tenant_id: tenantId,
-        lead_id: lead.id,
-        script_id: script.id,
-        status: "ACTIVE",
-        ai_handling: true,
-        current_node_id: null,
-        message_count: 1,
-        started_at: nowTime,
-        last_message: messageContent.substring(0, 200),
-        last_message_at: nowTime,
-        last_outbound_at: nowTime,
-      });
-      if (convErr) throw new Error("Erro ao criar conversação: " + convErr.message);
+      if (isTargetProfessionLiberal) {
+        const blacklist = ['pousada', 'hotel', 'chácara', 'chacara', 'variedades', 'artesanato', 'imports', 'turismo', 'parque', 'restaurante', 'grill', 'picanha', 'tintas', 'loja', 'loteamento', 'auto', 'mecânica', 'mecanica', 'oficina', 'barbearia', 'salão', 'salao', 'construção', 'construcao', 'distribuidora', 'mercado', 'supermercado', 'padaria', 'confeitaria'];
+        const hasCommercialTerm = blacklist.some(term => companyName.includes(term));
 
-      const { error: queueErr } = await supabase.from("pending_outbound").insert({
-        id: uuid(),
-        tenant_id: tenantId,
-        conversation_id: conversationId,
-        content: messageContent,
-        idempotency_key: "active-" + lead.id,
-        scheduled_for: nowTime,
-        attempts: 0,
-        message_type: "OUTBOUND_START",
-        priority: 6,
-      });
-      if (queueErr) throw new Error("Erro ao enfileirar mensagem: " + queueErr.message);
+        if (hasCommercialTerm) {
+          console.log(`  🚫 [Filtro Comercial] Lead "${lead.name}" (ID: ${lead.id}) pulado. Termo comercial incompatível com script liberal.`);
+          await supabase
+            .from("leads")
+            .update({ 
+              status: "COMMERCIAL_LEAD_SKIPPED", 
+              updated_at: new Date().toISOString() 
+            })
+            .eq("id", lead.id);
 
-      const { error: leadErr } = await supabase.from("leads").update({
-        queued_first_touch_at: nowTime,
-        updated_at: nowTime,
-      }).eq("id", lead.id);
-      if (leadErr) throw new Error("Erro ao atualizar lead: " + leadErr.message);
+          processedLeadIds.add(lead.id); // Evita reprocessar no mesmo loop
+          continue;
+        }
+      }
 
-      const { error: scriptErr } = await supabase.from("scripts").update({
-        total_usages: (script.total_usages || 0) + 1,
-      }).eq("id", script.id);
-      if (scriptErr) throw new Error("Erro ao atualizar script: " + scriptErr.message);
+      // C. Check optouts
+      const { data: optout } = await supabase
+        .from("optouts")
+        .select("whatsapp")
+        .eq("tenant_id", tenantId)
+        .eq("whatsapp", phone)
+        .maybeSingle();
 
-      const { error: variationErr } = await supabase.from("script_variations").update({
-        total_sent: (variation.total_sent || 0) + 1,
-        updated_at: nowTime,
-      }).eq("id", variation.id);
-      if (variationErr) throw new Error("Erro ao atualizar variação de script: " + variationErr.message);
+      if (optout) {
+        processedLeadIds.add(lead.id);
+        continue;
+      }
 
-      queued++;
-    } catch (err: any) {
-      console.error("  💥 Erro ao enfileirar lead: " + err.message);
-      failed++;
+      // Se passou em todos os filtros, tentar enfileirar
+      try {
+        const variation = pickVariation(variations);
+        if (!variation) {
+          processedLeadIds.add(lead.id);
+          continue;
+        }
+
+        const messageContent = await substituteVariables(variation.message, lead);
+        const conversationId = uuid();
+        const nowTime = new Date().toISOString();
+
+        const { error: convErr } = await supabase.from("conversations").insert({
+          id: conversationId,
+          tenant_id: tenantId,
+          lead_id: lead.id,
+          script_id: script.id,
+          status: "ACTIVE",
+          ai_handling: true,
+          current_node_id: null,
+          message_count: 1,
+          started_at: nowTime,
+          last_message: messageContent.substring(0, 200),
+          last_message_at: nowTime,
+          last_outbound_at: nowTime,
+        });
+        if (convErr) throw new Error("Erro ao criar conversação: " + convErr.message);
+
+        const { error: queueErr } = await supabase.from("pending_outbound").insert({
+          id: uuid(),
+          tenant_id: tenantId,
+          conversation_id: conversationId,
+          content: messageContent,
+          idempotency_key: "active-" + lead.id,
+          scheduled_for: nowTime,
+          attempts: 0,
+          message_type: "OUTBOUND_START",
+          priority: 6,
+        });
+        if (queueErr) throw new Error("Erro ao enfileirar mensagem: " + queueErr.message);
+
+        const { error: leadErr } = await supabase.from("leads").update({
+          queued_first_touch_at: nowTime,
+          updated_at: nowTime,
+        }).eq("id", lead.id);
+        if (leadErr) throw new Error("Erro ao atualizar lead: " + leadErr.message);
+
+        const { error: scriptErr } = await supabase.from("scripts").update({
+          total_usages: (script.total_usages || 0) + 1,
+        }).eq("id", script.id);
+        if (scriptErr) throw new Error("Erro ao atualizar script: " + scriptErr.message);
+
+        const { error: variationErr } = await supabase.from("script_variations").update({
+          total_sent: (variation.total_sent || 0) + 1,
+          updated_at: nowTime,
+        }).eq("id", variation.id);
+        if (variationErr) throw new Error("Erro ao atualizar variação de script: " + variationErr.message);
+
+        processedLeadIds.add(lead.id);
+        queued++;
+        break; // Processou 1 lead com sucesso para esta campanha, sai do loop de leads
+      } catch (err: any) {
+        console.error("  💥 Erro ao enfileirar lead: " + err.message);
+        failed++;
+        processedLeadIds.add(lead.id);
+      }
     }
   }
 
@@ -472,14 +528,27 @@ async function processFirstTouch(tenantId: string): Promise<{ queued: number; fa
 async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number): Promise<{ sent: number; queued: number; failed: number }> {
   let sent = 0, queued = 0, failed = 0;
 
-  // 1. Tentar Lock
-  const { data: lockResult, error: lockErr } = await supabase.rpc("try_advisory_lock", { lock_id: tenantId });
-  if (lockErr || !lockResult) {
-    console.log("  🔒 Worker para tenant " + tenantId + " já está rodando em outra instância.");
+  // 1. Tentar Lock Lógico Persistente (timeout de 2 min)
+  const nowTime = new Date().toISOString();
+  const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+  
+  const { data: lockUpdate, error: lockErr } = await supabase
+    .from("whatsapp_guardian_status")
+    .update({ locked_at: nowTime })
+    .eq("tenant_id", tenantId)
+    .or(`locked_at.is.null,locked_at.lt.${twoMinutesAgo}`)
+    .select();
+
+  if (lockErr || !lockUpdate || lockUpdate.length === 0) {
+    console.log("  🔒 [Lock Lógico] Worker para tenant " + tenantId + " já está rodando em outra instância.");
     return { sent: 0, queued: 0, failed: 0 };
   }
 
-  console.log("  🚀 Lock adquirido para tenant " + tenantId + ". Iniciando processamento...");
+  console.log("  🚀 [Lock Lógico] Lock adquirido com sucesso para tenant " + tenantId + ". Iniciando processamento...");
+
+  // Inicializar caches locais de memória para esta rodada contra race conditions
+  const processedLeadIds = new Set<string>();
+  const processedConversationIds = new Set<string>();
 
   try {
     while (Date.now() < runEndTime) {
@@ -493,7 +562,7 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
       if (!guardianStatus) {
         const { data: newStatus } = await supabase
           .from("whatsapp_guardian_status")
-          .insert({ tenant_id: tenantId, status: "NORMAL" })
+          .insert({ tenant_id: tenantId, status: "NORMAL", locked_at: nowTime })
           .select("*")
           .single();
         guardianStatus = newStatus;
@@ -501,8 +570,8 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
 
       const numberState = guardianStatus.status || "NORMAL";
 
-      if (numberState === "PAUSED") {
-        console.log("  ⏸️ Guardião do tenant " + tenantId + " está pausado.");
+      if (numberState === "PAUSED" || numberState === "SUSPENDED") {
+        console.log("  ⏸️ Guardião do tenant " + tenantId + " está pausado ou suspenso. Estado: " + numberState);
         await sleep(5000);
         continue;
       }
@@ -580,27 +649,35 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
       const canQueueNewActive = 
         numberState !== "COOLDOWN" && 
         numberState !== "PAUSED" && 
+        numberState !== "SUSPENDED" &&
         !hasReactivePending && 
         msgsLastHr < maxMsgsPerHr && 
         chatsToday < maxNewChatsPerDay;
 
       if (canQueueNewActive) {
-        const { queued: q } = await processFirstTouch(tenantId);
+        const { queued: q } = await processFirstTouch(tenantId, processedLeadIds);
         queued += q;
       }
 
       // 6. Buscar a mensagem mais prioritária na fila a enviar
-      const { data: queueItems } = await supabase
+      let queueQuery = supabase
         .from("pending_outbound")
         .select("*")
         .eq("tenant_id", tenantId)
         .is("sent_at", null)
         .is("failed_at", null)
         .lte("scheduled_for", new Date().toISOString())
-        .lt("attempts", 3)
+        .lt("attempts", 3);
+
+      if (processedConversationIds.size > 0) {
+        queueQuery = queueQuery.not("conversation_id", "in", `(${Array.from(processedConversationIds).map(id => `'${id}'`).join(",")})`);
+      }
+
+      const { data: queueItems } = await queueQuery
         .order("priority", { ascending: true })
         .order("scheduled_for", { ascending: true })
         .limit(1);
+
 
       if (!queueItems || queueItems.length === 0) {
         await sleep(2000);
@@ -608,6 +685,7 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
       }
 
       const item = queueItems[0];
+      processedConversationIds.add(item.conversation_id);
 
       // Obter detalhes da conversa/telefone do lead
       const { data: conversation } = await supabase
@@ -804,6 +882,98 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
         }
 
       } else {
+        const errText = (sendResult.error || "").toLowerCase();
+        const isSuspendedError = errText.includes("401") || 
+                                 errText.includes("conflict") || 
+                                 errText.includes("device_removed") || 
+                                 errText.includes("stream errored");
+
+        if (isSuspendedError) {
+          console.error(`  🚨 [WhatsApp Suspenso] Detectado erro de suspensão/desconexão para o tenant ${tenantId}: ${sendResult.error}`);
+          
+          // 1. Atualizar o status do Guardião do Tenant para SUSPENDED e resetar locked_at
+          await supabase
+            .from("whatsapp_guardian_status")
+            .update({ 
+              status: "SUSPENDED", 
+              locked_at: null,
+              updated_at: nowTime 
+            })
+            .eq("tenant_id", tenantId);
+
+          // 2. Disparar Alerta Operacional
+          try {
+            await supabase.from("operational_alerts").insert({
+              id: uuid(),
+              type: "whatsapp_suspension",
+              severity: "CRITICAL",
+              tenant_id: tenantId,
+              title: "WhatsApp Suspenso (Meta)",
+              message: `A conexão do WhatsApp foi derrubada pela Meta. Erro: ${sendResult.error}`,
+              context: { error: sendResult.error, conversation_id: item.conversation_id, pending_outbound_id: item.id },
+              created_at: nowTime,
+              updated_at: nowTime
+            });
+          } catch (alertErr) {
+            console.error("  ⚠️ Erro ao inserir alerta operacional:", alertErr);
+          }
+
+          // 3. Notificar o Usuário Administrador
+          try {
+            const { data: userAdmin } = await supabase
+              .from("users")
+              .select("id")
+              .eq("tenant_id", tenantId)
+              .order("role", { ascending: true })
+              .limit(1)
+              .maybeSingle();
+
+            if (userAdmin?.id) {
+              await supabase.from("notifications").insert({
+                id: uuid(),
+                tenant_id: tenantId,
+                user_id: userAdmin.id,
+                type: "whatsapp_suspension",
+                title: "🚨 WhatsApp Desconectado por Suspensão (Meta)",
+                body: "Atenção: A conexão do seu WhatsApp foi derrubada pela Meta devido a indícios de suspensão/spam. A prospecção ativa foi congelada para proteger seu número. Reconecte o aparelho nas configurações.",
+                created_at: nowTime
+              });
+            } else {
+              console.warn(`  ⚠️ Nenhum usuário encontrado para notificar sobre suspensão no tenant ${tenantId}`);
+            }
+          } catch (notifErr) {
+            console.error("  ⚠️ Erro ao criar notificação de usuário:", notifErr);
+          }
+
+          // Registrar falha na telemetria (marcar como duplicado = false, mas com erro)
+          try {
+            await supabase.from("whatsapp_guardian_telemetry").insert({
+              tenant_id: tenantId,
+              conversation_id: item.conversation_id,
+              message_type: item.message_type,
+              queued_at: item.created_at,
+              scheduled_for: item.scheduled_for,
+              error: sendResult.error,
+              number_state: "SUSPENDED",
+              is_reactive: ["REACTIVE_REPLY", "CHAT_CONTINUATION", "LOOKUP_REPLY"].includes(item.message_type || ""),
+              is_followup: item.message_type === "COMMERCIAL_FOLLOWUP",
+            });
+          } catch (_) {}
+
+          // Adiar item de envio atual para que não fique travado tentando de novo infinitamente antes de expirar
+          const attempts = (item.attempts || 0) + 1;
+          await supabase.from("pending_outbound").update({
+            attempts,
+            failed_reason: sendResult.error
+          }).eq("id", item.id);
+          
+          failed++;
+
+          // 4. Abortar fila do tenant atual
+          break;
+        }
+
+        // Fluxo de erro normal (que não é suspensão)
         const attempts = (item.attempts || 0) + 1;
         const updateData: any = {
           attempts,
@@ -835,8 +1005,16 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
       await sleep(1500);
     }
   } finally {
-    await supabase.rpc("try_advisory_unlock", { lock_id: tenantId });
-    console.log("  🔓 Lock liberado para tenant " + tenantId + ".");
+    try {
+      await supabase
+        .from("whatsapp_guardian_status")
+        .update({ locked_at: null })
+        .eq("tenant_id", tenantId)
+        .eq("locked_at", nowTime);
+      console.log("  🔓 [Lock Lógico] Lock liberado para tenant " + tenantId + ".");
+    } catch (errUnlock) {
+      console.error("  ⚠️ Erro ao liberar lock lógico:", errUnlock);
+    }
   }
 
   return { sent, queued, failed };
