@@ -100,6 +100,30 @@ export async function POST(request: NextRequest) {
     }
 
     const qrData = await qrRes.json();
+    const quarantineMinutesRaw = Number(process.env.WA_POST_RECONNECT_QUARANTINE_MINUTES || 60);
+    const quarantineMinutes = Number.isFinite(quarantineMinutesRaw) && quarantineMinutesRaw >= 0 ? quarantineMinutesRaw : 60;
+    const nowIso = new Date().toISOString();
+    const quarantinedUntil = new Date(Date.now() + quarantineMinutes * 60 * 1000).toISOString();
+    const guardianPayload = {
+      tenant_id: tenantId,
+      status: 'COLD',
+      external_state: 'qr_requested',
+      external_checked_at: nowIso,
+      last_disconnect_reason_code: null,
+      quarantined_until: quarantinedUntil,
+      circuit_open_until: null,
+      updated_at: nowIso,
+    };
+
+    const { error: guardianErr } = await supabaseAdmin
+      .from('whatsapp_guardian_status')
+      .upsert(guardianPayload, { onConflict: 'tenant_id' });
+
+    if (guardianErr) {
+      await supabaseAdmin
+        .from('whatsapp_guardian_status')
+        .upsert({ tenant_id: tenantId, status: 'COLD', updated_at: nowIso }, { onConflict: 'tenant_id' });
+    }
 
     return NextResponse.json({
       instanceName,

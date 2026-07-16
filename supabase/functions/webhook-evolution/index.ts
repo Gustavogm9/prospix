@@ -29,10 +29,10 @@ function randomDelay(minSec: number, maxSec: number): number {
 function splitMessageIntoBlocks(text: string): string[] {
   const rawBlocks = text.split(/\n\n+/).map(b => b.trim()).filter(Boolean);
   if (rawBlocks.length <= 1) return [text];
-  
+
   const blocks: string[] = [];
   let currentBlock = "";
-  
+
   for (const block of rawBlocks) {
     if (blocks.length >= 3) {
       blocks[blocks.length - 1] = blocks[blocks.length - 1] + "\n\n" + block;
@@ -49,13 +49,13 @@ function splitMessageIntoBlocks(text: string): string[] {
       }
     }
   }
-  
+
   if (currentBlock && blocks.length < 3) {
     blocks.push(currentBlock);
   } else if (currentBlock) {
     blocks[blocks.length - 1] = blocks[blocks.length - 1] + "\n\n" + currentBlock;
   }
-  
+
   return blocks;
 }
 
@@ -69,7 +69,273 @@ function normalizePhone(raw: string): string {
   return phone;
 }
 
-// ── OpenAI Call ──────────────────────────────────────────────────────────────
+
+type ConnectionGuardStatus = "COLD" | "NORMAL" | "PAUSED" | "SUSPENDED";
+
+function getNumberEnv(name: string, fallback: number): number {
+  const raw = Deno.env.get(name);
+  if (!raw) return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+function redactText(value: unknown): string {
+  return String(value ?? "")
+    .replace(/55\d{10,13}/g, "[PHONE_REDACTED]")
+    .replace(/[A-Za-z0-9_=-]{48,}/g, "[TOKEN_REDACTED]")
+    .slice(0, 500);
+}
+
+function redactPayload(value: unknown): Record<string, unknown> {
+  try {
+    return { preview: redactText(JSON.stringify(value ?? {})) };
+  } catch (_err) {
+    return { preview: redactText(value) };
+  }
+}
+
+async function shortHash(value: string): Promise<string> {
+  const bytes = new TextEncoder().encode(value || "unknown");
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .slice(0, 6)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function normalizeEventName(event: unknown): string {
+  return String(event || "").toUpperCase().replace(/[.]/g, "_");
+}
+
+function extractConnectionInstanceName(payload: any): string {
+  const data = payload?.data || {};
+  const candidate = payload?.instanceName
+    || (typeof payload?.instance === "string" ? payload.instance : null)
+    || data?.instanceName
+    || data?.instance?.instanceName
+    || data?.instance?.name
+    || (typeof data?.instance === "string" ? data.instance : null)
+    || data?.name
+    || "";
+  return String(candidate || "");
+}
+
+function extractConnectionState(payload: any): string | null {
+  const data = payload?.data || {};
+  const instance = data?.instance || payload?.instance || {};
+  return data?.state
+    || data?.status
+    || data?.connection
+    || data?.connectionStatus
+    || payload?.state
+    || payload?.status
+    || instance?.state
+    || instance?.connectionStatus
+    || null;
+}
+
+function extractConnectionRaw(payload: any): unknown {
+  const data = payload?.data || {};
+  return data?.disconnectionObject
+    || data?.error
+    || data?.reason
+    || data?.statusReason
+    || payload?.error
+    || payload?.reason
+    || data
+    || payload;
+}
+
+function classifyConnectionState(event: string, state: string | null, raw: unknown): { status: ConnectionGuardStatus; reasonCode: string; critical: boolean } {
+  const normalizedEvent = normalizeEventName(event);
+  const normalizedState = String(state || "").toLowerCase();
+  const rawText = redactText(raw).toLowerCase();
+
+  if (normalizedEvent === "QRCODE_UPDATED") return { status: "COLD", reasonCode: "WA_QR_UPDATED", critical: false };
+  if (rawText.includes("device_removed")) return { status: "SUSPENDED", reasonCode: "WA_DEVICE_REMOVED", critical: true };
+  if (rawText.includes("stream errored") || rawText.includes("stream:error")) return { status: "SUSPENDED", reasonCode: "WA_STREAM_ERRORED", critical: true };
+  if (rawText.includes("conflict")) return { status: "SUSPENDED", reasonCode: "WA_SESSION_CONFLICT", critical: true };
+  if (rawText.includes("401") || rawText.includes("unauthorized")) return { status: "SUSPENDED", reasonCode: "WA_UNAUTHORIZED", critical: true };
+  if (normalizedState === "open") return { status: "COLD", reasonCode: "WA_CONNECTION_OPEN", critical: false };
+  if (normalizedState === "connecting") return { status: "PAUSED", reasonCode: "WA_CONNECTING", critical: false };
+  if (normalizedState === "close" || normalizedState === "closed") return { status: "PAUSED", reasonCode: "WA_CONNECTION_CLOSED", critical: false };
+  return { status: "PAUSED", reasonCode: "WA_CONNECTION_UPDATE", critical: false };
+}
+
+async function recordConnectionEvent(params: {
+  tenantId: string;
+  instanceName: string;
+  eventType: string;
+  externalState: string | null;
+  reasonCode: string;
+  rawError?: Record<string, unknown>;
+  localStatusBefore?: string | null;
+  localStatusAfter?: string | null;
+}) {
+  try {
+    await supabase.from("whatsapp_connection_events").insert({
+      tenant_id: params.tenantId,
+      instance_hash: await shortHash(params.instanceName),
+      event_type: params.eventType,
+      external_state: params.externalState,
+      reason_code: params.reasonCode,
+      raw_error_redacted: params.rawError || {},
+      local_status_before: params.localStatusBefore || null,
+      local_status_after: params.localStatusAfter || null,
+    });
+  } catch (err) {
+    console.warn("Falha ao registrar whatsapp_connection_events:", err);
+  }
+}
+
+async function updateGuardianConnectionStatus(
+  tenantId: string,
+  status: ConnectionGuardStatus,
+  externalState: string | null,
+  reasonCode: string | null,
+  extra: Record<string, unknown> = {},
+) {
+  const payload = {
+    tenant_id: tenantId,
+    status,
+    external_state: externalState,
+    external_checked_at: new Date().toISOString(),
+    last_disconnect_reason_code: reasonCode,
+    updated_at: new Date().toISOString(),
+    ...extra,
+  };
+
+  const { error } = await supabase
+    .from("whatsapp_guardian_status")
+    .upsert(payload, { onConflict: "tenant_id" });
+
+  if (error) {
+    await supabase
+      .from("whatsapp_guardian_status")
+      .upsert({ tenant_id: tenantId, status, updated_at: new Date().toISOString() }, { onConflict: "tenant_id" });
+  }
+}
+
+async function createConnectionAlert(tenantId: string, reasonCode: string, state: string | null, context: Record<string, unknown>) {
+  const dedupKey = `whatsapp_connection:${tenantId}:${reasonCode}`;
+  const { data: existingAlert } = await supabase
+    .from("operational_alerts")
+    .select("id")
+    .eq("dedup_key", dedupKey)
+    .maybeSingle();
+
+  if (existingAlert) return;
+
+  await supabase.from("operational_alerts").insert({
+    id: uuid(),
+    type: "whatsapp_connection_guard",
+    severity: "CRITICAL",
+    tenant_id: tenantId,
+    title: "WhatsApp desconectado pelo aparelho",
+    message: `Webhook Evolution informou falha critica da conexao WhatsApp. Estado externo: ${state || "desconhecido"}.`,
+    context,
+    dedup_key: dedupKey,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  });
+
+  const { data: userAdmin } = await supabase
+    .from("users")
+    .select("id")
+    .eq("tenant_id", tenantId)
+    .order("role", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (userAdmin?.id) {
+    await supabase.from("notifications").insert({
+      id: uuid(),
+      tenant_id: tenantId,
+      user_id: userAdmin.id,
+      type: "whatsapp_connection_guard",
+      title: "WhatsApp desconectado",
+      body: "O aparelho foi removido ou a sessao do WhatsApp caiu. O envio automatico foi bloqueado ate nova conexao e quarentena.",
+      data: { reason_code: reasonCode },
+      created_at: new Date().toISOString(),
+    });
+  }
+}
+
+async function handleConnectionUpdate(payload: any): Promise<Response> {
+  const event = payload?.event || "CONNECTION_UPDATE";
+  const instanceName = extractConnectionInstanceName(payload);
+
+  if (!instanceName) {
+    return new Response(JSON.stringify({ ok: true, skipped: true, reason: "missing instance" }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const { data: tenantSecret } = await supabase
+    .from("tenant_secrets")
+    .select("tenant_id")
+    .eq("evolution_instance_name", instanceName)
+    .maybeSingle();
+
+  if (!tenantSecret?.tenant_id) {
+    console.log(`  No tenant found for connection event instance: ${instanceName}`);
+    return new Response(JSON.stringify({ ok: true, skipped: true, reason: "unknown instance" }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const tenantId = tenantSecret.tenant_id;
+  const state = extractConnectionState(payload);
+  const raw = extractConnectionRaw(payload);
+  const classification = classifyConnectionState(event, state, raw);
+  const { data: previousStatus } = await supabase
+    .from("whatsapp_guardian_status")
+    .select("status")
+    .eq("tenant_id", tenantId)
+    .maybeSingle();
+
+  const extra: Record<string, unknown> = {};
+  if (classification.reasonCode === "WA_CONNECTION_OPEN") {
+    const quarantineMinutes = getNumberEnv("WA_POST_RECONNECT_QUARANTINE_MINUTES", 60);
+    extra.connected_at = new Date().toISOString();
+    extra.quarantined_until = new Date(Date.now() + quarantineMinutes * 60 * 1000).toISOString();
+    extra.circuit_open_until = null;
+  } else if (classification.critical) {
+    extra.locked_at = null;
+    extra.circuit_open_until = new Date(Date.now() + getNumberEnv("WA_CRITICAL_CIRCUIT_OPEN_MINUTES", 60) * 60 * 1000).toISOString();
+  }
+
+  await updateGuardianConnectionStatus(tenantId, classification.status, state, classification.reasonCode, extra);
+  await recordConnectionEvent({
+    tenantId,
+    instanceName,
+    eventType: normalizeEventName(event),
+    externalState: state,
+    reasonCode: classification.reasonCode,
+    rawError: redactPayload(raw),
+    localStatusBefore: previousStatus?.status || null,
+    localStatusAfter: classification.status,
+  });
+
+  if (classification.critical) {
+    await createConnectionAlert(tenantId, classification.reasonCode, state, {
+      reason_code: classification.reasonCode,
+      external_state: state,
+      raw_error_redacted: redactPayload(raw),
+    });
+  }
+
+  return new Response(JSON.stringify({
+    ok: true,
+    handled: true,
+    event: normalizeEventName(event),
+    state,
+    reason_code: classification.reasonCode,
+    status: classification.status,
+  }), {
+    headers: { "Content-Type": "application/json" },
+  });
+}// ── OpenAI Call ──────────────────────────────────────────────────────────────
 async function callOpenAI(
   systemPrompt: string,
   userMessage: string,
@@ -79,7 +345,7 @@ async function callOpenAI(
   tools?: any[]
 ): Promise<{ content: string; toolCalls: any[]; tokensIn: number; tokensOut: number; latencyMs: number }> {
   const start = Date.now();
-  
+
   const payload: any = {
     model,
     messages: [
@@ -224,20 +490,20 @@ function buildConversationContext(messages: any[], leadName: string): string {
 
 function buildLeadEnrichedPrompt(lead: any): string {
   if (!lead) return "";
-  
+
   let prompt = "\n\n### 👤 DADOS ENRIQUECIDOS DO LEAD (Use para contextualizar e personalizar a abordagem):\n";
-  
+
   const firstName = lead.name ? lead.name.split(" ")[0] : "Lead";
   prompt += `- **Nome de tratamento**: ${firstName}\n`;
-  
+
   if (lead.profession) {
     prompt += `- **Profissão/Nicho**: ${lead.profession}\n`;
   }
-  
+
   if (lead.partner_or_owner !== null) {
     prompt += `- **Cargo/Socio-proprietário**: ${lead.partner_or_owner ? "Sim" : "Não"}\n`;
   }
-  
+
   if (lead.years_of_practice) {
     prompt += `- **Tempo de atuação**: ${lead.years_of_practice} anos\n`;
   }
@@ -280,7 +546,7 @@ function buildLeadEnrichedPrompt(lead: any): string {
 function applyGuardrails(text: string): string {
   let cleaned = text.replace(/<[^>]*>?/gm, ''); // remove html
   cleaned = cleaned.replace(/^(System:|AI:|Assistant:)\s*/i, ''); // remove prefixes
-  
+
   // Remove any price mentions (R$ XX, XX reais, etc.)
   cleaned = cleaned.replace(/R\$\s*[\d.,]+/gi, "[consulta personalizada]");
   cleaned = cleaned.replace(/\d+\s*reais/gi, "[consulta personalizada]");
@@ -300,15 +566,15 @@ function applyGuardrails(text: string): string {
 function getStartNode(flow: any): any {
   if (!flow || !flow.nodes || !Array.isArray(flow.nodes) || flow.nodes.length === 0) return null;
   const nodes = flow.nodes;
-  
-  const startNode = nodes.find((n: any) => 
-    n.type === 'trigger' || 
-    n.type === 'start' || 
-    String(n.id).toLowerCase().includes('start') || 
+
+  const startNode = nodes.find((n: any) =>
+    n.type === 'trigger' ||
+    n.type === 'start' ||
+    String(n.id).toLowerCase().includes('start') ||
     String(n.id).toLowerCase().includes('trigger')
   );
   if (startNode) return startNode;
-  
+
   const edges = flow.edges || [];
   const targetIds = new Set(edges.map((e: any) => e.target));
   const noIncoming = nodes.find((n: any) => !targetIds.has(n.id));
@@ -347,7 +613,7 @@ Responda APENAS com o ID do nó escolhido (ex: "node_1234"). Se nenhuma opção 
   try {
     const result = await callOpenAI(prompt, leadMessage, 0.1, 100);
     const matchedId = result.content.trim();
-    
+
     const isValid = outgoingEdges.some(e => e.target === matchedId);
     if (isValid) return matchedId;
 
@@ -364,9 +630,9 @@ function parseFlowToPrompt(flow: any): string {
   if (!flow || !flow.nodes || !Array.isArray(flow.nodes) || flow.nodes.length === 0) return "";
   const nodes = flow.nodes;
   const edges = flow.edges || [];
-  
+
   let instructions = "\n### FLUXOGRAMA DE DECISÃO DA CONVERSA (STATE MACHINE)\nSiga RIGOROSAMENTE estas etapas do fluxo para este roteiro. Mapeie em que ponto a conversa está e responda de acordo com os próximos nós:\n\n";
-  
+
   // Sort nodes generally by Y position to read top to bottom logically
   const sortedNodes = [...nodes].sort((a: any, b: any) => (a.position?.y || 0) - (b.position?.y || 0));
 
@@ -374,9 +640,9 @@ function parseFlowToPrompt(flow: any): string {
     const title = node.data?.title || node.type;
     const content = node.data?.message || node.data?.content || '';
     if (!title && !content) continue;
-    
+
     instructions += `- **[${title}]**: ${content}\n`;
-    
+
     // find connected edges
     const outgoing = edges.filter((e: any) => e.source === node.id);
     if (outgoing.length > 0) {
@@ -389,7 +655,7 @@ function parseFlowToPrompt(flow: any): string {
       }
     }
   }
-  
+
   instructions += "\n(Sua tarefa é identificar em qual etapa a conversa está atualmente e responder com base no que está escrito no nó correto e nas ramificações possíveis.)\n";
   return instructions;
 }
@@ -447,6 +713,10 @@ serve(async (req: Request) => {
 
     console.log(`📩 Webhook received: ${event}`);
 
+    const normalizedEvent = normalizeEventName(event);
+    if (normalizedEvent === "CONNECTION_UPDATE" || normalizedEvent === "QRCODE_UPDATED") {
+      return await handleConnectionUpdate(payload);
+    }
     // Only handle incoming messages
     if (event !== "messages.upsert" && event !== "MESSAGES_UPSERT") {
       // Also handle message status updates
@@ -890,7 +1160,7 @@ serve(async (req: Request) => {
             }
           });
         }
-        
+
         await supabase.from("lead_events").insert({
           tenant_id: tenantId,
           lead_id: lead.id,
@@ -936,7 +1206,7 @@ serve(async (req: Request) => {
     let aiInstructions: string | null = null;
     let scriptFlow: any = null;
     let guardiansConfig: any = null;
-    
+
     if (conversation.script_id) {
       const { data: script } = await supabase
         .from("scripts")
@@ -993,7 +1263,7 @@ serve(async (req: Request) => {
             if (nextNode) {
               currentNode = nextNode;
               currentNodeId = nextNode.id;
-              
+
               await supabase
                 .from("conversations")
                 .update({ current_node_id: currentNodeId })
@@ -1027,7 +1297,7 @@ Importante: Gere a resposta para o lead com base nesta etapa atual e garanta que
     }
 
     // ── Camada 3: Guardiões Injetados ────────────────────────
-    
+
     // Buscar o Contexto de Negócio do Tenant
     const { data: businessContext } = await supabase
       .from("tenant_business_context")
@@ -1043,7 +1313,7 @@ Importante: Gere a resposta para o lead com base nesta etapa atual e garanta que
       if (businessContext.tone_of_voice) personaGuardrail += `- **Tom de Voz OBRIGATÓRIO**: ${businessContext.tone_of_voice}\n`;
       if (businessContext.common_objections) personaGuardrail += `- **Como lidar com objeções**: ${businessContext.common_objections}\n`;
       if (businessContext.standard_approaches) personaGuardrail += `- **Abordagens de Ouro**: ${businessContext.standard_approaches}\n`;
-      
+
       aiInstructions = (aiInstructions || "") + personaGuardrail;
       console.log("  🧬 Contexto de Negócio injetado no prompt.");
     }
@@ -1095,7 +1365,7 @@ REGRA DE OURO: Integre as respostas recomendadas de contorno abaixo ao fluxo L-D
       const salesFrameworkGuardrail = `
 
 ### 🛡️ GUARDIÃO DE QUALIFICAÇÃO E DIAGNÓSTICO (SPIN / BANT / Receita Previsível):
-O lead demonstrou interesse inicial ou fez uma pergunta. 
+O lead demonstrou interesse inicial ou fez uma pergunta.
 NÃO VOMITE A AGENDA NEM DETALHES DO PRODUTO IMEDIATAMENTE.
 Use as seguintes técnicas combinadas:
 1. **Receita Previsível (Aaron Ross):** Mantenha mensagens CURTAS (formato "Spear-phishing"). Responda a dúvida dele de forma muito direta e passe a bola de volta. Se houver dúvida sobre quem decide, pergunte sutilmente: "Normalmente, você é a pessoa que lidera esses projetos por aí?"
@@ -1126,7 +1396,7 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
 
     // Sleep Mode Guardrail
     // Get current hour in UTC-3 (BRT)
-    const currentHourBRT = new Date().getUTCHours() - 3; 
+    const currentHourBRT = new Date().getUTCHours() - 3;
     const normalizedHour = currentHourBRT < 0 ? currentHourBRT + 24 : currentHourBRT;
     let isSleepMode = false;
     let scheduledTime = new Date(Date.now() + 5000);
@@ -1136,7 +1406,7 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
       const sleepModeGuardrail = `\n\n### 🌙 GUARDIÃO DE HORÁRIO COMERCIAL (SLEEP MODE):\nATENÇÃO: Você está recebendo essa mensagem fora do horário comercial (${normalizedHour}h). \n- Aja como se tivesse visto a mensagem no dia seguinte de manhã.\n- OBRIGATÓRIO COMEÇAR A MENSAGEM COM: 'Bom dia! Desculpe a demora, já não estava no escritório ontem...'\n- Depois disso, siga a resposta normalmente.`;
       aiInstructions = (aiInstructions || "") + sleepModeGuardrail;
       console.log(`  🌙 Guardião Sleep Mode Ativado (Hora BRT: ${normalizedHour}h).`);
-      
+
       // Calculate delay to next 08:00 AM BRT
       // BRT is UTC-3, so 08:00 BRT is 11:00 UTC
       const nextSend = new Date();
@@ -1210,19 +1480,19 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
             mediaType = "document";
           } catch(e) {}
         }
-        
+
         if (call.function?.name === "schedule_meeting") {
           try {
             const args = JSON.parse(call.function.arguments);
             responseText = args.confirmation_message || "Agendado com sucesso! Nos falamos em breve.";
-            
+
             // Camada 4: Dossiê Pós-Agendamento
             const dossier = args.dossier_summary;
-            
+
             // Update Lead and Conversation Status
             await supabase.from("leads").update({ status: "MEETING_SCHEDULED" }).eq("id", lead.id);
             await supabase.from("conversations").update({ status: "SCHEDULED", ai_handling: false }).eq("id", conversation.id);
-            
+
             // Create Notification with Dossier
             const { data: tenantAdmin } = await supabase.from("users").select("id").eq("tenant_id", tenantId).limit(1).single();
             if (tenantAdmin && dossier) {
@@ -1236,7 +1506,7 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
                 link: `/inbox?conversation=${conversation.id}`
               });
             }
-            
+
             console.log(`  📅 Guardião 4: Dossiê Gerado e Reunião Agendada!`);
           } catch(e) {
             console.error("Error processing schedule_meeting tool:", e);
@@ -1249,23 +1519,30 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
     // ── Step 5: Queue in pending_outbound with delay ─────────
     const blocks = splitMessageIntoBlocks(responseText);
     const hasToolCalls = aiResponse.toolCalls && aiResponse.toolCalls.length > 0;
-    
+
     // Calcula o tipo de mensagem inicial
     const baseMessageType = hasToolCalls ? 'LOOKUP_REPLY' : 'REACTIVE_REPLY';
     const basePriority = hasToolCalls ? 3 : 1;
 
+    let firstScheduledFor = "";
+    let firstDelaySec = 0;
     for (let idx = 0; idx < blocks.length; idx++) {
       const blockContent = blocks[idx];
       const isFirstBlock = idx === 0;
-      
+
       const blockDelaySec = isFirstBlock ? 0 : idx * randomDelay(5, 14);
-      
-      const scheduledFor = isSleepMode 
-        ? new Date(scheduledTime.getTime() + blockDelaySec * 1000).toISOString() 
+
+      const scheduledFor = isSleepMode
+        ? new Date(scheduledTime.getTime() + blockDelaySec * 1000).toISOString()
         : new Date(Date.now() + blockDelaySec * 1000).toISOString();
-        
+
+      if (isFirstBlock) {
+        firstScheduledFor = scheduledFor;
+        firstDelaySec = blockDelaySec;
+      }
+
       const idempotencyKey = "ai-" + conversation.id + "-" + inboundMsgId + "-" + idx;
-      
+
       const mType = isFirstBlock ? baseMessageType : 'CHAT_CONTINUATION';
       const mPriority = isFirstBlock ? basePriority : 2;
 
@@ -1292,13 +1569,13 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
         conversation_id: conversation.id,
         intent: classification.intent,
         response_preview: responseText.slice(0, 80),
-        delay_seconds: delaySec,
-        scheduled_for: scheduledFor,
+        delay_seconds: firstDelaySec,
+        scheduled_for: firstScheduledFor,
         model: MODEL,
         tokens_in: aiResponse.tokensIn,
         tokens_out: aiResponse.tokensOut,
         latency_ms: aiResponse.latencyMs,
-        reason: `Resposta IA gerada (${aiResponse.tokensOut} tokens) e agendada com atraso de ${delaySec}s para parecer humana`,
+        reason: `Resposta IA gerada (${aiResponse.tokensOut} tokens) e agendada com atraso de ${firstDelaySec}s para parecer humana`,
       },
       created_at: now,
     });
@@ -1312,15 +1589,15 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
       p_maps_calls: 0
     });
 
-    console.log(`  ⏱️ Scheduled for +${delaySec}s (${scheduledFor})`);
+    console.log(`  ⏱️ Scheduled for +${firstDelaySec}s (${firstScheduledFor})`);
 
     return new Response(JSON.stringify({
       ok: true,
       message_id: inboundMsgId,
       intent: classification.intent,
       confidence: classification.confidence,
-      response_scheduled: scheduledFor,
-      delay_seconds: delaySec,
+      response_scheduled: firstScheduledFor,
+      delay_seconds: firstDelaySec,
     }), {
       headers: { "Content-Type": "application/json" },
     });

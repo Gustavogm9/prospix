@@ -59,11 +59,404 @@ async function loadEvoConfig(tenantId: string): Promise<EvoConfig | null> {
     return {
       baseUrl: data.evolution_base_url || "https://evolution-evolution-api.qr4jgl.easypanel.host",
       instanceName: data.evolution_instance_name,
-      apiKey: data.evolution_api_key_encrypted || "429683C4C977415CAAFCCE10F7D57E11",
+      apiKey: data.evolution_api_key_encrypted || Deno.env.get("EVOLUTION_GUILDS_API_KEY") || "",
     };
   } catch (_e) {
     return null;
   }
+}
+
+type GuardMode = "OFF" | "OBSERVE" | "WARN" | "BLOCK";
+
+interface ExternalConnectionStatus {
+  ok: boolean;
+  state: string | null;
+  reasonCode: string;
+  critical: boolean;
+  rawError: Record<string, unknown>;
+}
+
+interface ConnectionGuardDecision {
+  allowSend: boolean;
+  allowNewActive: boolean;
+  reasonCode: string;
+  externalState: string | null;
+  isQuarantined: boolean;
+  quarantinedUntil: string | null;
+}
+
+function getGuardMode(name: string, fallback: GuardMode): GuardMode {
+  const raw = (Deno.env.get(name) || fallback).toUpperCase();
+  if (raw === "OFF" || raw === "OBSERVE" || raw === "WARN" || raw === "BLOCK") return raw;
+  return fallback;
+}
+
+function getNumberEnv(name: string, fallback: number): number {
+  const raw = Deno.env.get(name);
+  if (!raw) return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+function isBlockingMode(mode: GuardMode): boolean {
+  return mode === "BLOCK";
+}
+
+function statusAfterHealthyExternalState(guardianStatus: any): string {
+  const current = guardianStatus?.status || "NORMAL";
+  const guardReason = guardianStatus?.last_disconnect_reason_code;
+  if ((current === "PAUSED" || current === "SUSPENDED") && guardReason) return "COLD";
+  return current;
+}
+
+function redactText(value: unknown): string {
+  return String(value ?? "")
+    .replace(/55\d{10,13}/g, "[PHONE_REDACTED]")
+    .replace(/[A-Za-z0-9_=-]{48,}/g, "[TOKEN_REDACTED]")
+    .slice(0, 500);
+}
+
+function redactPayload(value: unknown): Record<string, unknown> {
+  try {
+    return { preview: redactText(JSON.stringify(value ?? {})) };
+  } catch (_err) {
+    return { preview: redactText(value) };
+  }
+}
+
+async function shortHash(value: string): Promise<string> {
+  const bytes = new TextEncoder().encode(value || "unknown");
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .slice(0, 6)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function extractState(payload: any): string | null {
+  return payload?.instance?.state
+    || payload?.state
+    || payload?.connectionState?.state
+    || payload?.connectionStatus
+    || payload?.status
+    || null;
+}
+
+function extractDisconnectionPayload(instance: any): unknown {
+  return instance?.disconnectionObject
+    || instance?.instance?.disconnectionObject
+    || instance?.error
+    || instance?.response
+    || null;
+}
+
+function classifyExternalConnection(state: string | null, raw: unknown): { reasonCode: string; critical: boolean } {
+  const rawText = redactText(raw).toLowerCase();
+  const normalized = String(state || "").toLowerCase();
+
+  if (rawText.includes("device_removed")) return { reasonCode: "WA_DEVICE_REMOVED", critical: true };
+  if (rawText.includes("stream errored") || rawText.includes("stream:error")) return { reasonCode: "WA_STREAM_ERRORED", critical: true };
+  if (rawText.includes("conflict")) return { reasonCode: "WA_SESSION_CONFLICT", critical: true };
+  if (rawText.includes("401") || rawText.includes("unauthorized")) return { reasonCode: "WA_UNAUTHORIZED", critical: true };
+  if (normalized && normalized !== "open") return { reasonCode: "WA_EXTERNAL_NOT_OPEN", critical: false };
+  if (!normalized) return { reasonCode: "WA_CONNECTION_STATE_UNAVAILABLE", critical: false };
+  return { reasonCode: "WA_CONNECTION_HEALTHY", critical: false };
+}
+
+async function fetchExternalConnectionStatus(evoConfig: EvoConfig): Promise<ExternalConnectionStatus> {
+  let state: string | null = null;
+  let rawError: unknown = {};
+
+  try {
+    const stateResp = await fetch(`${evoConfig.baseUrl}/instance/connectionState/${evoConfig.instanceName}`, {
+      headers: { apikey: evoConfig.apiKey },
+      signal: AbortSignal.timeout(4000),
+    });
+    const stateText = await stateResp.text();
+    let statePayload: any = null;
+    try { statePayload = JSON.parse(stateText); } catch (_err) {}
+    state = extractState(statePayload);
+    if (!stateResp.ok) rawError = statePayload || stateText;
+  } catch (err: any) {
+    rawError = { error: err.message };
+  }
+
+  if (state === "open") {
+    return { ok: true, state, reasonCode: "WA_CONNECTION_HEALTHY", critical: false, rawError: {} };
+  }
+
+  try {
+    const instancesResp = await fetch(`${evoConfig.baseUrl}/instance/fetchInstances`, {
+      headers: { apikey: evoConfig.apiKey },
+      signal: AbortSignal.timeout(5000),
+    });
+    const instancesText = await instancesResp.text();
+    let instancesPayload: any = null;
+    try { instancesPayload = JSON.parse(instancesText); } catch (_err) {}
+    const records = Array.isArray(instancesPayload) ? instancesPayload : [];
+    const record = records.find((item: any) => {
+      const instance = item?.instance || item;
+      return instance?.instanceName === evoConfig.instanceName
+        || instance?.name === evoConfig.instanceName
+        || item?.instanceName === evoConfig.instanceName
+        || item?.name === evoConfig.instanceName;
+    });
+    const instance = record?.instance || record;
+    state = extractState(instance) || state;
+    rawError = extractDisconnectionPayload(record) || rawError || instance || instancesPayload || instancesText;
+  } catch (err: any) {
+    rawError = rawError || { error: err.message };
+  }
+
+  const classification = classifyExternalConnection(state, rawError);
+  return {
+    ok: state === "open",
+    state,
+    reasonCode: classification.reasonCode,
+    critical: classification.critical,
+    rawError: redactPayload(rawError),
+  };
+}
+
+async function countDuePending(tenantId: string): Promise<number> {
+  const { count } = await supabase
+    .from("pending_outbound")
+    .select("id", { count: "exact", head: true })
+    .eq("tenant_id", tenantId)
+    .is("sent_at", null)
+    .is("failed_at", null)
+    .lte("scheduled_for", new Date().toISOString());
+
+  return count || 0;
+}
+
+async function recordConnectionEvent(params: {
+  tenantId: string;
+  instanceName: string;
+  eventType: string;
+  externalState: string | null;
+  reasonCode: string;
+  rawError?: Record<string, unknown>;
+  localStatusBefore?: string | null;
+  localStatusAfter?: string | null;
+  pendingDueCount?: number | null;
+}) {
+  try {
+    await supabase.from("whatsapp_connection_events").insert({
+      tenant_id: params.tenantId,
+      instance_hash: await shortHash(params.instanceName),
+      event_type: params.eventType,
+      external_state: params.externalState,
+      reason_code: params.reasonCode,
+      raw_error_redacted: params.rawError || {},
+      local_status_before: params.localStatusBefore || null,
+      local_status_after: params.localStatusAfter || null,
+      pending_due_count: params.pendingDueCount ?? null,
+    });
+  } catch (err) {
+    console.warn("Falha ao registrar whatsapp_connection_events:", err);
+  }
+}
+
+async function createCriticalConnectionAlert(
+  tenantId: string,
+  reasonCode: string,
+  message: string,
+  context: Record<string, unknown>,
+) {
+  const dedupKey = `whatsapp_connection:${tenantId}:${reasonCode}`;
+  const { data: existingAlert } = await supabase
+    .from("operational_alerts")
+    .select("id")
+    .eq("dedup_key", dedupKey)
+    .maybeSingle();
+
+  if (!existingAlert) {
+    await supabase.from("operational_alerts").insert({
+      id: uuid(),
+      type: "whatsapp_connection_guard",
+      severity: "CRITICAL",
+      tenant_id: tenantId,
+      title: "WhatsApp bloqueado pelo guardiao de conexao",
+      message,
+      context,
+      dedup_key: dedupKey,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+
+    const { data: userAdmin } = await supabase
+      .from("users")
+      .select("id")
+      .eq("tenant_id", tenantId)
+      .order("role", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (userAdmin?.id) {
+      await supabase.from("notifications").insert({
+        id: uuid(),
+        tenant_id: tenantId,
+        user_id: userAdmin.id,
+        type: "whatsapp_connection_guard",
+        title: "WhatsApp pausado por seguranca",
+        body: "O envio foi interrompido porque a conexao real do WhatsApp nao esta saudavel. Reconecte o aparelho e aguarde a quarentena antes de retomar.",
+        data: { reason_code: reasonCode },
+        created_at: new Date().toISOString(),
+      });
+    }
+  }
+}
+
+async function updateGuardianConnectionState(
+  tenantId: string,
+  status: string,
+  externalState: string | null,
+  reasonCode: string | null,
+  extra: Record<string, unknown> = {},
+) {
+  const payload = {
+    status,
+    external_state: externalState,
+    external_checked_at: new Date().toISOString(),
+    last_disconnect_reason_code: reasonCode,
+    updated_at: new Date().toISOString(),
+    ...extra,
+  };
+
+  const { error } = await supabase
+    .from("whatsapp_guardian_status")
+    .update(payload)
+    .eq("tenant_id", tenantId);
+
+  if (error) {
+    await supabase
+      .from("whatsapp_guardian_status")
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq("tenant_id", tenantId);
+  }
+}
+
+async function runConnectionHealthGuard(
+  tenantId: string,
+  evoConfig: EvoConfig | null,
+  guardianStatus: any,
+): Promise<ConnectionGuardDecision> {
+  const mode = getGuardMode("WA_PRE_SEND_HEALTH_CHECK_MODE", "BLOCK");
+  const quarantineUntil = guardianStatus?.quarantined_until || null;
+  const isQuarantined = quarantineUntil ? new Date(quarantineUntil).getTime() > Date.now() : false;
+
+  if (mode === "OFF") {
+    return {
+      allowSend: true,
+      allowNewActive: !isQuarantined,
+      reasonCode: "WA_CONNECTION_GUARD_OFF",
+      externalState: guardianStatus?.external_state || null,
+      isQuarantined,
+      quarantinedUntil: quarantineUntil,
+    };
+  }
+
+  if (!evoConfig || !evoConfig.apiKey) {
+    const pendingDueCount = await countDuePending(tenantId);
+    await recordConnectionEvent({
+      tenantId,
+      instanceName: evoConfig?.instanceName || "missing",
+      eventType: "PRE_SEND_HEALTH_CHECK",
+      externalState: null,
+      reasonCode: "WA_CONFIG_MISSING",
+      rawError: { error: "Evolution config missing" },
+      localStatusBefore: guardianStatus?.status,
+      localStatusAfter: "PAUSED",
+      pendingDueCount,
+    });
+
+    if (isBlockingMode(mode)) {
+      await updateGuardianConnectionState(tenantId, "PAUSED", null, "WA_CONFIG_MISSING");
+    }
+
+    return {
+      allowSend: !isBlockingMode(mode),
+      allowNewActive: false,
+      reasonCode: "WA_CONFIG_MISSING",
+      externalState: null,
+      isQuarantined,
+      quarantinedUntil: quarantineUntil,
+    };
+  }
+
+  const external = await fetchExternalConnectionStatus(evoConfig);
+  const pendingDueCount = await countDuePending(tenantId);
+
+  if (external.ok) {
+    const healthyStatus = statusAfterHealthyExternalState(guardianStatus);
+    await updateGuardianConnectionState(tenantId, healthyStatus, external.state, null, {
+      connected_at: guardianStatus?.connected_at || new Date().toISOString(),
+    });
+    return {
+      allowSend: true,
+      allowNewActive: !isQuarantined,
+      reasonCode: "WA_CONNECTION_HEALTHY",
+      externalState: external.state,
+      isQuarantined,
+      quarantinedUntil: quarantineUntil,
+    };
+  }
+
+  const nextStatus = external.critical ? "SUSPENDED" : "PAUSED";
+  await recordConnectionEvent({
+    tenantId,
+    instanceName: evoConfig.instanceName,
+    eventType: "PRE_SEND_HEALTH_CHECK",
+    externalState: external.state,
+    reasonCode: external.reasonCode,
+    rawError: external.rawError,
+    localStatusBefore: guardianStatus?.status,
+    localStatusAfter: isBlockingMode(mode) ? nextStatus : guardianStatus?.status,
+    pendingDueCount,
+  });
+
+  if (isBlockingMode(mode)) {
+    const circuitMinutes = external.critical
+      ? getNumberEnv("WA_CRITICAL_CIRCUIT_OPEN_MINUTES", 60)
+      : getNumberEnv("WA_TRANSIENT_CIRCUIT_OPEN_MINUTES", 15);
+    await updateGuardianConnectionState(tenantId, nextStatus, external.state, external.reasonCode, {
+      locked_at: null,
+      circuit_open_until: new Date(Date.now() + circuitMinutes * 60 * 1000).toISOString(),
+    });
+
+    if (external.critical) {
+      await createCriticalConnectionAlert(
+        tenantId,
+        external.reasonCode,
+        `Envio bloqueado: conexao Evolution/WhatsApp em estado ${external.state || "desconhecido"}.`,
+        { reason_code: external.reasonCode, external_state: external.state, pending_due_count: pendingDueCount },
+      );
+    }
+  }
+
+  return {
+    allowSend: !isBlockingMode(mode),
+    allowNewActive: false,
+    reasonCode: external.reasonCode,
+    externalState: external.state,
+    isQuarantined,
+    quarantinedUntil: quarantineUntil,
+  };
+}
+
+function classifySendFailure(error: string): { critical: boolean; status: "PAUSED" | "SUSPENDED"; reasonCode: string } {
+  const errText = (error || "").toLowerCase();
+
+  if (errText.includes("device_removed")) return { critical: true, status: "SUSPENDED", reasonCode: "SEND_CRITICAL_DEVICE_REMOVED" };
+  if (errText.includes("stream errored") || errText.includes("stream:error")) return { critical: true, status: "SUSPENDED", reasonCode: "SEND_CRITICAL_STREAM_ERRORED" };
+  if (errText.includes("conflict")) return { critical: true, status: "SUSPENDED", reasonCode: "SEND_CRITICAL_SESSION_CONFLICT" };
+  if (errText.includes("401") || errText.includes("unauthorized")) return { critical: true, status: "SUSPENDED", reasonCode: "SEND_CRITICAL_UNAUTHORIZED" };
+  if (errText.includes("connection closed")) return { critical: true, status: "PAUSED", reasonCode: "SEND_CRITICAL_CONNECTION_CLOSED" };
+  if (errText.includes("cannot read properties of undefined")) return { critical: true, status: "PAUSED", reasonCode: "SEND_EVOLUTION_INTERNAL_ERROR" };
+  if (errText.includes("instance does not exist") || errText.includes("not found")) return { critical: true, status: "SUSPENDED", reasonCode: "SEND_CRITICAL_INSTANCE_NOT_FOUND" };
+
+  return { critical: false, status: "PAUSED", reasonCode: "SEND_TRANSIENT_ERROR" };
 }
 
 // ── OpenAI Helper ───────────────────────────────────────────────────────────
@@ -170,14 +563,14 @@ async function sendWhatsApp(
 function getGenderFromFirstName(name: string): 'M' | 'F' {
   if (!name) return 'M';
   const cleanName = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
-  
+
   const masculineExceptions = [
     'luca', 'lucas', 'jean', 'george', 'andre', 'felipe', 'alexandre', 'guilherme', 'henrique',
     'mateus', 'matheus', 'jonas', 'isaias', 'elias', 'josias', 'messias', 'natan', 'natanael',
     'samuel', 'daniel', 'gabriel', 'rafael', 'miguel', 'murilo', 'danilo', 'angelo', 'otavio',
     'caio', 'heitor', 'igor', 'yuri', 'enzo', 'davi', 'arthur', 'artur', 'ian', 'caua', 'bento'
   ];
-  
+
   const feminineExceptions = [
     'beatriz', 'alice', 'yasmin', 'iasmin', 'raquel', 'rachel', 'irene', 'miriam', 'ester', 'esther',
     'carol', 'caroline', 'carolina', 'nair', 'ines', 'cleide', 'suely', 'sueli', 'elisabeth',
@@ -191,25 +584,25 @@ function getGenderFromFirstName(name: string): 'M' | 'F' {
   if (masculineExceptions.includes(cleanName)) return 'M';
   if (cleanName.endsWith('a')) return 'F';
   if (cleanName.endsWith('y') && !['wesley', 'valdecy', 'roney', 'rudy', 'darcy'].includes(cleanName)) return 'F';
-  
+
   return 'M';
 }
 
 // ── Variable Substitution ───────────────────────────────────────────────────
 async function substituteVariables(message: string, lead: any): Promise<string> {
   let result = message;
-  
+
   // Try to find a real person's name (Partner/Socio) in the enriched CNPJ QSA
   let personName = "";
   if (lead.metadata && lead.metadata.cnpj_info && lead.metadata.cnpj_info.qsa && lead.metadata.cnpj_info.qsa.length > 0) {
     const socio = lead.metadata.cnpj_info.qsa[0].nome;
     if (socio) personName = socio;
   }
-  
+
   // If no socio found, check if lead.name looks like a generic company name
   const leadName = lead.name || "";
   let firstName = "";
-  
+
   if (personName) {
     // Take the first name of the partner and capitalize it
     const parts = personName.split(" ");
@@ -220,7 +613,7 @@ async function substituteVariables(message: string, lead: any): Promise<string> 
     const lowerName = leadName.toLowerCase();
     const genericTerms = ['advocacia', 'advogado', 'advogados', 'assessoria', 'consultoria', 'escritório', 'clínica', 'centro', 'instituto', 'odontologia', 'saúde'];
     const isGeneric = genericTerms.some(term => lowerName.includes(term));
-    
+
     if (isGeneric) {
       firstName = "Responsável"; // Fallback to "Responsável" if it's a generic company name
     } else {
@@ -257,7 +650,7 @@ async function substituteVariables(message: string, lead: any): Promise<string> 
     result = result.replace(/(\[|\{)+Icebreaker(\]|\})+/gi, icebreaker);
     result = result.replace(/(\[|\{)+Quebra-gelo(\]|\})+/gi, icebreaker);
   }
-  
+
   return result;
 }
 
@@ -407,12 +800,12 @@ async function processFirstTouch(tenantId: string, processedLeadIds: Set<string>
         console.log(`  🚫 [Filtro Celular] Lead "${lead.name}" (ID: ${lead.id}) pulado. Telefone fixo/inválido: ${phone}`);
         await supabase
           .from("leads")
-          .update({ 
-            status: "INVALID_NUMBER", 
-            updated_at: new Date().toISOString() 
+          .update({
+            status: "INVALID_NUMBER",
+            updated_at: new Date().toISOString()
           })
           .eq("id", lead.id);
-        
+
         processedLeadIds.add(lead.id); // Evita reprocessar no mesmo loop
         continue;
       }
@@ -429,9 +822,9 @@ async function processFirstTouch(tenantId: string, processedLeadIds: Set<string>
           console.log(`  🚫 [Filtro Comercial] Lead "${lead.name}" (ID: ${lead.id}) pulado. Termo comercial incompatível com script liberal.`);
           await supabase
             .from("leads")
-            .update({ 
-              status: "COMMERCIAL_LEAD_SKIPPED", 
-              updated_at: new Date().toISOString() 
+            .update({
+              status: "COMMERCIAL_LEAD_SKIPPED",
+              updated_at: new Date().toISOString()
             })
             .eq("id", lead.id);
 
@@ -531,7 +924,7 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
   // 1. Tentar Lock Lógico Persistente (timeout de 2 min)
   const nowTime = new Date().toISOString();
   const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
-  
+
   const { data: lockUpdate, error: lockErr } = await supabase
     .from("whatsapp_guardian_status")
     .update({ locked_at: nowTime })
@@ -568,7 +961,18 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
         guardianStatus = newStatus;
       }
 
-      const numberState = guardianStatus.status || "NORMAL";
+      const evoConfig = await loadEvoConfig(tenantId);
+      const healthDecision = await runConnectionHealthGuard(tenantId, evoConfig, guardianStatus);
+
+      if (!healthDecision.allowSend) {
+        console.log("  [WhatsApp Guard] Envio bloqueado para tenant " + tenantId + ". Motivo: " + healthDecision.reasonCode);
+        await sleep(5000);
+        continue;
+      }
+
+      const numberState = healthDecision.reasonCode === "WA_CONNECTION_HEALTHY"
+        ? statusAfterHealthyExternalState(guardianStatus)
+        : guardianStatus?.status || "NORMAL";
 
       if (numberState === "PAUSED" || numberState === "SUSPENDED") {
         console.log("  ⏸️ Guardião do tenant " + tenantId + " está pausado ou suspenso. Estado: " + numberState);
@@ -646,12 +1050,13 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
       const hasReactivePending = (reactivePendingCount || 0) > 0;
 
       // 5. Enfileiramento de Novas Abordagens Ativas (se puder)
-      const canQueueNewActive = 
-        numberState !== "COOLDOWN" && 
-        numberState !== "PAUSED" && 
+      const canQueueNewActive =
+        healthDecision.allowNewActive &&
+        numberState !== "COOLDOWN" &&
+        numberState !== "PAUSED" &&
         numberState !== "SUSPENDED" &&
-        !hasReactivePending && 
-        msgsLastHr < maxMsgsPerHr && 
+        !hasReactivePending &&
+        msgsLastHr < maxMsgsPerHr &&
         chatsToday < maxNewChatsPerDay;
 
       if (canQueueNewActive) {
@@ -687,6 +1092,29 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
       const item = queueItems[0];
       processedConversationIds.add(item.conversation_id);
 
+      if (healthDecision.isQuarantined && item.message_type === "OUTBOUND_START") {
+        const newScheduled = healthDecision.quarantinedUntil || new Date(Date.now() + 10 * 60 * 1000).toISOString();
+        await supabase.from("pending_outbound").update({
+          scheduled_for: newScheduled,
+          failed_reason: "WA_NEW_NUMBER_QUARANTINE",
+        }).eq("id", item.id);
+
+        await recordConnectionEvent({
+          tenantId,
+          instanceName: evoConfig?.instanceName || "missing",
+          eventType: "QUEUE_QUARANTINE_DELAY",
+          externalState: healthDecision.externalState,
+          reasonCode: "WA_NEW_NUMBER_QUARANTINE",
+          localStatusBefore: numberState,
+          localStatusAfter: numberState,
+          pendingDueCount: await countDuePending(tenantId),
+        });
+
+        console.log("  [WhatsApp Guard] OUTBOUND_START adiado por quarentena ate " + newScheduled);
+        await sleep(2000);
+        continue;
+      }
+
       // Obter detalhes da conversa/telefone do lead
       const { data: conversation } = await supabase
         .from("conversations")
@@ -708,9 +1136,9 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
       const leadName = (conversation.leads as any).name || "Lead";
 
       // 7. Validar limites antes do envio
-      const limitsExceeded = 
-        msgsLastMin >= maxMsgsPerMin || 
-        msgsLastHr >= maxMsgsPerHr || 
+      const limitsExceeded =
+        msgsLastMin >= maxMsgsPerMin ||
+        msgsLastHr >= maxMsgsPerHr ||
         (item.message_type === "OUTBOUND_START" && chatsToday >= maxNewChatsPerDay);
 
       if (limitsExceeded) {
@@ -719,7 +1147,7 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
           scheduled_for: newScheduled,
           failed_reason: "Limites de envio excedidos. Adiado pelo Guardião."
         }).eq("id", item.id);
-        
+
         console.log("  ⚠️ Limites excedidos para tenant " + tenantId + ". Mensagem reagendada para " + newScheduled);
         await sleep(2000);
         continue;
@@ -728,7 +1156,7 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
       // 8. Aplicar delay global
       const minRange = globalDelayRange.min;
       const maxRange = globalDelayRange.max;
-      
+
       let calculatedDelay = Math.floor(Math.random() * (maxRange - minRange + 1)) + minRange;
       const roll = Math.random() * 100;
       if (roll > 80 && roll <= 95) {
@@ -742,7 +1170,7 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
       if (guardianStatus.last_global_send_at) {
         const lastSend = new Date(guardianStatus.last_global_send_at).getTime();
         const diffSec = (Date.now() - lastSend) / 1000;
-        
+
         if (diffSec < calculatedDelay) {
           const sleepSec = Math.ceil(calculatedDelay - diffSec);
           console.log("  ⏱️ Guardião: Aguardando " + sleepSec + "s de delay global...");
@@ -751,7 +1179,6 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
       }
 
       // 9. Enviar via Evolution API
-      const evoConfig = await loadEvoConfig(tenantId);
       if (!evoConfig) {
         await supabase.from("pending_outbound").update({
           failed_at: new Date().toISOString(),
@@ -763,11 +1190,11 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
       }
 
       const sendResult = await sendWhatsApp(evoConfig, phone, item.content, item.media_url, item.media_type);
-      const nowTime = new Date().toISOString();
+      const sendTime = new Date().toISOString();
 
       if (sendResult.ok) {
         await supabase.from("pending_outbound").update({
-          sent_at: nowTime,
+          sent_at: sendTime,
           attempts: (item.attempts || 0) + 1
         }).eq("id", item.id);
 
@@ -802,21 +1229,21 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
           script_id: conversation.script_id || null,
           script_node_id: conversation.current_node_id || null,
           script_variation_id: scriptVariationId || null,
-          created_at: nowTime,
+          created_at: sendTime,
         });
 
         await supabase.from("conversations").update({
           last_message: item.content.substring(0, 200),
-          last_message_at: nowTime,
-          last_outbound_at: nowTime,
+          last_message_at: sendTime,
+          last_outbound_at: sendTime,
           message_count: (conversation.message_count || 0) + 1,
         }).eq("id", item.conversation_id);
 
         if (item.message_type === "OUTBOUND_START" && conversation.leads?.status === "ENRICHED") {
           await supabase.from("leads").update({
             status: "CONTACTED",
-            contacted_at: nowTime,
-            updated_at: nowTime,
+            contacted_at: sendTime,
+            updated_at: sendTime,
           }).eq("id", conversation.leads.id);
 
           await supabase.from("lead_events").insert({
@@ -829,7 +1256,7 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
               delivery_status: "SENT",
               reason: "Primeira mensagem ativa enviada com sucesso pelo Guardião",
             },
-            created_at: nowTime,
+            created_at: sendTime,
           });
 
           await supabase.from("lead_events").insert({
@@ -837,7 +1264,7 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
             lead_id: conversation.leads.id,
             event_type: "status_changed",
             payload: { from: "ENRICHED", to: "CONTACTED", reason: "Lead contatado pelo Guardião" },
-            created_at: nowTime,
+            created_at: sendTime,
           });
         }
 
@@ -850,8 +1277,8 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
         });
 
         await supabase.from("whatsapp_guardian_status").update({
-          last_global_send_at: nowTime,
-          updated_at: nowTime,
+          last_global_send_at: sendTime,
+          updated_at: sendTime,
         }).eq("tenant_id", tenantId);
 
         sent++;
@@ -866,7 +1293,7 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
             message_type: item.message_type,
             queued_at: item.created_at,
             scheduled_for: item.scheduled_for,
-            sent_at: nowTime,
+            sent_at: sendTime,
             delay_applied: calculatedDelay,
             delay_reason: "Delay global de " + calculatedDelay + "s respeitado orgonicamente",
             number_state: numberState,
@@ -882,68 +1309,46 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
         }
 
       } else {
-        const errText = (sendResult.error || "").toLowerCase();
-        const isSuspendedError = errText.includes("401") || 
-                                 errText.includes("conflict") || 
-                                 errText.includes("device_removed") || 
-                                 errText.includes("stream errored");
+        const failure = classifySendFailure(sendResult.error || "");
 
-        if (isSuspendedError) {
-          console.error(`  🚨 [WhatsApp Suspenso] Detectado erro de suspensão/desconexão para o tenant ${tenantId}: ${sendResult.error}`);
-          
+        if (failure.critical) {
+          console.error("  [WhatsApp Guard] Falha critica no envio para tenant " + tenantId + ". Motivo: " + failure.reasonCode);
+
           // 1. Atualizar o status do Guardião do Tenant para SUSPENDED e resetar locked_at
-          await supabase
-            .from("whatsapp_guardian_status")
-            .update({ 
-              status: "SUSPENDED", 
-              locked_at: null,
-              updated_at: nowTime 
-            })
-            .eq("tenant_id", tenantId);
+          const retryDelayMinutes = getNumberEnv("WA_CRITICAL_RETRY_DELAY_MINUTES", 60);
+          const retryAt = new Date(Date.now() + retryDelayMinutes * 60 * 1000).toISOString();
+          const circuitMinutes = failure.status === "SUSPENDED"
+            ? getNumberEnv("WA_CRITICAL_CIRCUIT_OPEN_MINUTES", 60)
+            : getNumberEnv("WA_TRANSIENT_CIRCUIT_OPEN_MINUTES", 15);
 
-          // 2. Disparar Alerta Operacional
-          try {
-            await supabase.from("operational_alerts").insert({
-              id: uuid(),
-              type: "whatsapp_suspension",
-              severity: "CRITICAL",
-              tenant_id: tenantId,
-              title: "WhatsApp Suspenso (Meta)",
-              message: `A conexão do WhatsApp foi derrubada pela Meta. Erro: ${sendResult.error}`,
-              context: { error: sendResult.error, conversation_id: item.conversation_id, pending_outbound_id: item.id },
-              created_at: nowTime,
-              updated_at: nowTime
-            });
-          } catch (alertErr) {
-            console.error("  ⚠️ Erro ao inserir alerta operacional:", alertErr);
-          }
+          await updateGuardianConnectionState(tenantId, failure.status, healthDecision.externalState, failure.reasonCode, {
+            locked_at: null,
+            circuit_open_until: new Date(Date.now() + circuitMinutes * 60 * 1000).toISOString(),
+          });
 
-          // 3. Notificar o Usuário Administrador
-          try {
-            const { data: userAdmin } = await supabase
-              .from("users")
-              .select("id")
-              .eq("tenant_id", tenantId)
-              .order("role", { ascending: true })
-              .limit(1)
-              .maybeSingle();
+          await recordConnectionEvent({
+            tenantId,
+            instanceName: evoConfig.instanceName,
+            eventType: "SEND_FAILURE_GUARD",
+            externalState: healthDecision.externalState,
+            reasonCode: failure.reasonCode,
+            rawError: redactPayload(sendResult.error),
+            localStatusBefore: numberState,
+            localStatusAfter: failure.status,
+            pendingDueCount: await countDuePending(tenantId),
+          });
 
-            if (userAdmin?.id) {
-              await supabase.from("notifications").insert({
-                id: uuid(),
-                tenant_id: tenantId,
-                user_id: userAdmin.id,
-                type: "whatsapp_suspension",
-                title: "🚨 WhatsApp Desconectado por Suspensão (Meta)",
-                body: "Atenção: A conexão do seu WhatsApp foi derrubada pela Meta devido a indícios de suspensão/spam. A prospecção ativa foi congelada para proteger seu número. Reconecte o aparelho nas configurações.",
-                created_at: nowTime
-              });
-            } else {
-              console.warn(`  ⚠️ Nenhum usuário encontrado para notificar sobre suspensão no tenant ${tenantId}`);
-            }
-          } catch (notifErr) {
-            console.error("  ⚠️ Erro ao criar notificação de usuário:", notifErr);
-          }
+          await createCriticalConnectionAlert(
+            tenantId,
+            failure.reasonCode,
+            "Envio interrompido por falha critica da conexao WhatsApp/Evolution.",
+            {
+              reason_code: failure.reasonCode,
+              conversation_id: item.conversation_id,
+              pending_outbound_id: item.id,
+              error_redacted: redactText(sendResult.error),
+            },
+          );
 
           // Registrar falha na telemetria (marcar como duplicado = false, mas com erro)
           try {
@@ -953,20 +1358,18 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
               message_type: item.message_type,
               queued_at: item.created_at,
               scheduled_for: item.scheduled_for,
-              error: sendResult.error,
-              number_state: "SUSPENDED",
+              error: failure.reasonCode,
+              number_state: failure.status,
               is_reactive: ["REACTIVE_REPLY", "CHAT_CONTINUATION", "LOOKUP_REPLY"].includes(item.message_type || ""),
               is_followup: item.message_type === "COMMERCIAL_FOLLOWUP",
             });
           } catch (_) {}
 
-          // Adiar item de envio atual para que não fique travado tentando de novo infinitamente antes de expirar
-          const attempts = (item.attempts || 0) + 1;
+          // Adiar item atual durante o circuito aberto sem consumir tentativa por falha de conexao.
           await supabase.from("pending_outbound").update({
-            attempts,
-            failed_reason: sendResult.error
+            scheduled_for: retryAt,
+            failed_reason: failure.reasonCode,
           }).eq("id", item.id);
-          
           failed++;
 
           // 4. Abortar fila do tenant atual
@@ -980,7 +1383,7 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
           failed_reason: sendResult.error
         };
         if (attempts >= 3) {
-          updateData.failed_at = nowTime;
+          updateData.failed_at = sendTime;
         }
         await supabase.from("pending_outbound").update(updateData).eq("id", item.id);
         failed++;
@@ -1044,9 +1447,9 @@ serve(async (req: Request) => {
         .from("campaigns")
         .select("tenant_id")
         .eq("status", "ACTIVE");
-      
+
       if (activeCampaigns?.length) {
-        tenantIds = [...new Set(activeCampaigns.map((c: any) => c.tenant_id))];
+        tenantIds = Array.from(new Set(activeCampaigns.map((c: any) => String(c.tenant_id)).filter(Boolean)));
       }
     }
 
