@@ -12,7 +12,7 @@ import { ACTIVE_GUARDIAN_KEYS, runRegisteredGuardian } from "./registry.ts";
 import { GuardianReasonCodes } from "./reason-codes.ts";
 import { compactEvidence, redactGuardianText, sha256Hex } from "./evidence.ts";
 
-const GUARDIAN_ENGINE_V3_PHASE = "PHASE_5_RELEVANCE_STATE_SEMANTIC" as const;
+const GUARDIAN_ENGINE_V3_PHASE = "PHASE_6_CADENCE_LOCK_WAKE_SPREAD" as const;
 
 type SupabaseGuardianClient = {
   rpc: (functionName: "get_guardian_active_config", args: { p_tenant_id: string }) => Promise<{ data: unknown; error: any }>;
@@ -22,6 +22,7 @@ type SupabaseGuardianClient = {
 };
 
 const BLOCKING_MODES = new Set(["BLOCK", "HARD_BLOCK"]);
+const FLOW_STOPPING_DECISIONS = new Set(["DELAY", "ESCALATE", "BLOCK", "HARD_BLOCK"]);
 
 function matchesStage(guardian: EffectiveGuardian, context: GuardianRunContext): boolean {
   return guardian.execution_stage === context.stage || guardian.execution_stage === "ALL_STAGES";
@@ -40,6 +41,9 @@ function shouldRunGuardian(guardian: EffectiveGuardian, context: GuardianRunCont
 function applyMode(guardian: EffectiveGuardian, result: GuardianValidationResult): GuardianDecision {
   if (result.decision === "PASS") return "PASS";
   if (guardian.mode === "OBSERVE" || guardian.mode === "WARN") return "WARN";
+  if (result.decision === "DELAY") return "DELAY";
+  if (result.decision === "ESCALATE") return "ESCALATE";
+  if (result.decision === "REWRITE") return "REWRITE";
   if (guardian.mode === "BLOCK") return "BLOCK";
   if (guardian.mode === "HARD_BLOCK") return "HARD_BLOCK";
   return "WARN";
@@ -50,6 +54,7 @@ function summarize(decisions: GuardianLoggedDecision[]): GuardianRunResult["summ
     total: decisions.length,
     pass: decisions.filter((decision) => decision.decision === "PASS").length,
     warn: decisions.filter((decision) => decision.decision === "WARN").length,
+    delay: decisions.filter((decision) => decision.decision === "DELAY").length,
     block: decisions.filter((decision) => decision.decision === "BLOCK").length,
     hard_block: decisions.filter((decision) => decision.decision === "HARD_BLOCK").length,
     phase: GUARDIAN_ENGINE_V3_PHASE,
@@ -65,7 +70,7 @@ async function buildDecisionRow(params: {
   outputHash: string | null;
 }): Promise<Record<string, unknown>> {
   const persistedDecision = applyMode(params.guardian, params.result);
-  const blocksFlow = persistedDecision === "BLOCK" || persistedDecision === "HARD_BLOCK";
+  const blocksFlow = FLOW_STOPPING_DECISIONS.has(persistedDecision);
 
   return {
     tenant_id: params.context.tenantId,
@@ -86,7 +91,7 @@ async function buildDecisionRow(params: {
       phase: GUARDIAN_ENGINE_V3_PHASE,
       validator_decision: params.result.decision,
       persisted_decision: persistedDecision,
-      effective_action: blocksFlow ? "BLOCK_FLOW" : "ALLOW_FLOW",
+      effective_action: persistedDecision === "DELAY" ? "DELAY_FLOW" : blocksFlow ? "BLOCK_FLOW" : "ALLOW_FLOW",
       function_scope: params.context.functionScope,
     }),
   };
@@ -191,7 +196,7 @@ export class GuardianRunner {
       if (
         !blockingDecision &&
         BLOCKING_MODES.has(guardian.mode) &&
-        (latestDecision.decision === "BLOCK" || latestDecision.decision === "HARD_BLOCK")
+        FLOW_STOPPING_DECISIONS.has(latestDecision.decision)
       ) {
         blockingDecision = latestDecision;
       }

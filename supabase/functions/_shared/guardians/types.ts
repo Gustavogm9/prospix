@@ -122,11 +122,13 @@ export interface GuardianRunResult {
     total: number;
     pass: number;
     warn: number;
+    delay: number;
     block: number;
     hard_block: number;
     phase:
       | "PHASE_3_OBSERVE_ONLY"
       | "PHASE_4_STRUCTURAL_ENFORCEMENT"
-      | "PHASE_5_RELEVANCE_STATE_SEMANTIC";
+      | "PHASE_5_RELEVANCE_STATE_SEMANTIC"
+      | "PHASE_6_CADENCE_LOCK_WAKE_SPREAD";
   };
 }

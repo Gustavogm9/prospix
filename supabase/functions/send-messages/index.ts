@@ -8,6 +8,12 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { GuardianRunner } from "../_shared/guardians/runner.ts";
 import { buildCandidatePayload } from "../_shared/guardians/candidate.ts";
+import {
+  computeFirstResponseScheduledFor,
+  getGuardianByKey,
+  guardianNumber,
+} from "../_shared/guardians/validators/cadence.ts";
+import type { GuardianRunResult } from "../_shared/guardians/types.ts";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -25,6 +31,198 @@ function sleep(ms: number) {
 
 function uuid(): string {
   return crypto.randomUUID();
+}
+
+type ConversationLockResult = {
+  acquired: boolean;
+  requestedLockUntil: string;
+  currentLockUntil: string | null;
+  error?: string | null;
+};
+
+type GuardianDelayDecision = {
+  reasonCode: string;
+  scheduledFor: string;
+  finalDecision: "DELAY";
+};
+
+function isValidFutureIso(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) && timestamp > Date.now();
+}
+
+function extractDelayDecision(
+  run: GuardianRunResult,
+  fallbackDelayMs = 10 * 60 * 1000,
+): GuardianDelayDecision | null {
+  const decision = run.blockingDecision;
+  if (!decision) return null;
+  const isDelay =
+    decision.decision === "DELAY" ||
+    String(decision.reason_code || "").includes("_DELAY") ||
+    String(decision.reason_code || "").includes("_DELAYED");
+  if (!isDelay) return null;
+
+  const nextScheduled = isValidFutureIso(decision.evidence?.next_scheduled_for)
+    ? String(decision.evidence.next_scheduled_for)
+    : new Date(Date.now() + fallbackDelayMs).toISOString();
+
+  return {
+    reasonCode: decision.reason_code,
+    guardianKey: decision.guardian_key || null,
+    scheduledFor: nextScheduled,
+    finalDecision: "DELAY",
+  };
+}
+
+async function reschedulePendingByGuardian(params: {
+  item: any;
+  delay: GuardianDelayDecision;
+  configVersionId: string | null;
+}) {
+  await supabase.from("pending_outbound").update({
+    scheduled_for: params.delay.scheduledFor,
+    failed_reason: params.delay.reasonCode,
+    validation_status: "DELAYED",
+    validation_reason_code: params.delay.reasonCode,
+    final_guardian_checked_at: new Date().toISOString(),
+    final_guardian_decision: params.delay.finalDecision,
+    guardian_config_version_id: params.item.guardian_config_version_id || params.configVersionId,
+  }).eq("id", params.item.id);
+}
+
+async function blockPendingByGuardian(params: {
+  item: any;
+  reasonCode: string;
+  finalDecision: string;
+  configVersionId: string | null;
+}) {
+  await supabase.from("pending_outbound").update({
+    failed_at: new Date().toISOString(),
+    failed_reason: params.reasonCode,
+    validation_status: "BLOCKED",
+    validation_reason_code: params.reasonCode,
+    final_guardian_checked_at: new Date().toISOString(),
+    final_guardian_decision: params.finalDecision,
+    guardian_config_version_id: params.item.guardian_config_version_id || params.configVersionId,
+  }).eq("id", params.item.id);
+}
+
+async function countActiveOutboundContactsLast30m(tenantId: string): Promise<number> {
+  const since = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+  const { data } = await supabase
+    .from("messages")
+    .select("conversation_id")
+    .eq("tenant_id", tenantId)
+    .eq("direction", "OUTBOUND")
+    .gte("created_at", since)
+    .limit(1000);
+
+  return new Set((data || []).map((row: any) => row.conversation_id).filter(Boolean)).size;
+}
+
+async function getLastOutboundSentAt(conversationId: string): Promise<string | null> {
+  const { data } = await supabase
+    .from("messages")
+    .select("created_at")
+    .eq("conversation_id", conversationId)
+    .eq("direction", "OUTBOUND")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return data?.created_at || null;
+}
+
+async function countFollowupsWithoutReply(conversationId: string, lastInboundAt: string | null): Promise<number> {
+  let query = supabase
+    .from("pending_outbound")
+    .select("id", { count: "exact", head: true })
+    .eq("conversation_id", conversationId)
+    .eq("message_type", "COMMERCIAL_FOLLOWUP")
+    .is("failed_at", null);
+
+  if (lastInboundAt) {
+    query = query.gt("created_at", lastInboundAt);
+  }
+
+  const { count } = await query;
+  return count || 0;
+}
+
+async function acquireConversationLock(params: {
+  tenantId: string;
+  conversationId: string;
+  ttlSeconds: number;
+}): Promise<ConversationLockResult> {
+  const nowIso = new Date().toISOString();
+  const requestedLockUntil = new Date(Date.now() + Math.max(15, params.ttlSeconds) * 1000).toISOString();
+
+  try {
+    const { data, error } = await supabase.rpc("try_acquire_conversation_lock", {
+      p_conversation_id: params.conversationId,
+      p_tenant_id: params.tenantId,
+      p_lock_until: requestedLockUntil,
+      p_now: nowIso,
+    });
+
+    if (!error) {
+      const row = Array.isArray(data) ? data[0] : data;
+      return {
+        acquired: row?.acquired === true,
+        requestedLockUntil,
+        currentLockUntil: row?.current_lock_until || null,
+      };
+    }
+  } catch (_err) {
+    // Fallback below keeps deployment tolerant while the migration is rolling out.
+  }
+
+  const { data: updated, error: updateError } = await supabase
+    .from("conversations")
+    .update({ conversation_lock_until: requestedLockUntil })
+    .eq("id", params.conversationId)
+    .eq("tenant_id", params.tenantId)
+    .or(`conversation_lock_until.is.null,conversation_lock_until.lt.${nowIso}`)
+    .select("conversation_lock_until")
+    .maybeSingle();
+
+  if (updateError || !updated) {
+    const { data: current } = await supabase
+      .from("conversations")
+      .select("conversation_lock_until")
+      .eq("id", params.conversationId)
+      .eq("tenant_id", params.tenantId)
+      .maybeSingle();
+
+    return {
+      acquired: false,
+      requestedLockUntil,
+      currentLockUntil: current?.conversation_lock_until || null,
+      error: updateError?.message || null,
+    };
+  }
+
+  return {
+    acquired: true,
+    requestedLockUntil,
+    currentLockUntil: updated.conversation_lock_until || requestedLockUntil,
+  };
+}
+
+async function releaseConversationLock(tenantId: string, conversationId: string, lockUntil: string | null) {
+  if (!lockUntil) return;
+  const { error } = await supabase
+    .from("conversations")
+    .update({ conversation_lock_until: null })
+    .eq("id", conversationId)
+    .eq("tenant_id", tenantId)
+    .eq("conversation_lock_until", lockUntil);
+
+  if (error) {
+    console.warn("  [Guardian V3] Falha ao liberar conversation lock:", redactText(error.message));
+  }
 }
 
 /** Get current hour in BRT (UTC-3) */
@@ -1026,6 +1224,86 @@ async function processFirstTouch(
           continue;
         }
 
+        const g18Guardian = getGuardianByKey(guardianConfig, "G18_BUSINESS_HOURS");
+        const g20Guardian = getGuardianByKey(guardianConfig, "G20_CONTACT_CADENCE");
+        let plannedScheduledFor = computeFirstResponseScheduledFor(g20Guardian, nowTime, `first-touch:${tenantId}:${lead.id}`);
+        let queueValidationStatus = "APPROVED";
+        let queueValidationReasonCode = firstTouchGuardianRun.summary.warn > 0 ? "GUARDIAN_PHASE5_WARN_OBSERVED" : "GUARDIAN_PHASE5_PASS";
+        let queueFinalDecision = firstTouchGuardianRun.summary.warn > 0 ? "WARN" : "PASS";
+
+        const firstTouchPreEnqueueRun = await GuardianRunner.observe({
+          supabase,
+          config: guardianConfig,
+          tenantId,
+          leadId: lead.id,
+          conversationId,
+          stage: "PRE_ENQUEUE",
+          functionScope: "send-messages",
+          input: {
+            source: "first_touch",
+            campaign_id: campaign.id,
+            script_id: script.id,
+            variation_id: variation.id,
+          },
+          output: firstTouchCandidatePayload,
+          facts: {
+            now_iso: nowTime,
+            scheduled_for: plannedScheduledFor,
+            message_type: "OUTBOUND_START",
+            bucket_key: `first-touch:${tenantId}:${lead.id}`,
+          },
+        });
+
+        const firstTouchDelay = extractDelayDecision(firstTouchPreEnqueueRun);
+        if (firstTouchDelay) {
+          plannedScheduledFor = firstTouchDelay.scheduledFor;
+          queueValidationStatus = "DELAYED";
+          queueValidationReasonCode = firstTouchDelay.reasonCode;
+          queueFinalDecision = "DELAY";
+        } else if (!firstTouchPreEnqueueRun.allow) {
+          const reasonCode = firstTouchPreEnqueueRun.blockingDecision?.reason_code || "GUARDIAN_PHASE6_FIRST_TOUCH_PRE_ENQUEUE_BLOCKED";
+          const guardianKey = firstTouchPreEnqueueRun.blockingDecision?.guardian_key || null;
+
+          await supabase.from("leads").update({
+            queued_first_touch_at: nowTime,
+            lead_guardian_flags: {
+              ...(
+                lead.lead_guardian_flags && typeof lead.lead_guardian_flags === "object"
+                  ? lead.lead_guardian_flags
+                  : {}
+              ),
+              guardian_engine_v3: {
+                phase: firstTouchPreEnqueueRun.summary.phase,
+                blocked_at: nowTime,
+                stage: "PRE_ENQUEUE",
+                reason_code: reasonCode,
+                guardian_key: guardianKey,
+                script_id: script.id,
+                variation_id: variation.id,
+              },
+            },
+            updated_at: nowTime,
+          }).eq("id", lead.id);
+
+          await supabase.from("lead_events").insert({
+            tenant_id: tenantId,
+            lead_id: lead.id,
+            event_type: "guardian_blocked_outbound",
+            payload: {
+              source: "first_touch",
+              guardian_key: guardianKey,
+              reason_code: reasonCode,
+              validation_summary: firstTouchPreEnqueueRun.summary,
+              reason: "Guardian Engine V3 bloqueou primeira abordagem antes de entrar na fila.",
+            },
+            created_at: nowTime,
+          });
+
+          processedLeadIds.add(lead.id);
+          console.warn("  [Guardian V3] Primeira abordagem bloqueada no pre-enfileiramento. Lead: " + lead.id + " Reason: " + reasonCode);
+          continue;
+        }
+
         const { error: convErr } = await supabase.from("conversations").insert({
           id: conversationId,
           tenant_id: tenantId,
@@ -1048,15 +1326,15 @@ async function processFirstTouch(
           conversation_id: conversationId,
           content: messageContent,
           idempotency_key: "active-" + lead.id,
-          scheduled_for: nowTime,
+          scheduled_for: plannedScheduledFor,
           attempts: 0,
           message_type: "OUTBOUND_START",
           priority: 6,
-          guardian_config_version_id: firstTouchGuardianRun.configVersionId,
-          validation_status: "APPROVED",
-          validation_reason_code: firstTouchGuardianRun.summary.warn > 0 ? "GUARDIAN_PHASE5_WARN_OBSERVED" : "GUARDIAN_PHASE5_PASS",
+          guardian_config_version_id: firstTouchPreEnqueueRun.configVersionId || firstTouchGuardianRun.configVersionId,
+          validation_status: queueValidationStatus,
+          validation_reason_code: queueValidationReasonCode,
           final_guardian_checked_at: nowTime,
-          final_guardian_decision: firstTouchGuardianRun.summary.warn > 0 ? "WARN" : "PASS",
+          final_guardian_decision: queueFinalDecision,
         });
         if (queueErr) throw new Error("Erro ao enfileirar mensagem: " + queueErr.message);
 
@@ -1382,6 +1660,138 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
         continue;
       }
 
+      const nowForPhase6 = new Date().toISOString();
+      const preEnqueueGuardianRun = await GuardianRunner.observe({
+        supabase,
+        config: guardianConfig,
+        tenantId,
+        leadId,
+        conversationId: item.conversation_id,
+        pendingOutboundId: item.id,
+        candidateId: item.candidate_id || null,
+        stage: "PRE_ENQUEUE",
+        functionScope: "send-messages",
+        input: {
+          pending_outbound_id: item.id,
+          source: "pre_send_wake_spread_gate",
+          message_type: item.message_type,
+          current_scheduled_for: item.scheduled_for,
+        },
+        output: {
+          content: item.content,
+          has_media: Boolean(item.media_url),
+          media_type: item.media_type || null,
+        },
+        facts: {
+          now_iso: nowForPhase6,
+          scheduled_for: item.scheduled_for,
+          current_scheduled_for: item.scheduled_for,
+          pre_send_current_window_required: true,
+          message_type: item.message_type,
+          bucket_key: `pending:${tenantId}:${item.id}`,
+        },
+      });
+
+      const wakeSpreadDelay = extractDelayDecision(preEnqueueGuardianRun);
+      if (wakeSpreadDelay) {
+        await reschedulePendingByGuardian({
+          item,
+          delay: wakeSpreadDelay,
+          configVersionId: preEnqueueGuardianRun.configVersionId,
+        });
+        console.log("  [Guardian V3] Mensagem reagendada por G18 para " + wakeSpreadDelay.scheduledFor + ". Pending: " + item.id);
+        await sleep(500);
+        continue;
+      }
+
+      if (!preEnqueueGuardianRun.allow) {
+        const reasonCode = preEnqueueGuardianRun.blockingDecision?.reason_code || "GUARDIAN_PHASE6_PRE_ENQUEUE_BLOCKED";
+        const finalDecision = preEnqueueGuardianRun.blockingDecision?.decision || "BLOCK";
+        await blockPendingByGuardian({
+          item,
+          reasonCode,
+          finalDecision,
+          configVersionId: preEnqueueGuardianRun.configVersionId,
+        });
+        failed++;
+        console.warn("  [Guardian V3] Mensagem bloqueada no pre-enfileiramento tardio. Pending: " + item.id + " Reason: " + reasonCode);
+        await sleep(500);
+        continue;
+      }
+
+      const [
+        lastOutboundSentAt,
+        followupCountWithoutReply,
+        activeContacts30m,
+      ] = await Promise.all([
+        getLastOutboundSentAt(item.conversation_id),
+        countFollowupsWithoutReply(item.conversation_id, conversation.last_inbound_at || null),
+        countActiveOutboundContactsLast30m(tenantId),
+      ]);
+
+      const g21Guardian = getGuardianByKey(guardianConfig, "G21_CONCURRENCY_LOCK");
+      const conversationLockTtlSeconds = guardianNumber(g21Guardian, "conversation_lock_ttl_seconds", 120);
+      const conversationLock = await acquireConversationLock({
+        tenantId,
+        conversationId: item.conversation_id,
+        ttlSeconds: conversationLockTtlSeconds,
+      });
+
+      if (!conversationLock.acquired) {
+        const lockGuardianRun = await GuardianRunner.observe({
+          supabase,
+          config: guardianConfig,
+          tenantId,
+          leadId,
+          conversationId: item.conversation_id,
+          pendingOutboundId: item.id,
+          candidateId: item.candidate_id || null,
+          stage: "PRE_SEND",
+          functionScope: "send-messages",
+          input: {
+            pending_outbound_id: item.id,
+            source: "conversation_lock_acquire",
+            message_type: item.message_type,
+            scheduled_for: item.scheduled_for,
+            attempts: item.attempts || 0,
+          },
+          output: {
+            content: item.content,
+            has_media: Boolean(item.media_url),
+            media_type: item.media_type || null,
+          },
+          facts: {
+            now_iso: new Date().toISOString(),
+            number_state: numberState,
+            message_type: item.message_type,
+            conversation_lock_acquired: false,
+            conversation_lock_until: conversationLock.currentLockUntil,
+            active_contacts_30m: activeContacts30m,
+            followup_count_without_reply: followupCountWithoutReply,
+            last_outbound_sent_at: lastOutboundSentAt,
+            last_inbound_at: conversation.last_inbound_at || null,
+            ai_handling: conversation.ai_handling === true,
+            conversation_status: conversation.status || null,
+            lead_status: leadRecord.status || null,
+          },
+        });
+
+        const retryDelay: GuardianDelayDecision = {
+          reasonCode: lockGuardianRun.blockingDecision?.reason_code || "G21_CONCURRENCY_LOCK_BLOCKED",
+          scheduledFor: new Date(Date.now() + 15 * 1000).toISOString(),
+          finalDecision: "DELAY",
+        };
+        await reschedulePendingByGuardian({
+          item,
+          delay: retryDelay,
+          configVersionId: lockGuardianRun.configVersionId,
+        });
+        console.log("  [Guardian V3] Conversation lock ocupado. Mensagem reagendada sem envio. Pending: " + item.id);
+        await sleep(500);
+        continue;
+      }
+
+      try {
       const preSendGuardianRun = await GuardianRunner.observe({
         supabase,
         config: guardianConfig,
@@ -1404,10 +1814,18 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
           media_type: item.media_type || null,
         },
         facts: {
+          now_iso: new Date().toISOString(),
           number_state: numberState,
+          message_type: item.message_type,
           sent_last_minute: msgsLastMin,
           sent_last_hour: msgsLastHr,
           new_chats_today: chatsToday,
+          active_contacts_30m: activeContacts30m,
+          followup_count_without_reply: followupCountWithoutReply,
+          last_outbound_sent_at: lastOutboundSentAt,
+          last_inbound_at: conversation.last_inbound_at || null,
+          conversation_lock_acquired: true,
+          conversation_lock_until: conversationLock.requestedLockUntil,
           ai_handling: conversation.ai_handling === true,
           conversation_status: conversation.status || null,
           lead_status: leadRecord.status || null,
@@ -1424,8 +1842,8 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
         const finalDecision = preSendGuardianRun.summary.warn > 0 ? "WARN" : "PASS";
         const { error: finalGuardErr } = await supabase.from("pending_outbound").update({
           guardian_config_version_id: item.guardian_config_version_id || preSendGuardianRun.configVersionId,
-          validation_status: item.validation_status || "APPROVED",
-          validation_reason_code: item.validation_reason_code || "GUARDIAN_PHASE5_PRE_SEND_OBSERVED",
+          validation_status: "APPROVED",
+          validation_reason_code: preSendGuardianRun.summary.warn > 0 ? "GUARDIAN_PHASE6_PRE_SEND_WARN_OBSERVED" : "GUARDIAN_PHASE6_PRE_SEND_PASS",
           final_guardian_checked_at: new Date().toISOString(),
           final_guardian_decision: finalDecision,
         }).eq("id", item.id);
@@ -1435,6 +1853,33 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
         }
       } catch (err) {
         console.warn("  [Guardian V3] Final pre-send metadata update exception:", redactText(err));
+      }
+
+      const preSendDelay = extractDelayDecision(preSendGuardianRun);
+      if (preSendDelay) {
+        await reschedulePendingByGuardian({
+          item,
+          delay: preSendDelay,
+          configVersionId: preSendGuardianRun.configVersionId,
+        });
+        console.log("  [Guardian V3] Mensagem reagendada por cadencia. Pending: " + item.id + " Reason: " + preSendDelay.reasonCode);
+        await sleep(500);
+        continue;
+      }
+
+      if (!preSendGuardianRun.allow) {
+        const reasonCode = preSendGuardianRun.blockingDecision?.reason_code || "GUARDIAN_PHASE6_PRE_SEND_BLOCKED";
+        const finalDecision = preSendGuardianRun.blockingDecision?.decision || "BLOCK";
+        await blockPendingByGuardian({
+          item,
+          reasonCode,
+          finalDecision,
+          configVersionId: preSendGuardianRun.configVersionId,
+        });
+        failed++;
+        console.warn("  [Guardian V3] Mensagem bloqueada antes do envio. Pending: " + item.id + " Reason: " + reasonCode);
+        await sleep(500);
+        continue;
       }
 
       const finalContentCandidatePayload = buildCandidatePayload({
@@ -1760,6 +2205,10 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
         } catch (_) {}
 
         console.log("  ❌ Falha no envio para " + leadName + " (Tentativa " + attempts + "): " + sendResult.error);
+      }
+
+      } finally {
+        await releaseConversationLock(tenantId, item.conversation_id, conversationLock.requestedLockUntil);
       }
 
       await sleep(1500);

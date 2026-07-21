@@ -1,6 +1,11 @@
 import type { EffectiveGuardian, GuardianRunContext, GuardianValidationResult } from "./types.ts";
 import { GuardianReasonCodes } from "./reason-codes.ts";
 import { validateConversationState } from "./validators/conversation-state.ts";
+import {
+  validateBusinessHoursWakeSpread,
+  validateConcurrencyLock,
+  validateContactCadence,
+} from "./validators/cadence.ts";
 import { validateLeadRelevance } from "./validators/lead-relevance.ts";
 import { validatePromptInjection } from "./validators/prompt-injection.ts";
 import {
@@ -23,6 +28,9 @@ export const ACTIVE_GUARDIAN_KEYS = new Set([
   "G15_PROMPT_INJECTION",
   "G16_SEMANTIC_SCOPE",
   "G17_NATURALNESS",
+  "G18_BUSINESS_HOURS",
+  "G20_CONTACT_CADENCE",
+  "G21_CONCURRENCY_LOCK",
   "G23_OBSERVABILITY",
 ]);
 
@@ -41,6 +49,9 @@ const validators: Record<string, GuardianValidator> = {
   G15_PROMPT_INJECTION: validatePromptInjection,
   G16_SEMANTIC_SCOPE: validateSemanticScope,
   G17_NATURALNESS: validateNaturalness,
+  G18_BUSINESS_HOURS: validateBusinessHoursWakeSpread,
+  G20_CONTACT_CADENCE: validateContactCadence,
+  G21_CONCURRENCY_LOCK: validateConcurrencyLock,
   G23_OBSERVABILITY: validateObservability,
 };
 
