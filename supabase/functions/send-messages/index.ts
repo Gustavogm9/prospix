@@ -7,6 +7,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { GuardianRunner } from "../_shared/guardians/runner.ts";
+import { buildCandidatePayload } from "../_shared/guardians/candidate.ts";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -684,7 +685,11 @@ function pickVariation(variations: any[]): any {
 // ══════════════════════════════════════════════════════════════════════════════
 // PART 1: Send first-touch messages to ENRICHED leads
 // ══════════════════════════════════════════════════════════════════════════════
-async function processFirstTouch(tenantId: string, processedLeadIds: Set<string>): Promise<{ queued: number; failed: number }> {
+async function processFirstTouch(
+  tenantId: string,
+  processedLeadIds: Set<string>,
+  guardianConfig: Awaited<ReturnType<typeof GuardianRunner.loadConfig>>,
+): Promise<{ queued: number; failed: number }> {
   let queued = 0, failed = 0;
   const brtHour = getBrtHour();
   const brtDate = getBrtDateStr();
@@ -867,6 +872,70 @@ async function processFirstTouch(tenantId: string, processedLeadIds: Set<string>
         const messageContent = await substituteVariables(variation.message, lead);
         const conversationId = uuid();
         const nowTime = new Date().toISOString();
+        const firstTouchCandidatePayload = buildCandidatePayload({
+          messages: [messageContent],
+          intent: "OTHER",
+          leadName: lead.name,
+        });
+        const firstTouchGuardianRun = await GuardianRunner.observe({
+          supabase,
+          config: guardianConfig,
+          tenantId,
+          leadId: lead.id,
+          stage: "POST_GENERATION",
+          functionScope: "send-messages",
+          input: {
+            source: "first_touch",
+            script_id: script.id,
+            variation_id: variation.id,
+          },
+          output: firstTouchCandidatePayload,
+          facts: {
+            lead_name: lead.name || null,
+            title_verified: lead.title_verified ?? null,
+            identity_confidence: lead.identity_confidence ?? null,
+            gender_confidence: lead.gender_confidence ?? null,
+            entity_type: lead.entity_type ?? null,
+          },
+        });
+
+        if (!firstTouchGuardianRun.allow) {
+          const reasonCode = firstTouchGuardianRun.blockingDecision?.reason_code || "GUARDIAN_PHASE4_FIRST_TOUCH_BLOCKED";
+          const guardianKey = firstTouchGuardianRun.blockingDecision?.guardian_key || null;
+
+          await supabase.from("leads").update({
+            queued_first_touch_at: nowTime,
+            lead_guardian_flags: {
+              guardian_engine_v3: {
+                phase: "PHASE_4_STRUCTURAL_ENFORCEMENT",
+                blocked_at: nowTime,
+                reason_code: reasonCode,
+                guardian_key: guardianKey,
+                script_id: script.id,
+                variation_id: variation.id,
+              },
+            },
+            updated_at: nowTime,
+          }).eq("id", lead.id);
+
+          await supabase.from("lead_events").insert({
+            tenant_id: tenantId,
+            lead_id: lead.id,
+            event_type: "guardian_blocked_outbound",
+            payload: {
+              source: "first_touch",
+              guardian_key: guardianKey,
+              reason_code: reasonCode,
+              validation_summary: firstTouchGuardianRun.summary,
+              reason: "Guardian Engine V3 bloqueou primeira abordagem antes da fila.",
+            },
+            created_at: nowTime,
+          });
+
+          processedLeadIds.add(lead.id);
+          console.warn("  [Guardian V3] Primeira abordagem bloqueada antes da fila. Lead: " + lead.id + " Reason: " + reasonCode);
+          continue;
+        }
 
         const { error: convErr } = await supabase.from("conversations").insert({
           id: conversationId,
@@ -894,6 +963,11 @@ async function processFirstTouch(tenantId: string, processedLeadIds: Set<string>
           attempts: 0,
           message_type: "OUTBOUND_START",
           priority: 6,
+          guardian_config_version_id: firstTouchGuardianRun.configVersionId,
+          validation_status: "APPROVED",
+          validation_reason_code: firstTouchGuardianRun.summary.warn > 0 ? "GUARDIAN_PHASE4_WARN_OBSERVED" : "GUARDIAN_PHASE4_PASS",
+          final_guardian_checked_at: nowTime,
+          final_guardian_decision: firstTouchGuardianRun.summary.warn > 0 ? "WARN" : "PASS",
         });
         if (queueErr) throw new Error("Erro ao enfileirar mensagem: " + queueErr.message);
 
@@ -1071,7 +1145,7 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
         chatsToday < maxNewChatsPerDay;
 
       if (canQueueNewActive) {
-        const { queued: q } = await processFirstTouch(tenantId, processedLeadIds);
+        const { queued: q } = await processFirstTouch(tenantId, processedLeadIds, guardianConfig);
         queued += q;
       }
 
@@ -1129,7 +1203,7 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
       // Obter detalhes da conversa/telefone do lead
       const { data: conversation } = await supabase
         .from("conversations")
-        .select("*, leads!conversations_lead_id_fkey(whatsapp, name, id, status)")
+        .select("*, leads!conversations_lead_id_fkey(whatsapp, name, id, status, title_verified, identity_confidence, gender_confidence, entity_type)")
         .eq("id", item.conversation_id)
         .single();
 
@@ -1146,6 +1220,7 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
       const phone = (conversation.leads as any).whatsapp;
       const leadName = (conversation.leads as any).name || "Lead";
       const leadId = (conversation.leads as any).id || null;
+      const leadRecord = conversation.leads as any;
 
       const preSendGuardianRun = await GuardianRunner.observe({
         supabase,
@@ -1181,7 +1256,7 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
         const { error: finalGuardErr } = await supabase.from("pending_outbound").update({
           guardian_config_version_id: item.guardian_config_version_id || preSendGuardianRun.configVersionId,
           validation_status: item.validation_status || "APPROVED",
-          validation_reason_code: item.validation_reason_code || "GUARDIAN_PHASE3_PRE_SEND_OBSERVED",
+          validation_reason_code: item.validation_reason_code || "GUARDIAN_PHASE4_PRE_SEND_OBSERVED",
           final_guardian_checked_at: new Date().toISOString(),
           final_guardian_decision: finalDecision,
         }).eq("id", item.id);
@@ -1191,6 +1266,55 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
         }
       } catch (err) {
         console.warn("  [Guardian V3] Final pre-send metadata update exception:", redactText(err));
+      }
+
+      const finalContentCandidatePayload = buildCandidatePayload({
+        messages: [item.content],
+        intent: "OTHER",
+        leadName,
+      });
+      const finalContentGuardianRun = await GuardianRunner.observe({
+        supabase,
+        config: guardianConfig,
+        tenantId,
+        leadId,
+        conversationId: item.conversation_id,
+        pendingOutboundId: item.id,
+        candidateId: item.candidate_id || null,
+        stage: "POST_GENERATION",
+        functionScope: "send-messages",
+        input: {
+          pending_outbound_id: item.id,
+          source: "pre_send_final_content_gate",
+          message_type: item.message_type,
+        },
+        output: finalContentCandidatePayload,
+        facts: {
+          lead_name: leadRecord.name || null,
+          title_verified: leadRecord.title_verified ?? null,
+          identity_confidence: leadRecord.identity_confidence ?? null,
+          gender_confidence: leadRecord.gender_confidence ?? null,
+          entity_type: leadRecord.entity_type ?? null,
+        },
+      });
+
+      if (!finalContentGuardianRun.allow) {
+        const reasonCode = finalContentGuardianRun.blockingDecision?.reason_code || "GUARDIAN_PHASE4_PRE_SEND_BLOCKED";
+        const finalDecision = finalContentGuardianRun.blockingDecision?.decision || "HARD_BLOCK";
+        await supabase.from("pending_outbound").update({
+          failed_at: new Date().toISOString(),
+          failed_reason: reasonCode,
+          validation_status: "BLOCKED",
+          validation_reason_code: reasonCode,
+          final_guardian_checked_at: new Date().toISOString(),
+          final_guardian_decision: finalDecision,
+          guardian_config_version_id: item.guardian_config_version_id || finalContentGuardianRun.configVersionId,
+        }).eq("id", item.id);
+
+        failed++;
+        console.warn("  [Guardian V3] Mensagem bloqueada no pre-envio. Pending: " + item.id + " Reason: " + reasonCode);
+        await sleep(500);
+        continue;
       }
 
       // 7. Validar limites antes do envio

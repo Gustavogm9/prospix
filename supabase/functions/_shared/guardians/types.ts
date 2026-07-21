@@ -112,6 +112,8 @@ export interface GuardianLoggedDecision extends GuardianValidationResult {
 }
 
 export interface GuardianRunResult {
+  allow: boolean;
+  blockingDecision: GuardianLoggedDecision | null;
   config: EffectiveGuardianConfig | null;
   configVersionId: string | null;
   decisions: GuardianLoggedDecision[];
@@ -122,6 +124,6 @@ export interface GuardianRunResult {
     warn: number;
     block: number;
     hard_block: number;
-    phase: "PHASE_3_OBSERVE_ONLY";
+    phase: "PHASE_3_OBSERVE_ONLY" | "PHASE_4_STRUCTURAL_ENFORCEMENT";
   };
 }

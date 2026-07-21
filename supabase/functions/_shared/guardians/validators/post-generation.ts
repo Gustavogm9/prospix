@@ -28,6 +28,123 @@ function outputText(context: GuardianRunContext): string {
   return toLoggableText(context.output || "");
 }
 
+function factNumber(context: GuardianRunContext, key: string): number | null {
+  const value = context.facts?.[key];
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function factBoolean(context: GuardianRunContext, key: string): boolean | null {
+  const value = context.facts?.[key];
+  if (value === true || value === false) return value;
+  return null;
+}
+
+function candidateFlag(context: GuardianRunContext, key: string): boolean {
+  const output = context.output as Record<string, unknown> | undefined;
+  return output?.[key] === true;
+}
+
+function isBusinessLikeName(value: unknown): boolean {
+  const normalized = normalizeText(value || "");
+  return /\b(advocacia|advogados|assessoria|consultoria|clinica|clínica|centro|instituto|odontologia|saude|saúde|hotel|pousada|restaurante|loja|mercado|supermercado|distribuidora|construtora|imobiliaria|imobiliária)\b/i.test(normalized);
+}
+
+export function validateIdentityPersonalization(
+  guardian: EffectiveGuardian,
+  context: GuardianRunContext,
+): GuardianValidationResult {
+  const text = outputText(context);
+  const normalized = normalizeText(text);
+  const forbiddenTitles = stringArrayVariable(guardian, "forbidden_unverified_titles", [
+    "Dr.",
+    "Dra.",
+    "Doutor",
+    "Doutora",
+    "Sr.",
+    "Sra.",
+    "Senhor",
+    "Senhora",
+  ]);
+  const matchedTitles = forbiddenTitles
+    .filter((term) => normalized.includes(normalizeText(term)))
+    .slice(0, 10);
+  const usedTitle = candidateFlag(context, "used_title") || matchedTitles.length > 0;
+  const usedGenderedTerm = candidateFlag(context, "used_gendered_term");
+  const usedName = candidateFlag(context, "used_name");
+  const titleVerified = factBoolean(context, "title_verified");
+  const identityConfidence = factNumber(context, "identity_confidence");
+  const genderConfidence = factNumber(context, "gender_confidence");
+  const reasons: string[] = [];
+
+  if (usedTitle && variableValue(guardian, "title_verified_required", true) && titleVerified !== true) {
+    reasons.push("title_unverified");
+  }
+
+  if (usedGenderedTerm && variableValue<boolean>(guardian, "allow_gendered_terms", false) !== true) {
+    reasons.push("gendered_term_not_allowed");
+  }
+
+  if (
+    usedGenderedTerm &&
+    genderConfidence !== null &&
+    genderConfidence < numberVariable(guardian, "gender_confidence_min", 0.98)
+  ) {
+    reasons.push("gender_confidence_below_min");
+  }
+
+  if (
+    usedName &&
+    identityConfidence !== null &&
+    identityConfidence < numberVariable(guardian, "name_confidence_min", 0.9)
+  ) {
+    reasons.push("identity_confidence_below_min");
+  }
+
+  if (
+    usedName &&
+    variableValue(guardian, "block_business_like_name", true) === true &&
+    isBusinessLikeName(context.facts?.lead_name)
+  ) {
+    reasons.push("business_like_name_used_as_person");
+  }
+
+  if (reasons.length > 0) {
+    return {
+      decision: "HARD_BLOCK",
+      reason_code: GuardianReasonCodes.G04_IDENTITY_PERSONALIZATION_BLOCKED,
+      confidence: 0.96,
+      evidence: compactEvidence({
+        reasons,
+        matched_titles: matchedTitles,
+        used_title: usedTitle,
+        used_gendered_term: usedGenderedTerm,
+        used_name: usedName,
+        title_verified: titleVerified,
+        identity_confidence: identityConfidence,
+        gender_confidence: genderConfidence,
+        lead_name_redacted: redactGuardianText(context.facts?.lead_name || "", 120),
+        output_preview_redacted: redactGuardianText(text, 240),
+      }),
+    };
+  }
+
+  return {
+    decision: "PASS",
+    reason_code: GuardianReasonCodes.G04_IDENTITY_PERSONALIZATION_PASS,
+    confidence: 0.94,
+    evidence: compactEvidence({
+      used_title: usedTitle,
+      used_gendered_term: usedGenderedTerm,
+      used_name: usedName,
+      title_verified: titleVerified,
+      identity_confidence: identityConfidence,
+      gender_confidence: genderConfidence,
+    }),
+  };
+}
+
 export function validateStructuredOutput(
   _guardian: EffectiveGuardian,
   context: GuardianRunContext,
@@ -42,10 +159,10 @@ export function validateStructuredOutput(
       : "";
   });
   const validMessages = messageTexts.filter((message): message is string => typeof message === "string" && message.length > 0);
-  const invalidLengthMessages = validMessages.filter((message) => message.length < 8 || message.length > 220);
-  const invalidCount = validMessages.length < 1 || validMessages.length > 2;
+  const invalidMessages = messageTexts.filter((message) => typeof message !== "string" || message.length === 0);
+  const invalidCount = validMessages.length < 1 || validMessages.length > 3;
 
-  if (validMessages.length === 0 || invalidLengthMessages.length > 0 || invalidCount) {
+  if (validMessages.length === 0 || invalidMessages.length > 0 || invalidCount) {
     return {
       decision: "HARD_BLOCK",
       reason_code: GuardianReasonCodes.G12_STRUCTURED_OUTPUT_OBSERVED,
@@ -54,9 +171,9 @@ export function validateStructuredOutput(
         missing: validMessages.length === 0 ? "messages" : null,
         schema_status: "invalid",
         message_count: validMessages.length,
-        invalid_length_count: invalidLengthMessages.length,
+        invalid_message_count: invalidMessages.length,
         invalid_count: invalidCount,
-        phase3_effective_action: "observe_only",
+        phase4_effective_action: "block_when_enforced",
       },
     };
   }

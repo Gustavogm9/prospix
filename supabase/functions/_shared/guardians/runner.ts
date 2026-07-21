@@ -19,6 +19,8 @@ type SupabaseGuardianClient = {
   };
 };
 
+const BLOCKING_MODES = new Set(["BLOCK", "HARD_BLOCK"]);
+
 function matchesStage(guardian: EffectiveGuardian, context: GuardianRunContext): boolean {
   return guardian.execution_stage === context.stage || guardian.execution_stage === "ALL_STAGES";
 }
@@ -33,8 +35,11 @@ function shouldRunGuardian(guardian: EffectiveGuardian, context: GuardianRunCont
   return matchesStage(guardian, context) && matchesFunctionScope(guardian, context);
 }
 
-function phase3Decision(result: GuardianValidationResult): GuardianDecision {
+function applyMode(guardian: EffectiveGuardian, result: GuardianValidationResult): GuardianDecision {
   if (result.decision === "PASS") return "PASS";
+  if (guardian.mode === "OBSERVE" || guardian.mode === "WARN") return "WARN";
+  if (guardian.mode === "BLOCK") return "BLOCK";
+  if (guardian.mode === "HARD_BLOCK") return "HARD_BLOCK";
   return "WARN";
 }
 
@@ -45,7 +50,7 @@ function summarize(decisions: GuardianLoggedDecision[]): GuardianRunResult["summ
     warn: decisions.filter((decision) => decision.decision === "WARN").length,
     block: decisions.filter((decision) => decision.decision === "BLOCK").length,
     hard_block: decisions.filter((decision) => decision.decision === "HARD_BLOCK").length,
-    phase: "PHASE_3_OBSERVE_ONLY",
+    phase: "PHASE_4_STRUCTURAL_ENFORCEMENT",
   };
 }
 
@@ -57,9 +62,8 @@ async function buildDecisionRow(params: {
   inputHash: string | null;
   outputHash: string | null;
 }): Promise<Record<string, unknown>> {
-  const persistedDecision = params.guardian.guardian_key === "G23_OBSERVABILITY"
-    ? params.result.decision
-    : phase3Decision(params.result);
+  const persistedDecision = applyMode(params.guardian, params.result);
+  const blocksFlow = persistedDecision === "BLOCK" || persistedDecision === "HARD_BLOCK";
 
   return {
     tenant_id: params.context.tenantId,
@@ -77,10 +81,10 @@ async function buildDecisionRow(params: {
     output_hash: params.outputHash,
     evidence: compactEvidence({
       ...(params.result.evidence || {}),
-      phase: "PHASE_3_OBSERVE_ONLY",
+      phase: "PHASE_4_STRUCTURAL_ENFORCEMENT",
       validator_decision: params.result.decision,
       persisted_decision: persistedDecision,
-      effective_action: "ALLOW_FLOW",
+      effective_action: blocksFlow ? "BLOCK_FLOW" : "ALLOW_FLOW",
       function_scope: params.context.functionScope,
     }),
   };
@@ -114,6 +118,8 @@ export class GuardianRunner {
 
     if (!config?.active_version?.id) {
       return {
+        allow: true,
+        blockingDecision: null,
         config: null,
         configVersionId: null,
         decisions: [],
@@ -143,6 +149,7 @@ export class GuardianRunner {
     const outputHash = params.output === undefined ? null : await sha256Hex(params.output);
     const decisions: GuardianLoggedDecision[] = [];
     const rows: Record<string, unknown>[] = [];
+    let blockingDecision: GuardianLoggedDecision | null = null;
 
     for (const guardian of guardians) {
       let validation: GuardianValidationResult;
@@ -178,6 +185,14 @@ export class GuardianRunner {
         confidence: validation.confidence,
         evidence: row.evidence as Record<string, unknown>,
       });
+      const latestDecision = decisions[decisions.length - 1];
+      if (
+        !blockingDecision &&
+        BLOCKING_MODES.has(guardian.mode) &&
+        (latestDecision.decision === "BLOCK" || latestDecision.decision === "HARD_BLOCK")
+      ) {
+        blockingDecision = latestDecision;
+      }
       rows.push(row);
     }
 
@@ -191,6 +206,8 @@ export class GuardianRunner {
     }
 
     return {
+      allow: !blockingDecision,
+      blockingDecision,
       config,
       configVersionId: config.active_version.id,
       decisions,

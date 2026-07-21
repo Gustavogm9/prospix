@@ -2,6 +2,7 @@ import type { EffectiveGuardian, GuardianRunContext, GuardianValidationResult } 
 import { GuardianReasonCodes } from "./reason-codes.ts";
 import { validatePromptInjection } from "./validators/prompt-injection.ts";
 import {
+  validateIdentityPersonalization,
   validateInternalLeak,
   validateNaturalness,
   validatePlaceholderLeak,
@@ -11,6 +12,7 @@ import {
 import { validateObservability } from "./validators/observability.ts";
 
 export const PHASE3_GUARDIAN_KEYS = new Set([
+  "G04_IDENTITY_PERSONALIZATION",
   "G12_STRUCTURED_OUTPUT",
   "G13_PLACEHOLDER_LEAK",
   "G14_INTERNAL_LEAK",
@@ -26,6 +28,7 @@ type GuardianValidator = (
 ) => GuardianValidationResult | Promise<GuardianValidationResult>;
 
 const validators: Record<string, GuardianValidator> = {
+  G04_IDENTITY_PERSONALIZATION: validateIdentityPersonalization,
   G12_STRUCTURED_OUTPUT: validateStructuredOutput,
   G13_PLACEHOLDER_LEAK: validatePlaceholderLeak,
   G14_INTERNAL_LEAK: validateInternalLeak,

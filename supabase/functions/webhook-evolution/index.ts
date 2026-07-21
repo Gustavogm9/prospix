@@ -7,6 +7,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { GuardianRunner } from "../_shared/guardians/runner.ts";
 import { sha256Hex } from "../_shared/guardians/evidence.ts";
+import { buildCandidatePayload } from "../_shared/guardians/candidate.ts";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -70,22 +71,6 @@ function normalizePhone(raw: string): string {
   if (phone.length === 11 || phone.length === 10) return `55${phone}`;
   return phone;
 }
-
-function toCandidateIntent(intent: string): string {
-  if (["QUESTION", "INTERESTED", "OBJECTION", "SCHEDULED", "NOT_INTERESTED"].includes(intent)) {
-    return intent;
-  }
-  return "OTHER";
-}
-
-function textHasTitle(text: string): boolean {
-  return /\b(dr\.?|dra\.?|doutor|doutora)\b/i.test(text);
-}
-
-function textHasGenderedTerm(text: string): boolean {
-  return /\b(obrigado|obrigada|sr\.?|sra\.?|doutor|doutora)\b/i.test(text);
-}
-
 
 type ConnectionGuardStatus = "COLD" | "NORMAL" | "PAUSED" | "SUSPENDED";
 
@@ -1566,15 +1551,11 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
     // ── Step 5: Queue in pending_outbound with delay ─────────
     const blocks = splitMessageIntoBlocks(responseText);
     const hasToolCalls = aiResponse.toolCalls && aiResponse.toolCalls.length > 0;
-    const candidatePayload = {
+    const candidatePayload = buildCandidatePayload({
       messages: blocks,
-      intent: toCandidateIntent(classification.intent),
-      used_name: Boolean(lead.name && responseText.toLowerCase().includes(String(lead.name).split(" ")[0].toLowerCase())),
-      used_title: textHasTitle(responseText),
-      used_gendered_term: textHasGenderedTerm(responseText),
-      claims: [],
-      handoff_required: classification.intent === "CALLBACK_REQUEST",
-    };
+      intent: classification.intent,
+      leadName: lead.name,
+    });
 
     let candidateId: string | null = null;
     let guardianConfigVersionId = guardianConfig?.active_version?.id || null;
@@ -1587,7 +1568,7 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
           conversation_id: conversation.id,
           inbound_message_id: inboundMsgId,
           model_name: modelToUse,
-          prompt_version: "webhook-evolution:v3-phase3",
+          prompt_version: "webhook-evolution:v3-phase4",
           guardian_config_version_id: guardianConfigVersionId,
           candidate_payload: candidatePayload,
           status: "GENERATED",
@@ -1630,14 +1611,77 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
         model: modelToUse,
         has_tool_calls: hasToolCalls,
         media_type: mediaType,
+        lead_name: lead.name || null,
+        title_verified: lead.title_verified ?? null,
+        identity_confidence: lead.identity_confidence ?? null,
+        gender_confidence: lead.gender_confidence ?? null,
+        entity_type: lead.entity_type ?? null,
       },
     });
     guardianConfigVersionId = postGenerationGuardianRun.configVersionId || guardianConfigVersionId;
 
-    const phase3FinalDecision = postGenerationGuardianRun.summary.warn > 0 ? "WARN" : "PASS";
-    const phase3ReasonCode = postGenerationGuardianRun.summary.warn > 0
-      ? "GUARDIAN_PHASE3_WARN_OBSERVED"
-      : "GUARDIAN_PHASE3_PASS";
+    const phase4BlockingDecision = postGenerationGuardianRun.blockingDecision;
+    const phase4FinalDecision = phase4BlockingDecision?.decision
+      || (postGenerationGuardianRun.summary.warn > 0 ? "WARN" : "PASS");
+    const phase4ReasonCode = phase4BlockingDecision?.reason_code
+      || (postGenerationGuardianRun.summary.warn > 0 ? "GUARDIAN_PHASE4_WARN_OBSERVED" : "GUARDIAN_PHASE4_PASS");
+
+    if (!postGenerationGuardianRun.allow) {
+      if (candidateId) {
+        try {
+          const { error: candidateBlockErr } = await supabase
+            .from("ai_message_candidates")
+            .update({
+              status: "BLOCKED",
+              block_reason_code: phase4ReasonCode,
+              guardian_config_version_id: guardianConfigVersionId,
+              validation_summary: postGenerationGuardianRun.summary,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", candidateId);
+          if (candidateBlockErr) {
+            console.warn("  [Guardian V3] Candidate block update failed:", redactText(candidateBlockErr.message));
+          }
+        } catch (err) {
+          console.warn("  [Guardian V3] Candidate block update exception:", redactText(err));
+        }
+      }
+
+      await supabase.from("lead_events").insert({
+        tenant_id: tenantId,
+        lead_id: lead.id,
+        event_type: "guardian_blocked_outbound",
+        payload: {
+          conversation_id: conversation.id,
+          candidate_id: candidateId,
+          guardian_key: phase4BlockingDecision?.guardian_key || null,
+          reason_code: phase4ReasonCode,
+          final_decision: phase4FinalDecision,
+          validation_summary: postGenerationGuardianRun.summary,
+          reason: "Guardian Engine V3 bloqueou a resposta antes de entrar na fila.",
+        },
+        created_at: now,
+      });
+
+      await supabase.rpc("increment_tenant_usage", {
+        p_tenant_id: tenantId,
+        p_llm_tokens_input: aiResponse.tokensIn || 0,
+        p_llm_tokens_output: aiResponse.tokensOut || 0,
+        p_whatsapp_msgs: 0,
+        p_maps_calls: 0
+      });
+
+      return new Response(JSON.stringify({
+        ok: true,
+        message_id: inboundMsgId,
+        intent: classification.intent,
+        action: "guardian_blocked_outbound",
+        reason_code: phase4ReasonCode,
+        guardian_key: phase4BlockingDecision?.guardian_key || null,
+      }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
 
     if (candidateId) {
       try {
@@ -1699,9 +1743,9 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
         candidate_id: candidateId,
         guardian_config_version_id: guardianConfigVersionId,
         validation_status: "APPROVED",
-        validation_reason_code: phase3ReasonCode,
+        validation_reason_code: phase4ReasonCode,
         final_guardian_checked_at: new Date().toISOString(),
-        final_guardian_decision: phase3FinalDecision
+        final_guardian_decision: phase4FinalDecision
       });
     }
     // Log AI response generated event
