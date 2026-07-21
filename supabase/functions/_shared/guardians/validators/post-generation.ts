@@ -46,6 +46,37 @@ function candidateFlag(context: GuardianRunContext, key: string): boolean {
   return output?.[key] === true;
 }
 
+function outputClaims(context: GuardianRunContext): unknown[] {
+  const output = context.output as Record<string, unknown> | undefined;
+  return Array.isArray(output?.claims) ? output.claims : [];
+}
+
+function hasClaimEvidence(claim: unknown, allowedSources: string[]): boolean {
+  if (!claim || typeof claim !== "object") return false;
+  const entry = claim as Record<string, unknown>;
+  if (typeof entry.evidence_id === "string" && entry.evidence_id.trim().length > 0) return true;
+  if (Array.isArray(entry.evidence_ids) && entry.evidence_ids.some((id) => typeof id === "string" && id.trim().length > 0)) {
+    return true;
+  }
+  if (typeof entry.source === "string" && allowedSources.includes(entry.source)) return true;
+  return false;
+}
+
+function unsupportedStructuredClaims(context: GuardianRunContext, allowedSources: string[]): string[] {
+  return outputClaims(context)
+    .map((claim, index) => ({ claim, index }))
+    .filter(({ claim }) => !hasClaimEvidence(claim, allowedSources))
+    .map(({ claim, index }) => {
+      if (typeof claim === "string") return redactGuardianText(claim, 120);
+      if (claim && typeof claim === "object") {
+        const text = (claim as Record<string, unknown>).text || (claim as Record<string, unknown>).claim || "";
+        return text ? redactGuardianText(text, 120) : `claim_${index}_missing_evidence`;
+      }
+      return `claim_${index}_invalid`;
+    })
+    .slice(0, 10);
+}
+
 function isBusinessLikeName(value: unknown): boolean {
   const normalized = normalizeText(value || "");
   return /\b(advocacia|advogados|assessoria|consultoria|clinica|clínica|centro|instituto|odontologia|saude|saúde|hotel|pousada|restaurante|loja|mercado|supermercado|distribuidora|construtora|imobiliaria|imobiliária)\b/i.test(normalized);
@@ -173,7 +204,7 @@ export function validateStructuredOutput(
         message_count: validMessages.length,
         invalid_message_count: invalidMessages.length,
         invalid_count: invalidCount,
-        phase4_effective_action: "block_when_enforced",
+        effective_action: "block_when_enforced",
       },
     };
   }
@@ -275,8 +306,21 @@ export function validateSemanticScope(
 ): GuardianValidationResult {
   const text = outputText(context);
   const normalized = normalizeText(text);
+  const allowedSources = stringArrayVariable(guardian, "allowed_sources", [
+    "conversation_history",
+    "lead_record",
+    "script",
+    "approved_objections",
+    "approved_knowledge_base",
+    "calendar_availability",
+  ]);
+  const unsupportedClaims = unsupportedStructuredClaims(context, allowedSources);
+  const unsupportedClaimsMax = numberVariable(guardian, "unsupported_claims_max", 0);
   const risks: string[] = [];
 
+  if (unsupportedClaims.length > unsupportedClaimsMax) {
+    risks.push("unsupported_structured_claim");
+  }
   if (variableValue(guardian, "forbid_unapproved_numbers", true) && /(?:\+?55)?\d{10,13}/.test(text)) {
     risks.push("phone_or_number_visible");
   }
@@ -289,6 +333,15 @@ export function validateSemanticScope(
   if (/r\$\s*[\d.,]+|\d+\s*reais/i.test(normalized)) {
     risks.push("price_claim");
   }
+  if (/\b(lider|lideres|melhor|maior|premiado|premiada|certificado|certificada|comprovado|comprovada)\b/i.test(normalized)) {
+    risks.push("unsupported_superlative_or_credential_claim");
+  }
+  if (/\b\d+\s*%/.test(normalized)) {
+    risks.push("unsupported_percentage_claim");
+  }
+  if (/\b(mais de|ha|há)\s+\d+\s+(anos|clientes|projetos|casos|empresas)\b/i.test(normalized)) {
+    risks.push("unsupported_quantified_claim");
+  }
 
   if (risks.length > 0) {
     return {
@@ -297,6 +350,9 @@ export function validateSemanticScope(
       confidence: 0.82,
       evidence: {
         risks,
+        unsupported_claims: unsupportedClaims,
+        unsupported_claims_max: unsupportedClaimsMax,
+        allowed_sources: allowedSources,
         output_preview_redacted: redactGuardianText(text, 240),
       },
     };

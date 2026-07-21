@@ -8,9 +8,11 @@ import type {
   GuardianRunResult,
   GuardianValidationResult,
 } from "./types.ts";
-import { PHASE3_GUARDIAN_KEYS, runRegisteredGuardian } from "./registry.ts";
+import { ACTIVE_GUARDIAN_KEYS, runRegisteredGuardian } from "./registry.ts";
 import { GuardianReasonCodes } from "./reason-codes.ts";
 import { compactEvidence, redactGuardianText, sha256Hex } from "./evidence.ts";
+
+const GUARDIAN_ENGINE_V3_PHASE = "PHASE_5_RELEVANCE_STATE_SEMANTIC" as const;
 
 type SupabaseGuardianClient = {
   rpc: (functionName: "get_guardian_active_config", args: { p_tenant_id: string }) => Promise<{ data: unknown; error: any }>;
@@ -30,7 +32,7 @@ function matchesFunctionScope(guardian: EffectiveGuardian, context: GuardianRunC
 }
 
 function shouldRunGuardian(guardian: EffectiveGuardian, context: GuardianRunContext): boolean {
-  if (!PHASE3_GUARDIAN_KEYS.has(guardian.guardian_key)) return false;
+  if (!ACTIVE_GUARDIAN_KEYS.has(guardian.guardian_key)) return false;
   if (!guardian.enabled || guardian.mode === "OFF") return false;
   return matchesStage(guardian, context) && matchesFunctionScope(guardian, context);
 }
@@ -50,7 +52,7 @@ function summarize(decisions: GuardianLoggedDecision[]): GuardianRunResult["summ
     warn: decisions.filter((decision) => decision.decision === "WARN").length,
     block: decisions.filter((decision) => decision.decision === "BLOCK").length,
     hard_block: decisions.filter((decision) => decision.decision === "HARD_BLOCK").length,
-    phase: "PHASE_4_STRUCTURAL_ENFORCEMENT",
+    phase: GUARDIAN_ENGINE_V3_PHASE,
   };
 }
 
@@ -81,7 +83,7 @@ async function buildDecisionRow(params: {
     output_hash: params.outputHash,
     evidence: compactEvidence({
       ...(params.result.evidence || {}),
-      phase: "PHASE_4_STRUCTURAL_ENFORCEMENT",
+      phase: GUARDIAN_ENGINE_V3_PHASE,
       validator_decision: params.result.decision,
       persisted_decision: persistedDecision,
       effective_action: blocksFlow ? "BLOCK_FLOW" : "ALLOW_FLOW",

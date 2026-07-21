@@ -832,29 +832,45 @@ serve(async (req: Request) => {
       .in("status", ["ACTIVE", "PAUSED"])
       .order("started_at", { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
 
     if (existingConv) {
       conversation = existingConv;
     } else {
-      // Create a new conversation
-      const convId = uuid();
-      const now = new Date().toISOString();
-      const { data: newConv } = await supabase
+      const { data: latestConv } = await supabase
         .from("conversations")
-        .insert({
-          id: convId,
-          tenant_id: tenantId,
-          lead_id: lead.id,
-          status: "ACTIVE",
-          ai_handling: true,
-          message_count: 0,
-          started_at: now,
-          last_message_at: now,
-        })
-        .select()
-        .single();
-      conversation = newConv;
+        .select("*")
+        .eq("tenant_id", tenantId)
+        .eq("lead_id", lead.id)
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (
+        latestConv &&
+        (latestConv.ai_handling === false || ["CLOSED", "ESCALATED", "BLOCKED", "SCHEDULED"].includes(latestConv.status))
+      ) {
+        conversation = latestConv;
+      } else {
+        // Create a new conversation
+        const convId = uuid();
+        const now = new Date().toISOString();
+        const { data: newConv } = await supabase
+          .from("conversations")
+          .insert({
+            id: convId,
+            tenant_id: tenantId,
+            lead_id: lead.id,
+            status: "ACTIVE",
+            ai_handling: true,
+            message_count: 0,
+            started_at: now,
+            last_message_at: now,
+          })
+          .select()
+          .single();
+        conversation = newConv;
+      }
     }
 
     if (!conversation) {
@@ -1012,9 +1028,143 @@ serve(async (req: Request) => {
         ai_handling: true,
         conversation_status: conversation.status,
         conversation_message_count: conversation.message_count || 0,
+        lead_status: lead.status || null,
+        relevance_score: lead.relevance_score ?? null,
+        relevance_status: lead.relevance_status ?? null,
+        fit_score: lead.fit_score ?? null,
+        phone_validation_status: lead.phone_validation_status ?? null,
+        phone_validation_confidence: lead.phone_validation_confidence ?? null,
+        entity_type: lead.entity_type ?? null,
+        identity_confidence: lead.identity_confidence ?? null,
       },
     });
     const guardianConfig = inboundGuardianRun.config;
+
+    if (!inboundGuardianRun.allow) {
+      const blockingDecision = inboundGuardianRun.blockingDecision;
+      const reasonCode = blockingDecision?.reason_code || "GUARDIAN_PHASE5_INBOUND_BLOCKED";
+
+      await supabase.from("lead_events").insert({
+        tenant_id: tenantId,
+        lead_id: lead.id,
+        event_type: "guardian_blocked_inbound",
+        payload: {
+          conversation_id: conversation.id,
+          message_id: inboundMsgId,
+          guardian_key: blockingDecision?.guardian_key || null,
+          reason_code: reasonCode,
+          final_decision: blockingDecision?.decision || "BLOCK",
+          validation_summary: inboundGuardianRun.summary,
+          reason: "Guardian Engine V3 bloqueou a mensagem recebida antes da classificacao.",
+        },
+        created_at: now,
+      });
+
+      await supabase.from("conversations").update({
+        last_guardian_decision_at: now,
+        guardian_state: {
+          ...(
+            conversation.guardian_state && typeof conversation.guardian_state === "object"
+              ? conversation.guardian_state
+              : {}
+          ),
+          guardian_engine_v3: {
+            phase: inboundGuardianRun.summary.phase,
+            blocked_at: now,
+            stage: "INBOUND_PRE_CLASSIFICATION",
+            guardian_key: blockingDecision?.guardian_key || null,
+            reason_code: reasonCode,
+          },
+        },
+      }).eq("id", conversation.id);
+
+      return new Response(JSON.stringify({
+        ok: true,
+        message_id: inboundMsgId,
+        action: "guardian_blocked_inbound",
+        reason_code: reasonCode,
+        guardian_key: blockingDecision?.guardian_key || null,
+      }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const preGenerationGuardianRun = await GuardianRunner.observe({
+      supabase,
+      config: guardianConfig,
+      tenantId,
+      leadId: lead.id,
+      conversationId: conversation.id,
+      stage: "PRE_GENERATION",
+      functionScope: "webhook-evolution",
+      input: {
+        source: "reactive_reply",
+        inbound_message_id: inboundMsgId,
+        whatsapp_message_id: whatsappMessageId,
+      },
+      facts: {
+        ai_handling: conversation.ai_handling === true,
+        conversation_status: conversation.status,
+        conversation_message_count: conversation.message_count || 0,
+        lead_status: lead.status || null,
+        relevance_score: lead.relevance_score ?? null,
+        relevance_status: lead.relevance_status ?? null,
+        fit_score: lead.fit_score ?? null,
+        phone_validation_status: lead.phone_validation_status ?? null,
+        phone_validation_confidence: lead.phone_validation_confidence ?? null,
+        entity_type: lead.entity_type ?? null,
+        identity_confidence: lead.identity_confidence ?? null,
+      },
+    });
+
+    if (!preGenerationGuardianRun.allow) {
+      const blockingDecision = preGenerationGuardianRun.blockingDecision;
+      const reasonCode = blockingDecision?.reason_code || "GUARDIAN_PHASE5_PRE_GENERATION_BLOCKED";
+
+      await supabase.from("lead_events").insert({
+        tenant_id: tenantId,
+        lead_id: lead.id,
+        event_type: "guardian_blocked_pre_generation",
+        payload: {
+          conversation_id: conversation.id,
+          message_id: inboundMsgId,
+          guardian_key: blockingDecision?.guardian_key || null,
+          reason_code: reasonCode,
+          final_decision: blockingDecision?.decision || "BLOCK",
+          validation_summary: preGenerationGuardianRun.summary,
+          reason: "Guardian Engine V3 bloqueou IA antes da geracao por relevancia ou estado.",
+        },
+        created_at: now,
+      });
+
+      await supabase.from("conversations").update({
+        last_guardian_decision_at: now,
+        guardian_state: {
+          ...(
+            conversation.guardian_state && typeof conversation.guardian_state === "object"
+              ? conversation.guardian_state
+              : {}
+          ),
+          guardian_engine_v3: {
+            phase: preGenerationGuardianRun.summary.phase,
+            blocked_at: now,
+            stage: "PRE_GENERATION",
+            guardian_key: blockingDecision?.guardian_key || null,
+            reason_code: reasonCode,
+          },
+        },
+      }).eq("id", conversation.id);
+
+      return new Response(JSON.stringify({
+        ok: true,
+        message_id: inboundMsgId,
+        action: "guardian_blocked_pre_generation",
+        reason_code: reasonCode,
+        guardian_key: blockingDecision?.guardian_key || null,
+      }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
 
     const classification = await classifyIntent(messageContent);
     console.log(`  🎯 Intent: ${classification.intent} (${classification.confidence})`);
@@ -1568,7 +1718,7 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
           conversation_id: conversation.id,
           inbound_message_id: inboundMsgId,
           model_name: modelToUse,
-          prompt_version: "webhook-evolution:v3-phase4",
+          prompt_version: "webhook-evolution:v3-phase5",
           guardian_config_version_id: guardianConfigVersionId,
           candidate_payload: candidatePayload,
           status: "GENERATED",
@@ -1616,15 +1766,21 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
         identity_confidence: lead.identity_confidence ?? null,
         gender_confidence: lead.gender_confidence ?? null,
         entity_type: lead.entity_type ?? null,
+        lead_status: lead.status || null,
+        relevance_score: lead.relevance_score ?? null,
+        relevance_status: lead.relevance_status ?? null,
+        fit_score: lead.fit_score ?? null,
+        phone_validation_status: lead.phone_validation_status ?? null,
+        phone_validation_confidence: lead.phone_validation_confidence ?? null,
       },
     });
     guardianConfigVersionId = postGenerationGuardianRun.configVersionId || guardianConfigVersionId;
 
-    const phase4BlockingDecision = postGenerationGuardianRun.blockingDecision;
-    const phase4FinalDecision = phase4BlockingDecision?.decision
+    const phase5BlockingDecision = postGenerationGuardianRun.blockingDecision;
+    const phase5FinalDecision = phase5BlockingDecision?.decision
       || (postGenerationGuardianRun.summary.warn > 0 ? "WARN" : "PASS");
-    const phase4ReasonCode = phase4BlockingDecision?.reason_code
-      || (postGenerationGuardianRun.summary.warn > 0 ? "GUARDIAN_PHASE4_WARN_OBSERVED" : "GUARDIAN_PHASE4_PASS");
+    const phase5ReasonCode = phase5BlockingDecision?.reason_code
+      || (postGenerationGuardianRun.summary.warn > 0 ? "GUARDIAN_PHASE5_WARN_OBSERVED" : "GUARDIAN_PHASE5_PASS");
 
     if (!postGenerationGuardianRun.allow) {
       if (candidateId) {
@@ -1633,7 +1789,7 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
             .from("ai_message_candidates")
             .update({
               status: "BLOCKED",
-              block_reason_code: phase4ReasonCode,
+              block_reason_code: phase5ReasonCode,
               guardian_config_version_id: guardianConfigVersionId,
               validation_summary: postGenerationGuardianRun.summary,
               updated_at: new Date().toISOString(),
@@ -1654,9 +1810,9 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
         payload: {
           conversation_id: conversation.id,
           candidate_id: candidateId,
-          guardian_key: phase4BlockingDecision?.guardian_key || null,
-          reason_code: phase4ReasonCode,
-          final_decision: phase4FinalDecision,
+          guardian_key: phase5BlockingDecision?.guardian_key || null,
+          reason_code: phase5ReasonCode,
+          final_decision: phase5FinalDecision,
           validation_summary: postGenerationGuardianRun.summary,
           reason: "Guardian Engine V3 bloqueou a resposta antes de entrar na fila.",
         },
@@ -1676,8 +1832,8 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
         message_id: inboundMsgId,
         intent: classification.intent,
         action: "guardian_blocked_outbound",
-        reason_code: phase4ReasonCode,
-        guardian_key: phase4BlockingDecision?.guardian_key || null,
+        reason_code: phase5ReasonCode,
+        guardian_key: phase5BlockingDecision?.guardian_key || null,
       }), {
         headers: { "Content-Type": "application/json" },
       });
@@ -1743,9 +1899,9 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
         candidate_id: candidateId,
         guardian_config_version_id: guardianConfigVersionId,
         validation_status: "APPROVED",
-        validation_reason_code: phase4ReasonCode,
+        validation_reason_code: phase5ReasonCode,
         final_guardian_checked_at: new Date().toISOString(),
-        final_guardian_decision: phase4FinalDecision
+        final_guardian_decision: phase5FinalDecision
       });
     }
     // Log AI response generated event

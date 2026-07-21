@@ -11,6 +11,14 @@ const PROMPT_INJECTION_PATTERNS = [
   /modo desenvolvedor|jailbreak|roleplay|finja que voce/i,
 ];
 
+const HIGH_SEVERITY_PATTERNS = [
+  /ignore (all )?(previous|above|prior) instructions?/i,
+  /forget (all )?(previous|above|prior) instructions?/i,
+  /system prompt|developer message|prompt interno|regras internas|instrucoes internas/i,
+  /api[_ -]?key|access token|secret|senha|credencial/i,
+  /modo desenvolvedor|jailbreak/i,
+];
+
 export function validatePromptInjection(
   guardian: EffectiveGuardian,
   context: GuardianRunContext,
@@ -20,10 +28,17 @@ export function validatePromptInjection(
     .filter((pattern) => pattern.test(text))
     .map((pattern) => pattern.source)
     .slice(0, 8);
+  const highSeverityMatched = HIGH_SEVERITY_PATTERNS
+    .filter((pattern) => pattern.test(text))
+    .map((pattern) => pattern.source)
+    .slice(0, 8);
 
   const warnMin = numberVariable(guardian, "injection_score_warn_min", 0.4);
   const blockMin = numberVariable(guardian, "injection_score_block_min", 0.6);
-  const score = Math.min(1, matched.length * 0.25);
+  const score = Math.min(
+    1,
+    (highSeverityMatched.length > 0 ? 0.65 : 0) + Math.max(0, matched.length - highSeverityMatched.length) * 0.2,
+  );
 
   if (score >= warnMin) {
     return {
@@ -32,6 +47,7 @@ export function validatePromptInjection(
       confidence: score,
       evidence: compactEvidence({
         matched_patterns: matched,
+        high_severity_patterns: highSeverityMatched,
         score,
         warn_min: warnMin,
         block_min: blockMin,

@@ -869,9 +869,84 @@ async function processFirstTouch(
           continue;
         }
 
+        const nowTime = new Date().toISOString();
+        const firstTouchPreGenerationRun = await GuardianRunner.observe({
+          supabase,
+          config: guardianConfig,
+          tenantId,
+          leadId: lead.id,
+          stage: "PRE_GENERATION",
+          functionScope: "send-messages",
+          input: {
+            source: "first_touch",
+            campaign_id: campaign.id,
+            script_id: script.id,
+            variation_id: variation.id,
+          },
+          facts: {
+            ai_handling: true,
+            conversation_status: "OPENING_READY",
+            lead_status: lead.status || null,
+            relevance_score: lead.relevance_score ?? null,
+            relevance_status: lead.relevance_status ?? null,
+            fit_score: lead.fit_score ?? null,
+            phone_validation_status: lead.phone_validation_status ?? null,
+            phone_validation_confidence: lead.phone_validation_confidence ?? null,
+            entity_type: lead.entity_type ?? null,
+            identity_confidence: lead.identity_confidence ?? null,
+            target_profession: script.target_profession || null,
+            campaign_profession: campaign.profession || null,
+          },
+        });
+
+        if (!firstTouchPreGenerationRun.allow) {
+          const reasonCode = firstTouchPreGenerationRun.blockingDecision?.reason_code || "GUARDIAN_PHASE5_FIRST_TOUCH_PRE_GENERATION_BLOCKED";
+          const guardianKey = firstTouchPreGenerationRun.blockingDecision?.guardian_key || null;
+
+          await supabase.from("leads").update({
+            queued_first_touch_at: nowTime,
+            lead_guardian_flags: {
+              ...(
+                lead.lead_guardian_flags && typeof lead.lead_guardian_flags === "object"
+                  ? lead.lead_guardian_flags
+                  : {}
+              ),
+              guardian_engine_v3: {
+                phase: firstTouchPreGenerationRun.summary.phase,
+                blocked_at: nowTime,
+                stage: "PRE_GENERATION",
+                reason_code: reasonCode,
+                guardian_key: guardianKey,
+                campaign_id: campaign.id,
+                script_id: script.id,
+                variation_id: variation.id,
+              },
+            },
+            updated_at: nowTime,
+          }).eq("id", lead.id);
+
+          await supabase.from("lead_events").insert({
+            tenant_id: tenantId,
+            lead_id: lead.id,
+            event_type: "guardian_blocked_first_touch",
+            payload: {
+              source: "first_touch",
+              stage: "PRE_GENERATION",
+              guardian_key: guardianKey,
+              reason_code: reasonCode,
+              validation_summary: firstTouchPreGenerationRun.summary,
+              reason: "Guardian Engine V3 bloqueou primeira abordagem antes de gerar/enfileirar por relevancia ou estado.",
+            },
+            created_at: nowTime,
+          });
+
+          processedLeadIds.add(lead.id);
+          console.warn("  [Guardian V3] Primeira abordagem bloqueada antes da geracao. Lead: " + lead.id + " Reason: " + reasonCode);
+          continue;
+        }
+
         const messageContent = await substituteVariables(variation.message, lead);
         const conversationId = uuid();
-        const nowTime = new Date().toISOString();
         const firstTouchCandidatePayload = buildCandidatePayload({
           messages: [messageContent],
           intent: "OTHER",
@@ -896,19 +971,33 @@ async function processFirstTouch(
             identity_confidence: lead.identity_confidence ?? null,
             gender_confidence: lead.gender_confidence ?? null,
             entity_type: lead.entity_type ?? null,
+            lead_status: lead.status || null,
+            relevance_score: lead.relevance_score ?? null,
+            relevance_status: lead.relevance_status ?? null,
+            fit_score: lead.fit_score ?? null,
+            phone_validation_status: lead.phone_validation_status ?? null,
+            phone_validation_confidence: lead.phone_validation_confidence ?? null,
+            target_profession: script.target_profession || null,
+            campaign_profession: campaign.profession || null,
           },
         });
 
         if (!firstTouchGuardianRun.allow) {
-          const reasonCode = firstTouchGuardianRun.blockingDecision?.reason_code || "GUARDIAN_PHASE4_FIRST_TOUCH_BLOCKED";
+          const reasonCode = firstTouchGuardianRun.blockingDecision?.reason_code || "GUARDIAN_PHASE5_FIRST_TOUCH_BLOCKED";
           const guardianKey = firstTouchGuardianRun.blockingDecision?.guardian_key || null;
 
           await supabase.from("leads").update({
             queued_first_touch_at: nowTime,
             lead_guardian_flags: {
+              ...(
+                lead.lead_guardian_flags && typeof lead.lead_guardian_flags === "object"
+                  ? lead.lead_guardian_flags
+                  : {}
+              ),
               guardian_engine_v3: {
-                phase: "PHASE_4_STRUCTURAL_ENFORCEMENT",
+                phase: firstTouchGuardianRun.summary.phase,
                 blocked_at: nowTime,
+                stage: "POST_GENERATION",
                 reason_code: reasonCode,
                 guardian_key: guardianKey,
                 script_id: script.id,
@@ -965,7 +1054,7 @@ async function processFirstTouch(
           priority: 6,
           guardian_config_version_id: firstTouchGuardianRun.configVersionId,
           validation_status: "APPROVED",
-          validation_reason_code: firstTouchGuardianRun.summary.warn > 0 ? "GUARDIAN_PHASE4_WARN_OBSERVED" : "GUARDIAN_PHASE4_PASS",
+          validation_reason_code: firstTouchGuardianRun.summary.warn > 0 ? "GUARDIAN_PHASE5_WARN_OBSERVED" : "GUARDIAN_PHASE5_PASS",
           final_guardian_checked_at: nowTime,
           final_guardian_decision: firstTouchGuardianRun.summary.warn > 0 ? "WARN" : "PASS",
         });
@@ -1203,7 +1292,7 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
       // Obter detalhes da conversa/telefone do lead
       const { data: conversation } = await supabase
         .from("conversations")
-        .select("*, leads!conversations_lead_id_fkey(whatsapp, name, id, status, title_verified, identity_confidence, gender_confidence, entity_type)")
+        .select("*, leads!conversations_lead_id_fkey(whatsapp, name, id, status, title_verified, identity_confidence, gender_confidence, entity_type, relevance_score, relevance_status, fit_score, phone_validation_status, phone_validation_confidence)")
         .eq("id", item.conversation_id)
         .single();
 
@@ -1221,6 +1310,77 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
       const leadName = (conversation.leads as any).name || "Lead";
       const leadId = (conversation.leads as any).id || null;
       const leadRecord = conversation.leads as any;
+
+      const preGenerationGuardianRun = await GuardianRunner.observe({
+        supabase,
+        config: guardianConfig,
+        tenantId,
+        leadId,
+        conversationId: item.conversation_id,
+        pendingOutboundId: item.id,
+        candidateId: item.candidate_id || null,
+        stage: "PRE_GENERATION",
+        functionScope: "send-messages",
+        input: {
+          pending_outbound_id: item.id,
+          source: "pre_send_state_relevance_gate",
+          message_type: item.message_type,
+          scheduled_for: item.scheduled_for,
+          attempts: item.attempts || 0,
+        },
+        output: {
+          content: item.content,
+          has_media: Boolean(item.media_url),
+          media_type: item.media_type || null,
+        },
+        facts: {
+          ai_handling: conversation.ai_handling === true,
+          conversation_status: conversation.status || null,
+          lead_status: leadRecord.status || null,
+          relevance_score: leadRecord.relevance_score ?? null,
+          relevance_status: leadRecord.relevance_status ?? null,
+          fit_score: leadRecord.fit_score ?? null,
+          phone_validation_status: leadRecord.phone_validation_status ?? null,
+          phone_validation_confidence: leadRecord.phone_validation_confidence ?? null,
+          entity_type: leadRecord.entity_type ?? null,
+          identity_confidence: leadRecord.identity_confidence ?? null,
+        },
+      });
+
+      if (!preGenerationGuardianRun.allow) {
+        const reasonCode = preGenerationGuardianRun.blockingDecision?.reason_code || "GUARDIAN_PHASE5_PRE_SEND_PRE_GENERATION_BLOCKED";
+        const finalDecision = preGenerationGuardianRun.blockingDecision?.decision || "BLOCK";
+        await supabase.from("pending_outbound").update({
+          failed_at: new Date().toISOString(),
+          failed_reason: reasonCode,
+          validation_status: "BLOCKED",
+          validation_reason_code: reasonCode,
+          final_guardian_checked_at: new Date().toISOString(),
+          final_guardian_decision: finalDecision,
+          guardian_config_version_id: item.guardian_config_version_id || preGenerationGuardianRun.configVersionId,
+        }).eq("id", item.id);
+
+        await supabase.from("lead_events").insert({
+          tenant_id: tenantId,
+          lead_id: leadId,
+          event_type: "guardian_blocked_pre_send",
+          payload: {
+            pending_outbound_id: item.id,
+            conversation_id: item.conversation_id,
+            guardian_key: preGenerationGuardianRun.blockingDecision?.guardian_key || null,
+            reason_code: reasonCode,
+            final_decision: finalDecision,
+            validation_summary: preGenerationGuardianRun.summary,
+            reason: "Guardian Engine V3 bloqueou mensagem ja enfileirada antes do envio por relevancia ou estado.",
+          },
+          created_at: new Date().toISOString(),
+        });
+
+        failed++;
+        console.warn("  [Guardian V3] Mensagem bloqueada antes do envio por relevancia/estado. Pending: " + item.id + " Reason: " + reasonCode);
+        await sleep(500);
+        continue;
+      }
 
       const preSendGuardianRun = await GuardianRunner.observe({
         supabase,
@@ -1248,6 +1408,15 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
           sent_last_minute: msgsLastMin,
           sent_last_hour: msgsLastHr,
           new_chats_today: chatsToday,
+          ai_handling: conversation.ai_handling === true,
+          conversation_status: conversation.status || null,
+          lead_status: leadRecord.status || null,
+          relevance_score: leadRecord.relevance_score ?? null,
+          relevance_status: leadRecord.relevance_status ?? null,
+          fit_score: leadRecord.fit_score ?? null,
+          phone_validation_status: leadRecord.phone_validation_status ?? null,
+          phone_validation_confidence: leadRecord.phone_validation_confidence ?? null,
+          entity_type: leadRecord.entity_type ?? null,
         },
       });
 
@@ -1256,7 +1425,7 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
         const { error: finalGuardErr } = await supabase.from("pending_outbound").update({
           guardian_config_version_id: item.guardian_config_version_id || preSendGuardianRun.configVersionId,
           validation_status: item.validation_status || "APPROVED",
-          validation_reason_code: item.validation_reason_code || "GUARDIAN_PHASE4_PRE_SEND_OBSERVED",
+          validation_reason_code: item.validation_reason_code || "GUARDIAN_PHASE5_PRE_SEND_OBSERVED",
           final_guardian_checked_at: new Date().toISOString(),
           final_guardian_decision: finalDecision,
         }).eq("id", item.id);
@@ -1295,11 +1464,17 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
           identity_confidence: leadRecord.identity_confidence ?? null,
           gender_confidence: leadRecord.gender_confidence ?? null,
           entity_type: leadRecord.entity_type ?? null,
+          lead_status: leadRecord.status || null,
+          relevance_score: leadRecord.relevance_score ?? null,
+          relevance_status: leadRecord.relevance_status ?? null,
+          fit_score: leadRecord.fit_score ?? null,
+          phone_validation_status: leadRecord.phone_validation_status ?? null,
+          phone_validation_confidence: leadRecord.phone_validation_confidence ?? null,
         },
       });
 
       if (!finalContentGuardianRun.allow) {
-        const reasonCode = finalContentGuardianRun.blockingDecision?.reason_code || "GUARDIAN_PHASE4_PRE_SEND_BLOCKED";
+        const reasonCode = finalContentGuardianRun.blockingDecision?.reason_code || "GUARDIAN_PHASE5_PRE_SEND_BLOCKED";
         const finalDecision = finalContentGuardianRun.blockingDecision?.decision || "HARD_BLOCK";
         await supabase.from("pending_outbound").update({
           failed_at: new Date().toISOString(),

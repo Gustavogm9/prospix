@@ -1,5 +1,7 @@
 import type { EffectiveGuardian, GuardianRunContext, GuardianValidationResult } from "./types.ts";
 import { GuardianReasonCodes } from "./reason-codes.ts";
+import { validateConversationState } from "./validators/conversation-state.ts";
+import { validateLeadRelevance } from "./validators/lead-relevance.ts";
 import { validatePromptInjection } from "./validators/prompt-injection.ts";
 import {
   validateIdentityPersonalization,
@@ -11,8 +13,10 @@ import {
 } from "./validators/post-generation.ts";
 import { validateObservability } from "./validators/observability.ts";
 
-export const PHASE3_GUARDIAN_KEYS = new Set([
+export const ACTIVE_GUARDIAN_KEYS = new Set([
+  "G02_LEAD_RELEVANCE",
   "G04_IDENTITY_PERSONALIZATION",
+  "G05_CONVERSATION_STATE",
   "G12_STRUCTURED_OUTPUT",
   "G13_PLACEHOLDER_LEAK",
   "G14_INTERNAL_LEAK",
@@ -28,7 +32,9 @@ type GuardianValidator = (
 ) => GuardianValidationResult | Promise<GuardianValidationResult>;
 
 const validators: Record<string, GuardianValidator> = {
+  G02_LEAD_RELEVANCE: validateLeadRelevance,
   G04_IDENTITY_PERSONALIZATION: validateIdentityPersonalization,
+  G05_CONVERSATION_STATE: validateConversationState,
   G12_STRUCTURED_OUTPUT: validateStructuredOutput,
   G13_PLACEHOLDER_LEAK: validatePlaceholderLeak,
   G14_INTERNAL_LEAK: validateInternalLeak,

@@ -124,6 +124,9 @@ export interface GuardianRunResult {
     warn: number;
     block: number;
     hard_block: number;
-    phase: "PHASE_3_OBSERVE_ONLY" | "PHASE_4_STRUCTURAL_ENFORCEMENT";
+    phase:
+      | "PHASE_3_OBSERVE_ONLY"
+      | "PHASE_4_STRUCTURAL_ENFORCEMENT"
+      | "PHASE_5_RELEVANCE_STATE_SEMANTIC";
   };
 }
