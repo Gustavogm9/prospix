@@ -109,8 +109,17 @@ function statusAfterHealthyExternalState(guardianStatus: any): string {
   return current;
 }
 
+function toLoggableText(value: unknown): string {
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value ?? {});
+  } catch (_err) {
+    return String(value ?? "");
+  }
+}
+
 function redactText(value: unknown): string {
-  return String(value ?? "")
+  return toLoggableText(value)
     .replace(/55\d{10,13}/g, "[PHONE_REDACTED]")
     .replace(/[A-Za-z0-9_=-]{48,}/g, "[TOKEN_REDACTED]")
     .slice(0, 500);
