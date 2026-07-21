@@ -5,6 +5,8 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { GuardianRunner } from "../_shared/guardians/runner.ts";
+import { sha256Hex } from "../_shared/guardians/evidence.ts";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -67,6 +69,21 @@ function normalizePhone(raw: string): string {
   if (phone.startsWith("55") && phone.length >= 12) return phone;
   if (phone.length === 11 || phone.length === 10) return `55${phone}`;
   return phone;
+}
+
+function toCandidateIntent(intent: string): string {
+  if (["QUESTION", "INTERESTED", "OBJECTION", "SCHEDULED", "NOT_INTERESTED"].includes(intent)) {
+    return intent;
+  }
+  return "OTHER";
+}
+
+function textHasTitle(text: string): boolean {
+  return /\b(dr\.?|dra\.?|doutor|doutora)\b/i.test(text);
+}
+
+function textHasGenderedTerm(text: string): boolean {
+  return /\b(obrigado|obrigada|sr\.?|sra\.?|doutor|doutora)\b/i.test(text);
 }
 
 
@@ -993,6 +1010,27 @@ serve(async (req: Request) => {
     console.log("  🤖 AI handling active, processing...");
 
     // ── Step 1: Classify intent ──────────────────────────────
+    const inboundGuardianRun = await GuardianRunner.observe({
+      supabase,
+      tenantId,
+      leadId: lead.id,
+      conversationId: conversation.id,
+      stage: "INBOUND_PRE_CLASSIFICATION",
+      functionScope: "webhook-evolution",
+      input: {
+        event,
+        inbound_message_id: inboundMsgId,
+        whatsapp_message_id: whatsappMessageId,
+        message: messageContent,
+      },
+      facts: {
+        ai_handling: true,
+        conversation_status: conversation.status,
+        conversation_message_count: conversation.message_count || 0,
+      },
+    });
+    const guardianConfig = inboundGuardianRun.config;
+
     const classification = await classifyIntent(messageContent);
     console.log(`  🎯 Intent: ${classification.intent} (${classification.confidence})`);
 
@@ -1528,6 +1566,97 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
     // ── Step 5: Queue in pending_outbound with delay ─────────
     const blocks = splitMessageIntoBlocks(responseText);
     const hasToolCalls = aiResponse.toolCalls && aiResponse.toolCalls.length > 0;
+    const candidatePayload = {
+      messages: blocks,
+      intent: toCandidateIntent(classification.intent),
+      used_name: Boolean(lead.name && responseText.toLowerCase().includes(String(lead.name).split(" ")[0].toLowerCase())),
+      used_title: textHasTitle(responseText),
+      used_gendered_term: textHasGenderedTerm(responseText),
+      claims: [],
+      handoff_required: classification.intent === "CALLBACK_REQUEST",
+    };
+
+    let candidateId: string | null = null;
+    let guardianConfigVersionId = guardianConfig?.active_version?.id || null;
+    try {
+      const { data: candidate, error: candidateErr } = await supabase
+        .from("ai_message_candidates")
+        .insert({
+          tenant_id: tenantId,
+          lead_id: lead.id,
+          conversation_id: conversation.id,
+          inbound_message_id: inboundMsgId,
+          model_name: modelToUse,
+          prompt_version: "webhook-evolution:v3-phase3",
+          guardian_config_version_id: guardianConfigVersionId,
+          candidate_payload: candidatePayload,
+          status: "GENERATED",
+          final_messages: blocks,
+          input_hash: await sha256Hex({
+            inbound_message_id: inboundMsgId,
+            intent: classification.intent,
+            message: messageContent,
+          }),
+          output_hash: await sha256Hex(candidatePayload),
+        })
+        .select("id")
+        .single();
+
+      if (candidateErr) {
+        console.warn("  [Guardian V3] Candidate insert failed:", redactText(candidateErr.message));
+      } else {
+        candidateId = candidate?.id || null;
+      }
+    } catch (err) {
+      console.warn("  [Guardian V3] Candidate insert exception:", redactText(err));
+    }
+
+    const postGenerationGuardianRun = await GuardianRunner.observe({
+      supabase,
+      config: guardianConfig,
+      tenantId,
+      leadId: lead.id,
+      conversationId: conversation.id,
+      candidateId,
+      stage: "POST_GENERATION",
+      functionScope: "webhook-evolution",
+      input: {
+        inbound_message_id: inboundMsgId,
+        intent: classification.intent,
+        recent_message_count: recentMessages?.length || 0,
+      },
+      output: candidatePayload,
+      facts: {
+        model: modelToUse,
+        has_tool_calls: hasToolCalls,
+        media_type: mediaType,
+      },
+    });
+    guardianConfigVersionId = postGenerationGuardianRun.configVersionId || guardianConfigVersionId;
+
+    const phase3FinalDecision = postGenerationGuardianRun.summary.warn > 0 ? "WARN" : "PASS";
+    const phase3ReasonCode = postGenerationGuardianRun.summary.warn > 0
+      ? "GUARDIAN_PHASE3_WARN_OBSERVED"
+      : "GUARDIAN_PHASE3_PASS";
+
+    if (candidateId) {
+      try {
+        const { error: candidateUpdateErr } = await supabase
+          .from("ai_message_candidates")
+          .update({
+            status: "APPROVED",
+            guardian_config_version_id: guardianConfigVersionId,
+            validation_summary: postGenerationGuardianRun.summary,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", candidateId);
+        if (candidateUpdateErr) {
+          console.warn("  [Guardian V3] Candidate update failed:", redactText(candidateUpdateErr.message));
+        }
+      } catch (err) {
+        console.warn("  [Guardian V3] Candidate update exception:", redactText(err));
+      }
+    }
 
     // Calcula o tipo de mensagem inicial
     const baseMessageType = hasToolCalls ? 'LOOKUP_REPLY' : 'REACTIVE_REPLY';
@@ -1566,7 +1695,13 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
         scheduled_for: scheduledFor,
         attempts: 0,
         message_type: mType,
-        priority: mPriority
+        priority: mPriority,
+        candidate_id: candidateId,
+        guardian_config_version_id: guardianConfigVersionId,
+        validation_status: "APPROVED",
+        validation_reason_code: phase3ReasonCode,
+        final_guardian_checked_at: new Date().toISOString(),
+        final_guardian_decision: phase3FinalDecision
       });
     }
     // Log AI response generated event

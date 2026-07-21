@@ -6,6 +6,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { GuardianRunner } from "../_shared/guardians/runner.ts";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -951,6 +952,7 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
   // Inicializar caches locais de memória para esta rodada contra race conditions
   const processedLeadIds = new Set<string>();
   const processedConversationIds = new Set<string>();
+  const guardianConfig = await GuardianRunner.loadConfig({ supabase, tenantId });
 
   try {
     while (Date.now() < runEndTime) {
@@ -1143,6 +1145,53 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
 
       const phone = (conversation.leads as any).whatsapp;
       const leadName = (conversation.leads as any).name || "Lead";
+      const leadId = (conversation.leads as any).id || null;
+
+      const preSendGuardianRun = await GuardianRunner.observe({
+        supabase,
+        config: guardianConfig,
+        tenantId,
+        leadId,
+        conversationId: item.conversation_id,
+        pendingOutboundId: item.id,
+        candidateId: item.candidate_id || null,
+        stage: "PRE_SEND",
+        functionScope: "send-messages",
+        input: {
+          pending_outbound_id: item.id,
+          message_type: item.message_type,
+          scheduled_for: item.scheduled_for,
+          attempts: item.attempts || 0,
+        },
+        output: {
+          content: item.content,
+          has_media: Boolean(item.media_url),
+          media_type: item.media_type || null,
+        },
+        facts: {
+          number_state: numberState,
+          sent_last_minute: msgsLastMin,
+          sent_last_hour: msgsLastHr,
+          new_chats_today: chatsToday,
+        },
+      });
+
+      try {
+        const finalDecision = preSendGuardianRun.summary.warn > 0 ? "WARN" : "PASS";
+        const { error: finalGuardErr } = await supabase.from("pending_outbound").update({
+          guardian_config_version_id: item.guardian_config_version_id || preSendGuardianRun.configVersionId,
+          validation_status: item.validation_status || "APPROVED",
+          validation_reason_code: item.validation_reason_code || "GUARDIAN_PHASE3_PRE_SEND_OBSERVED",
+          final_guardian_checked_at: new Date().toISOString(),
+          final_guardian_decision: finalDecision,
+        }).eq("id", item.id);
+
+        if (finalGuardErr) {
+          console.warn("  [Guardian V3] Final pre-send metadata update failed:", redactText(finalGuardErr.message));
+        }
+      } catch (err) {
+        console.warn("  [Guardian V3] Final pre-send metadata update exception:", redactText(err));
+      }
 
       // 7. Validar limites antes do envio
       const limitsExceeded =

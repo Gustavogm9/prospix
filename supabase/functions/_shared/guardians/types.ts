@@ -84,3 +84,44 @@ export interface EffectiveGuardianConfig {
   } | null;
   guardians: EffectiveGuardian[];
 }
+
+export interface GuardianRunContext {
+  tenantId: string;
+  leadId?: string | null;
+  conversationId?: string | null;
+  pendingOutboundId?: string | null;
+  candidateId?: string | null;
+  stage: GuardianStage;
+  functionScope: EffectiveGuardian["function_scope"];
+  input?: unknown;
+  output?: unknown;
+  facts?: Record<string, unknown>;
+}
+
+export interface GuardianValidationResult {
+  decision: GuardianDecision;
+  reason_code: string;
+  confidence?: number | null;
+  evidence?: Record<string, unknown>;
+}
+
+export interface GuardianLoggedDecision extends GuardianValidationResult {
+  guardian_key: string;
+  execution_stage: GuardianStage | string;
+  mode_applied: GuardianMode;
+}
+
+export interface GuardianRunResult {
+  config: EffectiveGuardianConfig | null;
+  configVersionId: string | null;
+  decisions: GuardianLoggedDecision[];
+  errors: string[];
+  summary: {
+    total: number;
+    pass: number;
+    warn: number;
+    block: number;
+    hard_block: number;
+    phase: "PHASE_3_OBSERVE_ONLY";
+  };
+}
