@@ -217,6 +217,9 @@ export function validateBusinessHoursWakeSpread(
   };
 }
 
+const FOLLOWUP_LIKE_MESSAGE_TYPES = new Set(["COMMERCIAL_FOLLOWUP", "REFERRAL_REQUEST"]);
+const CADENCE_TRACKED_MESSAGE_TYPES = new Set(["OUTBOUND_START", "COMMERCIAL_FOLLOWUP", "REFERRAL_REQUEST"]);
+
 export function validateContactCadence(
   guardian: EffectiveGuardian,
   context: GuardianRunContext,
@@ -236,7 +239,7 @@ export function validateContactCadence(
     10,
   );
 
-  if (messageType === "COMMERCIAL_FOLLOWUP" && followupCount >= maxFollowups) {
+  if (FOLLOWUP_LIKE_MESSAGE_TYPES.has(messageType) && followupCount >= maxFollowups) {
     return {
       decision: "BLOCK",
       reason_code: GuardianReasonCodes.G20_CONTACT_CADENCE_BLOCKED,
@@ -250,7 +253,7 @@ export function validateContactCadence(
     };
   }
 
-  if (messageType === "COMMERCIAL_FOLLOWUP" && lastOutbound && (!lastInbound || lastInbound.getTime() <= lastOutbound.getTime())) {
+  if (FOLLOWUP_LIKE_MESSAGE_TYPES.has(messageType) && lastOutbound && (!lastInbound || lastInbound.getTime() <= lastOutbound.getTime())) {
     const nextAllowed = new Date(lastOutbound.getTime() + minGapHours * 60 * 60 * 1000);
     if (nextAllowed.getTime() > now.getTime()) {
       return {
@@ -270,7 +273,7 @@ export function validateContactCadence(
   }
 
   if (
-    ["OUTBOUND_START", "COMMERCIAL_FOLLOWUP"].includes(messageType) &&
+    CADENCE_TRACKED_MESSAGE_TYPES.has(messageType) &&
     activeContacts30m >= activeContactsMax
   ) {
     return {

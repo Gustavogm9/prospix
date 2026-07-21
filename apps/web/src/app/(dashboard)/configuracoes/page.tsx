@@ -48,6 +48,37 @@ type CredentialState = {
   updatedAt: string | null;
 };
 
+type WhatsAppGuardianTrace = {
+  status: {
+    status: string | null;
+    externalState: string | null;
+    externalCheckedAt: string | null;
+    lastDisconnectReasonCode: string | null;
+    quarantinedUntil: string | null;
+    circuitOpenUntil: string | null;
+    lastGlobalSendAt: string | null;
+    updatedAt: string | null;
+  } | null;
+  events24h: Array<{
+    eventType: string | null;
+    reasonCode: string | null;
+    externalState: string | null;
+    count: number;
+    firstSeenAt: string;
+    lastSeenAt: string;
+  }>;
+  recentEvents: Array<{
+    eventType: string | null;
+    reasonCode: string | null;
+    externalState: string | null;
+    createdAt: string;
+  }>;
+  pendingOutbound: {
+    activePending: number;
+    missingGuardianEvidence: number;
+  };
+};
+
 const emptyCredentialState: CredentialState = {
   aiProvider: 'GUILDS_SHARED',
   keys: {
@@ -153,6 +184,7 @@ export default function Settings() {
   // Integrations states
   const [whatsappStatus, setWhatsappStatus] = useState<'connected' | 'disconnected' | 'loading'>('loading');
   const [instanceName, setInstanceName] = useState<string | null>(null);
+  const [whatsappTrace, setWhatsappTrace] = useState<WhatsAppGuardianTrace | null>(null);
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [qrCountdown, setQrCountdown] = useState<number>(0);
   const [isGeneratingQr, setIsGeneratingQr] = useState(false);
@@ -198,6 +230,21 @@ export default function Settings() {
 
   const formatDate = (value: string) => {
     return new Date(value).toLocaleDateString('pt-BR');
+  };
+
+  const formatDateTime = (value?: string | null) => {
+    if (!value) return 'Sem registro';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return new Intl.DateTimeFormat('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
+      dateStyle: 'short',
+      timeStyle: 'medium',
+    }).format(date);
+  };
+
+  const formatTraceLabel = (value?: string | null) => {
+    return value ? value.replaceAll('_', ' ') : 'Sem registro';
   };
 
   const fetchProfile = useCallback(async () => {
@@ -422,6 +469,7 @@ export default function Settings() {
     try {
       const res = await apiFetch('/api/integrations/whatsapp/status');
       const data = await res.json();
+      setWhatsappTrace(data.guardianTrace ?? null);
       if (data.status === 'connected') {
         setWhatsappStatus('connected');
         setInstanceName(data.instanceName);
@@ -436,6 +484,7 @@ export default function Settings() {
       }
     } catch (err) {
       console.error('Error checking WhatsApp status:', err);
+      if (!silent) setWhatsappTrace(null);
       if (!silent) setWhatsappStatus('disconnected');
     }
   }, []);
@@ -592,6 +641,108 @@ export default function Settings() {
     } catch (err) {
       console.error('Failed to save notification preference', err);
     }
+  };
+
+  const renderWhatsAppTracePanel = () => {
+    if (!whatsappTrace) return null;
+
+    const status = whatsappTrace.status;
+    const latestGroup = whatsappTrace.events24h[0] ?? null;
+    const missingEvidence = whatsappTrace.pendingOutbound.missingGuardianEvidence;
+
+    return (
+      <div className="rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-4">
+        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <Shield className="w-4 h-4 text-[#1B3A6B]" />
+              <h4 className="text-[13px] font-bold text-[#0F172A]">Diagnóstico operacional</h4>
+            </div>
+            <p className="text-[11px] text-[#64748B] mt-1">
+              Estado registrado no banco e eventos consolidados das últimas 24h.
+            </p>
+          </div>
+          <Badge className={`text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 ${
+            status?.status === 'SUSPENDED' || status?.lastDisconnectReasonCode
+              ? 'bg-[#FEF3F2] text-[#B42318] border border-[#FECDCA]'
+              : 'bg-[#ECFDF3] text-[#027A48] border border-[#A7F3D0]'
+          }`}>
+            {formatTraceLabel(status?.status)}
+          </Badge>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-4">
+          <div className="rounded-lg border border-[#E5E7EB] bg-white p-3">
+            <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Estado externo</span>
+            <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">{formatTraceLabel(status?.externalState)}</span>
+          </div>
+          <div className="rounded-lg border border-[#E5E7EB] bg-white p-3">
+            <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Motivo</span>
+            <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">{formatTraceLabel(status?.lastDisconnectReasonCode)}</span>
+          </div>
+          <div className="rounded-lg border border-[#E5E7EB] bg-white p-3">
+            <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Circuit breaker</span>
+            <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">{formatDateTime(status?.circuitOpenUntil)}</span>
+          </div>
+          <div className="rounded-lg border border-[#E5E7EB] bg-white p-3">
+            <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Fila ativa</span>
+            <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">
+              {whatsappTrace.pendingOutbound.activePending} pendentes
+            </span>
+          </div>
+        </div>
+
+        {latestGroup && (
+          <div className="mt-3 rounded-lg border border-[#E5E7EB] bg-white p-3">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <div>
+                <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Último agrupamento</span>
+                <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">{formatTraceLabel(latestGroup.eventType)}</span>
+              </div>
+              <div>
+                <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Ocorrências</span>
+                <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">{latestGroup.count}</span>
+              </div>
+              <div>
+                <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Primeira</span>
+                <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">{formatDateTime(latestGroup.firstSeenAt)}</span>
+              </div>
+              <div>
+                <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Última</span>
+                <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">{formatDateTime(latestGroup.lastSeenAt)}</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="mt-3 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+          <div className={`text-[11px] font-semibold ${missingEvidence > 0 ? 'text-[#B42318]' : 'text-[#027A48]'}`}>
+            {missingEvidence > 0
+              ? `${missingEvidence} pendência(s) sem evidência Guardian`
+              : 'Nenhuma pendência ativa sem evidência Guardian'}
+          </div>
+          <div className="text-[10px] text-[#64748B]">
+            Última checagem: {formatDateTime(status?.externalCheckedAt || status?.updatedAt)}
+          </div>
+        </div>
+
+        {whatsappTrace.recentEvents.length > 0 && (
+          <div className="mt-3 border-t border-[#E5E7EB] pt-3">
+            <div className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider mb-2">Eventos recentes</div>
+            <div className="space-y-1.5">
+              {whatsappTrace.recentEvents.slice(0, 4).map((event, index) => (
+                <div key={`${event.createdAt}-${index}`} className="flex flex-col md:flex-row md:items-center md:justify-between gap-1 text-[11px]">
+                  <span className="text-[#0F172A] font-medium">
+                    {formatTraceLabel(event.eventType)} · {formatTraceLabel(event.reasonCode)}
+                  </span>
+                  <span className="text-[#64748B] font-mono">{formatDateTime(event.createdAt)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -881,6 +1032,8 @@ export default function Settings() {
                         </div>
                       </div>
 
+                      {renderWhatsAppTracePanel()}
+
                       {/* Anti-ban Info */}
                       <div className="p-5 rounded-xl border border-[#E5E7EB] bg-white">
                         <div className="flex items-center gap-2 mb-3">
@@ -919,7 +1072,9 @@ export default function Settings() {
 
                   {/* 3. Disconnected State */}
                   {whatsappStatus === 'disconnected' && (
-                    <>
+                    <div className="space-y-5">
+                      {renderWhatsAppTracePanel()}
+
                       {/* A. If QR Code is visible or is generating */}
                       {isGeneratingQr || qrCode ? (
                         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center bg-[#F8FAFC] border border-[#E5E7EB] p-6 rounded-xl">
@@ -1033,7 +1188,7 @@ export default function Settings() {
                           </Button>
                         </div>
                       )}
-                    </>
+                    </div>
                   )}
                 </div>
               </div>
