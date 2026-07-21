@@ -14,6 +14,7 @@ import {
   guardianNumber,
 } from "../_shared/guardians/validators/cadence.ts";
 import type { GuardianRunResult } from "../_shared/guardians/types.ts";
+import { dispatchAdminDisconnectAlert } from "../_shared/admin-monitoring.ts";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -439,6 +440,40 @@ async function countDuePending(tenantId: string): Promise<number> {
   return count || 0;
 }
 
+async function triggerAdminMonitoringDue(source: string): Promise<void> {
+  try {
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/admin-monitoring-dispatcher`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SUPABASE_KEY}`,
+      },
+      body: JSON.stringify({ mode: "due", limit: 5, source }),
+      signal: AbortSignal.timeout(25_000),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      console.warn("[admin-monitoring] dispatcher returned HTTP " + response.status + ": " + redactText(text).slice(0, 240));
+    }
+  } catch (err: any) {
+    console.warn("[admin-monitoring] dispatcher trigger failed:", redactText(err?.message || err).slice(0, 240));
+  }
+}
+
+function enqueueAdminMonitoringDue(source: string): void {
+  const promise = triggerAdminMonitoringDue(source);
+  const edgeRuntime = (globalThis as any).EdgeRuntime;
+  if (edgeRuntime && typeof edgeRuntime.waitUntil === "function") {
+    edgeRuntime.waitUntil(promise);
+    return;
+  }
+
+  promise.catch((err) => {
+    console.warn("[admin-monitoring] dispatcher fallback failed:", redactText(err?.message || err).slice(0, 240));
+  });
+}
+
 async function recordConnectionEvent(params: {
   tenantId: string;
   instanceName: string;
@@ -449,21 +484,29 @@ async function recordConnectionEvent(params: {
   localStatusBefore?: string | null;
   localStatusAfter?: string | null;
   pendingDueCount?: number | null;
-}) {
+}): Promise<string | null> {
   try {
-    await supabase.from("whatsapp_connection_events").insert({
-      tenant_id: params.tenantId,
-      instance_hash: await shortHash(params.instanceName),
-      event_type: params.eventType,
-      external_state: params.externalState,
-      reason_code: params.reasonCode,
-      raw_error_redacted: params.rawError || {},
-      local_status_before: params.localStatusBefore || null,
-      local_status_after: params.localStatusAfter || null,
-      pending_due_count: params.pendingDueCount ?? null,
-    });
+    const { data, error } = await supabase
+      .from("whatsapp_connection_events")
+      .insert({
+        tenant_id: params.tenantId,
+        instance_hash: await shortHash(params.instanceName),
+        event_type: params.eventType,
+        external_state: params.externalState,
+        reason_code: params.reasonCode,
+        raw_error_redacted: params.rawError || {},
+        local_status_before: params.localStatusBefore || null,
+        local_status_after: params.localStatusAfter || null,
+        pending_due_count: params.pendingDueCount ?? null,
+      })
+      .select("id")
+      .maybeSingle();
+
+    if (error) throw error;
+    return data?.id || null;
   } catch (err) {
     console.warn("Falha ao registrar whatsapp_connection_events:", err);
+    return null;
   }
 }
 
@@ -472,7 +515,7 @@ async function createCriticalConnectionAlert(
   reasonCode: string,
   message: string,
   context: Record<string, unknown>,
-) {
+): Promise<string | null> {
   const dedupKey = `whatsapp_connection:${tenantId}:${reasonCode}`;
   const { data: existingAlert } = await supabase
     .from("operational_alerts")
@@ -480,41 +523,49 @@ async function createCriticalConnectionAlert(
     .eq("dedup_key", dedupKey)
     .maybeSingle();
 
-  if (!existingAlert) {
-    await supabase.from("operational_alerts").insert({
-      id: uuid(),
-      type: "whatsapp_connection_guard",
-      severity: "CRITICAL",
-      tenant_id: tenantId,
-      title: "WhatsApp bloqueado pelo guardiao de conexao",
-      message,
-      context,
-      dedup_key: dedupKey,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    });
+  if (existingAlert) return existingAlert.id;
 
-    const { data: userAdmin } = await supabase
-      .from("users")
-      .select("id")
-      .eq("tenant_id", tenantId)
-      .order("role", { ascending: true })
-      .limit(1)
-      .maybeSingle();
+  const alertId = uuid();
+  const { error: alertError } = await supabase.from("operational_alerts").insert({
+    id: alertId,
+    type: "whatsapp_connection_guard",
+    severity: "CRITICAL",
+    tenant_id: tenantId,
+    title: "WhatsApp bloqueado pelo guardiao de conexao",
+    message,
+    context,
+    dedup_key: dedupKey,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  });
 
-    if (userAdmin?.id) {
-      await supabase.from("notifications").insert({
-        id: uuid(),
-        tenant_id: tenantId,
-        user_id: userAdmin.id,
-        type: "whatsapp_connection_guard",
-        title: "WhatsApp pausado por seguranca",
-        body: "O envio foi interrompido porque a conexao real do WhatsApp nao esta saudavel. Reconecte o aparelho e aguarde a quarentena antes de retomar.",
-        data: { reason_code: reasonCode },
-        created_at: new Date().toISOString(),
-      });
-    }
+  if (alertError) {
+    console.warn("Falha ao criar operational_alerts:", alertError);
+    return null;
   }
+
+  const { data: userAdmin } = await supabase
+    .from("users")
+    .select("id")
+    .eq("tenant_id", tenantId)
+    .order("role", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (userAdmin?.id) {
+    await supabase.from("notifications").insert({
+      id: uuid(),
+      tenant_id: tenantId,
+      user_id: userAdmin.id,
+      type: "whatsapp_connection_guard",
+      title: "WhatsApp pausado por seguranca",
+      body: "O envio foi interrompido porque a conexao real do WhatsApp nao esta saudavel. Reconecte o aparelho e aguarde a quarentena antes de retomar.",
+      data: { reason_code: reasonCode },
+      created_at: new Date().toISOString(),
+    });
+  }
+
+  return alertId;
 }
 
 async function updateGuardianConnectionState(
@@ -613,7 +664,7 @@ async function runConnectionHealthGuard(
   }
 
   const nextStatus = external.critical ? "SUSPENDED" : "PAUSED";
-  await recordConnectionEvent({
+  const connectionEventId = await recordConnectionEvent({
     tenantId,
     instanceName: evoConfig.instanceName,
     eventType: "PRE_SEND_HEALTH_CHECK",
@@ -635,12 +686,26 @@ async function runConnectionHealthGuard(
     });
 
     if (external.critical) {
-      await createCriticalConnectionAlert(
+      const operationalAlertId = await createCriticalConnectionAlert(
         tenantId,
         external.reasonCode,
         `Envio bloqueado: conexao Evolution/WhatsApp em estado ${external.state || "desconhecido"}.`,
         { reason_code: external.reasonCode, external_state: external.state, pending_due_count: pendingDueCount },
       );
+      try {
+        await dispatchAdminDisconnectAlert({
+          supabase,
+          tenantId,
+          reasonCode: external.reasonCode,
+          externalState: external.state,
+          connectionEventId,
+          operationalAlertId,
+          pendingDueCount,
+          source: "send-messages:pre-send-health",
+        });
+      } catch (err) {
+        console.warn("Falha ao disparar alerta admin de desconexao:", err);
+      }
     }
   }
 
@@ -2128,7 +2193,7 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
             circuit_open_until: new Date(Date.now() + circuitMinutes * 60 * 1000).toISOString(),
           });
 
-          await recordConnectionEvent({
+          const connectionEventId = await recordConnectionEvent({
             tenantId,
             instanceName: evoConfig.instanceName,
             eventType: "SEND_FAILURE_GUARD",
@@ -2140,7 +2205,7 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
             pendingDueCount: await countDuePending(tenantId),
           });
 
-          await createCriticalConnectionAlert(
+          const operationalAlertId = await createCriticalConnectionAlert(
             tenantId,
             failure.reasonCode,
             "Envio interrompido por falha critica da conexao WhatsApp/Evolution.",
@@ -2151,6 +2216,20 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
               error_redacted: redactText(sendResult.error),
             },
           );
+          try {
+            await dispatchAdminDisconnectAlert({
+              supabase,
+              tenantId,
+              reasonCode: failure.reasonCode,
+              externalState: healthDecision.externalState,
+              connectionEventId,
+              operationalAlertId,
+              pendingDueCount: await countDuePending(tenantId),
+              source: "send-messages:send-failure",
+            });
+          } catch (err) {
+            console.warn("Falha ao disparar alerta admin de desconexao:", err);
+          }
 
           // Registrar falha na telemetria (marcar como duplicado = false, mas com erro)
           try {
@@ -2260,7 +2339,8 @@ serve(async (req: Request) => {
     }
 
     if (tenantIds.length === 0) {
-      return new Response(JSON.stringify({ ok: true, message: "No active tenants to process" }), {
+      enqueueAdminMonitoringDue("send-messages:no-active-tenants");
+      return new Response(JSON.stringify({ ok: true, message: "No active tenants to process", admin_monitoring: "queued" }), {
         headers: { "Content-Type": "application/json" },
       });
     }
@@ -2276,8 +2356,11 @@ serve(async (req: Request) => {
     const summary = {
       ok: true,
       timestamp: new Date().toISOString(),
-      results
+      results,
+      admin_monitoring: "queued"
     };
+
+    enqueueAdminMonitoringDue("send-messages:cron");
 
     console.log("\n🏁 Worker finalizado: " + JSON.stringify(summary));
 

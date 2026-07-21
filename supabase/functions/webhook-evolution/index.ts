@@ -8,6 +8,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { GuardianRunner } from "../_shared/guardians/runner.ts";
 import { sha256Hex } from "../_shared/guardians/evidence.ts";
 import { buildCandidatePayload } from "../_shared/guardians/candidate.ts";
+import { dispatchAdminDisconnectAlert } from "../_shared/admin-monitoring.ts";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -182,20 +183,28 @@ async function recordConnectionEvent(params: {
   rawError?: Record<string, unknown>;
   localStatusBefore?: string | null;
   localStatusAfter?: string | null;
-}) {
+}): Promise<string | null> {
   try {
-    await supabase.from("whatsapp_connection_events").insert({
-      tenant_id: params.tenantId,
-      instance_hash: await shortHash(params.instanceName),
-      event_type: params.eventType,
-      external_state: params.externalState,
-      reason_code: params.reasonCode,
-      raw_error_redacted: params.rawError || {},
-      local_status_before: params.localStatusBefore || null,
-      local_status_after: params.localStatusAfter || null,
-    });
+    const { data, error } = await supabase
+      .from("whatsapp_connection_events")
+      .insert({
+        tenant_id: params.tenantId,
+        instance_hash: await shortHash(params.instanceName),
+        event_type: params.eventType,
+        external_state: params.externalState,
+        reason_code: params.reasonCode,
+        raw_error_redacted: params.rawError || {},
+        local_status_before: params.localStatusBefore || null,
+        local_status_after: params.localStatusAfter || null,
+      })
+      .select("id")
+      .maybeSingle();
+
+    if (error) throw error;
+    return data?.id || null;
   } catch (err) {
     console.warn("Falha ao registrar whatsapp_connection_events:", err);
+    return null;
   }
 }
 
@@ -227,7 +236,12 @@ async function updateGuardianConnectionStatus(
   }
 }
 
-async function createConnectionAlert(tenantId: string, reasonCode: string, state: string | null, context: Record<string, unknown>) {
+async function createConnectionAlert(
+  tenantId: string,
+  reasonCode: string,
+  state: string | null,
+  context: Record<string, unknown>,
+): Promise<string | null> {
   const dedupKey = `whatsapp_connection:${tenantId}:${reasonCode}`;
   const { data: existingAlert } = await supabase
     .from("operational_alerts")
@@ -235,10 +249,11 @@ async function createConnectionAlert(tenantId: string, reasonCode: string, state
     .eq("dedup_key", dedupKey)
     .maybeSingle();
 
-  if (existingAlert) return;
+  if (existingAlert) return existingAlert.id;
 
-  await supabase.from("operational_alerts").insert({
-    id: uuid(),
+  const alertId = uuid();
+  const { error: alertError } = await supabase.from("operational_alerts").insert({
+    id: alertId,
     type: "whatsapp_connection_guard",
     severity: "CRITICAL",
     tenant_id: tenantId,
@@ -249,6 +264,11 @@ async function createConnectionAlert(tenantId: string, reasonCode: string, state
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   });
+
+  if (alertError) {
+    console.warn("Falha ao criar operational_alerts:", alertError);
+    return null;
+  }
 
   const { data: userAdmin } = await supabase
     .from("users")
@@ -270,6 +290,8 @@ async function createConnectionAlert(tenantId: string, reasonCode: string, state
       created_at: new Date().toISOString(),
     });
   }
+
+  return alertId;
 }
 
 async function handleConnectionUpdate(payload: any): Promise<Response> {
@@ -317,7 +339,7 @@ async function handleConnectionUpdate(payload: any): Promise<Response> {
   }
 
   await updateGuardianConnectionStatus(tenantId, classification.status, state, classification.reasonCode, extra);
-  await recordConnectionEvent({
+  const connectionEventId = await recordConnectionEvent({
     tenantId,
     instanceName,
     eventType: normalizeEventName(event),
@@ -329,11 +351,24 @@ async function handleConnectionUpdate(payload: any): Promise<Response> {
   });
 
   if (classification.critical) {
-    await createConnectionAlert(tenantId, classification.reasonCode, state, {
+    const operationalAlertId = await createConnectionAlert(tenantId, classification.reasonCode, state, {
       reason_code: classification.reasonCode,
       external_state: state,
       raw_error_redacted: redactPayload(raw),
     });
+    try {
+      await dispatchAdminDisconnectAlert({
+        supabase,
+        tenantId,
+        reasonCode: classification.reasonCode,
+        externalState: state,
+        connectionEventId,
+        operationalAlertId,
+        source: "webhook-evolution",
+      });
+    } catch (err) {
+      console.warn("Falha ao disparar alerta admin de desconexao:", err);
+    }
   }
 
   return new Response(JSON.stringify({

@@ -32,6 +32,7 @@ import {
   Share2,
   MapPin,
   TrendingUp,
+  Radio,
 } from 'lucide-react';
 import { Avatar, Dropdown, DropdownItem } from '@prospix/ui';
 import { GlobalSearch } from './GlobalSearch';
@@ -62,6 +63,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
       label: 'MONITORAMENTO',
       items: [
         { name: 'Conversas IA', path: '/admin/conversas', icon: MessageSquare },
+        { name: 'Monitoramento ativo', path: '/admin/monitoramento', icon: Radio, permission: 'alerts.manage' },
         { name: 'Reuniões', path: '/admin/reunioes', icon: Calendar },
         { name: 'Campanhas', path: '/admin/campanhas', icon: Target },
         { name: 'Leads', path: '/admin/leads', icon: Contact },
