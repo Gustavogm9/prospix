@@ -25,6 +25,7 @@ import {
   MessageSquare,
   Contact,
   Shield,
+  ShieldCheck,
   Settings,
   Calendar,
   Target,
@@ -85,6 +86,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
     {
       label: 'SISTEMA',
       items: [
+        { name: 'Protecoes da IA', path: '/admin/guardioes', icon: ShieldCheck, permission: 'settings.manage' },
         { name: 'Compliance LGPD', path: '/admin/compliance', icon: ShieldAlert, permission: 'settings.manage' },
         { name: 'Feature Flags', path: '/admin/flags', icon: ToggleRight, permission: 'flags.manage' },
         { name: 'Alertas', path: '/admin/alertas', icon: Bell, permission: 'alerts.manage' },

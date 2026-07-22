@@ -426,7 +426,7 @@ export default function AppShell({ children }: AppShellProps) {
           <div className="flex items-center gap-3">
             {/* WhatsApp Status Indicator */}
             <Link
-              href="/configuracoes?tab=integracoes"
+              href={operationalView.actionHref}
               className={`hidden sm:inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-[12.5px] font-semibold border transition-all hover:-translate-y-0.5 ${indicatorClass(operationalView.indicatorTone)}`}
             >
               <span className="relative flex h-2 w-2">

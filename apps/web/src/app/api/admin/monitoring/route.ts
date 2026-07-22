@@ -727,6 +727,61 @@ async function loadAiActivityAlertDeliveries() {
   };
 }
 
+function mapWorkerDueQueueDiagnostic(row: any) {
+  return {
+    pendingOutboundId: row.pending_outbound_id,
+    tenantId: row.tenant_id,
+    tenantName: row.tenant_name || row.tenant_id,
+    tenantSlug: row.tenant_slug || '',
+    conversationId: row.conversation_id || null,
+    leadId: row.lead_id || null,
+    leadName: row.lead_name || null,
+    leadSource: row.lead_source || null,
+    leadStatus: row.lead_status || null,
+    campaignName: row.campaign_name || null,
+    campaignStatus: row.campaign_status || null,
+    messageType: row.message_type || null,
+    scheduledFor: row.scheduled_for,
+    dueAgeSeconds: row.due_age_seconds == null ? null : Number(row.due_age_seconds),
+    attempts: Number(row.attempts ?? 0),
+    validationStatus: row.validation_status || null,
+    validationReasonCode: row.validation_reason_code || null,
+    finalGuardianDecision: row.final_guardian_decision || null,
+    conversationStatus: row.conversation_status || null,
+    aiHandling: row.ai_handling ?? null,
+    guardianStatus: row.guardian_status || null,
+    guardianExternalState: row.guardian_external_state || null,
+    guardianReasonCode: row.guardian_reason_code || null,
+    blockingReason: row.blocking_reason,
+    blockerKind: row.blocker_kind,
+    blocksSend: Boolean(row.blocks_send),
+    operatorSummary: row.operator_summary,
+    recommendedAction: row.recommended_action,
+  };
+}
+
+async function loadWorkerDueQueueDiagnostics() {
+  const result = await supabaseAdmin
+    .from('ai_worker_due_queue_diagnostics')
+    .select('*')
+    .order('scheduled_for', { ascending: true })
+    .limit(25);
+
+  if (result.error) {
+    return {
+      available: false,
+      error: result.error.message,
+      rows: [],
+    };
+  }
+
+  return {
+    available: true,
+    error: null,
+    rows: (result.data || []).map(mapWorkerDueQueueDiagnostic),
+  };
+}
+
 async function loadDashboard() {
   const activeChannel = await loadActiveChannel();
   const [
@@ -798,6 +853,7 @@ async function loadDashboard() {
     guardianStates: guardianStates.current,
   });
   const aiActivityAlertDeliveries = await loadAiActivityAlertDeliveries();
+  const workerDueQueueDiagnostics = await loadWorkerDueQueueDiagnostics();
   const nowMs = Date.now();
   const activeSchedules = schedules.filter((s: any) => s.active);
   const overdueSchedules = activeSchedules.filter((s: any) => {
@@ -836,6 +892,7 @@ async function loadDashboard() {
       guardianAttentionStates: guardianStates.current.filter((state: any) => state.impactLevel !== 'INFO').length,
       aiActivityIssues: aiActivity.summary.blocked + aiActivity.summary.stalled + aiActivity.summary.watch,
       aiActivityAlerts24h: aiActivityAlertDeliveries.rows.length,
+      dueQueueItems: workerDueQueueDiagnostics.rows.length,
     },
     recipients,
     schedules,
@@ -846,6 +903,7 @@ async function loadDashboard() {
     guardianStates,
     aiActivity,
     aiActivityAlertDeliveries,
+    workerDueQueueDiagnostics,
   };
 }
 

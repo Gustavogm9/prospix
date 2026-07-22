@@ -59,6 +59,76 @@ type WhatsAppGuardianTrace = {
     activePending: number;
     missingGuardianEvidence: number;
   };
+  dueQueueDiagnostics: {
+    totalDue: number;
+    items: Array<{
+      pendingOutboundId: string;
+      conversationId: string | null;
+      leadId: string | null;
+      leadName: string | null;
+      leadSource: string | null;
+      leadStatus: string | null;
+      campaignName: string | null;
+      campaignStatus: string | null;
+      messageType: string | null;
+      scheduledFor: string;
+      dueAgeSeconds: number | null;
+      attempts: number;
+      validationStatus: string | null;
+      validationReasonCode: string | null;
+      finalGuardianDecision: string | null;
+      conversationStatus: string | null;
+      aiHandling: boolean | null;
+      guardianStatus: string | null;
+      guardianExternalState: string | null;
+      guardianReasonCode: string | null;
+      blockingReason: string;
+      blockerKind: string;
+      blocksSend: boolean;
+      operatorSummary: string;
+      recommendedAction: string;
+    }>;
+  };
+  workerSnapshot: {
+    generatedAt: string;
+    tenantId: string;
+    tenantName: string | null;
+    tenantStatus: string | null;
+    activePending: number;
+    duePending: number;
+    approvedPending: number;
+    delayedPending: number;
+    blockedOrFailedLast24h: number;
+    nextScheduledFor: string | null;
+    oldestDueAt: string | null;
+    oldestDueAgeSeconds: number | null;
+    sentToday: number;
+    sentLast60m: number;
+    latestAiMessageAt: string | null;
+    latestInboundAt: string | null;
+    latestRetryQueuedAt: string | null;
+    guardianStatus: string | null;
+    guardianExternalState: string | null;
+    guardianReasonCode: string | null;
+    guardianOperationState: string | null;
+    guardianBlockingSend: boolean;
+    guardianBlockSummary: string | null;
+    firstTouchEligible: number;
+    firstTouchEvaluated: number;
+    latestQueue: {
+      id: string | null;
+      messageType: string | null;
+      status: string | null;
+      createdAt: string | null;
+      scheduledFor: string | null;
+      sentAt: string | null;
+      failedAt: string | null;
+      failedReason: string | null;
+      validationStatus: string | null;
+      validationReasonCode: string | null;
+      finalGuardianDecision: string | null;
+    } | null;
+  } | null;
   aiActivity: TenantAiActivity | null;
 };
 
@@ -210,6 +280,85 @@ function aggregateEvents(events: any[]) {
   return Array.from(grouped.values()).sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt));
 }
 
+function mapWorkerSnapshot(row: any): WhatsAppGuardianTrace['workerSnapshot'] {
+  if (!row) return null;
+
+  const latestQueue = row.latest_queue_id
+    ? {
+        id: row.latest_queue_id ?? null,
+        messageType: row.latest_queue_message_type ?? null,
+        status: row.latest_queue_status ?? null,
+        createdAt: row.latest_queue_created_at ?? null,
+        scheduledFor: row.latest_queue_scheduled_for ?? null,
+        sentAt: row.latest_queue_sent_at ?? null,
+        failedAt: row.latest_queue_failed_at ?? null,
+        failedReason: row.latest_queue_failed_reason ?? null,
+        validationStatus: row.latest_queue_validation_status ?? null,
+        validationReasonCode: row.latest_queue_validation_reason_code ?? null,
+        finalGuardianDecision: row.latest_queue_final_guardian_decision ?? null,
+      }
+    : null;
+
+  return {
+    generatedAt: row.generated_at,
+    tenantId: row.tenant_id,
+    tenantName: row.tenant_name ?? null,
+    tenantStatus: row.tenant_status ?? null,
+    activePending: Number(row.active_pending ?? 0),
+    duePending: Number(row.due_pending ?? 0),
+    approvedPending: Number(row.approved_pending ?? 0),
+    delayedPending: Number(row.delayed_pending ?? 0),
+    blockedOrFailedLast24h: Number(row.blocked_or_failed_last24h ?? 0),
+    nextScheduledFor: row.next_scheduled_for ?? null,
+    oldestDueAt: row.oldest_due_at ?? null,
+    oldestDueAgeSeconds: row.oldest_due_age_seconds == null ? null : Number(row.oldest_due_age_seconds),
+    sentToday: Number(row.sent_today ?? 0),
+    sentLast60m: Number(row.sent_last60m ?? 0),
+    latestAiMessageAt: row.latest_ai_message_at ?? null,
+    latestInboundAt: row.latest_inbound_at ?? null,
+    latestRetryQueuedAt: row.latest_retry_queued_at ?? null,
+    guardianStatus: row.guardian_status ?? null,
+    guardianExternalState: row.guardian_external_state ?? null,
+    guardianReasonCode: row.guardian_reason_code ?? null,
+    guardianOperationState: row.guardian_operation_state ?? null,
+    guardianBlockingSend: Boolean(row.guardian_blocking_send),
+    guardianBlockSummary: row.guardian_block_summary ?? null,
+    firstTouchEligible: Number(row.first_touch_eligible ?? 0),
+    firstTouchEvaluated: Number(row.first_touch_evaluated ?? 0),
+    latestQueue,
+  };
+}
+
+function mapDueQueueDiagnostic(row: any): WhatsAppGuardianTrace['dueQueueDiagnostics']['items'][number] {
+  return {
+    pendingOutboundId: row.pending_outbound_id,
+    conversationId: row.conversation_id ?? null,
+    leadId: row.lead_id ?? null,
+    leadName: row.lead_name ?? null,
+    leadSource: row.lead_source ?? null,
+    leadStatus: row.lead_status ?? null,
+    campaignName: row.campaign_name ?? null,
+    campaignStatus: row.campaign_status ?? null,
+    messageType: row.message_type ?? null,
+    scheduledFor: row.scheduled_for,
+    dueAgeSeconds: row.due_age_seconds == null ? null : Number(row.due_age_seconds),
+    attempts: Number(row.attempts ?? 0),
+    validationStatus: row.validation_status ?? null,
+    validationReasonCode: row.validation_reason_code ?? null,
+    finalGuardianDecision: row.final_guardian_decision ?? null,
+    conversationStatus: row.conversation_status ?? null,
+    aiHandling: row.ai_handling ?? null,
+    guardianStatus: row.guardian_status ?? null,
+    guardianExternalState: row.guardian_external_state ?? null,
+    guardianReasonCode: row.guardian_reason_code ?? null,
+    blockingReason: row.blocking_reason,
+    blockerKind: row.blocker_kind,
+    blocksSend: Boolean(row.blocks_send),
+    operatorSummary: row.operator_summary,
+    recommendedAction: row.recommended_action,
+  };
+}
+
 async function loadWhatsAppGuardianTrace(tenantId: string): Promise<WhatsAppGuardianTrace> {
   const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
@@ -294,6 +443,39 @@ async function loadWhatsAppGuardianTrace(tenantId: string): Promise<WhatsAppGuar
     }));
   }
 
+  let workerSnapshot: WhatsAppGuardianTrace['workerSnapshot'] = null;
+  const workerSnapshotResult = await supabaseAdmin
+    .from('ai_worker_operational_snapshot')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .maybeSingle();
+
+  if (!workerSnapshotResult.error) {
+    workerSnapshot = mapWorkerSnapshot(workerSnapshotResult.data);
+  } else {
+    console.warn('AI worker operational snapshot unavailable:', workerSnapshotResult.error.message);
+  }
+
+  let dueQueueDiagnostics: WhatsAppGuardianTrace['dueQueueDiagnostics'] = {
+    totalDue: 0,
+    items: [],
+  };
+  const dueQueueDiagnosticsResult = await supabaseAdmin
+    .from('ai_worker_due_queue_diagnostics')
+    .select('*', { count: 'exact' })
+    .eq('tenant_id', tenantId)
+    .order('scheduled_for', { ascending: true })
+    .limit(5);
+
+  if (!dueQueueDiagnosticsResult.error) {
+    dueQueueDiagnostics = {
+      totalDue: dueQueueDiagnosticsResult.count ?? (dueQueueDiagnosticsResult.data?.length ?? 0),
+      items: (dueQueueDiagnosticsResult.data ?? []).map(mapDueQueueDiagnostic),
+    };
+  } else {
+    console.warn('AI worker due queue diagnostics unavailable:', dueQueueDiagnosticsResult.error.message);
+  }
+
   const status = statusResult.data
     ? {
         status: statusResult.data.status ?? null,
@@ -325,6 +507,8 @@ async function loadWhatsAppGuardianTrace(tenantId: string): Promise<WhatsAppGuar
       activePending: activePendingResult.count ?? 0,
       missingGuardianEvidence: missingGuardianResult.count ?? 0,
     },
+    dueQueueDiagnostics,
+    workerSnapshot,
     aiActivity: null,
   };
 }

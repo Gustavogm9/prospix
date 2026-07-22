@@ -4,6 +4,52 @@ type SupabaseLike = {
 
 export type AiActivityState = 'OK' | 'WATCH' | 'STALLED' | 'BLOCKED' | 'OFF_HOURS';
 
+export type FirstTouchEligibilitySummary = {
+  eligible: number;
+  totalEvaluated: number;
+  byReason: Record<string, number>;
+  topBlockingReason: string | null;
+  topBlockingReasonLabel: string | null;
+  topBlockingReasonCount: number;
+};
+
+export type AiWorkerOperationalSnapshot = {
+  activePending: number;
+  duePending: number;
+  approvedPending: number;
+  delayedPending: number;
+  blockedOrFailedLast24h: number;
+  nextScheduledFor: string | null;
+  oldestDueAt: string | null;
+  oldestDueAgeSeconds: number | null;
+  sentToday: number;
+  sentLast60m: number;
+  latestAiMessageAt: string | null;
+  latestInboundAt: string | null;
+  latestRetryQueuedAt: string | null;
+  guardianStatus: string | null;
+  guardianExternalState: string | null;
+  guardianReasonCode: string | null;
+  guardianOperationState: string | null;
+  guardianBlockingSend: boolean;
+  guardianBlockSummary: string | null;
+  firstTouchEligible: number;
+  firstTouchEvaluated: number;
+  latestQueue: {
+    id: string | null;
+    messageType: string | null;
+    status: string | null;
+    createdAt: string | null;
+    scheduledFor: string | null;
+    sentAt: string | null;
+    failedAt: string | null;
+    failedReason: string | null;
+    validationStatus: string | null;
+    validationReasonCode: string | null;
+    finalGuardianDecision: string | null;
+  } | null;
+};
+
 export type TenantAiActivity = {
   tenantId: string;
   tenantName: string;
@@ -19,6 +65,7 @@ export type TenantAiActivity = {
   leadsCreatedToday: number;
   contactableBacklog: number;
   oldestContactableLeadAt: string | null;
+  firstTouchEligibility: FirstTouchEligibilitySummary;
   duePending: number;
   oldestDuePendingAt: string | null;
   unansweredConversations: number;
@@ -30,6 +77,7 @@ export type TenantAiActivity = {
   lastInboundAt: string | null;
   guardianStatus: string | null;
   guardianOperationState: string | null;
+  workerSnapshot: AiWorkerOperationalSnapshot | null;
 };
 
 export type AiActivityMonitor = {
@@ -65,6 +113,43 @@ const OPERATING_END_HOUR = 18;
 const BRT_UTC_OFFSET_HOURS = 3;
 const DUE_PENDING_STALLED_MINUTES = 15;
 const UNANSWERED_STALLED_MINUTES = 10;
+
+const EMPTY_FIRST_TOUCH_ELIGIBILITY: FirstTouchEligibilitySummary = {
+  eligible: 0,
+  totalEvaluated: 0,
+  byReason: {},
+  topBlockingReason: null,
+  topBlockingReasonLabel: null,
+  topBlockingReasonCount: 0,
+};
+
+const FIRST_TOUCH_REASON_LABELS: Record<string, string> = {
+  ELIGIBLE: 'Elegivel',
+  DELETED: 'Lead removido',
+  LEAD_NOT_ENRICHED: 'Lead ainda nao enriquecido',
+  ALREADY_CONTACTED: 'Lead ja contatado',
+  ALREADY_SENT: 'Primeiro contato ja enviado',
+  FIRST_TOUCH_PENDING: 'Primeiro contato ja esta na fila',
+  FIRST_TOUCH_FAILED: 'Primeiro contato falhou anteriormente',
+  FIRST_TOUCH_RETRY_COOLDOWN: 'Aguardando nova tentativa segura',
+  FIRST_TOUCH_RETRY_LIMIT_REACHED: 'Limite de novas tentativas atingido',
+  PREVIOUSLY_GUARDIAN_BLOCKED: 'Bloqueado anteriormente pelo Guardian',
+  FIRST_TOUCH_ALREADY_MARKED: 'Lead ja marcado como tentado',
+  MISSING_WHATSAPP: 'Sem WhatsApp',
+  INVALID_MOBILE: 'WhatsApp invalido ou nao movel',
+  OPTED_OUT: 'Lead pediu para nao receber contato',
+  MISSING_CAMPAIGN: 'Sem campanha vinculada',
+  CAMPAIGN_INACTIVE_OR_MISSING: 'Campanha ausente ou inativa',
+  OUTSIDE_CAMPAIGN_WINDOW: 'Fora do horario da campanha',
+  DAILY_LIMIT_REACHED: 'Limite diario atingido',
+  SCRIPT_INACTIVE_OR_MISSING: 'Roteiro ausente ou inativo',
+  SCRIPT_NOT_APPROACH: 'Roteiro nao e de abordagem',
+  MISSING_ACTIVE_SCRIPT: 'Sem roteiro ativo compativel',
+  SCRIPT_PROFESSION_MISMATCH: 'Roteiro incompativel com a campanha',
+  MISSING_ACTIVE_VARIATION: 'Roteiro sem variacao ativa',
+  COMMERCIAL_NAME_FOR_INDIVIDUAL_SCRIPT: 'Nome comercial incompativel com roteiro individual',
+  GUARDIAN_RELEVANCE_BLOCK: 'Bloqueado por relevancia no Guardian',
+};
 
 function brtParts(now: Date) {
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -197,6 +282,88 @@ function oldestAt(rows: Array<Record<string, any>>, field: string): string | nul
   return oldest;
 }
 
+function reasonLabel(reason: string | null): string | null {
+  if (!reason) return null;
+  return FIRST_TOUCH_REASON_LABELS[reason] || reason.replaceAll('_', ' ').toLowerCase();
+}
+
+function countLabel(count: number, singular: string, plural: string): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function mapWorkerSnapshot(row: Record<string, any> | null | undefined): AiWorkerOperationalSnapshot | null {
+  if (!row) return null;
+  return {
+    activePending: Number(row.active_pending ?? 0),
+    duePending: Number(row.due_pending ?? 0),
+    approvedPending: Number(row.approved_pending ?? 0),
+    delayedPending: Number(row.delayed_pending ?? 0),
+    blockedOrFailedLast24h: Number(row.blocked_or_failed_last24h ?? 0),
+    nextScheduledFor: row.next_scheduled_for ?? null,
+    oldestDueAt: row.oldest_due_at ?? null,
+    oldestDueAgeSeconds: row.oldest_due_age_seconds == null ? null : Number(row.oldest_due_age_seconds),
+    sentToday: Number(row.sent_today ?? 0),
+    sentLast60m: Number(row.sent_last60m ?? 0),
+    latestAiMessageAt: row.latest_ai_message_at ?? null,
+    latestInboundAt: row.latest_inbound_at ?? null,
+    latestRetryQueuedAt: row.latest_retry_queued_at ?? null,
+    guardianStatus: row.guardian_status ?? null,
+    guardianExternalState: row.guardian_external_state ?? null,
+    guardianReasonCode: row.guardian_reason_code ?? null,
+    guardianOperationState: row.guardian_operation_state ?? null,
+    guardianBlockingSend: Boolean(row.guardian_blocking_send),
+    guardianBlockSummary: row.guardian_block_summary ?? null,
+    firstTouchEligible: Number(row.first_touch_eligible ?? 0),
+    firstTouchEvaluated: Number(row.first_touch_evaluated ?? 0),
+    latestQueue: row.latest_queue_id
+      ? {
+          id: row.latest_queue_id ?? null,
+          messageType: row.latest_queue_message_type ?? null,
+          status: row.latest_queue_status ?? null,
+          createdAt: row.latest_queue_created_at ?? null,
+          scheduledFor: row.latest_queue_scheduled_for ?? null,
+          sentAt: row.latest_queue_sent_at ?? null,
+          failedAt: row.latest_queue_failed_at ?? null,
+          failedReason: row.latest_queue_failed_reason ?? null,
+          validationStatus: row.latest_queue_validation_status ?? null,
+          validationReasonCode: row.latest_queue_validation_reason_code ?? null,
+          finalGuardianDecision: row.latest_queue_final_guardian_decision ?? null,
+        }
+      : null,
+  };
+}
+
+function buildFirstTouchEligibilitySummary(rows: Array<Record<string, any>>): FirstTouchEligibilitySummary {
+  if (!rows.length) return { ...EMPTY_FIRST_TOUCH_ELIGIBILITY, byReason: {} };
+
+  const byReason: Record<string, number> = {};
+  let eligible = 0;
+  let topBlockingReason: string | null = null;
+  let topBlockingReasonCount = 0;
+
+  for (const row of rows) {
+    const reason = String(row.eligibility_reason || (row.is_eligible_now ? 'ELIGIBLE' : 'UNKNOWN'));
+    byReason[reason] = (byReason[reason] || 0) + 1;
+    if (row.is_eligible_now === true || reason === 'ELIGIBLE') {
+      eligible += 1;
+      continue;
+    }
+    if (byReason[reason] > topBlockingReasonCount) {
+      topBlockingReason = reason;
+      topBlockingReasonCount = byReason[reason];
+    }
+  }
+
+  return {
+    eligible,
+    totalEvaluated: rows.length,
+    byReason,
+    topBlockingReason,
+    topBlockingReasonLabel: reasonLabel(topBlockingReason),
+    topBlockingReasonCount,
+  };
+}
+
 function ageMinutes(value: string | null, nowMs: number): number | null {
   if (!value) return null;
   const time = new Date(value).getTime();
@@ -221,11 +388,13 @@ function classifyTenantActivity(input: {
   guardianOperationState: string | null;
   contactableBacklog: number;
   oldestContactableLeadAt: string | null;
+  firstTouchEligibility: FirstTouchEligibilitySummary;
   duePending: number;
   oldestDuePendingAt: string | null;
   unansweredConversations: number;
   oldestUnansweredInboundAt: string | null;
   outboundToday: number;
+  workerSnapshot?: AiWorkerOperationalSnapshot | null;
   nowMs: number;
 }): Pick<TenantAiActivity, 'state' | 'label' | 'severity' | 'summary' | 'requiredAction'> {
   const inactiveTenant = input.tenantStatus && input.tenantStatus !== 'ACTIVE';
@@ -240,11 +409,15 @@ function classifyTenantActivity(input: {
   }
 
   if (input.guardianOperationState === 'REQUIRES_ACTION' || input.guardianOperationState === 'BLOCKED') {
+    const duePending = input.workerSnapshot?.duePending ?? input.duePending;
+    const pendingDetail = duePending > 0
+      ? ` ${countLabel(duePending, 'mensagem pronta aguarda', 'mensagens prontas aguardam')} reconexao antes de enviar.`
+      : '';
     return {
       state: 'BLOCKED',
       label: 'IA bloqueada pelo WhatsApp',
       severity: 'CRITICAL',
-      summary: 'A IA nao deve enviar porque o Guardian marcou a conexao do WhatsApp como bloqueada ou exigindo acao.',
+      summary: `${input.workerSnapshot?.guardianBlockSummary || 'A conexao do WhatsApp esta bloqueada ou exige acao.'}.${pendingDetail}`,
       requiredAction: 'Reconectar ou estabilizar o WhatsApp antes de esperar novos envios.',
     };
   }
@@ -255,7 +428,9 @@ function classifyTenantActivity(input: {
       state: 'STALLED',
       label: 'Fila vencida',
       severity: 'ATTENTION',
-      summary: `${input.duePending} mensagem(ns) deveriam ter sido enviadas e ainda estao pendentes.`,
+      summary: input.duePending === 1
+        ? '1 mensagem deveria ter sido enviada e ainda esta pendente.'
+        : `${countLabel(input.duePending, 'mensagem', 'mensagens')} deveriam ter sido enviadas e ainda estao pendentes.`,
       requiredAction: 'Executar/checar send-messages e validar se Guardian, campanha ou WhatsApp estao bloqueando a fila.',
     };
   }
@@ -266,7 +441,9 @@ function classifyTenantActivity(input: {
       state: 'STALLED',
       label: 'Resposta atrasada',
       severity: 'ATTENTION',
-      summary: `${input.unansweredConversations} conversa(s) receberam mensagem do lead e ainda nao tiveram resposta posterior da IA.`,
+      summary: input.unansweredConversations === 1
+        ? '1 conversa recebeu mensagem do lead e ainda nao teve resposta posterior da IA.'
+        : `${countLabel(input.unansweredConversations, 'conversa', 'conversas')} receberam mensagem do lead e ainda nao tiveram resposta posterior da IA.`,
       requiredAction: 'Priorizar continuacao de conversa antes de novas prospeccoes.',
     };
   }
@@ -276,8 +453,28 @@ function classifyTenantActivity(input: {
       state: 'WATCH',
       label: 'Sem primeiro envio hoje',
       severity: 'OBSERVATION',
-      summary: `${input.contactableBacklog} lead(s) enriquecidos estao aptos para primeiro contato, mas ainda nao houve envio da IA hoje.`,
+      summary: input.contactableBacklog === 1
+        ? '1 lead enriquecido esta elegivel pela regra canonica de primeiro contato, mas ainda nao houve envio da IA hoje.'
+        : `${countLabel(input.contactableBacklog, 'lead enriquecido', 'leads enriquecidos')} estao elegiveis pela regra canonica de primeiro contato, mas ainda nao houve envio da IA hoje.`,
       requiredAction: 'Acompanhar a proxima execucao do worker e verificar campanha ativa, horario e limites de cadencia.',
+    };
+  }
+
+  if (
+    input.isOperatingWindow &&
+    input.contactableBacklog === 0 &&
+    input.outboundToday === 0 &&
+    input.firstTouchEligibility.totalEvaluated > 0 &&
+    input.firstTouchEligibility.topBlockingReason
+  ) {
+    const reason = input.firstTouchEligibility.topBlockingReasonLabel || 'criterio operacional';
+    const count = input.firstTouchEligibility.topBlockingReasonCount;
+    return {
+      state: 'WATCH',
+      label: 'Sem lead elegivel',
+      severity: 'OBSERVATION',
+      summary: `Nenhum lead atende a todos os criterios canonicos de primeiro contato agora. Principal motivo: ${reason} (${count}).`,
+      requiredAction: 'Corrigir o motivo principal antes de esperar novos envios automaticos da IA.',
     };
   }
 
@@ -334,32 +531,40 @@ export async function loadAiActivityMonitor(
   const last60m = new Date(nowMs - 60 * 60 * 1000).toISOString();
   const unansweredCutoff = new Date(nowMs - UNANSWERED_STALLED_MINUTES * 60 * 1000).toISOString();
 
-  let leadBacklogQuery = supabase
-    .from('leads')
-    .select('id, tenant_id, name, source, status, created_at, queued_first_touch_at, contacted_at')
-    .eq('status', 'ENRICHED')
+  let firstTouchEligibilityQuery = supabase
+    .from('first_touch_lead_eligibility')
+    .select('tenant_id, lead_id, created_at, eligibility_reason, is_eligible_now')
+    .eq('lead_status', 'ENRICHED')
     .is('deleted_at', null)
-    .is('contacted_at', null)
-    .is('queued_first_touch_at', null)
-    .not('whatsapp', 'is', null)
     .order('created_at', { ascending: true })
-    .limit(1000);
-  leadBacklogQuery = tenantScope(leadBacklogQuery, tenantIds);
-  let contactableLeads = await loadRows<Record<string, any>>('contactable_leads', leadBacklogQuery, evidenceErrors);
+    .limit(5000);
+  firstTouchEligibilityQuery = tenantScope(firstTouchEligibilityQuery, tenantIds);
+  let firstTouchEligibilityRows = await loadRows<Record<string, any>>('first_touch_eligibility', firstTouchEligibilityQuery, evidenceErrors);
 
-  if (evidenceErrors.some((error) => error.startsWith('contactable_leads:'))) {
-    evidenceErrors.pop();
+  const firstTouchEligibilityErrorIndex = evidenceErrors.findIndex((error) => error.startsWith('first_touch_eligibility:'));
+  if (firstTouchEligibilityErrorIndex >= 0) {
+    evidenceErrors.splice(firstTouchEligibilityErrorIndex, 1);
     let fallbackLeadQuery = supabase
       .from('leads')
-      .select('id, tenant_id, name, source, status, created_at, contacted_at')
+      .select('id, tenant_id, created_at')
       .eq('status', 'ENRICHED')
       .is('deleted_at', null)
       .is('contacted_at', null)
+      .is('queued_first_touch_at', null)
+      .not('campaign_id', 'is', null)
       .not('whatsapp', 'is', null)
+      .or('whatsapp_valid.is.null,whatsapp_valid.eq.true')
       .order('created_at', { ascending: true })
       .limit(1000);
     fallbackLeadQuery = tenantScope(fallbackLeadQuery, tenantIds);
-    contactableLeads = await loadRows<Record<string, any>>('contactable_leads_legacy', fallbackLeadQuery, evidenceErrors);
+    const fallbackRows = await loadRows<Record<string, any>>('first_touch_eligibility_fallback', fallbackLeadQuery, evidenceErrors);
+    firstTouchEligibilityRows = fallbackRows.map((row) => ({
+      tenant_id: row.tenant_id,
+      lead_id: row.id,
+      created_at: row.created_at,
+      eligibility_reason: 'ELIGIBLE',
+      is_eligible_now: true,
+    }));
   }
 
   let leadsTodayQuery = supabase
@@ -412,6 +617,45 @@ export async function loadAiActivityMonitor(
     .limit(1000);
   inboundTodayQuery = tenantScope(inboundTodayQuery, tenantIds);
 
+  let workerSnapshotQuery = supabase
+    .from('ai_worker_operational_snapshot')
+    .select([
+      'tenant_id',
+      'active_pending',
+      'due_pending',
+      'approved_pending',
+      'delayed_pending',
+      'blocked_or_failed_last24h',
+      'next_scheduled_for',
+      'oldest_due_at',
+      'oldest_due_age_seconds',
+      'sent_today',
+      'sent_last60m',
+      'latest_ai_message_at',
+      'latest_inbound_at',
+      'latest_retry_queued_at',
+      'guardian_status',
+      'guardian_external_state',
+      'guardian_reason_code',
+      'guardian_operation_state',
+      'guardian_blocking_send',
+      'guardian_block_summary',
+      'first_touch_eligible',
+      'first_touch_evaluated',
+      'latest_queue_id',
+      'latest_queue_message_type',
+      'latest_queue_status',
+      'latest_queue_created_at',
+      'latest_queue_scheduled_for',
+      'latest_queue_sent_at',
+      'latest_queue_failed_at',
+      'latest_queue_failed_reason',
+      'latest_queue_validation_status',
+      'latest_queue_validation_reason_code',
+      'latest_queue_final_guardian_decision',
+    ].join(', '));
+  workerSnapshotQuery = tenantScope(workerSnapshotQuery, tenantIds);
+
   const [
     leadsToday,
     pendingDue,
@@ -419,6 +663,7 @@ export async function loadAiActivityMonitor(
     outboundToday,
     inboundToday,
     guardianRows,
+    workerSnapshotRows,
   ] = await Promise.all([
     loadRows<Record<string, any>>('leads_today', leadsTodayQuery, evidenceErrors),
     loadRows<Record<string, any>>('pending_due', pendingDueQuery, evidenceErrors),
@@ -426,9 +671,10 @@ export async function loadAiActivityMonitor(
     loadRows<Record<string, any>>('outbound_today', outboundTodayQuery, evidenceErrors),
     loadRows<Record<string, any>>('inbound_today', inboundTodayQuery, evidenceErrors),
     loadGuardianRows(supabase, tenantIds, options.guardianStates, evidenceErrors),
+    loadRows<Record<string, any>>('ai_worker_operational_snapshot', workerSnapshotQuery, evidenceErrors),
   ]);
 
-  const contactableByTenant = byTenant(contactableLeads);
+  const firstTouchEligibilityByTenant = byTenant(firstTouchEligibilityRows);
   const leadsTodayByTenant = byTenant(leadsToday);
   const pendingByTenant = byTenant(pendingDue);
   const unansweredByTenant = byTenant(conversations.filter((conversation) => {
@@ -443,30 +689,45 @@ export async function loadAiActivityMonitor(
     const id = String(row.tenantId || row.tenant_id || '');
     if (id) guardianByTenant.set(id, row);
   }
+  const workerByTenant = new Map<string, AiWorkerOperationalSnapshot>();
+  for (const row of workerSnapshotRows) {
+    const tenantId = String(row.tenant_id || '');
+    const snapshot = mapWorkerSnapshot(row);
+    if (tenantId && snapshot) workerByTenant.set(tenantId, snapshot);
+  }
 
   const tenants = tenantRows.map((tenant) => {
     const tenantId = String(tenant.id);
-    const contactable = contactableByTenant.get(tenantId) || [];
+    const firstTouchRows = firstTouchEligibilityByTenant.get(tenantId) || [];
+    const firstTouchEligibility = buildFirstTouchEligibilitySummary(firstTouchRows);
+    const contactable = firstTouchRows.filter((row) => row.is_eligible_now === true || row.eligibility_reason === 'ELIGIBLE');
     const due = pendingByTenant.get(tenantId) || [];
     const unanswered = unansweredByTenant.get(tenantId) || [];
     const outbounds = outboundByTenant.get(tenantId) || [];
     const inbounds = inboundByTenant.get(tenantId) || [];
     const guardian = guardianByTenant.get(tenantId);
+    const workerSnapshot = workerByTenant.get(tenantId) || null;
     const operationState = guardianOperation(guardian);
     const guardianStatus = guardian?.status ? String(guardian.status) : null;
-    const outboundLast60m = outbounds.filter((message) => String(message.created_at || '') >= last60m).length;
+    const contactableBacklog = workerSnapshot?.firstTouchEligible ?? contactable.length;
+    const duePending = workerSnapshot?.duePending ?? due.length;
+    const outboundTodayCount = workerSnapshot?.sentToday ?? outbounds.length;
+    const outboundLast60m = workerSnapshot?.sentLast60m
+      ?? outbounds.filter((message) => String(message.created_at || '') >= last60m).length;
     const classified = classifyTenantActivity({
       tenantStatus: tenant.status ? String(tenant.status) : null,
       isOperatingWindow: operatingWindow.isOpen,
       guardianStatus,
-      guardianOperationState: operationState,
-      contactableBacklog: contactable.length,
+      guardianOperationState: workerSnapshot?.guardianOperationState || operationState,
+      contactableBacklog,
       oldestContactableLeadAt: oldestAt(contactable, 'created_at'),
-      duePending: due.length,
-      oldestDuePendingAt: oldestAt(due, 'scheduled_for'),
+      firstTouchEligibility,
+      duePending,
+      oldestDuePendingAt: workerSnapshot?.oldestDueAt || oldestAt(due, 'scheduled_for'),
       unansweredConversations: unanswered.length,
       oldestUnansweredInboundAt: oldestAt(unanswered, 'last_inbound_at'),
-      outboundToday: outbounds.length,
+      outboundToday: outboundTodayCount,
+      workerSnapshot,
       nowMs,
     });
 
@@ -479,19 +740,21 @@ export async function loadAiActivityMonitor(
       isOperatingWindow: operatingWindow.isOpen,
       operatingWindowLabel: operatingWindow.label,
       leadsCreatedToday: (leadsTodayByTenant.get(tenantId) || []).length,
-      contactableBacklog: contactable.length,
+      contactableBacklog,
       oldestContactableLeadAt: oldestAt(contactable, 'created_at'),
-      duePending: due.length,
-      oldestDuePendingAt: oldestAt(due, 'scheduled_for'),
+      firstTouchEligibility,
+      duePending,
+      oldestDuePendingAt: workerSnapshot?.oldestDueAt || oldestAt(due, 'scheduled_for'),
       unansweredConversations: unanswered.length,
       oldestUnansweredInboundAt: oldestAt(unanswered, 'last_inbound_at'),
-      outboundToday: outbounds.length,
+      outboundToday: outboundTodayCount,
       outboundLast60m,
       inboundToday: inbounds.length,
-      lastOutboundAt: latestAt(outbounds, 'created_at'),
-      lastInboundAt: latestAt(inbounds, 'created_at'),
-      guardianStatus,
-      guardianOperationState: operationState,
+      lastOutboundAt: workerSnapshot?.latestAiMessageAt || latestAt(outbounds, 'created_at'),
+      lastInboundAt: workerSnapshot?.latestInboundAt || latestAt(inbounds, 'created_at'),
+      guardianStatus: workerSnapshot?.guardianStatus || guardianStatus,
+      guardianOperationState: workerSnapshot?.guardianOperationState || operationState,
+      workerSnapshot,
     };
   });
 

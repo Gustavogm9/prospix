@@ -183,6 +183,14 @@ type AiActivityTenant = {
   operatingWindowLabel: string;
   leadsCreatedToday: number;
   contactableBacklog: number;
+  firstTouchEligibility?: {
+    eligible: number;
+    totalEvaluated: number;
+    byReason: Record<string, number>;
+    topBlockingReason: string | null;
+    topBlockingReasonLabel: string | null;
+    topBlockingReasonCount: number;
+  };
   oldestContactableLeadAt: string | null;
   duePending: number;
   oldestDuePendingAt: string | null;
@@ -195,6 +203,63 @@ type AiActivityTenant = {
   lastInboundAt: string | null;
   guardianStatus: string | null;
   guardianOperationState: string | null;
+  workerSnapshot?: {
+    activePending: number;
+    duePending: number;
+    blockedOrFailedLast24h: number;
+    nextScheduledFor: string | null;
+    oldestDueAt: string | null;
+    oldestDueAgeSeconds: number | null;
+    sentToday: number;
+    sentLast60m: number;
+    latestAiMessageAt: string | null;
+    guardianStatus: string | null;
+    guardianExternalState: string | null;
+    guardianReasonCode: string | null;
+    guardianOperationState: string | null;
+    guardianBlockingSend: boolean;
+    guardianBlockSummary: string | null;
+    firstTouchEligible: number;
+    firstTouchEvaluated: number;
+    latestQueue: {
+      status: string | null;
+      messageType: string | null;
+      failedReason: string | null;
+      validationReasonCode: string | null;
+      finalGuardianDecision: string | null;
+    } | null;
+  } | null;
+};
+
+type WorkerDueQueueDiagnostic = {
+  pendingOutboundId: string;
+  tenantId: string;
+  tenantName: string;
+  tenantSlug: string;
+  conversationId: string | null;
+  leadId: string | null;
+  leadName: string | null;
+  leadSource: string | null;
+  leadStatus: string | null;
+  campaignName: string | null;
+  campaignStatus: string | null;
+  messageType: string | null;
+  scheduledFor: string;
+  dueAgeSeconds: number | null;
+  attempts: number;
+  validationStatus: string | null;
+  validationReasonCode: string | null;
+  finalGuardianDecision: string | null;
+  conversationStatus: string | null;
+  aiHandling: boolean | null;
+  guardianStatus: string | null;
+  guardianExternalState: string | null;
+  guardianReasonCode: string | null;
+  blockingReason: string;
+  blockerKind: string;
+  blocksSend: boolean;
+  operatorSummary: string;
+  recommendedAction: string;
 };
 
 type Dashboard = {
@@ -228,6 +293,7 @@ type Dashboard = {
     guardianAttentionStates?: number;
     aiActivityIssues?: number;
     aiActivityAlerts24h?: number;
+    dueQueueItems?: number;
   };
   scheduler: {
     lastRunAt: string | null;
@@ -281,6 +347,11 @@ type Dashboard = {
     available: boolean;
     error: string | null;
     rows: AiActivityAlertDelivery[];
+  };
+  workerDueQueueDiagnostics?: {
+    available: boolean;
+    error: string | null;
+    rows: WorkerDueQueueDiagnostic[];
   };
 };
 
@@ -370,6 +441,44 @@ function aiActivityClass(severity: string | null | undefined): string {
   if (severity === 'ATTENTION') return 'bg-amber-50 text-amber-800 border-amber-300';
   if (severity === 'OBSERVATION') return 'bg-blue-50 text-blue-700 border-blue-200';
   return 'bg-success-soft text-success-text border-success/30';
+}
+
+function workerQueueLabel(row: AiActivityTenant): string {
+  const worker = row.workerSnapshot;
+  if (!worker) return 'sem leitura';
+  if (worker.duePending > 0 && worker.guardianBlockingSend) return 'aguardando reconexao';
+  if (worker.duePending > 0) return 'fila atrasada';
+  if (worker.activePending > 0) return 'em espera';
+  if (worker.sentLast60m > 0) return 'enviando';
+  return 'sem fila';
+}
+
+function messageTypeLabel(messageType: string | null | undefined): string {
+  if (messageType === 'OUTBOUND_START') return 'Primeiro contato';
+  if (messageType === 'COMMERCIAL_FOLLOWUP') return 'Follow-up';
+  if (messageType === 'REACTIVE_REPLY') return 'Resposta ao lead';
+  if (messageType === 'CHAT_CONTINUATION') return 'Continuidade';
+  if (messageType === 'LOOKUP_REPLY') return 'Resposta com pesquisa';
+  return 'Mensagem da IA';
+}
+
+function blockerKindLabel(kind: string | null | undefined): string {
+  if (kind === 'CONNECTION') return 'Conexao';
+  if (kind === 'GUARDIAN') return 'Guardian';
+  if (kind === 'CONVERSATION') return 'Conversa';
+  if (kind === 'LEAD') return 'Lead';
+  if (kind === 'WORKER') return 'Worker';
+  return 'Diagnostico';
+}
+
+function blockerKindClass(row: WorkerDueQueueDiagnostic): string {
+  if (row.blocksSend && row.blockerKind === 'CONNECTION') return 'bg-red-50 text-red-700 border-red-200';
+  if (row.blocksSend) return 'bg-amber-50 text-amber-800 border-amber-300';
+  return 'bg-blue-50 text-blue-700 border-blue-200';
+}
+
+function countLabel(count: number, singular: string, plural: string): string {
+  return `${count} ${count === 1 ? singular : plural}`;
 }
 
 function formatToken(value: string | null | undefined): string {
@@ -655,6 +764,8 @@ export default function AdminMonitoringPage() {
   const aiActivity = data?.aiActivity;
   const aiActivityRows = aiActivity?.tenants || [];
   const aiActivityAlertDeliveries = data?.aiActivityAlertDeliveries;
+  const workerDueQueueDiagnostics = data?.workerDueQueueDiagnostics;
+  const workerDueRows = workerDueQueueDiagnostics?.rows || [];
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -812,7 +923,75 @@ export default function AdminMonitoringPage() {
         <MetricCard label="Alertas recentes" value={data?.summary.disconnectAlerts24h ?? 0} />
         <MetricCard label="IA em atencao" value={data?.summary.aiActivityIssues ?? 0} tone={(data?.summary.aiActivityIssues ?? 0) > 0 ? 'red' : 'normal'} />
         <MetricCard label="Alertas IA" value={data?.summary.aiActivityAlerts24h ?? 0} tone={(data?.summary.aiActivityAlerts24h ?? 0) > 0 ? 'red' : 'normal'} />
+        <MetricCard label="Fila IA vencida" value={data?.summary.dueQueueItems ?? 0} tone={(data?.summary.dueQueueItems ?? 0) > 0 ? 'red' : 'normal'} />
       </div>
+
+      <Card className="bg-white border-border shadow-sm">
+        <CardHeader className="pb-3">
+          <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+            <div>
+              <CardTitle className="text-base font-bold font-heading text-text">Fila vencida da IA</CardTitle>
+              <CardDescription className="text-text-secondary text-xs mt-1">
+                Mostra mensagens prontas que ja passaram do horario e o motivo operacional de nao terem avancado.
+              </CardDescription>
+            </div>
+            <Badge className={`text-[10px] px-2 py-0.5 border ${workerDueQueueDiagnostics?.available !== false ? 'bg-success-soft text-success-text border-success/30' : 'bg-amber-50 text-amber-800 border-amber-300'}`}>
+              {workerDueQueueDiagnostics?.available !== false ? countLabel(workerDueRows.length, 'item', 'itens') : 'diagnostico indisponivel'}
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {workerDueQueueDiagnostics?.error && (
+            <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-800 mb-3">
+              Diagnostico pendente no banco: {workerDueQueueDiagnostics.error}
+            </div>
+          )}
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="text-left text-[10px] uppercase tracking-wider text-text-secondary border-b border-border">
+                <tr>
+                  <th className="py-2 pr-3">Tenant</th>
+                  <th className="py-2 pr-3">Lead</th>
+                  <th className="py-2 pr-3">Mensagem</th>
+                  <th className="py-2 pr-3">Atraso</th>
+                  <th className="py-2 pr-3">Motivo</th>
+                  <th className="py-2 pr-3">Acao</th>
+                </tr>
+              </thead>
+              <tbody>
+                {workerDueRows.map((row) => (
+                  <tr key={row.pendingOutboundId} className="border-b border-border/50 align-top">
+                    <td className="py-3 pr-3 min-w-[210px]">
+                      <div className="font-semibold text-text">{row.tenantName}</div>
+                      <div className="text-[10px] text-text-secondary">{row.tenantSlug || row.tenantId}</div>
+                    </td>
+                    <td className="py-3 pr-3 min-w-[190px]">
+                      <div className="font-semibold text-text">{row.leadName || 'Lead sem nome'}</div>
+                      <div className="text-[10px] text-text-secondary">{row.campaignName || row.leadSource || 'sem campanha registrada'}</div>
+                    </td>
+                    <td className="py-3 pr-3 min-w-[130px]">
+                      <div className="font-semibold text-text">{messageTypeLabel(row.messageType)}</div>
+                      <div className="text-[10px] text-text-secondary">agendada {formatDate(row.scheduledFor)}</div>
+                    </td>
+                    <td className="py-3 pr-3 whitespace-nowrap">
+                      <div className="font-semibold text-text">{formatDuration(row.dueAgeSeconds)}</div>
+                      <div className="text-[10px] text-text-secondary">{countLabel(row.attempts, 'tentativa', 'tentativas')}</div>
+                    </td>
+                    <td className="py-3 pr-3 min-w-[280px] max-w-[420px]">
+                      <Badge className={`text-[9px] px-1.5 py-0 border ${blockerKindClass(row)}`}>{blockerKindLabel(row.blockerKind)}</Badge>
+                      <p className="text-text-secondary mt-1 leading-relaxed">{row.operatorSummary}</p>
+                    </td>
+                    <td className="py-3 pr-3 min-w-[280px] max-w-[420px] text-text-secondary">
+                      {row.recommendedAction}
+                    </td>
+                  </tr>
+                ))}
+                {workerDueRows.length === 0 && <EmptyRow columns={6} label="Nenhuma mensagem vencida na fila da IA." />}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card className="bg-white border-border shadow-sm">
         <CardHeader className="pb-3">
@@ -861,7 +1040,19 @@ export default function AdminMonitoringPage() {
                     </td>
                     <td className="py-3 pr-3 text-text-secondary min-w-[150px]">
                       <div>Leads hoje: <span className="font-semibold text-text">{row.leadsCreatedToday}</span></div>
-                      <div>Aptos sem fila: <span className="font-semibold text-text">{row.contactableBacklog}</span></div>
+                      <div>Elegiveis agora: <span className="font-semibold text-text">{row.contactableBacklog}</span></div>
+                      {row.firstTouchEligibility && (
+                        <>
+                          <div className="text-[10px]">
+                            Avaliados: <span className="font-semibold text-text">{row.firstTouchEligibility.totalEvaluated}</span>
+                          </div>
+                          {row.firstTouchEligibility.topBlockingReasonLabel && (
+                            <div className="text-[10px]">
+                              Bloqueio: <span className="font-semibold text-text">{row.firstTouchEligibility.topBlockingReasonLabel}</span> ({row.firstTouchEligibility.topBlockingReasonCount})
+                            </div>
+                          )}
+                        </>
+                      )}
                       <div className="text-[10px]">Mais antigo: {formatDate(row.oldestContactableLeadAt)}</div>
                     </td>
                     <td className="py-3 pr-3 text-text-secondary min-w-[150px]">
@@ -873,10 +1064,20 @@ export default function AdminMonitoringPage() {
                       <div>Hoje: <span className="font-semibold text-text">{row.outboundToday}</span></div>
                       <div>Ultima hora: <span className="font-semibold text-text">{row.outboundLast60m}</span></div>
                       <div>Fila vencida: <span className="font-semibold text-text">{row.duePending}</span></div>
+                      {row.workerSnapshot && (
+                        <>
+                          <div className="text-[10px]">Fila atual: <span className="font-semibold text-text">{row.workerSnapshot.activePending}</span></div>
+                          <div className="text-[10px]">Situacao: <span className="font-semibold text-text">{workerQueueLabel(row)}</span></div>
+                          <div className="text-[10px]">Bloqueios/falhas 24h: <span className="font-semibold text-text">{row.workerSnapshot.blockedOrFailedLast24h}</span></div>
+                        </>
+                      )}
                     </td>
                     <td className="py-3 pr-3 text-text-secondary min-w-[300px] max-w-[460px]">
                       <div>{row.summary}</div>
                       <div className="text-[10px] mt-1">Acao: {row.requiredAction}</div>
+                      {row.workerSnapshot?.guardianBlockSummary && (
+                        <div className="text-[10px] mt-1">Conexao: {row.workerSnapshot.guardianBlockSummary}</div>
+                      )}
                     </td>
                     <td className="py-3 pr-3 text-text-secondary whitespace-nowrap">
                       <div>IA: {formatDate(row.lastOutboundAt)}</div>

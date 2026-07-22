@@ -19,7 +19,8 @@ type ReferralGuardianDecision = {
   configVersionId: string;
 };
 
-const guardianConfigCache = new Map<string, EffectiveGuardianConfig | null>();
+const GUARDIAN_CONFIG_CACHE_TTL_MS = 60_000;
+const guardianConfigCache = new Map<string, { loadedAt: number; config: EffectiveGuardianConfig | null }>();
 
 function buildMessage(leadName: string | null) {
   const firstName = leadName ? leadName.split(" ")[0] : "tudo bem";
@@ -27,10 +28,14 @@ function buildMessage(leadName: string | null) {
 }
 
 async function loadGuardianConfig(tenantId: string): Promise<EffectiveGuardianConfig | null> {
-  if (!guardianConfigCache.has(tenantId)) {
-    guardianConfigCache.set(tenantId, await GuardianRunner.loadConfig({ supabase, tenantId }));
+  const cached = guardianConfigCache.get(tenantId);
+  if (cached && Date.now() - cached.loadedAt < GUARDIAN_CONFIG_CACHE_TTL_MS) {
+    return cached.config;
   }
-  return guardianConfigCache.get(tenantId) || null;
+
+  const config = await GuardianRunner.loadConfig({ supabase, tenantId });
+  guardianConfigCache.set(tenantId, { loadedAt: Date.now(), config });
+  return config;
 }
 
 function validFutureIso(value: unknown): value is string {

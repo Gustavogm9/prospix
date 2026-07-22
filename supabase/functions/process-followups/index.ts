@@ -17,13 +17,18 @@ type FollowupGuardianDecision = {
   configVersionId: string | null;
 };
 
-const guardianConfigCache = new Map<string, EffectiveGuardianConfig | null>();
+const GUARDIAN_CONFIG_CACHE_TTL_MS = 60_000;
+const guardianConfigCache = new Map<string, { loadedAt: number; config: EffectiveGuardianConfig | null }>();
 
 async function loadGuardianConfig(tenantId: string): Promise<EffectiveGuardianConfig | null> {
-  if (!guardianConfigCache.has(tenantId)) {
-    guardianConfigCache.set(tenantId, await GuardianRunner.loadConfig({ supabase, tenantId }));
+  const cached = guardianConfigCache.get(tenantId);
+  if (cached && Date.now() - cached.loadedAt < GUARDIAN_CONFIG_CACHE_TTL_MS) {
+    return cached.config;
   }
-  return guardianConfigCache.get(tenantId) || null;
+
+  const config = await GuardianRunner.loadConfig({ supabase, tenantId });
+  guardianConfigCache.set(tenantId, { loadedAt: Date.now(), config });
+  return config;
 }
 
 function validFutureIso(value: unknown): value is string {
@@ -51,6 +56,18 @@ async function countFollowupsWithoutReply(conversationId: string, lastInboundAt:
 
   if (lastInboundAt) query = query.gt("created_at", lastInboundAt);
   const { count } = await query;
+  return count || 0;
+}
+
+async function countOpenFollowups(conversationId: string): Promise<number> {
+  const { count } = await supabase
+    .from("pending_outbound")
+    .select("id", { count: "exact", head: true })
+    .eq("conversation_id", conversationId)
+    .eq("message_type", "COMMERCIAL_FOLLOWUP")
+    .is("sent_at", null)
+    .is("failed_at", null);
+
   return count || 0;
 }
 
@@ -208,7 +225,7 @@ serve(async (req) => {
     const { data: conversations, error: convError } = await supabase
       .from("conversations")
       .select("*, leads!conversations_lead_id_fkey(name, whatsapp)")
-      .eq("status", "CONVERSING")
+      .eq("status", "ACTIVE")
       .eq("ai_handling", true)
       .lte("last_message_at", cutoffDate)
       .limit(50);
@@ -228,13 +245,19 @@ serve(async (req) => {
       // Fetch the last message to ensure it was from the AI
       const { data: lastMsg } = await supabase
         .from("messages")
-        .select("direction, content")
+        .select("direction, sender, content")
         .eq("conversation_id", conv.id)
         .order("created_at", { ascending: false })
         .limit(1)
         .single();
 
-      if (!lastMsg || lastMsg.direction !== "OUTBOUND") {
+      if (!lastMsg || lastMsg.direction !== "OUTBOUND" || lastMsg.sender !== "AI") {
+        continue;
+      }
+
+      const openFollowups = await countOpenFollowups(conv.id);
+      if (openFollowups > 0) {
+        console.log(`Skipping ${conv.id}: follow-up already queued.`);
         continue;
       }
 
@@ -259,7 +282,7 @@ serve(async (req) => {
       }
 
       console.log(`Queueing Guardian-approved follow-up for ${conv.id} (Lead: ${leadName})`);
-      await supabase.from("pending_outbound").insert({
+      const { error: insertError } = await supabase.from("pending_outbound").insert({
         id: uuid(),
         tenant_id: conv.tenant_id,
         conversation_id: conv.id,
@@ -275,6 +298,10 @@ serve(async (req) => {
         final_guardian_checked_at: new Date().toISOString(),
         final_guardian_decision: guardianDecision.finalDecision,
       });
+      if (insertError) {
+        console.warn(`Failed to queue follow-up for ${conv.id}: ${insertError.message}`);
+        continue;
+      }
       processed++;
     }
 

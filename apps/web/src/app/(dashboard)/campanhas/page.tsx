@@ -1,7 +1,7 @@
 'use client';
 
 import { Target, Plus, Pause, Edit2, Copy, Play, Loader2, Info, X, Trash2, ChevronDown, Lock, Zap, Tag, ChevronRight, AlertTriangle, ArrowRight } from 'lucide-react';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { campaignsQueries, tenantAddonsQueries, icpsQueries, scriptsQueries } from '@/lib/queries';
 import type { ICP } from '@/lib/queries';
@@ -27,6 +27,7 @@ interface Campaign {
   state?: string;
   icpId: string;
   icpName?: string;
+  activeScriptId?: string | null;
 }
 
 const BRAZILIAN_STATES = [
@@ -192,6 +193,19 @@ export default function Campaigns() {
     icpHighValueAreas: '', icpMinGoogleRating: '', icpMinReviews: '',
   });
 
+  const selectedSegmentConfig = useMemo(
+    () => SEGMENTS.find(s => s.id === selectedSegment) ?? DEFAULT_SEGMENT,
+    [selectedSegment],
+  );
+  const compatibleScripts = useMemo(
+    () => scripts.filter((script) => (
+      script.status === 'ACTIVE'
+      && script.category === 'APPROACH'
+      && (!script.target_profession || script.target_profession === selectedSegmentConfig.profession)
+    )),
+    [scripts, selectedSegmentConfig.profession],
+  );
+
   // ── Data fetching ──────────────────────────────────────────────────────
   const fetchCampaigns = useCallback(async () => {
     if (!tenantId) return;
@@ -261,6 +275,12 @@ export default function Campaigns() {
     fetchIcps();
     fetchScriptsCheck();
   }, [fetchCampaigns, fetchLimit, fetchIcps, fetchScriptsCheck]);
+
+  useEffect(() => {
+    if (!selectedScriptId) return;
+    if (compatibleScripts.some((script) => script.id === selectedScriptId)) return;
+    setSelectedScriptId('');
+  }, [compatibleScripts, selectedScriptId]);
 
   // ── Handlers ───────────────────────────────────────────────────────────
   const handlePause = async (id: string) => {
@@ -503,10 +523,9 @@ export default function Campaigns() {
 
     if (!tenantId) return;
     setIsCreating(true);
-    const segment = SEGMENTS.find(s => s.id === selectedSegment) ?? DEFAULT_SEGMENT;
     const payload = {
       name: newCamp.name.trim(),
-      profession: segment.profession as any,
+      profession: selectedSegmentConfig.profession as any,
       cities: newCamp.cities.split(',').map(c => c.trim()).filter(Boolean),
       dailyLimit: Number(newCamp.dailyLimit) || 20,
       hourWindowStart: Number(newCamp.hourStart) || 8,
@@ -515,7 +534,7 @@ export default function Campaigns() {
       captureSources,
       state: campState,
       icpId: selectedIcpId,
-      activeScriptId: selectedScriptId || undefined,
+      activeScriptId: selectedScriptId || null,
       filters: {
         min_fit_score: 3,
       },
@@ -959,9 +978,9 @@ export default function Campaigns() {
                   className="w-full h-9 pl-3 pr-8 rounded-lg bg-[#F9FAFB] border border-[#E5E7EB] text-[13px] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none appearance-none cursor-pointer font-medium text-[#0F172A]"
                 >
                   <option value="">Associar automaticamente por profissão</option>
-                  {scripts.map(script => (
+                  {compatibleScripts.map(script => (
                     <option key={script.id} value={script.id}>
-                      {script.name} ({script.status === 'ACTIVE' ? 'Ativo' : 'Rascunho'})
+                      {script.name} ({script.target_profession ? PROF_LABEL[script.target_profession] || script.target_profession : 'Geral'})
                     </option>
                   ))}
                 </select>
@@ -973,6 +992,12 @@ export default function Campaigns() {
                 Escolha o roteiro específico que a IA usará. Se omitido, a plataforma buscará um roteiro ativo compatível com a profissão.
               </p>
             </div>
+
+            {compatibleScripts.length === 0 && (
+              <p className="text-[10px] text-[#B54708] -mt-1 font-semibold">
+                Nenhum roteiro ativo compativel encontrado para este segmento.
+              </p>
+            )}
 
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">

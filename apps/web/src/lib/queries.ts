@@ -108,6 +108,48 @@ function mapError(error: unknown): QueryError {
   return { message: 'Unknown error' };
 }
 
+function normalizeOptionalId(value?: string | null): string | null {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  return normalized || null;
+}
+
+async function validateCampaignActiveScript(
+  tenantId: string,
+  scriptId: string | null,
+  profession: Profession,
+): Promise<QueryError | null> {
+  if (!scriptId) return null;
+
+  const { data: script, error } = await supabase
+    .from('scripts')
+    .select('id, name, status, category, target_profession')
+    .eq('tenant_id', tenantId)
+    .eq('id', scriptId)
+    .maybeSingle();
+
+  if (error) return mapError(error);
+  if (!script) {
+    return {
+      message: 'Roteiro nao encontrado para este tenant.',
+      code: 'SCRIPT_NOT_FOUND',
+    };
+  }
+  if (script.status !== 'ACTIVE' || script.category !== 'APPROACH') {
+    return {
+      message: 'A campanha precisa usar um roteiro ativo de abordagem.',
+      code: 'SCRIPT_NOT_ACTIVE_APPROACH',
+    };
+  }
+  if (script.target_profession && script.target_profession !== profession) {
+    return {
+      message: `Roteiro incompativel com a campanha: "${script.name}" atende ${script.target_profession}, mas a campanha e ${profession}.`,
+      code: 'SCRIPT_PROFESSION_MISMATCH',
+    };
+  }
+
+  return null;
+}
+
 function mapLeadStatusToBackend(status?: string): string | undefined {
   if (!status) return undefined;
   const mapping: Record<string, string> = {
@@ -587,13 +629,17 @@ export const campaignsQueries = {
     dailyLimit?: number;
     hourWindowStart?: number;
     hourWindowEnd?: number;
-    activeScriptId?: string;
+    activeScriptId?: string | null;
     icpId: string;
     filters?: Record<string, unknown>;
     searchTags?: string[];
     captureSources?: string[];
     state?: string;
   }) => {
+    const activeScriptId = normalizeOptionalId(campaignData.activeScriptId);
+    const scriptValidationError = await validateCampaignActiveScript(tenantId, activeScriptId, campaignData.profession);
+    if (scriptValidationError) return { data: null, error: scriptValidationError };
+
     const { data, error } = await supabase
       .from('campaigns')
       .insert({
@@ -606,7 +652,7 @@ export const campaignsQueries = {
         daily_limit: campaignData.dailyLimit ?? 100,
         hour_window_start: campaignData.hourWindowStart ?? 9,
         hour_window_end: campaignData.hourWindowEnd ?? 18,
-        active_script_id: campaignData.activeScriptId,
+        active_script_id: activeScriptId,
         icp_id: campaignData.icpId,
         filters: (campaignData.filters || { min_fit_score: 3 }) as any,
         search_tags: campaignData.searchTags || [],
@@ -631,7 +677,7 @@ export const campaignsQueries = {
     dailyLimit?: number;
     hourWindowStart?: number;
     hourWindowEnd?: number;
-    activeScriptId?: string;
+    activeScriptId?: string | null;
     icpId?: string;
     filters?: Record<string, unknown>;
     searchTags?: string[];
@@ -649,6 +695,13 @@ export const campaignsQueries = {
     if (!campaign) return { data: null, error: { message: 'Campaign not found', code: 'NOT_FOUND' } };
     if (campaign.status === 'ARCHIVED') return { data: null, error: { message: 'Cannot update an archived campaign', code: 'BAD_REQUEST' } };
 
+    const effectiveProfession = updateData.profession ?? campaign.profession;
+    const effectiveScriptId = updateData.activeScriptId !== undefined
+      ? normalizeOptionalId(updateData.activeScriptId)
+      : normalizeOptionalId(campaign.active_script_id);
+    const scriptValidationError = await validateCampaignActiveScript(tenantId, effectiveScriptId, effectiveProfession);
+    if (scriptValidationError) return { data: null, error: scriptValidationError };
+
     const updatePayload: any = {
       updated_at: new Date().toISOString(),
     };
@@ -659,7 +712,7 @@ export const campaignsQueries = {
     if (updateData.dailyLimit !== undefined) updatePayload.daily_limit = updateData.dailyLimit;
     if (updateData.hourWindowStart !== undefined) updatePayload.hour_window_start = updateData.hourWindowStart;
     if (updateData.hourWindowEnd !== undefined) updatePayload.hour_window_end = updateData.hourWindowEnd;
-    if (updateData.activeScriptId !== undefined) updatePayload.active_script_id = updateData.activeScriptId;
+    if (updateData.activeScriptId !== undefined) updatePayload.active_script_id = effectiveScriptId;
     if (updateData.icpId !== undefined) updatePayload.icp_id = updateData.icpId;
     if (updateData.searchTags !== undefined) updatePayload.search_tags = updateData.searchTags;
     if (updateData.captureSources !== undefined) updatePayload.capture_sources = updateData.captureSources;

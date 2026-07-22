@@ -157,6 +157,41 @@ async function countFollowupsWithoutReply(conversationId: string, lastInboundAt:
   return count || 0;
 }
 
+async function loadReusableFirstTouchConversation(tenantId: string, leadId: string): Promise<any | null> {
+  const { data } = await supabase
+    .from("conversations")
+    .select("id, message_count, started_at")
+    .eq("tenant_id", tenantId)
+    .eq("lead_id", leadId)
+    .eq("status", "ACTIVE")
+    .eq("ai_handling", true)
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return data || null;
+}
+
+async function countFirstTouchAttemptsForLead(tenantId: string, leadId: string): Promise<number> {
+  const { data: conversations } = await supabase
+    .from("conversations")
+    .select("id")
+    .eq("tenant_id", tenantId)
+    .eq("lead_id", leadId);
+
+  const conversationIds = (conversations || []).map((row: any) => row.id).filter(Boolean);
+  if (conversationIds.length === 0) return 0;
+
+  const { count } = await supabase
+    .from("pending_outbound")
+    .select("id", { count: "exact", head: true })
+    .eq("tenant_id", tenantId)
+    .eq("message_type", "OUTBOUND_START")
+    .in("conversation_id", conversationIds);
+
+  return count || 0;
+}
+
 async function acquireConversationLock(params: {
   tenantId: string;
   conversationId: string;
@@ -1067,9 +1102,16 @@ async function processFirstTouch(
         .from("scripts")
         .select("*")
         .eq("id", scriptId)
+        .eq("tenant_id", tenantId)
         .eq("status", "ACTIVE")
-        .single();
+        .eq("category", "APPROACH")
+        .maybeSingle();
       script = s;
+    }
+
+    if (!script && scriptId) {
+      failed++;
+      continue;
     }
 
     if (!script) {
@@ -1079,13 +1121,13 @@ async function processFirstTouch(
         .eq("tenant_id", tenantId)
         .eq("status", "ACTIVE")
         .eq("category", "APPROACH")
-        .order("total_usages", { ascending: false })
-        .limit(5);
+        .order("total_usages", { ascending: false });
 
       if (scripts?.length) {
-        script = scripts.find((s: any) => s.target_profession === campaign.profession)
-          || scripts.find((s: any) => !s.target_profession)
-          || scripts[0];
+        const compatibleScripts = scripts.filter((s: any) => !s.target_profession || s.target_profession === campaign.profession);
+        script = compatibleScripts.find((s: any) => s.target_profession === campaign.profession)
+          || compatibleScripts.find((s: any) => !s.target_profession)
+          || null;
       }
     }
 
@@ -1106,24 +1148,67 @@ async function processFirstTouch(
       continue;
     }
 
-    // ── Find ENRICHED leads for this campaign ────────────────
-    let query = supabase
-      .from("leads")
-      .select("*")
+    // ── Find canonically eligible ENRICHED leads for this campaign ────────────────
+    let eligibilityQuery = supabase
+      .from("first_touch_lead_eligibility")
+      .select("lead_id, fit_score, created_at")
       .eq("campaign_id", campaign.id)
       .eq("tenant_id", tenantId)
-      .eq("status", "ENRICHED")
-      .is("contacted_at", null)
-      .is("queued_first_touch_at", null)
-      .not("whatsapp", "is", null);
+      .eq("script_id", script.id)
+      .eq("is_eligible_now", true);
 
     if (processedLeadIds.size > 0) {
-      query = query.not("id", "in", `(${Array.from(processedLeadIds).map(id => `'${id}'`).join(",")})`);
+      eligibilityQuery = eligibilityQuery.not("lead_id", "in", `(${Array.from(processedLeadIds).map(id => `'${id}'`).join(",")})`);
     }
 
-    const { data: leads } = await query
+    const { data: eligibleRows, error: eligibilityError } = await eligibilityQuery
       .order("fit_score", { ascending: false })
+      .order("created_at", { ascending: true })
       .limit(5);
+
+    let leads: any[] | null = null;
+
+    if (eligibilityError) {
+      console.warn("  [First Touch] Canonical eligibility view unavailable, using legacy candidate query. Error: " + eligibilityError.message);
+
+      let query = supabase
+        .from("leads")
+        .select("*")
+        .eq("campaign_id", campaign.id)
+        .eq("tenant_id", tenantId)
+        .eq("status", "ENRICHED")
+        .is("contacted_at", null)
+        .is("queued_first_touch_at", null)
+        .not("whatsapp", "is", null)
+        .or("whatsapp_valid.is.null,whatsapp_valid.eq.true");
+
+      if (processedLeadIds.size > 0) {
+        query = query.not("id", "in", `(${Array.from(processedLeadIds).map(id => `'${id}'`).join(",")})`);
+      }
+
+      const { data: legacyLeads } = await query
+        .order("fit_score", { ascending: false })
+        .limit(5);
+      leads = legacyLeads || [];
+    } else if (eligibleRows?.length) {
+      const eligibleLeadIds = eligibleRows.map((row: any) => row.lead_id).filter(Boolean);
+      const { data: leadRows, error: leadFetchError } = await supabase
+        .from("leads")
+        .select("*")
+        .eq("tenant_id", tenantId)
+        .in("id", eligibleLeadIds);
+
+      if (leadFetchError) {
+        console.error("  [First Touch] Erro ao carregar leads elegiveis canonicos: " + leadFetchError.message);
+        failed++;
+        continue;
+      }
+
+      const leadById = new Map((leadRows || []).map((lead: any) => [lead.id, lead]));
+      leads = eligibleLeadIds.map((leadId: string) => leadById.get(leadId)).filter(Boolean);
+    } else {
+      leads = [];
+    }
 
     if (!leads?.length) {
       continue;
@@ -1273,7 +1358,12 @@ async function processFirstTouch(
         }
 
         const messageContent = await substituteVariables(variation.message, lead);
-        const conversationId = uuid();
+        const reusableConversation = await loadReusableFirstTouchConversation(tenantId, lead.id);
+        const conversationId = reusableConversation?.id || uuid();
+        const firstTouchAttemptCount = await countFirstTouchAttemptsForLead(tenantId, lead.id);
+        const firstTouchIdempotencyKey = firstTouchAttemptCount > 0
+          ? `active-retry-${lead.id}-${firstTouchAttemptCount + 1}`
+          : `active-${lead.id}`;
         const firstTouchCandidatePayload = buildCandidatePayload({
           messages: [messageContent],
           intent: "OTHER",
@@ -1433,28 +1523,40 @@ async function processFirstTouch(
           continue;
         }
 
-        const { error: convErr } = await supabase.from("conversations").insert({
-          id: conversationId,
-          tenant_id: tenantId,
-          lead_id: lead.id,
+        const conversationPayload = {
           script_id: script.id,
           status: "ACTIVE",
           ai_handling: true,
           current_node_id: null,
-          message_count: 1,
-          started_at: nowTime,
           last_message: messageContent.substring(0, 200),
           last_message_at: nowTime,
           last_outbound_at: nowTime,
-        });
-        if (convErr) throw new Error("Erro ao criar conversação: " + convErr.message);
+        };
+
+        if (reusableConversation) {
+          const { error: convErr } = await supabase.from("conversations")
+            .update(conversationPayload)
+            .eq("id", conversationId)
+            .eq("tenant_id", tenantId);
+          if (convErr) throw new Error("Erro ao reutilizar conversa para retentativa: " + convErr.message);
+        } else {
+          const { error: convErr } = await supabase.from("conversations").insert({
+            id: conversationId,
+            tenant_id: tenantId,
+            lead_id: lead.id,
+            ...conversationPayload,
+            message_count: 1,
+            started_at: nowTime,
+          });
+          if (convErr) throw new Error("Erro ao criar conversa: " + convErr.message);
+        }
 
         const { error: queueErr } = await supabase.from("pending_outbound").insert({
           id: uuid(),
           tenant_id: tenantId,
           conversation_id: conversationId,
           content: messageContent,
-          idempotency_key: "active-" + lead.id,
+          idempotency_key: firstTouchIdempotencyKey,
           scheduled_for: plannedScheduledFor,
           attempts: 0,
           message_type: "OUTBOUND_START",
@@ -1466,6 +1568,25 @@ async function processFirstTouch(
           final_guardian_decision: queueFinalDecision,
         });
         if (queueErr) throw new Error("Erro ao enfileirar mensagem: " + queueErr.message);
+
+        if (firstTouchAttemptCount > 0) {
+          await supabase.from("lead_events").insert({
+            tenant_id: tenantId,
+            lead_id: lead.id,
+            event_type: "first_touch_retry_queued",
+            payload: {
+              conversation_id: conversationId,
+              campaign_id: campaign.id,
+              script_id: script.id,
+              variation_id: variation.id,
+              previous_attempt_count: firstTouchAttemptCount,
+              attempt_number: firstTouchAttemptCount + 1,
+              idempotency_key: firstTouchIdempotencyKey,
+              reason: "Retentativa segura de primeiro contato apos falha recuperavel anterior.",
+            },
+            created_at: nowTime,
+          });
+        }
 
         const { error: leadErr } = await supabase.from("leads").update({
           queued_first_touch_at: nowTime,

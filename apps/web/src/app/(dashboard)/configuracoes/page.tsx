@@ -107,6 +107,76 @@ type WhatsAppGuardianTrace = {
     activePending: number;
     missingGuardianEvidence: number;
   };
+  dueQueueDiagnostics?: {
+    totalDue: number;
+    items: Array<{
+      pendingOutboundId: string;
+      conversationId: string | null;
+      leadId: string | null;
+      leadName: string | null;
+      leadSource: string | null;
+      leadStatus: string | null;
+      campaignName: string | null;
+      campaignStatus: string | null;
+      messageType: string | null;
+      scheduledFor: string;
+      dueAgeSeconds: number | null;
+      attempts: number;
+      validationStatus: string | null;
+      validationReasonCode: string | null;
+      finalGuardianDecision: string | null;
+      conversationStatus: string | null;
+      aiHandling: boolean | null;
+      guardianStatus: string | null;
+      guardianExternalState: string | null;
+      guardianReasonCode: string | null;
+      blockingReason: string;
+      blockerKind: string;
+      blocksSend: boolean;
+      operatorSummary: string;
+      recommendedAction: string;
+    }>;
+  };
+  workerSnapshot?: {
+    generatedAt: string;
+    tenantId: string;
+    tenantName: string | null;
+    tenantStatus: string | null;
+    activePending: number;
+    duePending: number;
+    approvedPending: number;
+    delayedPending: number;
+    blockedOrFailedLast24h: number;
+    nextScheduledFor: string | null;
+    oldestDueAt: string | null;
+    oldestDueAgeSeconds: number | null;
+    sentToday: number;
+    sentLast60m: number;
+    latestAiMessageAt: string | null;
+    latestInboundAt: string | null;
+    latestRetryQueuedAt: string | null;
+    guardianStatus: string | null;
+    guardianExternalState: string | null;
+    guardianReasonCode: string | null;
+    guardianOperationState: string | null;
+    guardianBlockingSend: boolean;
+    guardianBlockSummary: string | null;
+    firstTouchEligible: number;
+    firstTouchEvaluated: number;
+    latestQueue: {
+      id: string | null;
+      messageType: string | null;
+      status: string | null;
+      createdAt: string | null;
+      scheduledFor: string | null;
+      sentAt: string | null;
+      failedAt: string | null;
+      failedReason: string | null;
+      validationStatus: string | null;
+      validationReasonCode: string | null;
+      finalGuardianDecision: string | null;
+    } | null;
+  } | null;
   aiActivity: {
     state: 'OK' | 'WATCH' | 'STALLED' | 'BLOCKED' | 'OFF_HOURS';
     label: string;
@@ -117,6 +187,14 @@ type WhatsAppGuardianTrace = {
     operatingWindowLabel: string;
     leadsCreatedToday: number;
     contactableBacklog: number;
+    firstTouchEligibility?: {
+      eligible: number;
+      totalEvaluated: number;
+      byReason: Record<string, number>;
+      topBlockingReason: string | null;
+      topBlockingReasonLabel: string | null;
+      topBlockingReasonCount: number;
+    };
     duePending: number;
     unansweredConversations: number;
     outboundToday: number;
@@ -190,6 +268,8 @@ type TenantBillingData = {
 
 type TabKey = 'perfil' | 'integracoes' | 'agenda' | 'credenciais' | 'financeiro' | 'privacidade' | 'contexto';
 
+const TAB_KEYS: TabKey[] = ['perfil', 'contexto', 'integracoes', 'agenda', 'credenciais', 'financeiro', 'privacidade'];
+
 type WhatsAppStatusSyncState = {
   mode: 'starting' | 'live' | 'polling' | 'error';
   lastRefreshAt: string | null;
@@ -212,12 +292,46 @@ const tabConfig: { key: TabKey; label: string; icon: React.ElementType }[] = [
   { key: 'privacidade', label: 'Privacidade & Dados', icon: FileText },
 ];
 
+const firstTouchReasonLabels: Record<string, string> = {
+  ELIGIBLE: 'Elegivel',
+  DELETED: 'Lead removido',
+  LEAD_NOT_ENRICHED: 'Lead ainda nao enriquecido',
+  ALREADY_CONTACTED: 'Lead ja contatado',
+  ALREADY_SENT: 'Primeiro contato ja enviado',
+  FIRST_TOUCH_PENDING: 'Primeiro contato ja esta na fila',
+  FIRST_TOUCH_FAILED: 'Primeiro contato falhou anteriormente',
+  FIRST_TOUCH_RETRY_COOLDOWN: 'Aguardando nova tentativa segura',
+  FIRST_TOUCH_RETRY_LIMIT_REACHED: 'Limite de novas tentativas atingido',
+  PREVIOUSLY_GUARDIAN_BLOCKED: 'Bloqueado anteriormente pelo Guardian',
+  FIRST_TOUCH_ALREADY_MARKED: 'Lead ja marcado como tentado',
+  MISSING_WHATSAPP: 'Sem WhatsApp',
+  INVALID_MOBILE: 'WhatsApp invalido ou nao movel',
+  OPTED_OUT: 'Lead pediu para nao receber contato',
+  MISSING_CAMPAIGN: 'Sem campanha vinculada',
+  CAMPAIGN_INACTIVE_OR_MISSING: 'Campanha ausente ou inativa',
+  OUTSIDE_CAMPAIGN_WINDOW: 'Fora do horario da campanha',
+  DAILY_LIMIT_REACHED: 'Limite diario atingido',
+  SCRIPT_INACTIVE_OR_MISSING: 'Roteiro ausente ou inativo',
+  SCRIPT_NOT_APPROACH: 'Roteiro nao e de abordagem',
+  MISSING_ACTIVE_SCRIPT: 'Sem roteiro ativo compativel',
+  SCRIPT_PROFESSION_MISMATCH: 'Roteiro incompativel com a campanha',
+  MISSING_ACTIVE_VARIATION: 'Roteiro sem variacao ativa',
+  COMMERCIAL_NAME_FOR_INDIVIDUAL_SCRIPT: 'Nome comercial incompativel com roteiro individual',
+  GUARDIAN_RELEVANCE_BLOCK: 'Bloqueado por relevancia no Guardian',
+};
+
+const isTabKey = (value: string | null): value is TabKey => Boolean(value && TAB_KEYS.includes(value as TabKey));
+
+const firstTouchReasonLabel = (reason: string) => (
+  firstTouchReasonLabels[reason] || reason.replaceAll('_', ' ').toLowerCase()
+);
+
 export default function Settings() {
   const { user, tenantId } = useAuthStore();
   const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState<string>(() => {
     const tab = searchParams.get('tab');
-    if (tab && ['perfil', 'contexto', 'integracoes', 'agenda', 'credenciais', 'financeiro', 'privacidade'].includes(tab)) {
+    if (isTabKey(tab)) {
       return tab;
     }
     return 'perfil';
@@ -276,6 +390,7 @@ export default function Settings() {
   const statusPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const statusRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const statusRealtimeChannelRef = useRef<RealtimeChannel | null>(null);
+  const diagnosticPanelRef = useRef<HTMLDivElement | null>(null);
   const canManageCredentials = user?.role !== 'ASSISTANT';
 
   // Agenda settings state
@@ -348,6 +463,36 @@ export default function Settings() {
     return 'bg-[#ECFDF3] text-[#027A48] border-[#A7F3D0]';
   };
 
+  const explainAiOperation = (
+    currentState: WhatsAppGuardianTrace['currentState'] | null,
+    aiActivity: WhatsAppGuardianTrace['aiActivity'],
+  ) => {
+    if (!currentState) {
+      return 'O sistema ainda nao confirmou o estado operacional do WhatsApp.';
+    }
+
+    if (currentState.operationState === 'BLOCKED' || currentState.operationState === 'REQUIRES_ACTION') {
+      return 'A IA esta pausada para envios automaticos ate a conexao ou o bloqueio operacional ser resolvido.';
+    }
+
+    if (aiActivity?.state === 'STALLED') {
+      return 'A IA esta conectada, mas existe atraso em fila ou resposta que precisa ser acompanhado antes de confiar no envio automatico.';
+    }
+
+    if (aiActivity?.state === 'WATCH') {
+      if (aiActivity.contactableBacklog === 0 && aiActivity.firstTouchEligibility?.totalEvaluated) {
+        return 'A IA pode responder conversas existentes, mas nao iniciara novos contatos porque nenhum lead atende todos os criterios atuais.';
+      }
+      return 'A IA esta conectada, porem em observacao porque existe uma condicao operacional que pode reduzir ou adiar novas prospeccoes.';
+    }
+
+    if (aiActivity?.state === 'OFF_HOURS') {
+      return 'A IA esta fora da janela ativa de prospeccao; novas abordagens devem aguardar o horario configurado.';
+    }
+
+    return 'A IA esta liberada para responder e iniciar conversas conforme campanha, roteiro, horario, limites e Guardian.';
+  };
+
   const syncClass = (mode: WhatsAppStatusSyncState['mode']) => {
     if (mode === 'live') return 'bg-[#ECFDF3] text-[#027A48] border-[#A7F3D0]';
     if (mode === 'error') return 'bg-[#FEF3F2] text-[#B42318] border-[#FECDCA]';
@@ -360,6 +505,88 @@ export default function Settings() {
     if (mode === 'polling') return 'Atualizacao automatica';
     if (mode === 'error') return 'Atualizacao instavel';
     return 'Sincronizando';
+  };
+
+  const workerStatusLabel = (status?: string | null, duePending = 0, blockedByConnection = false) => {
+    if (duePending > 0 && blockedByConnection) return 'Aguardando reconexao';
+    if (duePending > 0) return 'Fila atrasada';
+    if (status === 'FAILED') return 'Ultimo envio falhou';
+    if (status === 'BLOCKED') return 'Ultimo envio bloqueado';
+    if (status === 'DUE') return 'Pronto para enviar';
+    if (status === 'DELAYED') return 'Aguardando seguranca';
+    if (status === 'WAITING') return 'Agendado';
+    if (status === 'SENT') return 'Enviou recentemente';
+    return 'Sem fila ativa';
+  };
+
+  const workerStatusClass = (status?: string | null, duePending = 0, blockedByConnection = false) => {
+    if (blockedByConnection) return 'bg-[#FEF3F2] text-[#B42318] border-[#FECDCA]';
+    if (status === 'FAILED' || status === 'BLOCKED') return 'bg-[#FEF3F2] text-[#B42318] border-[#FECDCA]';
+    if (duePending > 0 || status === 'DUE' || status === 'DELAYED') return 'bg-[#FFFAEB] text-[#B54708] border-[#FEDF89]';
+    if (status === 'WAITING') return 'bg-[#EFF8FF] text-[#175CD3] border-[#B2DDFF]';
+    return 'bg-[#ECFDF3] text-[#027A48] border-[#A7F3D0]';
+  };
+
+  const messageTypeLabel = (messageType?: string | null) => {
+    if (messageType === 'OUTBOUND_START') return 'Primeiro contato';
+    if (messageType === 'COMMERCIAL_FOLLOWUP') return 'Follow-up';
+    if (messageType === 'REACTIVE_REPLY') return 'Resposta ao lead';
+    if (messageType === 'CHAT_CONTINUATION') return 'Continuidade';
+    if (messageType === 'LOOKUP_REPLY') return 'Resposta com pesquisa';
+    return 'Mensagem da IA';
+  };
+
+  const blockerKindLabel = (kind?: string | null) => {
+    if (kind === 'CONNECTION') return 'Conexao';
+    if (kind === 'GUARDIAN') return 'Guardian';
+    if (kind === 'CONVERSATION') return 'Conversa';
+    if (kind === 'LEAD') return 'Lead';
+    if (kind === 'WORKER') return 'Worker';
+    return 'Diagnostico';
+  };
+
+  const countLabel = (count: number, singular: string, plural: string) => (
+    `${count} ${count === 1 ? singular : plural}`
+  );
+
+  const buildWorkerSummary = (
+    worker: NonNullable<WhatsAppGuardianTrace['workerSnapshot']>,
+    aiActivity: WhatsAppGuardianTrace['aiActivity'],
+    currentState: WhatsAppGuardianTrace['currentState'] | null,
+  ) => {
+    const blockedByConnection = Boolean(
+      worker.guardianBlockingSend ||
+      currentState?.operationState === 'BLOCKED' ||
+      currentState?.operationState === 'REQUIRES_ACTION',
+    );
+
+    if (worker.duePending > 0) {
+      if (blockedByConnection) {
+        return worker.duePending === 1
+          ? '1 mensagem esta pronta, mas nao sera enviada enquanto o WhatsApp estiver desconectado, pausado ou sem autorizacao.'
+          : `${countLabel(worker.duePending, 'mensagem', 'mensagens')} estao prontas, mas nao serao enviadas enquanto o WhatsApp estiver desconectado, pausado ou sem autorizacao.`;
+      }
+      return worker.duePending === 1
+        ? '1 mensagem ja deveria ter sido enviada e ainda esta na fila. Acompanhe a proxima rodada; se continuar assim, investigar execucao do envio e gateway.'
+        : `${countLabel(worker.duePending, 'mensagem', 'mensagens')} ja deveriam ter sido enviadas e ainda estao na fila. Acompanhe a proxima rodada; se continuar assim, investigar execucao do envio e gateway.`;
+    }
+    if (worker.activePending > 0) {
+      return worker.activePending === 1
+        ? '1 mensagem esta na fila aguardando o horario seguro definido pela IA e pelo Guardian.'
+        : `${countLabel(worker.activePending, 'mensagem', 'mensagens')} estao na fila aguardando o horario seguro definido pela IA e pelo Guardian.`;
+    }
+    if (worker.sentLast60m > 0) {
+      return `A IA enviou ${countLabel(worker.sentLast60m, 'mensagem', 'mensagens')} na ultima hora.`;
+    }
+    if (aiActivity?.isOperatingWindow && worker.firstTouchEligible > 0 && worker.sentToday === 0) {
+      return worker.firstTouchEligible === 1
+        ? '1 lead esta pronto para primeiro contato, mas ainda nao houve envio hoje. Acompanhe a proxima rodada de envio.'
+        : `${countLabel(worker.firstTouchEligible, 'lead', 'leads')} estao prontos para primeiro contato, mas ainda nao houve envio hoje. Acompanhe a proxima rodada de envio.`;
+    }
+    if (worker.firstTouchEligible <= 0) {
+      return 'Nao ha leads prontos para primeiro contato neste momento. A IA segue disponivel para respostas e follow-ups conforme as regras.';
+    }
+    return 'Sem fila ativa neste momento. A IA aguarda a proxima oportunidade valida de envio.';
   };
 
   const fetchProfile = useCallback(async () => {
@@ -627,6 +854,24 @@ export default function Settings() {
   }, [checkStatus]);
 
   useEffect(() => {
+    const requestedTab = searchParams.get('tab');
+    if (isTabKey(requestedTab) && requestedTab !== activeTab) {
+      setActiveTab(requestedTab);
+    }
+  }, [activeTab, searchParams]);
+
+  useEffect(() => {
+    if (activeTab !== 'integracoes') return;
+    if (typeof window === 'undefined' || window.location.hash !== '#diagnostico-operacional') return;
+
+    const timer = window.setTimeout(() => {
+      diagnosticPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 120);
+
+    return () => window.clearTimeout(timer);
+  }, [activeTab, whatsappTrace]);
+
+  useEffect(() => {
     if (activeTab === 'perfil') {
       fetchProfile();
       // Fetch notification preferences from API
@@ -692,7 +937,7 @@ export default function Settings() {
         pollingIntervalRef.current = null;
       }
     };
-  }, [activeTab, fetchProfile, checkStatus, fetchCredentialState, fetchBilling, fetchAgendaSettings]);
+  }, [activeTab, searchParams, fetchProfile, checkStatus, fetchCredentialState, fetchBilling, fetchAgendaSettings]);
 
   useEffect(() => {
     if (activeTab !== 'integracoes' || !tenantId) return;
@@ -892,9 +1137,16 @@ export default function Settings() {
     const currentState = whatsappTrace.currentState ?? null;
     const recentTransitions = whatsappTrace.recentTransitions ?? [];
     const aiActivity = whatsappTrace.aiActivity ?? null;
+    const workerSnapshot = whatsappTrace.workerSnapshot ?? null;
+    const dueQueueDiagnostics = whatsappTrace.dueQueueDiagnostics ?? { totalDue: 0, items: [] };
+    const firstDueItem = dueQueueDiagnostics.items[0] ?? null;
 
     return (
-      <div className="rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-4">
+      <div
+        id="diagnostico-operacional"
+        ref={diagnosticPanelRef}
+        className="scroll-mt-28 rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-4"
+      >
         <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
@@ -948,6 +1200,17 @@ export default function Settings() {
               <span>Origem: {formatTraceLabel(status?.stateSource)}</span>
               <span>Motivo: {formatTraceLabel(status?.stateReasonCode || status?.lastDisconnectReasonCode)}</span>
             </div>
+            <div className="mt-3 rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] px-3 py-2">
+              <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">O que significa</span>
+              <p className="text-[11px] text-[#334155] mt-1 leading-relaxed">
+                {explainAiOperation(currentState, aiActivity)}
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-2 text-[10px] text-[#64748B]">
+                <span>Responder conversas: {currentState.allowSend ? 'sim, liberado' : 'nao, pausado'}</span>
+                <span>Iniciar novas conversas: {currentState.allowNewActive ? 'sim, liberado' : 'nao ou com restricao'}</span>
+                <span>Proximo passo: {aiActivity?.requiredAction || 'acompanhar a proxima leitura'}</span>
+              </div>
+            </div>
           </div>
         )}
 
@@ -966,7 +1229,7 @@ export default function Settings() {
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[10px] shrink-0">
                 <span className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 font-semibold text-[#334155]">Leads hoje: {aiActivity.leadsCreatedToday}</span>
-                <span className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 font-semibold text-[#334155]">Aptos: {aiActivity.contactableBacklog}</span>
+                <span className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 font-semibold text-[#334155]">Elegiveis agora: {aiActivity.contactableBacklog}</span>
                 <span className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 font-semibold text-[#334155]">Fila vencida: {aiActivity.duePending}</span>
                 <span className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 font-semibold text-[#334155]">Sem resposta: {aiActivity.unansweredConversations}</span>
               </div>
@@ -976,6 +1239,161 @@ export default function Settings() {
               <span>Ultimo envio IA: {formatDateTime(aiActivity.lastOutboundAt)}</span>
               <span>Ultima entrada lead: {formatDateTime(aiActivity.lastInboundAt)}</span>
             </div>
+            {aiActivity.firstTouchEligibility && (
+              <div className="mt-3 rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] px-3 py-2">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-[10px] text-[#64748B]">
+                  <span>Elegiveis reais: {aiActivity.firstTouchEligibility.eligible} de {aiActivity.firstTouchEligibility.totalEvaluated} avaliados</span>
+                  <span>Principal bloqueio: {aiActivity.firstTouchEligibility.topBlockingReasonLabel || 'sem bloqueio dominante'}</span>
+                  <span>Ocorrencias: {aiActivity.firstTouchEligibility.topBlockingReasonCount}</span>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {Object.entries(aiActivity.firstTouchEligibility.byReason)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 5)
+                    .map(([reason, count]) => (
+                      <span key={reason} className="rounded-md border border-[#CBD5E1] bg-white px-2 py-1 text-[10px] font-semibold text-[#334155]">
+                        {firstTouchReasonLabel(reason)}: {count}
+                      </span>
+                    ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {workerSnapshot && (
+          <div className="mt-3 rounded-lg border border-[#D0D5DD] bg-white p-3">
+            <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[12px] font-bold text-[#0F172A]">Execucao da IA</span>
+                  <Badge className={`text-[9px] uppercase font-bold tracking-wider px-2 py-0.5 border ${workerStatusClass(workerSnapshot.latestQueue?.status, workerSnapshot.duePending, workerSnapshot.guardianBlockingSend)}`}>
+                    {workerStatusLabel(workerSnapshot.latestQueue?.status, workerSnapshot.duePending, workerSnapshot.guardianBlockingSend)}
+                  </Badge>
+                </div>
+                <p className="text-[11px] text-[#334155] mt-1 leading-relaxed">
+                  {buildWorkerSummary(workerSnapshot, aiActivity, currentState)}
+                </p>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[10px] shrink-0">
+                <span className="rounded-md border border-[#E5E7EB] bg-[#F8FAFC] px-2 py-1 font-semibold text-[#334155]">
+                  Hoje: {countLabel(workerSnapshot.sentToday, 'envio', 'envios')}
+                </span>
+                <span className="rounded-md border border-[#E5E7EB] bg-[#F8FAFC] px-2 py-1 font-semibold text-[#334155]">
+                  Ultima hora: {workerSnapshot.sentLast60m}
+                </span>
+                <span className={`rounded-md border px-2 py-1 font-semibold ${workerSnapshot.duePending > 0 ? 'bg-[#FFFAEB] text-[#B54708] border-[#FEDF89]' : 'bg-[#F8FAFC] text-[#334155] border-[#E5E7EB]'}`}>
+                  Atrasadas: {workerSnapshot.duePending}
+                </span>
+                <span className={`rounded-md border px-2 py-1 font-semibold ${workerSnapshot.blockedOrFailedLast24h > 0 ? 'bg-[#FEF3F2] text-[#B42318] border-[#FECDCA]' : 'bg-[#F8FAFC] text-[#334155] border-[#E5E7EB]'}`}>
+                  Falhas/bloqueios: {workerSnapshot.blockedOrFailedLast24h}
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-3">
+              <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-3">
+                <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Ultimo envio</span>
+                <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">{formatDateTime(workerSnapshot.latestAiMessageAt)}</span>
+              </div>
+              <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-3">
+                <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Fila agora</span>
+                <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">
+                  {workerSnapshot.activePending} em espera
+                </span>
+              </div>
+              <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-3">
+                <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Proximo envio</span>
+                <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">{formatDateTime(workerSnapshot.nextScheduledFor)}</span>
+              </div>
+              <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-3">
+                <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Leads prontos</span>
+                <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">
+                  {workerSnapshot.firstTouchEligible} de {workerSnapshot.firstTouchEvaluated}
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+              <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-3">
+                <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Bloqueio atual</span>
+                <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">
+                  {workerSnapshot.guardianBlockSummary || 'Sem bloqueio de conexao'}
+                </span>
+              </div>
+              <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-3">
+                <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Estado da conexao</span>
+                <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">
+                  {formatTraceLabel(workerSnapshot.guardianStatus)} / {formatTraceLabel(workerSnapshot.guardianExternalState)}
+                </span>
+              </div>
+              <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-3">
+                <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Motivo da conexao</span>
+                <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">
+                  {formatTraceLabel(workerSnapshot.guardianReasonCode)}
+                </span>
+              </div>
+            </div>
+
+            {workerSnapshot.latestQueue && (
+              <div className="mt-3 rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] px-3 py-2">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-[10px] text-[#64748B]">
+                  <span>Ultima acao da fila: {messageTypeLabel(workerSnapshot.latestQueue.messageType)}</span>
+                  <span>Status: {workerStatusLabel(workerSnapshot.latestQueue.status, workerSnapshot.duePending, workerSnapshot.guardianBlockingSend)}</span>
+                  <span>Horario: {formatDateTime(workerSnapshot.latestQueue.sentAt || workerSnapshot.latestQueue.failedAt || workerSnapshot.latestQueue.scheduledFor || workerSnapshot.latestQueue.createdAt)}</span>
+                </div>
+                {(workerSnapshot.latestQueue.failedReason || workerSnapshot.latestQueue.validationReasonCode || workerSnapshot.latestQueue.finalGuardianDecision) && (
+                  <p className="text-[10px] text-[#64748B] mt-2">
+                    Motivo registrado: {formatTraceLabel(workerSnapshot.latestQueue.failedReason || workerSnapshot.latestQueue.validationReasonCode || workerSnapshot.latestQueue.finalGuardianDecision)}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {firstDueItem && (
+              <div className={`mt-3 rounded-lg border px-3 py-3 ${
+                firstDueItem.blocksSend
+                  ? 'border-[#FEDF89] bg-[#FFFAEB]'
+                  : 'border-[#BFDBFE] bg-[#EFF6FF]'
+              }`}>
+                <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[11px] font-bold text-[#0F172A]">Pendencia principal</span>
+                      <Badge className={`text-[9px] uppercase font-bold tracking-wider px-2 py-0.5 border ${
+                        firstDueItem.blocksSend
+                          ? 'bg-[#FEF0C7] text-[#B54708] border-[#FEDF89]'
+                          : 'bg-[#DBEAFE] text-[#1D4ED8] border-[#BFDBFE]'
+                      }`}>
+                        {blockerKindLabel(firstDueItem.blockerKind)}
+                      </Badge>
+                      {dueQueueDiagnostics.totalDue > 1 && (
+                        <span className="text-[10px] text-[#64748B]">
+                          mais {countLabel(dueQueueDiagnostics.totalDue - 1, 'pendencia vencida', 'pendencias vencidas')}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-[#334155] mt-1 leading-relaxed">{firstDueItem.operatorSummary}</p>
+                    <p className="text-[10px] text-[#475569] mt-1 leading-relaxed">
+                      Acao recomendada: {firstDueItem.recommendedAction}
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-[10px] shrink-0">
+                    <span className="rounded-md border border-white/70 bg-white/70 px-2 py-1 font-semibold text-[#334155]">
+                      Tipo: {messageTypeLabel(firstDueItem.messageType)}
+                    </span>
+                    <span className="rounded-md border border-white/70 bg-white/70 px-2 py-1 font-semibold text-[#334155]">
+                      Atraso: {formatDuration(firstDueItem.dueAgeSeconds)}
+                    </span>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-3 text-[10px] text-[#64748B]">
+                  <span>Lead: {firstDueItem.leadName || 'sem nome registrado'}</span>
+                  <span>Campanha: {firstDueItem.campaignName || 'sem campanha registrada'}</span>
+                  <span>Agendada para: {formatDateTime(firstDueItem.scheduledFor)}</span>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1026,7 +1444,7 @@ export default function Settings() {
         <div className="mt-3 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
           <div className={`text-[11px] font-semibold ${missingEvidence > 0 ? 'text-[#B42318]' : 'text-[#027A48]'}`}>
             {missingEvidence > 0
-              ? `${missingEvidence} pendência(s) sem evidência Guardian`
+              ? countLabel(missingEvidence, 'pendencia sem evidencia Guardian', 'pendencias sem evidencia Guardian')
               : 'Nenhuma pendência ativa sem evidência Guardian'}
           </div>
           <div className="text-[10px] text-[#64748B]">

@@ -63,6 +63,10 @@ function cleanText(value: unknown, max = 500): string {
     .slice(0, max);
 }
 
+function countLabel(count: number, singular: string, plural: string): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
 function scopedTenantIds(schedule: Schedule): string[] {
   return Array.isArray(schedule.tenant_ids)
     ? schedule.tenant_ids.filter((id) => typeof id === "string" && id.length > 0)
@@ -349,19 +353,25 @@ function oldestAt(rows: any[], field: string): string | null {
 function classifyActivity(input: {
   isOperatingWindow: boolean;
   guardianStatus: string;
+  guardianBlockingSend?: boolean;
+  guardianBlockSummary?: string | null;
   contactableBacklog: number;
   duePending: number;
   oldestDuePendingAt: string | null;
+  blockedOrFailedLast24h?: number;
   unansweredConversations: number;
   oldestUnansweredInboundAt: string | null;
   outboundToday: number;
   nowMs: number;
 }): { state: ActivityState; summary: string; action: string } {
   const guardian = input.guardianStatus.toUpperCase();
-  if (guardian === "SUSPENDED" || guardian === "PAUSED") {
+  if (guardian === "SUSPENDED" || guardian === "PAUSED" || input.guardianBlockingSend) {
+    const dueDetail = input.duePending > 0
+      ? ` ${countLabel(input.duePending, "mensagem pronta aguarda", "mensagens prontas aguardam")} reconexao antes de enviar.`
+      : "";
     return {
       state: "BLOCKED",
-      summary: "IA pausada por estado do WhatsApp.",
+      summary: `${input.guardianBlockSummary || "IA pausada por estado do WhatsApp."}.${dueDetail}`,
       action: "Reconectar ou estabilizar o WhatsApp.",
     };
   }
@@ -370,7 +380,9 @@ function classifyActivity(input: {
   if (input.duePending > 0 && dueAge >= 15) {
     return {
       state: "STALLED",
-      summary: `${input.duePending} mensagem(ns) vencida(s) na fila.`,
+      summary: input.duePending === 1
+        ? "1 mensagem vencida na fila."
+        : `${countLabel(input.duePending, "mensagem", "mensagens")} vencidas na fila.`,
       action: "Checar worker send-messages e bloqueios do Guardian.",
     };
   }
@@ -379,7 +391,9 @@ function classifyActivity(input: {
   if (input.unansweredConversations > 0 && inboundAge >= 10) {
     return {
       state: "STALLED",
-      summary: `${input.unansweredConversations} conversa(s) aguardando resposta da IA.`,
+      summary: input.unansweredConversations === 1
+        ? "1 conversa aguarda resposta da IA."
+        : `${countLabel(input.unansweredConversations, "conversa", "conversas")} aguardam resposta da IA.`,
       action: "Priorizar continuidade antes de nova prospeccao.",
     };
   }
@@ -387,8 +401,18 @@ function classifyActivity(input: {
   if (input.isOperatingWindow && input.contactableBacklog > 0 && input.outboundToday === 0) {
     return {
       state: "WATCH",
-      summary: `${input.contactableBacklog} lead(s) aptos e nenhum envio da IA hoje.`,
+      summary: input.contactableBacklog === 1
+        ? "1 lead apto e nenhum envio da IA hoje."
+        : `${countLabel(input.contactableBacklog, "lead apto", "leads aptos")} e nenhum envio da IA hoje.`,
       action: "Acompanhar proxima execucao e validar campanha/cadencia.",
+    };
+  }
+
+  if ((input.blockedOrFailedLast24h || 0) > 0) {
+    return {
+      state: "WATCH",
+      summary: `${countLabel(input.blockedOrFailedLast24h || 0, "falha ou bloqueio recente", "falhas ou bloqueios recentes")} em envios da IA.`,
+      action: "Acompanhar se novas filas voltam a falhar antes de aumentar cadencia.",
     };
   }
 
@@ -488,11 +512,42 @@ async function collectAiActivity(schedule: Schedule, tenants: any[], guardianSta
     .limit(1000);
   inboundQuery = applyTenantScope(inboundQuery, schedule);
 
-  const [pendingResult, unansweredResult, outboundResult, inboundResult] = await Promise.all([
+  let workerSnapshotQuery = supabase
+    .from("ai_worker_operational_snapshot")
+    .select([
+      "tenant_id",
+      "active_pending",
+      "due_pending",
+      "blocked_or_failed_last24h",
+      "next_scheduled_for",
+      "oldest_due_at",
+      "oldest_due_age_seconds",
+      "sent_today",
+      "sent_last60m",
+      "latest_ai_message_at",
+      "latest_inbound_at",
+      "guardian_status",
+      "guardian_external_state",
+      "guardian_reason_code",
+      "guardian_operation_state",
+      "guardian_blocking_send",
+      "guardian_block_summary",
+      "first_touch_eligible",
+      "first_touch_evaluated",
+      "latest_queue_status",
+      "latest_queue_message_type",
+      "latest_queue_failed_reason",
+      "latest_queue_validation_reason_code",
+      "latest_queue_final_guardian_decision",
+    ].join(", "));
+  workerSnapshotQuery = applyTenantScope(workerSnapshotQuery, schedule);
+
+  const [pendingResult, unansweredResult, outboundResult, inboundResult, workerSnapshotResult] = await Promise.all([
     safeRows("pendingDue", pendingQuery),
     safeRows("unansweredConversations", unansweredQuery),
     safeRows("outboundToday", outboundQuery),
     safeRows("inboundToday", inboundQuery),
+    safeRows("aiWorkerSnapshot", workerSnapshotQuery),
   ]);
 
   const contactableByTenant = rowsByTenant(contactableResult.rows);
@@ -501,6 +556,7 @@ async function collectAiActivity(schedule: Schedule, tenants: any[], guardianSta
   const outboundByTenant = rowsByTenant(outboundResult.rows);
   const inboundByTenant = rowsByTenant(inboundResult.rows);
   const guardianByTenant = new Map((guardianStatus || []).map((row: any) => [String(row.tenant_id), row]));
+  const workerByTenant = new Map((workerSnapshotResult.rows || []).map((row: any) => [String(row.tenant_id), row]));
 
   const tenantRows = tenants.map((tenant: any) => {
     const tenantId = String(tenant.id);
@@ -510,15 +566,25 @@ async function collectAiActivity(schedule: Schedule, tenants: any[], guardianSta
     const outbound = outboundByTenant.get(tenantId) || [];
     const inbound = inboundByTenant.get(tenantId) || [];
     const guardian = guardianByTenant.get(tenantId);
+    const worker = workerByTenant.get(tenantId) || null;
+    const contactableBacklog = worker ? Number(worker.first_touch_eligible || 0) : contactable.length;
+    const duePending = worker ? Number(worker.due_pending || 0) : pending.length;
+    const outboundToday = worker ? Number(worker.sent_today || 0) : outbound.length;
+    const outboundLast60m = worker
+      ? Number(worker.sent_last60m || 0)
+      : outbound.filter((row: any) => String(row.created_at || "") >= last60m).length;
     const classified = classifyActivity({
       isOperatingWindow: operatingWindow.isOpen,
-      guardianStatus: String(guardian?.status || "NORMAL"),
-      contactableBacklog: contactable.length,
-      duePending: pending.length,
-      oldestDuePendingAt: oldestAt(pending, "scheduled_for"),
+      guardianStatus: String(worker?.guardian_status || guardian?.status || "NORMAL"),
+      guardianBlockingSend: Boolean(worker?.guardian_blocking_send),
+      guardianBlockSummary: worker?.guardian_block_summary || null,
+      contactableBacklog,
+      duePending,
+      oldestDuePendingAt: worker?.oldest_due_at || oldestAt(pending, "scheduled_for"),
+      blockedOrFailedLast24h: Number(worker?.blocked_or_failed_last24h || 0),
       unansweredConversations: unanswered.length,
       oldestUnansweredInboundAt: oldestAt(unanswered, "last_inbound_at"),
-      outboundToday: outbound.length,
+      outboundToday,
       nowMs,
     });
 
@@ -528,13 +594,30 @@ async function collectAiActivity(schedule: Schedule, tenants: any[], guardianSta
       state: classified.state,
       summary: classified.summary,
       action: classified.action,
-      contactable_backlog: contactable.length,
-      due_pending: pending.length,
+      contactable_backlog: contactableBacklog,
+      due_pending: duePending,
       unanswered_conversations: unanswered.length,
-      outbound_today: outbound.length,
-      outbound_last_60m: outbound.filter((row: any) => String(row.created_at || "") >= last60m).length,
+      outbound_today: outboundToday,
+      outbound_last_60m: outboundLast60m,
       inbound_today: inbound.length,
-      guardian_status: guardian?.status || null,
+      guardian_status: worker?.guardian_status || guardian?.status || null,
+      active_pending: worker ? Number(worker.active_pending || 0) : null,
+      blocked_or_failed_last24h: worker ? Number(worker.blocked_or_failed_last24h || 0) : null,
+      first_touch_evaluated: worker ? Number(worker.first_touch_evaluated || 0) : null,
+      oldest_due_age_minutes: worker?.oldest_due_age_seconds == null
+        ? null
+        : Math.floor(Number(worker.oldest_due_age_seconds || 0) / 60),
+      next_scheduled_for: worker?.next_scheduled_for || null,
+      latest_ai_message_at: worker?.latest_ai_message_at || null,
+      worker_status: worker?.latest_queue_status || null,
+      worker_message_type: worker?.latest_queue_message_type || null,
+      worker_failed_reason: worker?.latest_queue_failed_reason || null,
+      worker_validation_reason_code: worker?.latest_queue_validation_reason_code || null,
+      worker_final_guardian_decision: worker?.latest_queue_final_guardian_decision || null,
+      guardian_external_state: worker?.guardian_external_state || guardian?.external_state || null,
+      guardian_reason_code: worker?.guardian_reason_code || guardian?.last_disconnect_reason_code || null,
+      guardian_blocking_send: Boolean(worker?.guardian_blocking_send),
+      guardian_block_summary: worker?.guardian_block_summary || null,
     };
   });
 
@@ -549,6 +632,7 @@ async function collectAiActivity(schedule: Schedule, tenants: any[], guardianSta
     unansweredResult.error,
     outboundResult.error,
     inboundResult.error,
+    workerSnapshotResult.error,
   ].filter(Boolean);
 
   return {

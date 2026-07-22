@@ -38,6 +38,21 @@ type AdminAiActivityTenant = {
   outbound_last_60m?: number | null;
   inbound_today?: number | null;
   guardian_status?: string | null;
+  active_pending?: number | null;
+  blocked_or_failed_last24h?: number | null;
+  first_touch_evaluated?: number | null;
+  oldest_due_age_minutes?: number | null;
+  next_scheduled_for?: string | null;
+  latest_ai_message_at?: string | null;
+  worker_status?: string | null;
+  worker_message_type?: string | null;
+  worker_failed_reason?: string | null;
+  worker_validation_reason_code?: string | null;
+  worker_final_guardian_decision?: string | null;
+  guardian_external_state?: string | null;
+  guardian_reason_code?: string | null;
+  guardian_blocking_send?: boolean | null;
+  guardian_block_summary?: string | null;
 };
 
 type AdminAiActivity = {
@@ -559,6 +574,9 @@ function activityStateLabel(value: string | null | undefined): string {
 function activityImpactText(activity: AdminAiActivityTenant): string {
   const state = String(activity.state || "").toUpperCase();
   if (state === "BLOCKED") {
+    if (activity.guardian_blocking_send && Number(activity.due_pending || 0) > 0) {
+      return "ha mensagens prontas, mas o WhatsApp esta desconectado, pausado ou sem autorizacao para envio.";
+    }
     return "a IA nao deve enviar mensagens ate o bloqueio operacional ser resolvido.";
   }
   if (Number(activity.due_pending || 0) > 0) {
@@ -570,6 +588,19 @@ function activityImpactText(activity: AdminAiActivityTenant): string {
   return "a operacao precisa de acompanhamento porque ha sinais de atraso.";
 }
 
+function queueStatusText(activity: AdminAiActivityTenant): string {
+  const due = Number(activity.due_pending || 0);
+  const active = Number(activity.active_pending || 0);
+  const status = String(activity.worker_status || "").toUpperCase();
+  if (due > 0 && activity.guardian_blocking_send) return "pronta, aguardando reconexao";
+  if (due > 0) return "atrasada";
+  if (active > 0) return "aguardando horario seguro";
+  if (status === "FAILED") return "ultimo envio falhou";
+  if (status === "BLOCKED") return "ultimo envio bloqueado";
+  if (status === "SENT") return "ultimo envio concluido";
+  return "sem fila ativa";
+}
+
 export function buildAdminAiActivityAlertMessage(input: AiActivityAlertInput) {
   const activity = input.activity;
   const tenantName = cleanText(activity.tenant_name || input.tenant?.name || input.tenant?.slug || "tenant desconhecido", 120);
@@ -577,6 +608,7 @@ export function buildAdminAiActivityAlertMessage(input: AiActivityAlertInput) {
   const createdAt = input.createdAt || new Date().toISOString();
   const summaryText = sanitizePreview(activity.summary || "A operacao da IA precisa de acompanhamento.", 220);
   const actionText = sanitizePreview(activity.action || "Verificar o painel de monitoramento administrativo.", 220);
+  const activePending = Number(activity.active_pending || 0);
   const bodyLines = [
     "Prospix - alerta de atividade da IA",
     "",
@@ -586,19 +618,35 @@ export function buildAdminAiActivityAlertMessage(input: AiActivityAlertInput) {
     `Impacto: ${activityImpactText(activity)}`,
     "",
     "Evidencias:",
-    `- Leads aptos sem primeiro contato: ${Number(activity.contactable_backlog || 0)}.`,
+    `- Leads prontos para primeiro contato: ${Number(activity.contactable_backlog || 0)} de ${Number(activity.first_touch_evaluated || 0)} avaliados.`,
     `- Mensagens vencidas na fila: ${Number(activity.due_pending || 0)}.`,
+    `- Fila atual: ${activePending} ${plural(activePending, "mensagem", "mensagens")}, ${queueStatusText(activity)}.`,
+    `- Falhas ou bloqueios nas ultimas 24h: ${Number(activity.blocked_or_failed_last24h || 0)}.`,
     `- Conversas aguardando resposta: ${Number(activity.unanswered_conversations || 0)}.`,
     `- Envios da IA hoje: ${Number(activity.outbound_today || 0)} (${Number(activity.outbound_last_60m || 0)} na ultima hora).`,
     `- Entradas de leads hoje: ${Number(activity.inbound_today || 0)}.`,
-    `- Estado do WhatsApp: ${sanitizePreview(activity.guardian_status || "sem registro", 80)}.`,
+    `- Ultimo envio da IA: ${formatBrtMinute(activity.latest_ai_message_at)}.`,
+    `- Proximo envio previsto: ${formatBrtMinute(activity.next_scheduled_for)}.`,
+    `- Estado do WhatsApp: ${sanitizePreview(activity.guardian_block_summary || activity.guardian_status || "sem registro", 120)}.`,
+  ];
+
+  const reason = activity.guardian_reason_code
+    || activity.worker_failed_reason
+    || activity.worker_validation_reason_code
+    || activity.worker_final_guardian_decision
+    || null;
+  if (reason) {
+    bodyLines.push(`- Motivo registrado: ${sanitizePreview(reason, 160)}.`);
+  }
+
+  bodyLines.push(
     "",
     "Resumo:",
     summaryText,
     "",
     "Acao recomendada:",
     actionText,
-  ];
+  );
 
   const body = bodyLines.join("\n");
   const summary = cleanText(`${stateLabel} em ${tenantName}: ${summaryText}`, 500);
