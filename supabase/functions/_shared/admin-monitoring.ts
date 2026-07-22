@@ -1,4 +1,4 @@
-import { buildAdminDisconnectAlertMessage } from "./admin-message-formatters.ts";
+import { buildAdminAiActivityAlertMessage, buildAdminDisconnectAlertMessage } from "./admin-message-formatters.ts";
 
 type SupabaseLike = any;
 
@@ -56,6 +56,25 @@ type DisconnectAlertParams = {
   connectionEventId?: string | null;
   operationalAlertId?: string | null;
   pendingDueCount?: number | null;
+  source: string;
+};
+
+type AiActivityAlertParams = {
+  supabase: SupabaseLike;
+  activity: {
+    tenant_id?: string | null;
+    tenant_name?: string | null;
+    state?: string | null;
+    summary?: string | null;
+    action?: string | null;
+    contactable_backlog?: number | null;
+    due_pending?: number | null;
+    unanswered_conversations?: number | null;
+    outbound_today?: number | null;
+    outbound_last_60m?: number | null;
+    inbound_today?: number | null;
+    guardian_status?: string | null;
+  };
   source: string;
 };
 
@@ -326,6 +345,45 @@ async function loadTenant(supabase: SupabaseLike, tenantId: string) {
   return data || { id: tenantId, name: tenantId, slug: null };
 }
 
+async function createOrLoadAiActivityOperationalAlert(params: AiActivityAlertParams, incidentKey: string) {
+  const tenantId = String(params.activity.tenant_id || "");
+  if (!tenantId) return null;
+
+  const { data: existing } = await params.supabase
+    .from("operational_alerts")
+    .select("id")
+    .eq("dedup_key", incidentKey)
+    .maybeSingle();
+
+  if (existing?.id) return existing.id;
+
+  const alertId = uuid();
+  const state = String(params.activity.state || "STALLED").toUpperCase();
+  const severity = state === "BLOCKED" ? "CRITICAL" : "ATTENTION";
+  const { error } = await params.supabase.from("operational_alerts").insert({
+    id: alertId,
+    type: "ai_activity_monitor",
+    severity,
+    tenant_id: tenantId,
+    title: state === "BLOCKED" ? "IA bloqueada operacionalmente" : "IA com atividade atrasada",
+    message: cleanText(params.activity.summary || "Monitor de atividade detectou atraso operacional da IA.", 500),
+    context: {
+      source: params.source,
+      activity: params.activity,
+    },
+    dedup_key: incidentKey,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  });
+
+  if (error) {
+    console.warn("[admin-monitoring] failed to create AI activity operational_alert", error);
+    return null;
+  }
+
+  return alertId;
+}
+
 async function loadConnectionEvent(supabase: SupabaseLike, eventId?: string | null) {
   if (!eventId) return null;
   const { data } = await supabase
@@ -499,6 +557,92 @@ export async function dispatchAdminDisconnectAlert(params: DisconnectAlertParams
     const result = await sendAdminMonitoringWhatsApp(recipient.whatsapp, built.body, params.supabase);
     await params.supabase
       .from("admin_disconnect_alert_deliveries")
+      .update({
+        channel_id: result.channelId || null,
+        status: result.ok ? "SENT" : "FAILED",
+        sent_at: result.ok ? new Date().toISOString() : null,
+        whatsapp_message_id: result.whatsappMessageId || null,
+        error: result.error || null,
+        ai_summary: built.summary,
+        message_body: built.body,
+      })
+      .eq("id", deliveryId);
+
+    if (result.ok) sent++;
+    else failed++;
+  }
+
+  return { sent, failed, skipped };
+}
+
+export async function dispatchAdminAiActivityAlert(params: AiActivityAlertParams) {
+  const state = String(params.activity.state || "").toUpperCase();
+  const tenantId = String(params.activity.tenant_id || "");
+  if (!tenantId || !["BLOCKED", "STALLED"].includes(state)) {
+    return { sent: 0, failed: 0, skipped: 0, reason: "NOT_ACTIONABLE" };
+  }
+
+  const recipients = await loadRecipients(params.supabase);
+  if (recipients.length === 0) {
+    return { sent: 0, failed: 0, skipped: 0, reason: "NO_ACTIVE_RECIPIENTS" };
+  }
+
+  const now = new Date();
+  const alertBucket = now.toISOString().slice(0, 13);
+  const incidentKey = `ai_activity:${tenantId}:${state}:${alertBucket}`;
+  const tenant = await loadTenant(params.supabase, tenantId);
+  const operationalAlertId = await createOrLoadAiActivityOperationalAlert(params, incidentKey);
+  const built = buildAdminAiActivityAlertMessage({
+    tenant,
+    activity: params.activity,
+    source: params.source,
+    createdAt: now.toISOString(),
+  });
+
+  let sent = 0;
+  let failed = 0;
+  let skipped = 0;
+
+  for (const recipient of recipients) {
+    const { data: existing } = await params.supabase
+      .from("admin_ai_activity_alert_deliveries")
+      .select("id, status")
+      .eq("incident_key", incidentKey)
+      .eq("recipient_id", recipient.id)
+      .maybeSingle();
+
+    if (existing?.status === "SENT") {
+      skipped++;
+      continue;
+    }
+
+    const deliveryId = existing?.id || uuid();
+    if (!existing?.id) {
+      const { error: insertError } = await params.supabase
+        .from("admin_ai_activity_alert_deliveries")
+        .insert({
+          id: deliveryId,
+          operational_alert_id: operationalAlertId,
+          tenant_id: tenantId,
+          recipient_id: recipient.id,
+          incident_key: incidentKey,
+          status: "PENDING",
+          activity_state: state,
+          severity: state === "BLOCKED" ? "CRITICAL" : "ATTENTION",
+          ai_summary: built.summary,
+          message_body: built.body,
+        });
+
+      if (insertError) {
+        console.warn("[admin-monitoring] failed to insert AI activity alert delivery", insertError);
+        failed++;
+        continue;
+      }
+    }
+
+    const result = await sendAdminMonitoringWhatsApp(recipient.whatsapp, built.body, params.supabase);
+    await params.supabase
+      .from("admin_ai_activity_alert_deliveries")
       .update({
         channel_id: result.channelId || null,
         status: result.ok ? "SENT" : "FAILED",

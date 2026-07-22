@@ -34,6 +34,8 @@ import {
 import { Avatar, Dropdown, DropdownItem } from '@prospix/ui';
 import { apiFetch } from '../lib/api-fetch';
 import { TutorialModal } from '../components/TutorialModal';
+import { OperationalStatusProvider, useOperationalStatus } from '../hooks/useOperationalStatus';
+import type { OperationalTone } from '../lib/operational-status';
 
 interface AppShellCounters {
   conversations: number;
@@ -59,6 +61,37 @@ interface AppShellProps {
   children: React.ReactNode;
 }
 
+function indicatorClass(tone: OperationalTone): string {
+  if (tone === 'green') return 'text-[#15803d] bg-[#f0fdf4] border-[#bbf7d0] hover:bg-[#dcfce7]';
+  if (tone === 'blue') return 'text-[#175CD3] bg-[#EFF8FF] border-[#B2DDFF] hover:bg-[#DBEAFE]';
+  if (tone === 'amber') return 'text-[#B54708] bg-[#FFFAEB] border-[#FEDF89] hover:bg-[#FEF3C7]';
+  if (tone === 'red') return 'text-[#be123c] bg-[#fff1f2] border-[#fecdd3] hover:bg-[#ffe4e6] animate-pulse';
+  return 'text-[#475569] bg-[#F1F5F9] border-[#E2E8F0] hover:bg-[#E2E8F0]';
+}
+
+function dotClass(tone: OperationalTone): string {
+  if (tone === 'green') return 'bg-[#22c55e]';
+  if (tone === 'blue') return 'bg-[#3b82f6]';
+  if (tone === 'amber') return 'bg-[#f59e0b]';
+  if (tone === 'red') return 'bg-[#f43f5e]';
+  return 'bg-[#94A3B8]';
+}
+
+function dotPingClass(tone: OperationalTone): string {
+  if (tone === 'green') return 'bg-[#4ade80]';
+  if (tone === 'blue') return 'bg-[#60a5fa]';
+  if (tone === 'amber') return 'bg-[#fbbf24]';
+  if (tone === 'red') return 'bg-[#fb7185]';
+  return 'bg-[#94A3B8]';
+}
+
+function bannerClass(tone: OperationalTone): string {
+  if (tone === 'red') return 'bg-[#FEF3F2] border-[#FEE4E2] text-[#B42318]';
+  if (tone === 'amber') return 'bg-[#FFFAEB] border-[#FEDF89] text-[#B54708]';
+  if (tone === 'blue') return 'bg-[#EFF8FF] border-[#B2DDFF] text-[#175CD3]';
+  return 'bg-[#F8FAFC] border-[#E2E8F0] text-[#475569]';
+}
+
 export default function AppShell({ children }: AppShellProps) {
   const { user, clearSession } = useAuthStore();
   const router = useRouter();
@@ -71,8 +104,8 @@ export default function AppShell({ children }: AppShellProps) {
   const [notifications, setNotifications] = useState<Array<{id: string; title: string; body: string; read_at: string | null; created_at: string; link?: string}>>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isTutorialOpen, setIsTutorialOpen] = useState(false);
-  const [isWhatsappConnected, setIsWhatsappConnected] = useState<boolean | null>(null);
-  const [whatsappDisconnectReason, setWhatsappDisconnectReason] = useState<string | null>(null);
+  const operationalStatus = useOperationalStatus({ pollMs: 60_000 });
+  const operationalView = operationalStatus.view;
 
   const searchResults = globalSearch.trim().length > 1 ? [
     { type: 'lead', label: `Buscar "${globalSearch}" em Leads`, path: `/leads?search=${encodeURIComponent(globalSearch)}` },
@@ -119,20 +152,6 @@ export default function AppShell({ children }: AppShellProps) {
     };
 
     fetchCounters();
-
-    const fetchWhatsappStatus = async () => {
-      try {
-        const res = await apiFetch('/api/integrations/whatsapp/status');
-        const json = await res.json();
-        const connected = json?.status === 'connected';
-        setIsWhatsappConnected(connected);
-        setWhatsappDisconnectReason(connected ? null : (json?.reason || 'other'));
-      } catch {
-        setIsWhatsappConnected(true);
-        setWhatsappDisconnectReason(null);
-      }
-    };
-    fetchWhatsappStatus();
 
     return () => {
       isMounted = false;
@@ -234,6 +253,7 @@ export default function AppShell({ children }: AppShellProps) {
 
   return (
     <ErrorBoundary>
+    <OperationalStatusProvider value={operationalStatus}>
     <div className="min-h-[100dvh] bg-bg flex relative">
       {/* ── Desktop Sidebar (236px) ────────────────────────────────────────── */}
       <aside className="hidden md:flex flex-col w-[236px] bg-surface border-r border-border h-[100dvh] sticky top-0 shrink-0 z-20">
@@ -407,36 +427,19 @@ export default function AppShell({ children }: AppShellProps) {
             {/* WhatsApp Status Indicator */}
             <Link
               href="/configuracoes?tab=integracoes"
-              className={`hidden sm:inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-[12.5px] font-semibold border transition-all hover:-translate-y-0.5 ${
-                isWhatsappConnected === null
-                  ? 'text-[#475569] bg-[#F1F5F9] border-[#E2E8F0] hover:bg-[#E2E8F0]'
-                  : isWhatsappConnected
-                  ? 'text-[#15803d] bg-[#f0fdf4] border-[#bbf7d0] hover:bg-[#dcfce7]'
-                  : 'text-[#be123c] bg-[#fff1f2] border-[#fecdd3] hover:bg-[#ffe4e6] animate-pulse'
-              }`}
+              className={`hidden sm:inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-[12.5px] font-semibold border transition-all hover:-translate-y-0.5 ${indicatorClass(operationalView.indicatorTone)}`}
             >
               <span className="relative flex h-2 w-2">
-                {isWhatsappConnected === null ? (
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-[#94A3B8]"></span>
-                ) : isWhatsappConnected ? (
-                  <>
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#4ade80] opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-[#22c55e]"></span>
-                  </>
+                {operationalView.indicatorTone === 'neutral' ? (
+                  <span className={`relative inline-flex rounded-full h-2 w-2 ${dotClass(operationalView.indicatorTone)}`}></span>
                 ) : (
                   <>
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#fb7185] opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-[#f43f5e]"></span>
+                    <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${dotPingClass(operationalView.indicatorTone)} opacity-75`}></span>
+                    <span className={`relative inline-flex rounded-full h-2 w-2 ${dotClass(operationalView.indicatorTone)}`}></span>
                   </>
                 )}
               </span>
-              <span>
-                {isWhatsappConnected === null
-                  ? 'WhatsApp...'
-                  : isWhatsappConnected
-                  ? 'WhatsApp Conectado'
-                  : 'WhatsApp Desconectado'}
-              </span>
+              <span>{operationalView.indicatorLabel}</span>
             </Link>
 
             {/* Tour button */}
@@ -551,23 +554,24 @@ export default function AppShell({ children }: AppShellProps) {
           </div>
         </header>
 
-        {isWhatsappConnected === false && (
-          <div className="bg-[#FEF3F2] border-b border-[#FEE4E2] px-5 py-2.5 flex items-center justify-between z-20 sticky top-[60px]">
+        {operationalView.showBanner && (
+          <div className={`${bannerClass(operationalView.bannerTone)} border-b px-5 py-2.5 flex items-center justify-between z-20 sticky top-[60px]`}>
             <div className="flex items-center gap-2.5">
-              <AlertTriangle className="w-4 h-4 text-[#D92D20] shrink-0" />
-              <p className="text-[12px] text-[#B42318] font-medium leading-tight">
-                <strong className="font-bold">Atenção:</strong> {
-                  whatsappDisconnectReason === 'device_removed'
-                    ? "Seu WhatsApp foi desconectado pelo próprio aparelho celular (Aparelho Removido). A IA está paralisada."
-                    : "Seu WhatsApp está desconectado. A IA está paralisada e não pode enviar mensagens."
-                }
-              </p>
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <div className="leading-tight">
+                <p className="text-[12px] font-medium">
+                  <strong className="font-bold">{operationalView.bannerTitle}:</strong> {operationalView.bannerBody}
+                </p>
+                {operationalView.bannerDetail && (
+                  <p className="text-[10.5px] opacity-85 mt-0.5">{operationalView.bannerDetail}</p>
+                )}
+              </div>
             </div>
-            <Link 
-              href="/configuracoes?tab=integracoes" 
-              className="text-[11px] font-bold text-[#D92D20] uppercase tracking-wider hover:underline shrink-0 ml-4"
+            <Link
+              href={operationalView.actionHref}
+              className="text-[11px] font-bold uppercase tracking-wider hover:underline shrink-0 ml-4"
             >
-              Reconectar →
+              {operationalView.actionLabel} -&gt;
             </Link>
           </div>
         )}
@@ -580,6 +584,7 @@ export default function AppShell({ children }: AppShellProps) {
       
       <TutorialModal isOpen={isTutorialOpen} onClose={() => setIsTutorialOpen(false)} />
     </div>
+    </OperationalStatusProvider>
     </ErrorBoundary>
   );
 }

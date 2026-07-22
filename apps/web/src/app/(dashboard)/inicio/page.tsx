@@ -7,6 +7,7 @@ import { dashboardQueries, conversationsQueries, meetingsQueries, leadsQueries }
 import { useAuthStore } from '@/store/auth-store';
 import { useRouter } from 'next/navigation';
 import { OnboardingChecklist } from '@/components/OnboardingChecklist';
+import { useOperationalStatusContext } from '@/hooks/useOperationalStatus';
 
 interface HotLead {
   id: string;
@@ -238,6 +239,8 @@ const mapBackendMessage = (msg: any): Message => {
 export default function HomePage() {
   const router = useRouter();
   const tenantId = useAuthStore(state => state.tenantId);
+  const operationalStatus = useOperationalStatusContext();
+  const operationalView = operationalStatus?.view;
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [weekOffset, setWeekOffset] = useState(0);
@@ -908,10 +911,21 @@ export default function HomePage() {
                     {selectedConv.tagType && (
                       <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
                         selectedConv.tagType === 'success' ? 'bg-[#ECFDF3] text-[#027A48]' :
-                        selectedConv.tagType === 'live' ? 'bg-[rgba(232,152,28,0.14)] text-[#A56B0A]' :
+                        selectedConv.tagType === 'live'
+                          ? operationalView?.conversationTone === 'red'
+                            ? 'bg-[#FEF3F2] text-[#B42318]'
+                            : operationalView?.conversationTone === 'amber'
+                              ? 'bg-[#FFFAEB] text-[#B54708]'
+                              : operationalView?.conversationTone === 'blue'
+                                ? 'bg-[#EFF8FF] text-[#175CD3]'
+                                : operationalView?.conversationTone === 'neutral'
+                                  ? 'bg-[#F1F5F9] text-[#475569]'
+                                  : 'bg-[rgba(232,152,28,0.14)] text-[#A56B0A]' :
                         selectedConv.tagType === 'warning' ? 'bg-[#FFFAEB] text-[#B54708]' :
                         'bg-[rgba(27,58,107,0.08)] text-[#1B3A6B]'
-                      }`}>{selectedConv.tagLabel}</span>
+                      }`}>
+                        {selectedConv.aiHandling ? (operationalView?.conversationBadgeLabel || selectedConv.tagLabel) : selectedConv.tagLabel}
+                      </span>
                     )}
                   </div>
                   <div className="text-[12px] text-[#475569] mt-0.5 flex items-center gap-1.5 flex-wrap">
@@ -1009,11 +1023,11 @@ export default function HomePage() {
                   <div className="p-3 bg-[rgba(27,58,107,0.04)] border-t border-[rgba(27,58,107,0.12)] flex items-center justify-between gap-3 shrink-0">
                     <div className="flex items-center gap-2.5">
                       <div className="p-2 bg-[rgba(27,58,107,0.08)] text-[#1B3A6B] rounded-lg">
-                        <Bot className="w-4 h-4 animate-pulse" />
+                        <Bot className={`w-4 h-4 ${operationalView?.canSend ? 'animate-pulse' : ''}`} />
                       </div>
                       <div>
-                        <p className="text-xs font-semibold text-[#0F172A]">IA conduzindo conversa</p>
-                        <p className="text-[10px] text-[#475569]">A IA está respondendo no WhatsApp agora.</p>
+                        <p className="text-xs font-semibold text-[#0F172A]">{operationalView?.conversationTitle || 'IA conduzindo conversa'}</p>
+                        <p className="text-[10px] text-[#475569]">{operationalView?.conversationBody || 'Status operacional em verificacao.'}</p>
                       </div>
                     </div>
                     <Button

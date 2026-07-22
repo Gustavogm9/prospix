@@ -5,6 +5,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
+  dispatchAdminAiActivityAlert,
   dispatchAdminDisconnectAlert,
   getAdminMonitoringChannelStatus,
   sendAdminMonitoringWhatsApp,
@@ -42,6 +43,11 @@ type CountResult = {
 };
 
 type DispatcherRunStatus = "SUCCEEDED" | "COMPLETED_WITH_FAILURES" | "FAILED";
+type ActivityState = "OK" | "WATCH" | "STALLED" | "BLOCKED" | "OFF_HOURS";
+
+const OPERATING_START_HOUR = 9;
+const OPERATING_END_HOUR = 18;
+const BRT_UTC_OFFSET_HOURS = 3;
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -66,6 +72,54 @@ function scopedTenantIds(schedule: Schedule): string[] {
 function applyTenantScope(query: any, schedule: Schedule) {
   const tenantIds = scopedTenantIds(schedule);
   return tenantIds.length > 0 ? query.in("tenant_id", tenantIds) : query;
+}
+
+function brtParts(now: Date) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    weekday: "short",
+    hourCycle: "h23",
+  }).formatToParts(now);
+  const map = new Map(parts.map((part) => [part.type, part.value]));
+  return {
+    year: Number(map.get("year")),
+    month: Number(map.get("month")),
+    day: Number(map.get("day")),
+    hour: Number(map.get("hour")),
+    weekday: map.get("weekday") || "",
+  };
+}
+
+function brtTodayAt(parts: ReturnType<typeof brtParts>, hour: number): string {
+  return new Date(Date.UTC(
+    parts.year,
+    parts.month - 1,
+    parts.day,
+    hour + BRT_UTC_OFFSET_HOURS,
+    0,
+    0,
+    0,
+  )).toISOString();
+}
+
+function buildOperatingWindow(now: Date) {
+  const parts = brtParts(now);
+  const weekend = parts.weekday === "Sat" || parts.weekday === "Sun";
+  const isOpen = !weekend && parts.hour >= OPERATING_START_HOUR && parts.hour < OPERATING_END_HOUR;
+  return {
+    isOpen,
+    label: isOpen
+      ? "horario ativo"
+      : weekend
+        ? "fora do horario ativo: fim de semana"
+        : `fora do horario ativo: ${OPERATING_START_HOUR}h as ${OPERATING_END_HOUR}h`,
+    dayStartAt: brtTodayAt(parts, 0),
+  };
 }
 
 async function safeCount(
@@ -229,11 +283,13 @@ async function collectMetrics(schedule: Schedule, periodStart: string, periodEnd
   guardianQuery = applyTenantScope(guardianQuery, schedule);
   const { data: guardianStatus, error: guardianError } = await guardianQuery;
   const tenantById = new Map((tenants || []).map((tenant: any) => [tenant.id, tenant]));
+  const aiActivity = await collectAiActivity(schedule, tenants, guardianStatus || [], periodEnd);
 
   const recentMessages = await loadRecentMessages(schedule, periodStart, periodEnd);
   const errors = [
     ...Object.values(counts).map((count) => count.error).filter(Boolean),
     guardianError ? `guardianStatus: ${guardianError.message}` : null,
+    ...aiActivity.errors,
   ].filter(Boolean);
 
   return {
@@ -250,8 +306,319 @@ async function collectMetrics(schedule: Schedule, periodStart: string, periodEnd
       ...row,
       tenant_name: tenantById.get(row.tenant_id)?.name || tenantById.get(row.tenant_id)?.slug || null,
     })),
+    aiActivity,
     recentMessages,
     errors,
+  };
+}
+
+async function safeRows(
+  label: string,
+  query: PromiseLike<{ data: any[] | null; error: any }>,
+): Promise<{ rows: any[]; error: string | null }> {
+  try {
+    const { data, error } = await query;
+    if (error) return { rows: [], error: `${label}: ${error.message}` };
+    return { rows: data || [], error: null };
+  } catch (err: any) {
+    return { rows: [], error: `${label}: ${cleanText(err?.message || err, 200)}` };
+  }
+}
+
+function rowsByTenant(rows: any[]) {
+  const map = new Map<string, any[]>();
+  for (const row of rows) {
+    const tenantId = String(row.tenant_id || "");
+    if (!tenantId) continue;
+    const list = map.get(tenantId) || [];
+    list.push(row);
+    map.set(tenantId, list);
+  }
+  return map;
+}
+
+function oldestAt(rows: any[], field: string): string | null {
+  let oldest: string | null = null;
+  for (const row of rows) {
+    const value = row?.[field] ? String(row[field]) : null;
+    if (value && (!oldest || value < oldest)) oldest = value;
+  }
+  return oldest;
+}
+
+function classifyActivity(input: {
+  isOperatingWindow: boolean;
+  guardianStatus: string;
+  contactableBacklog: number;
+  duePending: number;
+  oldestDuePendingAt: string | null;
+  unansweredConversations: number;
+  oldestUnansweredInboundAt: string | null;
+  outboundToday: number;
+  nowMs: number;
+}): { state: ActivityState; summary: string; action: string } {
+  const guardian = input.guardianStatus.toUpperCase();
+  if (guardian === "SUSPENDED" || guardian === "PAUSED") {
+    return {
+      state: "BLOCKED",
+      summary: "IA pausada por estado do WhatsApp.",
+      action: "Reconectar ou estabilizar o WhatsApp.",
+    };
+  }
+
+  const dueAge = input.oldestDuePendingAt ? Math.floor((input.nowMs - new Date(input.oldestDuePendingAt).getTime()) / 60000) : 0;
+  if (input.duePending > 0 && dueAge >= 15) {
+    return {
+      state: "STALLED",
+      summary: `${input.duePending} mensagem(ns) vencida(s) na fila.`,
+      action: "Checar worker send-messages e bloqueios do Guardian.",
+    };
+  }
+
+  const inboundAge = input.oldestUnansweredInboundAt ? Math.floor((input.nowMs - new Date(input.oldestUnansweredInboundAt).getTime()) / 60000) : 0;
+  if (input.unansweredConversations > 0 && inboundAge >= 10) {
+    return {
+      state: "STALLED",
+      summary: `${input.unansweredConversations} conversa(s) aguardando resposta da IA.`,
+      action: "Priorizar continuidade antes de nova prospeccao.",
+    };
+  }
+
+  if (input.isOperatingWindow && input.contactableBacklog > 0 && input.outboundToday === 0) {
+    return {
+      state: "WATCH",
+      summary: `${input.contactableBacklog} lead(s) aptos e nenhum envio da IA hoje.`,
+      action: "Acompanhar proxima execucao e validar campanha/cadencia.",
+    };
+  }
+
+  if (input.contactableBacklog > 0 || input.duePending > 0 || input.unansweredConversations > 0 || ["COLD", "HIGH_LOAD", "COOLDOWN"].includes(guardian)) {
+    return {
+      state: "WATCH",
+      summary: "Operacao com pontos para acompanhamento.",
+      action: "Monitorar sem intervencao imediata.",
+    };
+  }
+
+  if (!input.isOperatingWindow) {
+    return {
+      state: "OFF_HOURS",
+      summary: "Fora do horario ativo de prospeccao.",
+      action: "Nenhuma acao imediata.",
+    };
+  }
+
+  return {
+    state: "OK",
+    summary: "IA sem pendencias operacionais relevantes.",
+    action: "Nenhuma acao imediata.",
+  };
+}
+
+async function collectAiActivity(schedule: Schedule, tenants: any[], guardianStatus: any[], periodEnd: string) {
+  const now = new Date(periodEnd);
+  const nowMs = now.getTime();
+  const operatingWindow = buildOperatingWindow(now);
+  const last60m = new Date(nowMs - 60 * 60 * 1000).toISOString();
+  const unansweredCutoff = new Date(nowMs - 10 * 60 * 1000).toISOString();
+
+  let contactableQuery = supabase
+    .from("leads")
+    .select("id, tenant_id, created_at, status, contacted_at, queued_first_touch_at")
+    .eq("status", "ENRICHED")
+    .is("deleted_at", null)
+    .is("contacted_at", null)
+    .is("queued_first_touch_at", null)
+    .not("whatsapp", "is", null)
+    .order("created_at", { ascending: true })
+    .limit(1000);
+  contactableQuery = applyTenantScope(contactableQuery, schedule);
+  let contactableResult = await safeRows("contactableLeads", contactableQuery);
+
+  if (contactableResult.error) {
+    let fallbackContactableQuery = supabase
+      .from("leads")
+      .select("id, tenant_id, created_at, status, contacted_at")
+      .eq("status", "ENRICHED")
+      .is("deleted_at", null)
+      .is("contacted_at", null)
+      .not("whatsapp", "is", null)
+      .order("created_at", { ascending: true })
+      .limit(1000);
+    fallbackContactableQuery = applyTenantScope(fallbackContactableQuery, schedule);
+    contactableResult = await safeRows("contactableLeadsLegacy", fallbackContactableQuery);
+  }
+
+  let pendingQuery = supabase
+    .from("pending_outbound")
+    .select("id, tenant_id, scheduled_for")
+    .is("sent_at", null)
+    .is("failed_at", null)
+    .lte("scheduled_for", periodEnd)
+    .order("scheduled_for", { ascending: true })
+    .limit(1000);
+  pendingQuery = applyTenantScope(pendingQuery, schedule);
+
+  let unansweredQuery = supabase
+    .from("conversations")
+    .select("id, tenant_id, last_inbound_at, last_outbound_at")
+    .eq("status", "ACTIVE")
+    .eq("ai_handling", true)
+    .not("last_inbound_at", "is", null)
+    .lte("last_inbound_at", unansweredCutoff)
+    .limit(1000);
+  unansweredQuery = applyTenantScope(unansweredQuery, schedule);
+
+  let outboundQuery = supabase
+    .from("messages")
+    .select("id, tenant_id, created_at")
+    .eq("direction", "OUTBOUND")
+    .eq("sender", "AI")
+    .gte("created_at", operatingWindow.dayStartAt)
+    .lte("created_at", periodEnd)
+    .limit(1000);
+  outboundQuery = applyTenantScope(outboundQuery, schedule);
+
+  let inboundQuery = supabase
+    .from("messages")
+    .select("id, tenant_id, created_at")
+    .eq("direction", "INBOUND")
+    .gte("created_at", operatingWindow.dayStartAt)
+    .lte("created_at", periodEnd)
+    .limit(1000);
+  inboundQuery = applyTenantScope(inboundQuery, schedule);
+
+  const [pendingResult, unansweredResult, outboundResult, inboundResult] = await Promise.all([
+    safeRows("pendingDue", pendingQuery),
+    safeRows("unansweredConversations", unansweredQuery),
+    safeRows("outboundToday", outboundQuery),
+    safeRows("inboundToday", inboundQuery),
+  ]);
+
+  const contactableByTenant = rowsByTenant(contactableResult.rows);
+  const pendingByTenant = rowsByTenant(pendingResult.rows);
+  const unansweredByTenant = rowsByTenant(unansweredResult.rows.filter((row: any) => row.last_inbound_at && (!row.last_outbound_at || row.last_inbound_at > row.last_outbound_at)));
+  const outboundByTenant = rowsByTenant(outboundResult.rows);
+  const inboundByTenant = rowsByTenant(inboundResult.rows);
+  const guardianByTenant = new Map((guardianStatus || []).map((row: any) => [String(row.tenant_id), row]));
+
+  const tenantRows = tenants.map((tenant: any) => {
+    const tenantId = String(tenant.id);
+    const contactable = contactableByTenant.get(tenantId) || [];
+    const pending = pendingByTenant.get(tenantId) || [];
+    const unanswered = unansweredByTenant.get(tenantId) || [];
+    const outbound = outboundByTenant.get(tenantId) || [];
+    const inbound = inboundByTenant.get(tenantId) || [];
+    const guardian = guardianByTenant.get(tenantId);
+    const classified = classifyActivity({
+      isOperatingWindow: operatingWindow.isOpen,
+      guardianStatus: String(guardian?.status || "NORMAL"),
+      contactableBacklog: contactable.length,
+      duePending: pending.length,
+      oldestDuePendingAt: oldestAt(pending, "scheduled_for"),
+      unansweredConversations: unanswered.length,
+      oldestUnansweredInboundAt: oldestAt(unanswered, "last_inbound_at"),
+      outboundToday: outbound.length,
+      nowMs,
+    });
+
+    return {
+      tenant_id: tenantId,
+      tenant_name: tenant.name || tenant.slug || tenantId,
+      state: classified.state,
+      summary: classified.summary,
+      action: classified.action,
+      contactable_backlog: contactable.length,
+      due_pending: pending.length,
+      unanswered_conversations: unanswered.length,
+      outbound_today: outbound.length,
+      outbound_last_60m: outbound.filter((row: any) => String(row.created_at || "") >= last60m).length,
+      inbound_today: inbound.length,
+      guardian_status: guardian?.status || null,
+    };
+  });
+
+  const summary = tenantRows.reduce((acc: Record<string, number>, row: any) => {
+    acc[row.state] = (acc[row.state] || 0) + 1;
+    return acc;
+  }, {});
+
+  const errors = [
+    contactableResult.error,
+    pendingResult.error,
+    unansweredResult.error,
+    outboundResult.error,
+    inboundResult.error,
+  ].filter(Boolean);
+
+  return {
+    operatingWindow,
+    summary,
+    tenants: tenantRows,
+    errors,
+  };
+}
+
+async function collectAllTenantGuardianStatus(schedule: Schedule) {
+  let guardianQuery = supabase
+    .from("whatsapp_guardian_status")
+    .select("tenant_id, status, external_state, last_disconnect_reason_code, updated_at, quarantined_until, circuit_open_until")
+    .order("updated_at", { ascending: false })
+    .limit(200);
+  guardianQuery = applyTenantScope(guardianQuery, schedule);
+  const { data, error } = await guardianQuery;
+  if (error) return { rows: [], error: `guardianStatus: ${error.message}` };
+  return { rows: data || [], error: null };
+}
+
+async function processAiActivityAlerts(source: string) {
+  const schedule: Schedule = {
+    id: "ai-activity-alert-monitor",
+    name: "AI Activity Alert Monitor",
+    recipient_id: "",
+    active: true,
+    interval_minutes: 5,
+    window_minutes: 60,
+    timezone: "America/Sao_Paulo",
+    tenant_ids: null,
+    include_numbers: false,
+    include_recent_messages: false,
+  };
+  const periodEnd = new Date().toISOString();
+  const tenants = await loadTenants(schedule);
+  const guardian = await collectAllTenantGuardianStatus(schedule);
+  const activity = await collectAiActivity(schedule, tenants, guardian.rows, periodEnd);
+  const actionable = activity.tenants.filter((row: any) => ["BLOCKED", "STALLED"].includes(String(row.state || "").toUpperCase()));
+  let sent = 0;
+  let failed = 0;
+  let skipped = 0;
+  const results = [];
+
+  for (const row of actionable) {
+    try {
+      const result = await dispatchAdminAiActivityAlert({
+        supabase,
+        activity: row,
+        source,
+      });
+      sent += result.sent || 0;
+      failed += result.failed || 0;
+      skipped += result.skipped || 0;
+      results.push({ tenant_id: row.tenant_id, state: row.state, ...result });
+    } catch (err: any) {
+      failed++;
+      results.push({ tenant_id: row.tenant_id, state: row.state, error: cleanText(err?.message || err, 240) });
+    }
+  }
+
+  return {
+    evaluated: activity.tenants.length,
+    actionable: actionable.length,
+    sent,
+    failed,
+    skipped,
+    errors: [guardian.error, ...(activity.errors || [])].filter(Boolean),
+    results,
   };
 }
 
@@ -456,19 +823,23 @@ serve(async (request) => {
       const dispatcherRunId = await createDispatcherRun(mode, source);
       try {
         const result = await processDue(body?.limit || 10, source);
+        const aiActivityAlerts = await processAiActivityAlerts(source);
         const summary = summarizeDueResults(result.results);
         await completeDispatcherRun(
           dispatcherRunId,
-          summary.failed > 0 ? "COMPLETED_WITH_FAILURES" : "SUCCEEDED",
+          summary.failed > 0 || aiActivityAlerts.failed > 0 ? "COMPLETED_WITH_FAILURES" : "SUCCEEDED",
           {
             claimed_count: result.claimed,
-            sent_count: summary.sent,
-            failed_count: summary.failed,
-            skipped_count: summary.skipped,
-            result_summary: result,
+            sent_count: summary.sent + aiActivityAlerts.sent,
+            failed_count: summary.failed + aiActivityAlerts.failed,
+            skipped_count: summary.skipped + aiActivityAlerts.skipped,
+            result_summary: {
+              reports: result,
+              ai_activity_alerts: aiActivityAlerts,
+            },
           },
         );
-        return json({ ok: true, ...result, dispatcher_run_id: dispatcherRunId });
+        return json({ ok: true, ...result, ai_activity_alerts: aiActivityAlerts, dispatcher_run_id: dispatcherRunId });
       } catch (err: any) {
         const errorMessage = cleanText(err?.message || err, 500);
         await completeDispatcherRun(dispatcherRunId, "FAILED", {

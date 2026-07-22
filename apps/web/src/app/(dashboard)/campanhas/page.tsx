@@ -8,6 +8,7 @@ import type { ICP } from '@/lib/queries';
 import { useAuthStore } from '@/store/auth-store';
 import { toast, Tooltip } from '@prospix/ui';
 import { apiFetch } from '@/lib/api-fetch';
+import { buildOperationalStatusView } from '@/lib/operational-status';
 
 interface Campaign {
   id: string;
@@ -428,9 +429,17 @@ export default function Campaigns() {
     try {
       const res = await apiFetch('/api/integrations/whatsapp/status');
       const data = await res.json();
-      if (!data?.data?.connected) {
+      const operationalView = buildOperationalStatusView(data, res.ok ? null : (data?.message || data?.error || 'Falha ao checar status.'));
+      if (data?.status !== 'connected') {
         toast.error('WhatsApp Desconectado', 'Antes de criar campanhas, conecte seu WhatsApp na tela de Configurações para que a IA possa enviar mensagens.');
         return;
+      }
+      if (!operationalView.canSend) {
+        toast.error(operationalView.bannerTitle, operationalView.bannerDetail || operationalView.bannerBody);
+        return;
+      }
+      if (!operationalView.canStartNewConversations) {
+        toast.warning(operationalView.bannerTitle, operationalView.bannerDetail || operationalView.bannerBody);
       }
     } catch {
       // Falhou na checagem, deixar passar ou alertar? Vamos deixar passar por precaução

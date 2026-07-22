@@ -8,6 +8,7 @@ import { conversationsQueries, meetingsQueries, leadsQueries } from '@/lib/queri
 
 import { useRealtimeEvents } from '@/hooks/useRealtimeEvents';
 import { useAuthStore } from '@/store/auth-store';
+import { useOperationalStatusContext } from '@/hooks/useOperationalStatus';
 
 interface Message {
   id: string;
@@ -101,6 +102,8 @@ type FilterType = 'all' | 'hot' | 'wait' | 'scheduled';
 export default function Conversations() {
   const { tenantId } = useAuthStore();
   const router = useRouter();
+  const operationalStatus = useOperationalStatusContext();
+  const operationalView = operationalStatus?.view;
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedConv, setSelectedConv] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -511,10 +514,29 @@ export default function Conversations() {
       );
     }
     if (type === 'live') {
+      const tone = operationalView?.conversationTone || 'green';
+      const tagClass = tone === 'red'
+        ? 'bg-[#FEF3F2] text-[#B42318]'
+        : tone === 'amber'
+          ? 'bg-[#FFFAEB] text-[#B54708]'
+          : tone === 'blue'
+            ? 'bg-[#EFF8FF] text-[#175CD3]'
+            : tone === 'neutral'
+              ? 'bg-[#F1F5F9] text-[#475569]'
+              : 'bg-[rgba(232,152,28,0.14)] text-[#A56B0A]';
+      const dotClassName = tone === 'red'
+        ? 'bg-[#D92D20]'
+        : tone === 'amber'
+          ? 'bg-[#E8981C]'
+          : tone === 'blue'
+            ? 'bg-[#175CD3]'
+            : tone === 'neutral'
+              ? 'bg-[#94A3B8]'
+              : 'bg-[#E8981C]';
       return (
-        <span className="inline-flex items-center gap-1.5 text-[10.5px] font-semibold px-[7px] py-[2px] rounded-[10px] bg-[rgba(232,152,28,0.14)] text-[#A56B0A] whitespace-nowrap">
-          <span className="w-[5px] h-[5px] rounded-full bg-[#E8981C] animate-pulse" />
-          {conv.tagLabel}
+        <span className={`inline-flex items-center gap-1.5 text-[10.5px] font-semibold px-[7px] py-[2px] rounded-[10px] whitespace-nowrap ${tagClass}`}>
+          <span className={`w-[5px] h-[5px] rounded-full ${dotClassName} ${operationalView?.canSend ? 'animate-pulse' : ''}`} />
+          {operationalView?.conversationBadgeLabel || conv.tagLabel}
         </span>
       );
     }
@@ -712,7 +734,7 @@ export default function Conversations() {
           </div>
           <span className="text-[10.5px] font-semibold px-2 py-[2px] rounded-[10px] bg-[rgba(232,152,28,0.14)] text-[#A56B0A] inline-flex items-center gap-[5px]">
             <span className="w-[5px] h-[5px] rounded-full bg-[#E8981C] animate-pulse" />
-            {liveCount} ao vivo
+            {liveCount} {operationalView?.conversationTone === 'green' ? 'ao vivo' : 'com IA'}
           </span>
         </div>
 
@@ -982,11 +1004,11 @@ export default function Conversations() {
                   <div className="p-3 bg-[rgba(27,58,107,0.04)] border-t border-[rgba(27,58,107,0.12)] flex items-center justify-between gap-3 shrink-0">
                     <div className="flex items-center gap-2.5">
                       <div className="p-2 bg-[rgba(27,58,107,0.08)] text-[#1B3A6B] rounded-lg">
-                        <Bot className="w-4 h-4 animate-pulse" />
+                        <Bot className={`w-4 h-4 ${operationalView?.canSend ? 'animate-pulse' : ''}`} />
                       </div>
                       <div>
-                        <p className="text-xs font-semibold text-[#0F172A]">IA conduzindo conversa</p>
-                        <p className="text-[10px] text-[#475569]">A IA está respondendo no WhatsApp agora.</p>
+                        <p className="text-xs font-semibold text-[#0F172A]">{operationalView?.conversationTitle || 'IA conduzindo conversa'}</p>
+                        <p className="text-[10px] text-[#475569]">{operationalView?.conversationBody || 'Status operacional em verificacao.'}</p>
                       </div>
                     </div>
                     <Button

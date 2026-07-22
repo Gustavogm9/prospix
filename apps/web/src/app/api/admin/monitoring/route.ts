@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin, supabaseAdmin } from '../_lib/auth';
+import { loadAiActivityMonitor } from '../../_lib/ai-activity-monitor';
 
 const E164_RE = /^\+[1-9][0-9]{7,14}$/;
 const DEFAULT_ADMIN_CHANNEL_LABEL = 'Canal administrativo';
@@ -492,6 +493,240 @@ async function dispatcherChannelStatus(channel: AdminChannelRow | null) {
   }
 }
 
+function guardianStateLabel(status: unknown): string {
+  const normalized = String(status || 'UNKNOWN').toUpperCase();
+  if (normalized === 'NORMAL') return 'Operacional';
+  if (normalized === 'COLD') return 'Em observacao';
+  if (normalized === 'HIGH_LOAD') return 'Volume alto';
+  if (normalized === 'COOLDOWN') return 'Em resfriamento';
+  if (normalized === 'PAUSED') return 'Pausado';
+  if (normalized === 'SUSPENDED') return 'Precisa de acao';
+  if (normalized === 'UNKNOWN') return 'Sem status';
+  return normalized.replaceAll('_', ' ');
+}
+
+function guardianOperationLabel(operation: string): string {
+  if (operation === 'ACTIVE') return 'Operando normalmente';
+  if (operation === 'THROTTLED') return 'Operando com cuidado';
+  if (operation === 'BLOCKED') return 'Envios pausados';
+  if (operation === 'REQUIRES_ACTION') return 'Precisa de acao';
+  return operation.replaceAll('_', ' ');
+}
+
+function durationSince(value: unknown): number | null {
+  if (!value) return null;
+  const startedAt = new Date(String(value)).getTime();
+  if (!Number.isFinite(startedAt)) return null;
+  return Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+}
+
+function isFuture(value: unknown): boolean {
+  if (!value) return false;
+  const time = new Date(String(value)).getTime();
+  return Number.isFinite(time) && time > Date.now();
+}
+
+function buildGuardianCurrentState(status: any, latestTransition: any | null, tenant: any) {
+  if (!status) {
+    return {
+      tenantId: tenant.id,
+      tenantName: tenant.name,
+      tenantSlug: tenant.slug,
+      status: 'UNKNOWN',
+      label: guardianStateLabel('UNKNOWN'),
+      impactLevel: 'ATTENTION',
+      operationState: 'REQUIRES_ACTION',
+      operationLabel: guardianOperationLabel('REQUIRES_ACTION'),
+      externalState: null,
+      reasonCode: 'STATUS_NOT_REGISTERED',
+      stateSource: null,
+      enteredAt: null,
+      durationSeconds: null,
+      allowSend: false,
+      allowNewActive: false,
+      summary: 'Ainda nao existe registro de saude do WhatsApp para este tenant. A operacao precisa de uma checagem do Guardian.',
+      lastCheckedAt: null,
+      updatedAt: null,
+    };
+  }
+
+  const normalized = String(status.status || 'NORMAL').toUpperCase();
+  const enteredAt = status.state_entered_at || latestTransition?.entered_at || status.updated_at || null;
+  const reasonCode = status.state_reason_code || status.last_disconnect_reason_code || latestTransition?.reason_code || null;
+  const quarantined = isFuture(status.quarantined_until);
+
+  let impactLevel = 'INFO';
+  let operationState = 'ACTIVE';
+  let allowSend = true;
+  let allowNewActive = true;
+  let summary = 'WhatsApp operacional. A IA pode responder e iniciar conversas dentro das regras configuradas.';
+
+  if (normalized === 'SUSPENDED') {
+    impactLevel = 'CRITICAL';
+    operationState = 'REQUIRES_ACTION';
+    allowSend = false;
+    allowNewActive = false;
+    summary = 'WhatsApp desconectado ou sem autorizacao. A IA nao envia ate reconectar o numero.';
+  } else if (normalized === 'PAUSED') {
+    impactLevel = 'ATTENTION';
+    operationState = 'BLOCKED';
+    allowSend = false;
+    allowNewActive = false;
+    summary = 'Conexao instavel, fechada ou conectando. A IA pausa envios para evitar falhas.';
+  } else if (normalized === 'COLD') {
+    impactLevel = 'OBSERVATION';
+    operationState = 'THROTTLED';
+    allowSend = true;
+    allowNewActive = !quarantined;
+    summary = quarantined
+      ? 'WhatsApp conectado em observacao. Respostas podem seguir, mas novas prospeccoes aguardam o fim da quarentena.'
+      : 'WhatsApp conectado em observacao. A IA opera com ritmo reduzido para proteger o numero.';
+  } else if (normalized === 'HIGH_LOAD') {
+    impactLevel = 'OBSERVATION';
+    operationState = 'THROTTLED';
+    allowSend = true;
+    allowNewActive = false;
+    summary = 'Volume alto. A IA prioriza respostas e reduz novas prospeccoes ate a carga normalizar.';
+  } else if (normalized === 'COOLDOWN') {
+    impactLevel = 'ATTENTION';
+    operationState = 'THROTTLED';
+    allowSend = true;
+    allowNewActive = false;
+    summary = 'Numero em resfriamento operacional. A IA envia com intervalo maior e nao inicia novas prospeccoes.';
+  }
+
+  return {
+    tenantId: tenant.id,
+    tenantName: tenant.name,
+    tenantSlug: tenant.slug,
+    status: normalized,
+    label: guardianStateLabel(normalized),
+    impactLevel,
+    operationState,
+    operationLabel: guardianOperationLabel(operationState),
+    externalState: status.external_state || null,
+    reasonCode,
+    stateSource: status.state_source || null,
+    enteredAt,
+    durationSeconds: durationSince(enteredAt),
+    allowSend,
+    allowNewActive,
+    summary,
+    lastCheckedAt: status.external_checked_at || null,
+    updatedAt: status.updated_at || null,
+  };
+}
+
+function sortGuardianStates(states: any[]) {
+  const rank: Record<string, number> = {
+    CRITICAL: 0,
+    ATTENTION: 1,
+    OBSERVATION: 2,
+    INFO: 3,
+  };
+  return states.sort((a, b) =>
+    (rank[a.impactLevel] ?? 9) - (rank[b.impactLevel] ?? 9)
+    || String(a.tenantName || '').localeCompare(String(b.tenantName || '')),
+  );
+}
+
+async function loadGuardianStates(tenants: any[]) {
+  let statusResult = await supabaseAdmin
+    .from('whatsapp_guardian_status')
+    .select('tenant_id, status, external_state, external_checked_at, last_disconnect_reason_code, quarantined_until, circuit_open_until, last_global_send_at, state_entered_at, state_reason_code, state_source, updated_at');
+  let schemaVersion = 'v2';
+
+  if (statusResult.error) {
+    schemaVersion = 'legacy';
+    statusResult = await supabaseAdmin
+      .from('whatsapp_guardian_status')
+      .select('tenant_id, status, external_state, external_checked_at, last_disconnect_reason_code, quarantined_until, circuit_open_until, last_global_send_at, updated_at');
+  }
+
+  if (statusResult.error) {
+    return {
+      available: false,
+      schemaVersion,
+      statusError: statusResult.error.message,
+      transitionLogAvailable: false,
+      transitionLogError: null,
+      current: [],
+      recentTransitions: [],
+    };
+  }
+
+  const transitionResult = await supabaseAdmin
+    .from('whatsapp_guardian_state_transitions')
+    .select('tenant_id, previous_status, status, external_state, reason_code, impact_level, operation_state, operator_summary, allow_send, allow_new_active, entered_at, exited_at, duration_seconds')
+    .order('entered_at', { ascending: false })
+    .limit(30);
+
+  const transitionRows = transitionResult.error ? [] : (transitionResult.data || []);
+  const latestTransitionByTenant = new Map<string, any>();
+  for (const transition of transitionRows) {
+    if (!latestTransitionByTenant.has(transition.tenant_id)) {
+      latestTransitionByTenant.set(transition.tenant_id, transition);
+    }
+  }
+
+  const tenantById = new Map((tenants || []).map((tenant: any) => [tenant.id, tenant]));
+  const statusByTenant = new Map((statusResult.data || []).map((status: any) => [status.tenant_id, status]));
+  const current = sortGuardianStates((tenants || []).map((tenant: any) =>
+    buildGuardianCurrentState(statusByTenant.get(tenant.id) || null, latestTransitionByTenant.get(tenant.id) || null, tenant),
+  ));
+
+  return {
+    available: true,
+    schemaVersion,
+    statusError: null,
+    transitionLogAvailable: !transitionResult.error,
+    transitionLogError: transitionResult.error?.message || null,
+    current,
+    recentTransitions: transitionRows.map((transition: any) => {
+      const tenant = tenantById.get(transition.tenant_id);
+      return {
+        tenantId: transition.tenant_id,
+        tenantName: tenant?.name || transition.tenant_id,
+        previousStatus: transition.previous_status || null,
+        status: transition.status,
+        externalState: transition.external_state || null,
+        reasonCode: transition.reason_code || null,
+        impactLevel: transition.impact_level || null,
+        operationState: transition.operation_state || null,
+        operationLabel: guardianOperationLabel(String(transition.operation_state || '')),
+        operatorSummary: transition.operator_summary || null,
+        allowSend: transition.allow_send ?? null,
+        allowNewActive: transition.allow_new_active ?? null,
+        enteredAt: transition.entered_at,
+        exitedAt: transition.exited_at || null,
+        durationSeconds: transition.duration_seconds ?? null,
+      };
+    }),
+  };
+}
+
+async function loadAiActivityAlertDeliveries() {
+  const result = await supabaseAdmin
+    .from('admin_ai_activity_alert_deliveries')
+    .select('id, operational_alert_id, tenant_id, recipient_id, channel_id, incident_key, status, activity_state, severity, ai_summary, error, created_at, sent_at, tenants(id, name, slug), admin_monitoring_recipients(id, label, whatsapp)')
+    .order('created_at', { ascending: false })
+    .limit(25);
+
+  if (result.error) {
+    return {
+      available: false,
+      error: result.error.message,
+      rows: [],
+    };
+  }
+
+  return {
+    available: true,
+    error: null,
+    rows: result.data || [],
+  };
+}
+
 async function loadDashboard() {
   const activeChannel = await loadActiveChannel();
   const [
@@ -556,6 +791,13 @@ async function loadDashboard() {
   const runs = runsRes.data || [];
   const deliveries = deliveriesRes.data || [];
   const dispatcherRuns = dispatcherRunsRes.data || [];
+  const tenants = tenantsRes.data || [];
+  const guardianStates = await loadGuardianStates(tenants);
+  const aiActivity = await loadAiActivityMonitor(supabaseAdmin, {
+    tenants,
+    guardianStates: guardianStates.current,
+  });
+  const aiActivityAlertDeliveries = await loadAiActivityAlertDeliveries();
   const nowMs = Date.now();
   const activeSchedules = schedules.filter((s: any) => s.active);
   const overdueSchedules = activeSchedules.filter((s: any) => {
@@ -591,13 +833,19 @@ async function loadDashboard() {
       overdueSchedules,
       failedReports24h: runs.filter((r: any) => r.status === 'FAILED').length,
       disconnectAlerts24h: deliveries.length,
+      guardianAttentionStates: guardianStates.current.filter((state: any) => state.impactLevel !== 'INFO').length,
+      aiActivityIssues: aiActivity.summary.blocked + aiActivity.summary.stalled + aiActivity.summary.watch,
+      aiActivityAlerts24h: aiActivityAlertDeliveries.rows.length,
     },
     recipients,
     schedules,
     reportRuns: runs,
     disconnectDeliveries: deliveries,
     dispatcherRuns,
-    tenants: tenantsRes.data || [],
+    tenants,
+    guardianStates,
+    aiActivity,
+    aiActivityAlertDeliveries,
   };
 }
 

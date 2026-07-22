@@ -79,6 +79,23 @@ type DisconnectDelivery = {
   admin_monitoring_recipients?: { id: string; label: string; whatsapp: string } | null;
 };
 
+type AiActivityAlertDelivery = {
+  id: string;
+  tenant_id: string;
+  recipient_id: string;
+  channel_id: string | null;
+  incident_key: string;
+  status: string;
+  activity_state: string;
+  severity: string;
+  ai_summary: string | null;
+  error: string | null;
+  created_at: string;
+  sent_at: string | null;
+  tenants?: { id: string; name: string; slug: string } | null;
+  admin_monitoring_recipients?: { id: string; label: string; whatsapp: string } | null;
+};
+
 type Tenant = {
   id: string;
   name: string;
@@ -113,6 +130,73 @@ type DispatcherRun = {
   created_at: string;
 };
 
+type GuardianCurrentState = {
+  tenantId: string;
+  tenantName: string;
+  tenantSlug: string;
+  status: string;
+  label: string;
+  impactLevel: 'INFO' | 'OBSERVATION' | 'ATTENTION' | 'CRITICAL' | string;
+  operationState: 'ACTIVE' | 'THROTTLED' | 'BLOCKED' | 'REQUIRES_ACTION' | string;
+  operationLabel: string;
+  externalState: string | null;
+  reasonCode: string | null;
+  stateSource: string | null;
+  enteredAt: string | null;
+  durationSeconds: number | null;
+  allowSend: boolean;
+  allowNewActive: boolean;
+  summary: string;
+  lastCheckedAt: string | null;
+  updatedAt: string | null;
+};
+
+type GuardianTransition = {
+  tenantId: string;
+  tenantName: string;
+  previousStatus: string | null;
+  status: string;
+  externalState: string | null;
+  reasonCode: string | null;
+  impactLevel: string | null;
+  operationState: string | null;
+  operationLabel: string;
+  operatorSummary: string | null;
+  allowSend: boolean | null;
+  allowNewActive: boolean | null;
+  enteredAt: string;
+  exitedAt: string | null;
+  durationSeconds: number | null;
+};
+
+type AiActivityTenant = {
+  tenantId: string;
+  tenantName: string;
+  tenantSlug: string;
+  tenantStatus: string | null;
+  state: 'OK' | 'WATCH' | 'STALLED' | 'BLOCKED' | 'OFF_HOURS';
+  label: string;
+  severity: 'INFO' | 'OBSERVATION' | 'ATTENTION' | 'CRITICAL';
+  summary: string;
+  requiredAction: string;
+  isOperatingWindow: boolean;
+  operatingWindowLabel: string;
+  leadsCreatedToday: number;
+  contactableBacklog: number;
+  oldestContactableLeadAt: string | null;
+  duePending: number;
+  oldestDuePendingAt: string | null;
+  unansweredConversations: number;
+  oldestUnansweredInboundAt: string | null;
+  outboundToday: number;
+  outboundLast60m: number;
+  inboundToday: number;
+  lastOutboundAt: string | null;
+  lastInboundAt: string | null;
+  guardianStatus: string | null;
+  guardianOperationState: string | null;
+};
+
 type Dashboard = {
   channel: {
     configured: boolean;
@@ -141,6 +225,9 @@ type Dashboard = {
     overdueSchedules: number;
     failedReports24h: number;
     disconnectAlerts24h: number;
+    guardianAttentionStates?: number;
+    aiActivityIssues?: number;
+    aiActivityAlerts24h?: number;
   };
   scheduler: {
     lastRunAt: string | null;
@@ -161,6 +248,40 @@ type Dashboard = {
   channelEvents: ChannelEvent[];
   dispatcherRuns: DispatcherRun[];
   tenants: Tenant[];
+  guardianStates?: {
+    available: boolean;
+    schemaVersion: string;
+    statusError: string | null;
+    transitionLogAvailable: boolean;
+    transitionLogError: string | null;
+    current: GuardianCurrentState[];
+    recentTransitions: GuardianTransition[];
+  };
+  aiActivity?: {
+    generatedAt: string;
+    operatingWindow: {
+      isOpen: boolean;
+      label: string;
+      dayStartAt: string;
+      operatingStartAt: string;
+      operatingEndAt: string;
+    };
+    summary: {
+      totalTenants: number;
+      ok: number;
+      watch: number;
+      stalled: number;
+      blocked: number;
+      offHours: number;
+    };
+    tenants: AiActivityTenant[];
+    evidenceErrors: string[];
+  };
+  aiActivityAlertDeliveries?: {
+    available: boolean;
+    error: string | null;
+    rows: AiActivityAlertDelivery[];
+  };
 };
 
 const STATUS_STYLE: Record<string, string> = {
@@ -222,6 +343,37 @@ function channelStatusClass(status: ChannelStatus | null | undefined): string {
     default:
       return 'bg-surface-sunken text-text-secondary border-border';
   }
+}
+
+function formatDuration(seconds: number | null | undefined): string {
+  if (seconds == null) return 'sem registro';
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}min`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  if (hours < 24) return remainingMinutes ? `${hours}h ${remainingMinutes}min` : `${hours}h`;
+  const days = Math.floor(hours / 24);
+  const remainingHours = hours % 24;
+  return remainingHours ? `${days}d ${remainingHours}h` : `${days}d`;
+}
+
+function guardianImpactClass(impact: string | null | undefined): string {
+  if (impact === 'CRITICAL') return 'bg-red-50 text-red-700 border-red-200';
+  if (impact === 'ATTENTION') return 'bg-amber-50 text-amber-800 border-amber-300';
+  if (impact === 'OBSERVATION') return 'bg-blue-50 text-blue-700 border-blue-200';
+  return 'bg-success-soft text-success-text border-success/30';
+}
+
+function aiActivityClass(severity: string | null | undefined): string {
+  if (severity === 'CRITICAL') return 'bg-red-50 text-red-700 border-red-200';
+  if (severity === 'ATTENTION') return 'bg-amber-50 text-amber-800 border-amber-300';
+  if (severity === 'OBSERVATION') return 'bg-blue-50 text-blue-700 border-blue-200';
+  return 'bg-success-soft text-success-text border-success/30';
+}
+
+function formatToken(value: string | null | undefined): string {
+  return value ? value.replaceAll('_', ' ') : '-';
 }
 
 function qrImageSrc(value: string | null): string | null {
@@ -497,6 +649,12 @@ export default function AdminMonitoringPage() {
   const qrSrc = qrImageSrc(channelQr);
   const channelConnected = channel?.connectionStatus === 'CONNECTED';
   const channelBusy = busyKey?.startsWith('channel:') || false;
+  const guardianStates = data?.guardianStates;
+  const guardianCurrent = guardianStates?.current || [];
+  const guardianTransitions = guardianStates?.recentTransitions || [];
+  const aiActivity = data?.aiActivity;
+  const aiActivityRows = aiActivity?.tenants || [];
+  const aiActivityAlertDeliveries = data?.aiActivityAlertDeliveries;
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -652,7 +810,193 @@ export default function AdminMonitoringPage() {
         <MetricCard label="Agendas vencidas" value={data?.summary.overdueSchedules ?? 0} tone={(data?.summary.overdueSchedules ?? 0) > 0 ? 'red' : 'normal'} />
         <MetricCard label="Falhas recentes" value={data?.summary.failedReports24h ?? 0} tone={(data?.summary.failedReports24h ?? 0) > 0 ? 'red' : 'normal'} />
         <MetricCard label="Alertas recentes" value={data?.summary.disconnectAlerts24h ?? 0} />
+        <MetricCard label="IA em atencao" value={data?.summary.aiActivityIssues ?? 0} tone={(data?.summary.aiActivityIssues ?? 0) > 0 ? 'red' : 'normal'} />
+        <MetricCard label="Alertas IA" value={data?.summary.aiActivityAlerts24h ?? 0} tone={(data?.summary.aiActivityAlerts24h ?? 0) > 0 ? 'red' : 'normal'} />
       </div>
+
+      <Card className="bg-white border-border shadow-sm">
+        <CardHeader className="pb-3">
+          <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+            <div>
+              <CardTitle className="text-base font-bold font-heading text-text">Atividade operacional da IA</CardTitle>
+              <CardDescription className="text-text-secondary text-xs mt-1">
+                Verifica se a IA esta iniciando contatos, respondendo conversas e esvaziando a fila dentro da tolerancia.
+              </CardDescription>
+            </div>
+            <Badge className={`text-[10px] px-2 py-0.5 border ${aiActivity?.operatingWindow.isOpen ? 'bg-success-soft text-success-text border-success/30' : 'bg-surface-sunken text-text-secondary border-border'}`}>
+              {aiActivity?.operatingWindow.label || 'janela nao calculada'}
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {(aiActivity?.evidenceErrors || []).length > 0 && (
+            <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              Coleta parcial: {aiActivity?.evidenceErrors.slice(0, 2).join(' | ')}
+            </div>
+          )}
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="text-left text-[10px] uppercase tracking-wider text-text-secondary border-b border-border">
+                <tr>
+                  <th className="py-2 pr-3">Tenant</th>
+                  <th className="py-2 pr-3">Estado IA</th>
+                  <th className="py-2 pr-3">Prospeccao</th>
+                  <th className="py-2 pr-3">Conversas</th>
+                  <th className="py-2 pr-3">Envios</th>
+                  <th className="py-2 pr-3">Resumo</th>
+                  <th className="py-2 pr-3">Ultimo sinal</th>
+                </tr>
+              </thead>
+              <tbody>
+                {aiActivityRows.map((row) => (
+                  <tr key={row.tenantId} className="border-b border-border/50 align-top">
+                    <td className="py-3 pr-3 min-w-[220px]">
+                      <div className="font-semibold text-text">{row.tenantName}</div>
+                      <div className="text-[10px] text-text-secondary">{row.tenantSlug}</div>
+                    </td>
+                    <td className="py-3 pr-3">
+                      <Badge className={`text-[9px] px-1.5 py-0 border ${aiActivityClass(row.severity)}`}>{row.label}</Badge>
+                      <div className="text-[10px] text-text-secondary mt-1">{formatToken(row.guardianStatus)}</div>
+                    </td>
+                    <td className="py-3 pr-3 text-text-secondary min-w-[150px]">
+                      <div>Leads hoje: <span className="font-semibold text-text">{row.leadsCreatedToday}</span></div>
+                      <div>Aptos sem fila: <span className="font-semibold text-text">{row.contactableBacklog}</span></div>
+                      <div className="text-[10px]">Mais antigo: {formatDate(row.oldestContactableLeadAt)}</div>
+                    </td>
+                    <td className="py-3 pr-3 text-text-secondary min-w-[150px]">
+                      <div>Sem resposta: <span className="font-semibold text-text">{row.unansweredConversations}</span></div>
+                      <div>Entradas hoje: <span className="font-semibold text-text">{row.inboundToday}</span></div>
+                      <div className="text-[10px]">Mais antiga: {formatDate(row.oldestUnansweredInboundAt)}</div>
+                    </td>
+                    <td className="py-3 pr-3 text-text-secondary min-w-[150px]">
+                      <div>Hoje: <span className="font-semibold text-text">{row.outboundToday}</span></div>
+                      <div>Ultima hora: <span className="font-semibold text-text">{row.outboundLast60m}</span></div>
+                      <div>Fila vencida: <span className="font-semibold text-text">{row.duePending}</span></div>
+                    </td>
+                    <td className="py-3 pr-3 text-text-secondary min-w-[300px] max-w-[460px]">
+                      <div>{row.summary}</div>
+                      <div className="text-[10px] mt-1">Acao: {row.requiredAction}</div>
+                    </td>
+                    <td className="py-3 pr-3 text-text-secondary whitespace-nowrap">
+                      <div>IA: {formatDate(row.lastOutboundAt)}</div>
+                      <div>Lead: {formatDate(row.lastInboundAt)}</div>
+                    </td>
+                  </tr>
+                ))}
+                {aiActivityRows.length === 0 && <EmptyRow columns={7} label="Nenhuma evidencia de atividade coletada." />}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="bg-white border-border shadow-sm">
+        <CardHeader className="pb-3">
+          <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+            <div>
+              <CardTitle className="text-base font-bold font-heading text-text">Estado dos WhatsApps dos usuarios</CardTitle>
+              <CardDescription className="text-text-secondary text-xs mt-1">
+                Mostra se a IA pode responder, iniciar conversas e ha quanto tempo cada numero esta no estado atual.
+              </CardDescription>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge className={`text-[10px] px-2 py-0.5 border ${guardianStates?.available ? 'bg-success-soft text-success-text border-success/30' : 'bg-red-50 text-red-700 border-red-200'}`}>
+                {guardianStates?.available ? 'Status disponivel' : 'Status indisponivel'}
+              </Badge>
+              <Badge className={`text-[10px] px-2 py-0.5 border ${guardianStates?.transitionLogAvailable ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-amber-50 text-amber-800 border-amber-300'}`}>
+                {guardianStates?.transitionLogAvailable ? 'Historico ativo' : 'Historico pendente'}
+              </Badge>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {guardianStates?.statusError && (
+            <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700">
+              Falha ao ler status do Guardian: {guardianStates.statusError}
+            </div>
+          )}
+          {guardianStates?.transitionLogError && (
+            <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              Historico de mudancas ainda nao esta ativo no banco: {guardianStates.transitionLogError}
+            </div>
+          )}
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="text-left text-[10px] uppercase tracking-wider text-text-secondary border-b border-border">
+                <tr>
+                  <th className="py-2 pr-3">Tenant</th>
+                  <th className="py-2 pr-3">Estado</th>
+                  <th className="py-2 pr-3">Tempo</th>
+                  <th className="py-2 pr-3">Operacao</th>
+                  <th className="py-2 pr-3">IA</th>
+                  <th className="py-2 pr-3">Resumo</th>
+                  <th className="py-2 pr-3">Checagem</th>
+                </tr>
+              </thead>
+              <tbody>
+                {guardianCurrent.map((state) => (
+                  <tr key={state.tenantId} className="border-b border-border/50 align-top">
+                    <td className="py-3 pr-3 min-w-[220px]">
+                      <div className="font-semibold text-text">{state.tenantName}</div>
+                      <div className="text-[10px] text-text-secondary">{state.tenantSlug}</div>
+                    </td>
+                    <td className="py-3 pr-3">
+                      <Badge className={`text-[9px] px-1.5 py-0 border ${guardianImpactClass(state.impactLevel)}`}>{state.label}</Badge>
+                      <div className="text-[10px] text-text-secondary mt-1">{formatToken(state.externalState)}</div>
+                    </td>
+                    <td className="py-3 pr-3 text-text-secondary whitespace-nowrap">
+                      {formatDuration(state.durationSeconds)}
+                      <div className="text-[10px]">{formatDate(state.enteredAt)}</div>
+                    </td>
+                    <td className="py-3 pr-3">
+                      <div className="font-semibold text-text">{state.operationLabel}</div>
+                      <div className="text-[10px] text-text-secondary">{formatToken(state.reasonCode)}</div>
+                    </td>
+                    <td className="py-3 pr-3 min-w-[150px]">
+                      <div className={state.allowSend ? 'text-success-text font-semibold' : 'text-red-700 font-semibold'}>
+                        Responder: {state.allowSend ? 'sim' : 'nao'}
+                      </div>
+                      <div className={state.allowNewActive ? 'text-success-text font-semibold' : 'text-amber-800 font-semibold'}>
+                        Prospec. nova: {state.allowNewActive ? 'sim' : 'cuidado'}
+                      </div>
+                    </td>
+                    <td className="py-3 pr-3 text-text-secondary min-w-[280px] max-w-[420px]">
+                      {state.summary}
+                    </td>
+                    <td className="py-3 pr-3 text-text-secondary whitespace-nowrap">{formatDate(state.lastCheckedAt || state.updatedAt)}</td>
+                  </tr>
+                ))}
+                {guardianCurrent.length === 0 && <EmptyRow columns={7} label="Nenhum status Guardian encontrado." />}
+              </tbody>
+            </table>
+          </div>
+
+          {guardianTransitions.length > 0 && (
+            <div className="border border-border rounded-lg overflow-x-auto">
+              <div className="min-w-[780px]">
+                <div className="grid grid-cols-[220px_160px_130px_1fr_120px] gap-3 px-3 py-2 text-[10px] uppercase tracking-wider text-text-secondary bg-surface-sunken">
+                  <span>Tenant</span>
+                  <span>Mudanca</span>
+                  <span>Tempo</span>
+                  <span>Resumo</span>
+                  <span>Quando</span>
+                </div>
+                {guardianTransitions.slice(0, 8).map((transition, index) => (
+                  <div key={`${transition.tenantId}-${transition.enteredAt}-${index}`} className="grid grid-cols-[220px_160px_130px_1fr_120px] gap-3 px-3 py-2 text-xs border-t border-border/60">
+                    <span className="font-semibold text-text truncate">{transition.tenantName}</span>
+                    <span className="text-text-secondary truncate">{formatToken(transition.previousStatus)} para {formatToken(transition.status)}</span>
+                    <span className="text-text-secondary">{transition.exitedAt ? formatDuration(transition.durationSeconds) : 'estado atual'}</span>
+                    <span className="text-text-secondary truncate">{transition.operatorSummary || transition.operationLabel || '-'}</span>
+                    <span className="text-text-secondary">{formatDate(transition.enteredAt)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {createRecipientOpen && (
         <Card className="bg-white border-primary/30 shadow-sm">
@@ -869,6 +1213,35 @@ export default function AdminMonitoringPage() {
                   </div>
                 ))}
                 {(data?.disconnectDeliveries || []).length === 0 && <p className="text-xs text-text-secondary py-4">Nenhum alerta de desconexao entregue.</p>}
+              </CardContent>
+            </Card>
+
+            <Card className="bg-white border-border shadow-sm">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base font-bold font-heading text-text">Alertas de atividade da IA</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {aiActivityAlertDeliveries?.error && (
+                  <p className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                    Historico pendente no banco: {aiActivityAlertDeliveries.error}
+                  </p>
+                )}
+                {(aiActivityAlertDeliveries?.rows || []).map((delivery) => (
+                  <div key={delivery.id} className="border border-border rounded-lg p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Badge className={`text-[9px] px-1.5 py-0 border ${statusClass(delivery.status)}`}>{delivery.status}</Badge>
+                        <span className="text-xs font-semibold text-text truncate">{delivery.tenants?.name || delivery.tenant_id}</span>
+                      </div>
+                      <span className="text-[10px] text-text-secondary">{formatDate(delivery.sent_at || delivery.created_at)}</span>
+                    </div>
+                    <p className="text-[10px] font-mono text-text-secondary mt-2">{delivery.activity_state} / {delivery.severity}</p>
+                    <p className="text-xs text-text mt-1 line-clamp-2">{delivery.ai_summary || delivery.error || 'Sem resumo registrado.'}</p>
+                  </div>
+                ))}
+                {(aiActivityAlertDeliveries?.rows || []).length === 0 && (
+                  <p className="text-xs text-text-secondary py-4">Nenhum alerta de atividade da IA entregue.</p>
+                )}
               </CardContent>
             </Card>
 

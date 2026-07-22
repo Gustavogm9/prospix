@@ -25,6 +25,31 @@ type AdminRecentMessage = {
   content_preview?: string | null;
 };
 
+type AdminAiActivityTenant = {
+  tenant_id?: string | null;
+  tenant_name?: string | null;
+  state?: string | null;
+  summary?: string | null;
+  action?: string | null;
+  contactable_backlog?: number | null;
+  due_pending?: number | null;
+  unanswered_conversations?: number | null;
+  outbound_today?: number | null;
+  outbound_last_60m?: number | null;
+  inbound_today?: number | null;
+  guardian_status?: string | null;
+};
+
+type AdminAiActivity = {
+  operatingWindow?: {
+    isOpen?: boolean | null;
+    label?: string | null;
+  };
+  summary?: Record<string, number | null | undefined>;
+  tenants?: AdminAiActivityTenant[];
+  errors?: string[];
+};
+
 type AdminConnectionLog = {
   created_at?: string | null;
   event_type?: string | null;
@@ -49,6 +74,7 @@ type ReportMetricsView = {
   tenants?: AdminTenant[];
   counts?: AdminCountMap;
   guardianStatus?: AdminGuardianStatus[];
+  aiActivity?: AdminAiActivity;
   recentMessages?: AdminRecentMessage[];
   errors?: string[];
 };
@@ -62,6 +88,13 @@ type DisconnectMessageInput = {
   pendingDueCount?: number | null;
   recentMessages?: AdminRecentMessage[];
   connectionLogs?: AdminConnectionLog[];
+};
+
+type AiActivityAlertInput = {
+  tenant?: AdminTenant | null;
+  activity: AdminAiActivityTenant;
+  source?: string | null;
+  createdAt?: string | null;
 };
 
 const UUID_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
@@ -241,6 +274,60 @@ function buildReportAction(counts: AdminCountMap, guardianRows: AdminGuardianSta
   return "Acao recomendada: nenhuma acao imediata.";
 }
 
+function activityCount(activity: AdminAiActivity | undefined, key: string): number {
+  const value = Number(activity?.summary?.[key] ?? 0);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function buildAiActivityLines(activity: AdminAiActivity | undefined): string[] {
+  if (!activity) return ["Atividade da IA: sem coleta de SLA operacional neste relatorio."];
+
+  const blocked = activityCount(activity, "BLOCKED");
+  const stalled = activityCount(activity, "STALLED");
+  const watch = activityCount(activity, "WATCH");
+  const ok = activityCount(activity, "OK");
+  const offHours = activityCount(activity, "OFF_HOURS");
+  const parts = [
+    ok > 0 ? `${ok} OK` : null,
+    watch > 0 ? `${watch} em acompanhamento` : null,
+    stalled > 0 ? `${stalled} atrasada` : null,
+    blocked > 0 ? `${blocked} bloqueada` : null,
+    offHours > 0 ? `${offHours} fora do horario` : null,
+  ].filter(Boolean);
+  const lines = [`Atividade da IA: ${parts.length ? parts.join("; ") : "sem tenants no escopo"}.`];
+  const notable = (activity.tenants || [])
+    .filter((tenant) => ["BLOCKED", "STALLED", "WATCH"].includes(String(tenant.state || "").toUpperCase()))
+    .slice(0, 3);
+
+  for (const tenant of notable) {
+    const name = cleanText(tenant.tenant_name || tenant.tenant_id || "tenant desconhecido", 120);
+    const summary = sanitizePreview(tenant.summary || "requer acompanhamento", 160);
+    const numbers = [
+      `${Number(tenant.contactable_backlog || 0)} aptos`,
+      `${Number(tenant.due_pending || 0)} na fila vencida`,
+      `${Number(tenant.unanswered_conversations || 0)} sem resposta`,
+      `${Number(tenant.outbound_today || 0)} envios hoje`,
+    ].join("; ");
+    lines.push(`- ${name}: ${summary} (${numbers}).`);
+  }
+
+  if (notable.length === 0) {
+    lines.push("- Nenhum atraso operacional relevante detectado.");
+  }
+
+  return lines;
+}
+
+function buildAiActivityAction(activity: AdminAiActivity | undefined): string | null {
+  if (!activity) return null;
+  const blocked = activityCount(activity, "BLOCKED");
+  const stalled = activityCount(activity, "STALLED");
+  if (blocked > 0) return "Acao IA: primeiro resolver WhatsApp bloqueado; sem isso, a IA nao deve enviar.";
+  if (stalled > 0) return "Acao IA: checar worker de envio, fila vencida e respostas pendentes.";
+  if (activityCount(activity, "WATCH") > 0) return "Acao IA: acompanhar proxima execucao antes de intervir.";
+  return "Acao IA: nenhuma intervencao necessaria.";
+}
+
 export function buildAdminReportMessage(schedule: ReportScheduleView, metrics: ReportMetricsView) {
   const counts = metrics.counts || {};
   const tenants = metrics.tenants || [];
@@ -248,6 +335,7 @@ export function buildAdminReportMessage(schedule: ReportScheduleView, metrics: R
   const guardianRows = metrics.guardianStatus || [];
   const recentMessages = (metrics.recentMessages || []).slice(-3);
   const errors = metrics.errors || [];
+  const aiActivity = metrics.aiActivity;
   const leads = countOf(counts, "leadsCreated");
   const conversationsStarted = countOf(counts, "conversationsStarted");
   const activeConversations = countOf(counts, "activeConversations");
@@ -273,6 +361,7 @@ export function buildAdminReportMessage(schedule: ReportScheduleView, metrics: R
   }
 
   lines.push(...buildWhatsAppSummary(guardianRows, tenantById));
+  lines.push(...buildAiActivityLines(aiActivity));
   lines.push(`Pendencias: ${pending === 0 ? "nenhuma fila vencida" : `${pending} ${plural(pending, "mensagem pendente", "mensagens pendentes")}`}.`);
 
   if (recentMessages.length > 0) {
@@ -281,7 +370,9 @@ export function buildAdminReportMessage(schedule: ReportScheduleView, metrics: R
     lines.push("Ultimas interacoes: nenhuma mensagem no periodo.");
   }
 
+  const activityAction = buildAiActivityAction(aiActivity);
   lines.push("", buildReportAction(counts, guardianRows, errors));
+  if (activityAction) lines.push(activityAction);
 
   const body = lines.join("\n");
   const summary = cleanText([
@@ -454,5 +545,62 @@ export function buildAdminDisconnectAlertMessage(input: DisconnectMessageInput) 
 
   const body = bodyLines.join("\n");
   const summary = cleanText(`WhatsApp de ${tenantName} desconectado em ${formatBrtMinute(eventAt)}. Motivo: ${reason.short}.`, 500);
+  return { summary, body };
+}
+
+function activityStateLabel(value: string | null | undefined): string {
+  const state = String(value || "").toUpperCase();
+  if (state === "BLOCKED") return "IA bloqueada";
+  if (state === "STALLED") return "IA atrasada";
+  if (state === "WATCH") return "IA em acompanhamento";
+  return "atividade da IA";
+}
+
+function activityImpactText(activity: AdminAiActivityTenant): string {
+  const state = String(activity.state || "").toUpperCase();
+  if (state === "BLOCKED") {
+    return "a IA nao deve enviar mensagens ate o bloqueio operacional ser resolvido.";
+  }
+  if (Number(activity.due_pending || 0) > 0) {
+    return "ha mensagens que ja deveriam ter sido enviadas e continuam pendentes.";
+  }
+  if (Number(activity.unanswered_conversations || 0) > 0) {
+    return "ha conversas de leads aguardando resposta da IA alem da tolerancia.";
+  }
+  return "a operacao precisa de acompanhamento porque ha sinais de atraso.";
+}
+
+export function buildAdminAiActivityAlertMessage(input: AiActivityAlertInput) {
+  const activity = input.activity;
+  const tenantName = cleanText(activity.tenant_name || input.tenant?.name || input.tenant?.slug || "tenant desconhecido", 120);
+  const stateLabel = activityStateLabel(activity.state);
+  const createdAt = input.createdAt || new Date().toISOString();
+  const summaryText = sanitizePreview(activity.summary || "A operacao da IA precisa de acompanhamento.", 220);
+  const actionText = sanitizePreview(activity.action || "Verificar o painel de monitoramento administrativo.", 220);
+  const bodyLines = [
+    "Prospix - alerta de atividade da IA",
+    "",
+    `Atencao: ${stateLabel} em ${tenantName}.`,
+    "",
+    `Quando: ${formatBrtMinute(createdAt)}`,
+    `Impacto: ${activityImpactText(activity)}`,
+    "",
+    "Evidencias:",
+    `- Leads aptos sem primeiro contato: ${Number(activity.contactable_backlog || 0)}.`,
+    `- Mensagens vencidas na fila: ${Number(activity.due_pending || 0)}.`,
+    `- Conversas aguardando resposta: ${Number(activity.unanswered_conversations || 0)}.`,
+    `- Envios da IA hoje: ${Number(activity.outbound_today || 0)} (${Number(activity.outbound_last_60m || 0)} na ultima hora).`,
+    `- Entradas de leads hoje: ${Number(activity.inbound_today || 0)}.`,
+    `- Estado do WhatsApp: ${sanitizePreview(activity.guardian_status || "sem registro", 80)}.`,
+    "",
+    "Resumo:",
+    summaryText,
+    "",
+    "Acao recomendada:",
+    actionText,
+  ];
+
+  const body = bodyLines.join("\n");
+  const summary = cleanText(`${stateLabel} em ${tenantName}: ${summaryText}`, 500);
   return { summary, body };
 }

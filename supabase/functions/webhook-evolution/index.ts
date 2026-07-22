@@ -9,6 +9,12 @@ import { GuardianRunner } from "../_shared/guardians/runner.ts";
 import { sha256Hex } from "../_shared/guardians/evidence.ts";
 import { buildCandidatePayload } from "../_shared/guardians/candidate.ts";
 import { dispatchAdminDisconnectAlert } from "../_shared/admin-monitoring.ts";
+import {
+  buildGuardianStatePatch,
+  isFutureTimestamp,
+  recordGuardianStateTransition,
+  shouldPromoteColdToNormal,
+} from "../_shared/whatsapp-guardian-state.ts";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -230,14 +236,32 @@ async function updateGuardianConnectionStatus(
   externalState: string | null,
   reasonCode: string | null,
   extra: Record<string, unknown> = {},
+  transition: { connectionEventId?: string | null } = {},
 ) {
+  const nowIso = new Date().toISOString();
+  const { data: previousStatus } = await supabase
+    .from("whatsapp_guardian_status")
+    .select("status, state_entered_at, quarantined_until, circuit_open_until")
+    .eq("tenant_id", tenantId)
+    .maybeSingle();
+  const statePatch = buildGuardianStatePatch({
+    previousStatus: previousStatus?.status || null,
+    nextStatus: status,
+    reasonCode,
+    source: String(extra.state_source || "webhook-evolution"),
+    nowIso,
+    previousStateEnteredAt: previousStatus?.state_entered_at || null,
+  });
   const payload = {
     tenant_id: tenantId,
     status,
     external_state: externalState,
-    external_checked_at: new Date().toISOString(),
+    external_checked_at: nowIso,
     last_disconnect_reason_code: reasonCode,
-    updated_at: new Date().toISOString(),
+    updated_at: nowIso,
+    state_entered_at: statePatch.state_entered_at,
+    ...(statePatch.state_reason_code !== undefined ? { state_reason_code: statePatch.state_reason_code } : {}),
+    ...(statePatch.state_source !== undefined ? { state_source: statePatch.state_source } : {}),
     ...extra,
   };
 
@@ -249,6 +273,24 @@ async function updateGuardianConnectionStatus(
     await supabase
       .from("whatsapp_guardian_status")
       .upsert({ tenant_id: tenantId, status, updated_at: new Date().toISOString() }, { onConflict: "tenant_id" });
+  }
+
+  if (!error) {
+    await recordGuardianStateTransition({
+      supabase,
+      tenantId,
+      previousStatus: previousStatus?.status || null,
+      nextStatus: status,
+      externalState,
+      reasonCode,
+      source: String(extra.state_source || "webhook-evolution"),
+      enteredAt: nowIso,
+      connectionEventId: transition.connectionEventId || null,
+      metadata: {
+        quarantined_until: extra.quarantined_until || previousStatus?.quarantined_until || null,
+        circuit_open_until: extra.circuit_open_until || previousStatus?.circuit_open_until || null,
+      },
+    });
   }
 }
 
@@ -412,32 +454,60 @@ async function handleConnectionUpdate(payload: any): Promise<Response> {
   const tenantId = tenantSecret.tenant_id;
   const { data: previousStatus } = await supabase
     .from("whatsapp_guardian_status")
-    .select("status")
+    .select("status, external_state, last_disconnect_reason_code, connected_at, quarantined_until, circuit_open_until")
     .eq("tenant_id", tenantId)
     .maybeSingle();
 
+  let nextStatus = classification.status;
+  let eventReasonCode = classification.reasonCode;
+  let statusReasonCode: string | null = classification.reasonCode;
   const extra: Record<string, unknown> = {};
   if (classification.reasonCode === "WA_CONNECTION_OPEN") {
-    const quarantineMinutes = getNumberEnv("WA_POST_RECONNECT_QUARANTINE_MINUTES", 60);
-    extra.connected_at = new Date().toISOString();
-    extra.quarantined_until = new Date(Date.now() + quarantineMinutes * 60 * 1000).toISOString();
-    extra.circuit_open_until = null;
+    const previousExternalOpen = String(previousStatus?.external_state || "").toLowerCase() === "open";
+    const previousStatusValue = String(previousStatus?.status || "").toUpperCase();
+    const activeCircuit = isFutureTimestamp(previousStatus?.circuit_open_until);
+    const freshConnection = !previousStatus
+      || !previousExternalOpen
+      || previousStatusValue === "PAUSED"
+      || previousStatusValue === "SUSPENDED"
+      || Boolean(previousStatus?.last_disconnect_reason_code)
+      || activeCircuit;
+
+    statusReasonCode = null;
+    if (freshConnection) {
+      const quarantineMinutes = getNumberEnv("WA_POST_RECONNECT_QUARANTINE_MINUTES", 60);
+      nextStatus = "COLD";
+      extra.connected_at = new Date().toISOString();
+      extra.quarantined_until = new Date(Date.now() + quarantineMinutes * 60 * 1000).toISOString();
+      extra.circuit_open_until = null;
+    } else if (shouldPromoteColdToNormal({
+      guardianStatus: previousStatus,
+      externalState: state,
+      quarantineMinutes: getNumberEnv("WA_POST_RECONNECT_QUARANTINE_MINUTES", 60),
+    })) {
+      nextStatus = "NORMAL";
+      eventReasonCode = "WA_COLD_PROMOTED_TO_NORMAL";
+      extra.circuit_open_until = null;
+    } else {
+      nextStatus = (previousStatus?.status as ConnectionGuardStatus | undefined) || "COLD";
+      eventReasonCode = "WA_CONNECTION_OPEN_STABLE";
+    }
   } else if (classification.critical) {
     extra.locked_at = null;
     extra.circuit_open_until = new Date(Date.now() + getNumberEnv("WA_CRITICAL_CIRCUIT_OPEN_MINUTES", 60) * 60 * 1000).toISOString();
   }
 
-  await updateGuardianConnectionStatus(tenantId, classification.status, state, classification.reasonCode, extra);
   const connectionEventId = await recordConnectionEvent({
     tenantId,
     instanceName,
     eventType: normalizeEventName(event),
     externalState: state,
-    reasonCode: classification.reasonCode,
+    reasonCode: eventReasonCode,
     rawError: redactPayload(raw),
     localStatusBefore: previousStatus?.status || null,
-    localStatusAfter: classification.status,
+    localStatusAfter: nextStatus,
   });
+  await updateGuardianConnectionStatus(tenantId, nextStatus, state, statusReasonCode, extra, { connectionEventId });
 
   if (classification.critical) {
     const operationalAlertId = await createConnectionAlert(tenantId, classification.reasonCode, state, {

@@ -15,6 +15,11 @@ import {
 } from "../_shared/guardians/validators/cadence.ts";
 import type { GuardianRunResult } from "../_shared/guardians/types.ts";
 import { dispatchAdminDisconnectAlert } from "../_shared/admin-monitoring.ts";
+import {
+  buildGuardianStatePatch,
+  recordGuardianStateTransition,
+  shouldPromoteColdToNormal,
+} from "../_shared/whatsapp-guardian-state.ts";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -303,10 +308,15 @@ function isBlockingMode(mode: GuardMode): boolean {
   return mode === "BLOCK";
 }
 
-function statusAfterHealthyExternalState(guardianStatus: any): string {
+function statusAfterHealthyExternalState(guardianStatus: any, externalState?: string | null): string {
   const current = guardianStatus?.status || "NORMAL";
   const guardReason = guardianStatus?.last_disconnect_reason_code;
   if ((current === "PAUSED" || current === "SUSPENDED") && guardReason) return "COLD";
+  if (shouldPromoteColdToNormal({
+    guardianStatus,
+    externalState,
+    quarantineMinutes: getNumberEnv("WA_POST_RECONNECT_QUARANTINE_MINUTES", 60),
+  })) return "NORMAL";
   return current;
 }
 
@@ -575,12 +585,29 @@ async function updateGuardianConnectionState(
   reasonCode: string | null,
   extra: Record<string, unknown> = {},
 ) {
+  const nowIso = new Date().toISOString();
+  const { data: previousStatus } = await supabase
+    .from("whatsapp_guardian_status")
+    .select("status, state_entered_at, quarantined_until, circuit_open_until")
+    .eq("tenant_id", tenantId)
+    .maybeSingle();
+  const statePatch = buildGuardianStatePatch({
+    previousStatus: previousStatus?.status || null,
+    nextStatus: status,
+    reasonCode,
+    source: String(extra.state_source || "send-messages"),
+    nowIso,
+    previousStateEnteredAt: previousStatus?.state_entered_at || null,
+  });
   const payload = {
     status,
     external_state: externalState,
-    external_checked_at: new Date().toISOString(),
+    external_checked_at: nowIso,
     last_disconnect_reason_code: reasonCode,
-    updated_at: new Date().toISOString(),
+    updated_at: nowIso,
+    state_entered_at: statePatch.state_entered_at,
+    ...(statePatch.state_reason_code !== undefined ? { state_reason_code: statePatch.state_reason_code } : {}),
+    ...(statePatch.state_source !== undefined ? { state_source: statePatch.state_source } : {}),
     ...extra,
   };
 
@@ -594,6 +621,23 @@ async function updateGuardianConnectionState(
       .from("whatsapp_guardian_status")
       .update({ status, updated_at: new Date().toISOString() })
       .eq("tenant_id", tenantId);
+  }
+
+  if (!error) {
+    await recordGuardianStateTransition({
+      supabase,
+      tenantId,
+      previousStatus: previousStatus?.status || null,
+      nextStatus: status,
+      externalState,
+      reasonCode,
+      source: String(extra.state_source || "send-messages"),
+      enteredAt: nowIso,
+      metadata: {
+        quarantined_until: extra.quarantined_until || previousStatus?.quarantined_until || null,
+        circuit_open_until: extra.circuit_open_until || previousStatus?.circuit_open_until || null,
+      },
+    });
   }
 }
 
@@ -649,10 +693,30 @@ async function runConnectionHealthGuard(
   const pendingDueCount = await countDuePending(tenantId);
 
   if (external.ok) {
-    const healthyStatus = statusAfterHealthyExternalState(guardianStatus);
+    const previousStatus = guardianStatus?.status || null;
+    const healthyStatus = statusAfterHealthyExternalState(guardianStatus, external.state);
     await updateGuardianConnectionState(tenantId, healthyStatus, external.state, null, {
       connected_at: guardianStatus?.connected_at || new Date().toISOString(),
     });
+    if (previousStatus === "COLD" && healthyStatus === "NORMAL") {
+      await recordConnectionEvent({
+        tenantId,
+        instanceName: evoConfig.instanceName,
+        eventType: "STATE_TRANSITION",
+        externalState: external.state,
+        reasonCode: "WA_COLD_PROMOTED_TO_NORMAL",
+        rawError: {
+          message: "Conexao saudavel; observacao encerrada automaticamente.",
+          connected_at: guardianStatus?.connected_at || null,
+          quarantined_until: guardianStatus?.quarantined_until || null,
+          circuit_open_until: guardianStatus?.circuit_open_until || null,
+          source: "send-messages:pre-send-health",
+        },
+        localStatusBefore: previousStatus,
+        localStatusAfter: healthyStatus,
+        pendingDueCount,
+      });
+    }
     return {
       allowSend: true,
       allowNewActive: !isQuarantined,
@@ -1488,7 +1552,7 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
       }
 
       const numberState = healthDecision.reasonCode === "WA_CONNECTION_HEALTHY"
-        ? statusAfterHealthyExternalState(guardianStatus)
+        ? statusAfterHealthyExternalState(guardianStatus, healthDecision.externalState)
         : guardianStatus?.status || "NORMAL";
 
       if (numberState === "PAUSED" || numberState === "SUSPENDED") {

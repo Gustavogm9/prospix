@@ -57,8 +57,36 @@ type WhatsAppGuardianTrace = {
     quarantinedUntil: string | null;
     circuitOpenUntil: string | null;
     lastGlobalSendAt: string | null;
+    stateEnteredAt?: string | null;
+    stateReasonCode?: string | null;
+    stateSource?: string | null;
     updatedAt: string | null;
   } | null;
+  currentState?: {
+    status: string;
+    label: string;
+    impactLevel: 'INFO' | 'OBSERVATION' | 'ATTENTION' | 'CRITICAL';
+    operationState: 'ACTIVE' | 'THROTTLED' | 'BLOCKED' | 'REQUIRES_ACTION';
+    enteredAt: string | null;
+    durationSeconds: number | null;
+    allowSend: boolean;
+    allowNewActive: boolean;
+    summary: string;
+  } | null;
+  recentTransitions?: Array<{
+    previousStatus: string | null;
+    status: string;
+    externalState: string | null;
+    reasonCode: string;
+    impactLevel: string;
+    operationState: string;
+    operatorSummary: string;
+    allowSend: boolean | null;
+    allowNewActive: boolean | null;
+    enteredAt: string;
+    exitedAt: string | null;
+    durationSeconds: number | null;
+  }>;
   events24h: Array<{
     eventType: string | null;
     reasonCode: string | null;
@@ -77,6 +105,24 @@ type WhatsAppGuardianTrace = {
     activePending: number;
     missingGuardianEvidence: number;
   };
+  aiActivity: {
+    state: 'OK' | 'WATCH' | 'STALLED' | 'BLOCKED' | 'OFF_HOURS';
+    label: string;
+    severity: 'INFO' | 'OBSERVATION' | 'ATTENTION' | 'CRITICAL';
+    summary: string;
+    requiredAction: string;
+    isOperatingWindow: boolean;
+    operatingWindowLabel: string;
+    leadsCreatedToday: number;
+    contactableBacklog: number;
+    duePending: number;
+    unansweredConversations: number;
+    outboundToday: number;
+    outboundLast60m: number;
+    inboundToday: number;
+    lastOutboundAt: string | null;
+    lastInboundAt: string | null;
+  } | null;
 };
 
 const emptyCredentialState: CredentialState = {
@@ -245,6 +291,41 @@ export default function Settings() {
 
   const formatTraceLabel = (value?: string | null) => {
     return value ? value.replaceAll('_', ' ') : 'Sem registro';
+  };
+
+  const formatDuration = (seconds?: number | null) => {
+    if (seconds == null) return 'Sem registro';
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}min`;
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    if (hours < 24) return remainingMinutes ? `${hours}h ${remainingMinutes}min` : `${hours}h`;
+    const days = Math.floor(hours / 24);
+    const remainingHours = hours % 24;
+    return remainingHours ? `${days}d ${remainingHours}h` : `${days}d`;
+  };
+
+  const impactClass = (impact?: string | null) => {
+    if (impact === 'CRITICAL') return 'bg-[#FEF3F2] text-[#B42318] border-[#FECDCA]';
+    if (impact === 'ATTENTION') return 'bg-[#FFFAEB] text-[#B54708] border-[#FEDF89]';
+    if (impact === 'OBSERVATION') return 'bg-[#EFF8FF] text-[#175CD3] border-[#B2DDFF]';
+    return 'bg-[#ECFDF3] text-[#027A48] border-[#A7F3D0]';
+  };
+
+  const operationLabel = (operation?: string | null) => {
+    if (operation === 'ACTIVE') return 'Operando normalmente';
+    if (operation === 'THROTTLED') return 'Operando com cuidado';
+    if (operation === 'BLOCKED') return 'Envios pausados';
+    if (operation === 'REQUIRES_ACTION') return 'Precisa de acao';
+    return formatTraceLabel(operation);
+  };
+
+  const aiActivityClass = (severity?: string | null) => {
+    if (severity === 'CRITICAL') return 'bg-[#FEF3F2] text-[#B42318] border-[#FECDCA]';
+    if (severity === 'ATTENTION') return 'bg-[#FFFAEB] text-[#B54708] border-[#FEDF89]';
+    if (severity === 'OBSERVATION') return 'bg-[#EFF8FF] text-[#175CD3] border-[#B2DDFF]';
+    return 'bg-[#ECFDF3] text-[#027A48] border-[#A7F3D0]';
   };
 
   const fetchProfile = useCallback(async () => {
@@ -649,6 +730,9 @@ export default function Settings() {
     const status = whatsappTrace.status;
     const latestGroup = whatsappTrace.events24h[0] ?? null;
     const missingEvidence = whatsappTrace.pendingOutbound.missingGuardianEvidence;
+    const currentState = whatsappTrace.currentState ?? null;
+    const recentTransitions = whatsappTrace.recentTransitions ?? [];
+    const aiActivity = whatsappTrace.aiActivity ?? null;
 
     return (
       <div className="rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-4">
@@ -670,6 +754,66 @@ export default function Settings() {
             {formatTraceLabel(status?.status)}
           </Badge>
         </div>
+
+        {currentState && (
+          <div className={`mt-4 rounded-lg border bg-white p-3 ${impactClass(currentState.impactLevel)}`}>
+            <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[12px] font-bold text-[#0F172A]">{currentState.label}</span>
+                  <Badge className={`text-[9px] uppercase font-bold tracking-wider px-2 py-0.5 border ${impactClass(currentState.impactLevel)}`}>
+                    {operationLabel(currentState.operationState)}
+                  </Badge>
+                  <span className="text-[10px] text-[#64748B]">
+                    ha {formatDuration(currentState.durationSeconds)}
+                  </span>
+                </div>
+                <p className="text-[11px] text-[#334155] mt-1">{currentState.summary}</p>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-[10px] shrink-0">
+                <span className={`rounded-md border px-2 py-1 font-semibold ${currentState.allowSend ? 'bg-[#ECFDF3] text-[#027A48] border-[#A7F3D0]' : 'bg-[#FEF3F2] text-[#B42318] border-[#FECDCA]'}`}>
+                  Respostas: {currentState.allowSend ? 'liberadas' : 'pausadas'}
+                </span>
+                <span className={`rounded-md border px-2 py-1 font-semibold ${currentState.allowNewActive ? 'bg-[#ECFDF3] text-[#027A48] border-[#A7F3D0]' : 'bg-[#FFFAEB] text-[#B54708] border-[#FEDF89]'}`}>
+                  Novas conversas: {currentState.allowNewActive ? 'liberadas' : 'em cuidado'}
+                </span>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-3 text-[10px] text-[#64748B]">
+              <span>Entrou neste estado: {formatDateTime(currentState.enteredAt)}</span>
+              <span>Origem: {formatTraceLabel(status?.stateSource)}</span>
+              <span>Motivo: {formatTraceLabel(status?.stateReasonCode || status?.lastDisconnectReasonCode)}</span>
+            </div>
+          </div>
+        )}
+
+        {aiActivity && (
+          <div className={`mt-3 rounded-lg border bg-white p-3 ${aiActivityClass(aiActivity.severity)}`}>
+            <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[12px] font-bold text-[#0F172A]">{aiActivity.label}</span>
+                  <Badge className={`text-[9px] uppercase font-bold tracking-wider px-2 py-0.5 border ${aiActivityClass(aiActivity.severity)}`}>
+                    {aiActivity.isOperatingWindow ? 'horario ativo' : 'fora do horario'}
+                  </Badge>
+                </div>
+                <p className="text-[11px] text-[#334155] mt-1">{aiActivity.summary}</p>
+                <p className="text-[10px] text-[#64748B] mt-1">Acao: {aiActivity.requiredAction}</p>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[10px] shrink-0">
+                <span className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 font-semibold text-[#334155]">Leads hoje: {aiActivity.leadsCreatedToday}</span>
+                <span className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 font-semibold text-[#334155]">Aptos: {aiActivity.contactableBacklog}</span>
+                <span className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 font-semibold text-[#334155]">Fila vencida: {aiActivity.duePending}</span>
+                <span className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 font-semibold text-[#334155]">Sem resposta: {aiActivity.unansweredConversations}</span>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-3 text-[10px] text-[#64748B]">
+              <span>Mensagens da IA hoje: {aiActivity.outboundToday} ({aiActivity.outboundLast60m} na ultima hora)</span>
+              <span>Ultimo envio IA: {formatDateTime(aiActivity.lastOutboundAt)}</span>
+              <span>Ultima entrada lead: {formatDateTime(aiActivity.lastInboundAt)}</span>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-4">
           <div className="rounded-lg border border-[#E5E7EB] bg-white p-3">
@@ -736,6 +880,26 @@ export default function Settings() {
                     {formatTraceLabel(event.eventType)} · {formatTraceLabel(event.reasonCode)}
                   </span>
                   <span className="text-[#64748B] font-mono">{formatDateTime(event.createdAt)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {recentTransitions.length > 0 && (
+          <div className="mt-3 border-t border-[#E5E7EB] pt-3">
+            <div className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider mb-2">Mudancas de estado</div>
+            <div className="space-y-1.5">
+              {recentTransitions.slice(0, 4).map((transition, index) => (
+                <div key={`${transition.enteredAt}-${index}`} className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-1 text-[11px]">
+                  <span className="text-[#0F172A] font-medium">
+                    {formatTraceLabel(transition.previousStatus)} para {formatTraceLabel(transition.status)} - {operationLabel(transition.operationState)}
+                  </span>
+                  <span className="text-[#64748B]">
+                    {transition.exitedAt
+                      ? `${formatDuration(transition.durationSeconds)} encerrado em ${formatDateTime(transition.exitedAt)}`
+                      : `estado atual desde ${formatDateTime(transition.enteredAt)}`}
+                  </span>
                 </div>
               ))}
             </div>
