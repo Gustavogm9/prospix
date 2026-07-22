@@ -1,3 +1,5 @@
+import { buildAdminDisconnectAlertMessage } from "./admin-message-formatters.ts";
+
 type SupabaseLike = any;
 
 type Recipient = {
@@ -73,21 +75,6 @@ function cleanText(value: unknown, max = 600): string {
 
 function normalizeWhatsAppNumber(value: string): string {
   return String(value || "").replace(/\D/g, "");
-}
-
-function formatBrt(value: string | Date | null | undefined): string {
-  if (!value) return "desconhecido";
-  const date = value instanceof Date ? value : new Date(value);
-  if (!Number.isFinite(date.getTime())) return "desconhecido";
-  return new Intl.DateTimeFormat("pt-BR", {
-    timeZone: "America/Sao_Paulo",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(date);
 }
 
 function normalizeBaseUrl(value: string | null | undefined): string {
@@ -403,21 +390,21 @@ async function loadRecentMessages(supabase: SupabaseLike, tenantId: string, refe
   });
 }
 
-function buildDisconnectFallbackSummary(params: {
-  tenantName: string;
-  reasonCode: string;
-  externalState?: string | null;
-  recentMessages: any[];
-  pendingDueCount?: number | null;
-}) {
-  const sent = params.recentMessages.filter((m) => m.direction === "OUTBOUND").length;
-  const inbound = params.recentMessages.filter((m) => m.direction === "INBOUND").length;
-  return [
-    `Queda detectada no tenant ${params.tenantName}.`,
-    `Motivo tecnico: ${params.reasonCode}. Estado externo: ${params.externalState || "desconhecido"}.`,
-    `Janela de 5h antes do evento: ${sent} mensagens outbound e ${inbound} inbound registradas.`,
-    params.pendingDueCount == null ? null : `Fila pendente no momento: ${params.pendingDueCount}.`,
-  ].filter(Boolean).join(" ");
+async function loadRecentConnectionLogs(supabase: SupabaseLike, tenantId: string, referenceAt: string) {
+  const ref = new Date(referenceAt);
+  const since = new Date(ref.getTime() - 10 * 60 * 1000).toISOString();
+  const until = new Date(ref.getTime() + 60 * 1000).toISOString();
+
+  const { data } = await supabase
+    .from("whatsapp_connection_events")
+    .select("created_at, event_type, external_state, reason_code, raw_error_redacted, local_status_before, local_status_after, pending_due_count")
+    .eq("tenant_id", tenantId)
+    .gte("created_at", since)
+    .lte("created_at", until)
+    .order("created_at", { ascending: true })
+    .limit(12);
+
+  return data || [];
 }
 
 async function buildDisconnectMessage(params: {
@@ -428,59 +415,18 @@ async function buildDisconnectMessage(params: {
   source: string;
   pendingDueCount?: number | null;
   recentMessages: any[];
+  connectionLogs: any[];
 }) {
-  const eventAt = params.event?.created_at || new Date().toISOString();
-  const fallback = buildDisconnectFallbackSummary({
-    tenantName: params.tenant?.name || params.tenant?.id || "tenant desconhecido",
+  return buildAdminDisconnectAlertMessage({
+    tenant: params.tenant,
+    event: params.event,
     reasonCode: params.reasonCode,
     externalState: params.externalState,
-    recentMessages: params.recentMessages,
+    source: params.source,
     pendingDueCount: params.pendingDueCount ?? params.event?.pending_due_count ?? null,
+    recentMessages: params.recentMessages,
+    connectionLogs: params.connectionLogs,
   });
-
-  const summary = await summarizeWithExistingAI({
-    systemPrompt: [
-      "Voce e um operador senior de monitoramento do Prospix.",
-      "Resuma um incidente de queda de WhatsApp para administradores.",
-      "Seja objetivo, factual, sem especular causa fora dos dados.",
-      "Inclua risco operacional e acao imediata recomendada em no maximo 5 frases.",
-    ].join(" "),
-    userPrompt: JSON.stringify({
-      tenant: params.tenant,
-      event: params.event,
-      reason_code: params.reasonCode,
-      external_state: params.externalState,
-      source: params.source,
-      pending_due_count: params.pendingDueCount ?? params.event?.pending_due_count ?? null,
-      recent_messages: params.recentMessages,
-    }),
-    fallback,
-    maxTokens: 240,
-  });
-
-  const messageLines = params.recentMessages.slice(-8).map((message) => {
-    const phone = message.lead_whatsapp || "sem numero";
-    const who = message.direction === "OUTBOUND" ? "IA/OUT" : "LEAD/IN";
-    return `- ${formatBrt(message.created_at)} ${who} ${phone}: ${message.content_preview || "(sem texto)"}`;
-  });
-
-  const body = [
-    "[PROSPIX] WhatsApp desconectado",
-    `Tenant: ${params.tenant?.name || params.tenant?.id || "desconhecido"}`,
-    `Quando: ${formatBrt(eventAt)}`,
-    `Motivo: ${params.reasonCode}`,
-    `Estado externo: ${params.externalState || params.event?.external_state || "desconhecido"}`,
-    `Origem: ${params.source}`,
-    `Pendentes no momento: ${params.pendingDueCount ?? params.event?.pending_due_count ?? "n/d"}`,
-    "",
-    "Resumo IA:",
-    summary,
-    "",
-    "Ultimas mensagens registradas:",
-    messageLines.length > 0 ? messageLines.join("\n") : "- Nenhuma mensagem encontrada nas 5h anteriores.",
-  ].join("\n");
-
-  return { summary, body };
 }
 
 export async function dispatchAdminDisconnectAlert(params: DisconnectAlertParams) {
@@ -493,6 +439,7 @@ export async function dispatchAdminDisconnectAlert(params: DisconnectAlertParams
   const eventAt = event?.created_at || new Date().toISOString();
   const tenant = await loadTenant(params.supabase, params.tenantId);
   const recentMessages = await loadRecentMessages(params.supabase, params.tenantId, eventAt);
+  const connectionLogs = await loadRecentConnectionLogs(params.supabase, params.tenantId, eventAt);
   const incidentKey = params.connectionEventId
     ? `connection_event:${params.connectionEventId}`
     : `tenant:${params.tenantId}:${params.reasonCode}:${eventAt.slice(0, 16)}`;
@@ -505,6 +452,7 @@ export async function dispatchAdminDisconnectAlert(params: DisconnectAlertParams
     source: params.source,
     pendingDueCount: params.pendingDueCount ?? event?.pending_due_count ?? null,
     recentMessages,
+    connectionLogs,
   });
 
   let sent = 0;

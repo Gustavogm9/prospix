@@ -8,8 +8,8 @@ import {
   dispatchAdminDisconnectAlert,
   getAdminMonitoringChannelStatus,
   sendAdminMonitoringWhatsApp,
-  summarizeWithExistingAI,
 } from "../_shared/admin-monitoring.ts";
+import { buildAdminReportMessage, formatBrtMinute } from "../_shared/admin-message-formatters.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -55,20 +55,6 @@ function cleanText(value: unknown, max = 500): string {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, max);
-}
-
-function formatBrt(value: string | Date | null | undefined): string {
-  if (!value) return "desconhecido";
-  const date = value instanceof Date ? value : new Date(value);
-  if (!Number.isFinite(date.getTime())) return "desconhecido";
-  return new Intl.DateTimeFormat("pt-BR", {
-    timeZone: "America/Sao_Paulo",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
 }
 
 function scopedTenantIds(schedule: Schedule): string[] {
@@ -237,11 +223,12 @@ async function collectMetrics(schedule: Schedule, periodStart: string, periodEnd
 
   let guardianQuery = supabase
     .from("whatsapp_guardian_status")
-    .select("tenant_id, status, external_state, last_disconnect_reason_code, updated_at")
+    .select("tenant_id, status, external_state, last_disconnect_reason_code, updated_at, quarantined_until, circuit_open_until")
     .order("updated_at", { ascending: false })
     .limit(20);
   guardianQuery = applyTenantScope(guardianQuery, schedule);
   const { data: guardianStatus, error: guardianError } = await guardianQuery;
+  const tenantById = new Map((tenants || []).map((tenant: any) => [tenant.id, tenant]));
 
   const recentMessages = await loadRecentMessages(schedule, periodStart, periodEnd);
   const errors = [
@@ -259,81 +246,18 @@ async function collectMetrics(schedule: Schedule, periodStart: string, periodEnd
       status: tenant.status,
     })),
     counts: Object.fromEntries(Object.entries(counts).map(([key, result]) => [key, result.value])),
-    guardianStatus: guardianStatus || [],
+    guardianStatus: (guardianStatus || []).map((row: any) => ({
+      ...row,
+      tenant_name: tenantById.get(row.tenant_id)?.name || tenantById.get(row.tenant_id)?.slug || null,
+    })),
     recentMessages,
     errors,
   };
 }
 
-function buildFallbackSummary(metrics: any): string {
-  const counts = metrics.counts || {};
-  return [
-    `Janela com ${counts.leadsCreated || 0} leads captados, ${counts.conversationsStarted || 0} conversas iniciadas e ${counts.outboundMessages || 0} mensagens outbound.`,
-    `Fila pendente vencida: ${counts.pendingDue || 0}. Eventos de conexao WhatsApp: ${counts.connectionEvents || 0}, criticos: ${counts.criticalConnectionEvents || 0}.`,
-    metrics.errors?.length ? `Coleta parcial: ${metrics.errors.length} erro(s) tecnicos registrados no run.` : "Coleta concluida sem erro tecnico reportado.",
-  ].join(" ");
-}
-
 async function buildReportMessage(schedule: Schedule, metrics: any) {
-  const fallback = buildFallbackSummary(metrics);
-  const aiSummary = await summarizeWithExistingAI({
-    systemPrompt: [
-      "Voce e um operador senior de monitoramento administrativo do Prospix.",
-      "Resuma captacao, conversas, fila e saude do WhatsApp para administradores.",
-      "Use somente os dados fornecidos, sem inferir causa ou diagnostico fora das evidencias.",
-      "Seja conciso, factual e aponte risco operacional imediato quando existir.",
-    ].join(" "),
-    userPrompt: JSON.stringify({
-      schedule: {
-        id: schedule.id,
-        name: schedule.name,
-        interval_minutes: schedule.interval_minutes,
-        window_minutes: schedule.window_minutes,
-        include_numbers: schedule.include_numbers,
-      },
-      metrics,
-    }),
-    fallback,
-    maxTokens: 260,
-  });
-
-  const counts = metrics.counts || {};
-  const tenantNames = (metrics.tenants || []).slice(0, 8).map((t: any) => t.name || t.slug || t.id).join(", ");
-  const guardianLines = (metrics.guardianStatus || []).slice(0, 6).map((row: any) =>
-    `- ${row.tenant_id}: ${row.status || "n/d"} / ${row.external_state || "sem estado"} / ${row.last_disconnect_reason_code || "sem motivo"}`
-  );
-  const messageLines = (metrics.recentMessages || []).slice(-8).map((message: any) => {
-    const phone = schedule.include_numbers ? message.lead_whatsapp || "sem numero" : "numero oculto";
-    const who = message.direction === "OUTBOUND" ? "IA/OUT" : "LEAD/IN";
-    return `- ${formatBrt(message.created_at)} ${who} ${phone}: ${message.content_preview || "(sem texto)"}`;
-  });
-
-  const body = [
-    "[PROSPIX] Relatorio administrativo",
-    `Agenda: ${schedule.name}`,
-    `Janela: ${formatBrt(metrics.period.start)} ate ${formatBrt(metrics.period.end)}`,
-    `Escopo: ${metrics.tenantScope === "selected" ? tenantNames || "tenants selecionados" : "todos os tenants ativos"}`,
-    "",
-    "Resumo IA:",
-    aiSummary,
-    "",
-    "Metricas:",
-    `- Leads captados: ${counts.leadsCreated || 0}`,
-    `- Conversas iniciadas: ${counts.conversationsStarted || 0}`,
-    `- Conversas ativas: ${counts.activeConversations || 0}`,
-    `- Mensagens inbound/outbound: ${counts.inboundMessages || 0}/${counts.outboundMessages || 0}`,
-    `- Fila pendente vencida: ${counts.pendingDue || 0}`,
-    `- Eventos WhatsApp totais/criticos: ${counts.connectionEvents || 0}/${counts.criticalConnectionEvents || 0}`,
-    "",
-    "Saude WhatsApp:",
-    guardianLines.length ? guardianLines.join("\n") : "- Sem status guardian registrado no escopo.",
-    "",
-    "Ultimas mensagens:",
-    messageLines.length ? messageLines.join("\n") : "- Sem mensagens recentes na janela ou exibicao desativada.",
-    metrics.errors?.length ? `\nErros de coleta: ${metrics.errors.join(" | ").slice(0, 700)}` : "",
-  ].filter((line) => line !== "").join("\n");
-
-  return { aiSummary, body };
+  const built = buildAdminReportMessage(schedule, metrics);
+  return { aiSummary: built.summary, body: built.body };
 }
 
 async function createRun(schedule: Schedule, recipient: Recipient, periodStart: string, periodEnd: string) {
@@ -501,7 +425,7 @@ async function sendRecipientTest(recipientId: string) {
   const body = [
     "[PROSPIX] Teste de monitoramento administrativo",
     `Destinatario: ${recipient.label}`,
-    `Horario: ${formatBrt(new Date())}`,
+    `Horario: ${formatBrtMinute(new Date())}`,
     "Canal administrativo operacional para este destinatario.",
   ].join("\n");
 
