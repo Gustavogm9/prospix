@@ -2,6 +2,48 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin, supabaseAdmin } from '../_lib/auth';
 
 const E164_RE = /^\+[1-9][0-9]{7,14}$/;
+const DEFAULT_ADMIN_CHANNEL_LABEL = 'Canal administrativo';
+const DEFAULT_ADMIN_INSTANCE_NAME = 'prospix_admin_monitoring';
+const ADMIN_CHANNEL_SELECT = [
+  'id',
+  'label',
+  'evolution_base_url',
+  'evolution_instance_name',
+  'active',
+  'connection_status',
+  'external_state',
+  'last_qr_requested_at',
+  'connected_at',
+  'disconnected_at',
+  'last_checked_at',
+  'last_error',
+  'created_at',
+  'updated_at',
+].join(', ');
+
+type AdminChannelRow = {
+  id: string;
+  label: string;
+  evolution_base_url: string;
+  evolution_instance_name: string;
+  active: boolean;
+  connection_status: 'UNKNOWN' | 'PENDING_QR' | 'CONNECTED' | 'DISCONNECTED' | 'ERROR';
+  external_state: string | null;
+  last_qr_requested_at: string | null;
+  connected_at: string | null;
+  disconnected_at: string | null;
+  last_checked_at: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type EvolutionCallResult = {
+  ok: boolean;
+  status: number;
+  data: any;
+  text: string;
+};
 
 function normalizeWhatsapp(value: unknown): string {
   const raw = String(value ?? '').trim();
@@ -27,26 +69,366 @@ function sanitizeTenantIds(value: unknown): string[] | null {
   return ids.length > 0 ? Array.from(new Set(ids)) : null;
 }
 
-function channelStatus() {
-  const adminConfigured = Boolean(
-    process.env.ADMIN_REPORT_EVOLUTION_BASE_URL
-      && process.env.ADMIN_REPORT_EVOLUTION_INSTANCE_NAME
-      && process.env.ADMIN_REPORT_EVOLUTION_API_KEY,
-  );
+function normalizeBaseUrl(value: unknown): string {
+  return String(value || '').trim().replace(/\/+$/, '');
+}
 
-  const fallbackConfigured = Boolean(
-    process.env.EVOLUTION_GUILDS_INSTANCE
-      && process.env.EVOLUTION_GUILDS_API_KEY,
+function getDefaultEvolutionBaseUrl(): string {
+  return normalizeBaseUrl(
+    process.env.ADMIN_REPORT_EVOLUTION_BASE_URL
+      || process.env.EVOLUTION_BASE_URL
+      || 'https://evolution-evolution-api.qr4jgl.easypanel.host',
+  );
+}
+
+function getEvolutionApiKey(): string {
+  return process.env.ADMIN_REPORT_EVOLUTION_API_KEY || process.env.EVOLUTION_GUILDS_API_KEY || '';
+}
+
+function normalizeInstanceName(value: unknown): string {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 80);
+  return normalized || DEFAULT_ADMIN_INSTANCE_NAME;
+}
+
+function redactEvolutionPayload(value: unknown): Record<string, unknown> {
+  try {
+    const text = JSON.stringify(value ?? {})
+      .replace(/[A-Za-z0-9_=-]{40,}/g, '[REDACTED]')
+      .replace(/55\d{10,13}/g, '[PHONE_REDACTED]')
+      .slice(0, 1000);
+    return { preview: text };
+  } catch {
+    return { preview: String(value ?? '').slice(0, 1000) };
+  }
+}
+
+function extractQrCode(payload: any): string | null {
+  const candidate = payload?.base64
+    || payload?.qrcode?.base64
+    || payload?.qrcode
+    || payload?.qr
+    || payload?.code
+    || payload?.data?.base64
+    || payload?.data?.qrcode?.base64
+    || null;
+  if (!candidate || typeof candidate !== 'string') return null;
+  return candidate;
+}
+
+function normalizeEvolutionState(value: unknown): string | null {
+  const state = String(value || '').trim();
+  return state ? state : null;
+}
+
+function connectionStatusFromState(state: string | null): AdminChannelRow['connection_status'] {
+  const normalized = String(state || '').toLowerCase();
+  if (['open', 'connected', 'connect'].includes(normalized)) return 'CONNECTED';
+  if (['connecting', 'qr', 'qrcode', 'pairing', 'pending'].includes(normalized)) return 'PENDING_QR';
+  if (['close', 'closed', 'disconnected', 'logout', 'not_found'].includes(normalized)) return 'DISCONNECTED';
+  return state ? 'DISCONNECTED' : 'UNKNOWN';
+}
+
+function connectionStatusFromInstance(instance: any): { status: AdminChannelRow['connection_status']; externalState: string | null } {
+  const state = normalizeEvolutionState(
+    instance?.connectionStatus
+      || instance?.connectionState?.state
+      || instance?.instance?.state
+      || instance?.state
+      || instance?.status,
+  );
+  return { status: connectionStatusFromState(state), externalState: state };
+}
+
+async function loadActiveChannel(): Promise<AdminChannelRow | null> {
+  const { data, error } = await supabaseAdmin
+    .from('admin_monitoring_channels')
+    .select(ADMIN_CHANNEL_SELECT)
+    .eq('active', true)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return (data || null) as AdminChannelRow | null;
+}
+
+function serializeChannel(channel: AdminChannelRow | null, dispatcherStatus?: Record<string, unknown>) {
+  const apiKeyConfigured = Boolean(getEvolutionApiKey());
+  const baseUrlConfigured = Boolean(channel?.evolution_base_url || getDefaultEvolutionBaseUrl());
+  const mergedStatus = dispatcherStatus || {};
+  const connectionStatus = String(
+    mergedStatus.connectionStatus || channel?.connection_status || 'UNKNOWN',
   );
 
   return {
-    configured: adminConfigured || fallbackConfigured,
-    source: adminConfigured ? 'ADMIN_REPORT_EVOLUTION_*' : 'EVOLUTION_GUILDS_*',
-    instanceName: adminConfigured
-      ? process.env.ADMIN_REPORT_EVOLUTION_INSTANCE_NAME || null
-      : process.env.EVOLUTION_GUILDS_INSTANCE || null,
-    baseUrlConfigured: Boolean(process.env.ADMIN_REPORT_EVOLUTION_BASE_URL || process.env.EVOLUTION_BASE_URL),
+    configured: Boolean(channel && apiKeyConfigured && baseUrlConfigured),
+    connected: connectionStatus === 'CONNECTED',
+    channelId: channel?.id || null,
+    label: channel?.label || null,
+    source: channel ? 'admin_monitoring_channels' : 'NO_ACTIVE_ADMIN_MONITORING_CHANNEL',
+    instanceName: channel?.evolution_instance_name || null,
+    baseUrlConfigured,
+    apiKeyConfigured,
+    connectionStatus,
+    externalState: (mergedStatus.externalState as string | null | undefined) ?? channel?.external_state ?? null,
+    lastQrRequestedAt: (mergedStatus.lastQrRequestedAt as string | null | undefined) ?? channel?.last_qr_requested_at ?? null,
+    connectedAt: (mergedStatus.connectedAt as string | null | undefined) ?? channel?.connected_at ?? null,
+    disconnectedAt: (mergedStatus.disconnectedAt as string | null | undefined) ?? channel?.disconnected_at ?? null,
+    lastCheckedAt: (mergedStatus.lastCheckedAt as string | null | undefined) ?? channel?.last_checked_at ?? null,
+    lastError: (mergedStatus.lastError as string | null | undefined) ?? channel?.last_error ?? null,
+    dispatcherReachable: mergedStatus.dispatcherReachable as boolean | undefined,
+    dispatcherError: (mergedStatus.dispatcherError as string | null | undefined) ?? null,
+    reason: channel ? null : 'NO_ACTIVE_ADMIN_MONITORING_CHANNEL',
   };
+}
+
+async function evolutionFetch(
+  baseUrl: string,
+  apiKey: string,
+  path: string,
+  init: RequestInit = {},
+): Promise<EvolutionCallResult> {
+  const extraHeaders = init.headers instanceof Headers
+    ? Object.fromEntries(init.headers.entries())
+    : Array.isArray(init.headers)
+      ? Object.fromEntries(init.headers)
+      : init.headers || {};
+
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: apiKey,
+      ...extraHeaders,
+    },
+    signal: AbortSignal.timeout(12_000),
+  });
+
+  const text = await response.text();
+  let data: any = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
+
+  return { ok: response.ok, status: response.status, data, text };
+}
+
+function isInstanceAlreadyExists(result: EvolutionCallResult): boolean {
+  const text = `${result.text} ${JSON.stringify(result.data || {})}`.toLowerCase();
+  return result.status === 409 || (result.status === 400 && (text.includes('already') || text.includes('exist')));
+}
+
+function findEvolutionInstance(instances: any, instanceName: string): any | null {
+  if (!Array.isArray(instances)) return null;
+  return instances.find((instance: any) =>
+    instance?.name === instanceName
+    || instance?.instanceName === instanceName
+    || instance?.instance?.instanceName === instanceName
+    || instance?.instance?.name === instanceName
+  ) || null;
+}
+
+async function insertChannelEvent(
+  channelId: string,
+  eventType: string,
+  patch: {
+    connectionStatus?: AdminChannelRow['connection_status'] | null;
+    externalState?: string | null;
+    error?: string | null;
+    rawResponse?: unknown;
+    createdById?: string | null;
+  } = {},
+) {
+  await supabaseAdmin.from('admin_monitoring_channel_events').insert({
+    channel_id: channelId,
+    event_type: eventType,
+    connection_status: patch.connectionStatus || null,
+    external_state: patch.externalState || null,
+    error: patch.error || null,
+    raw_response_redacted: redactEvolutionPayload(patch.rawResponse || {}),
+    created_by_id: patch.createdById || null,
+  });
+}
+
+async function updateChannelStatus(
+  channel: AdminChannelRow,
+  status: AdminChannelRow['connection_status'],
+  patch: {
+    externalState?: string | null;
+    lastError?: string | null;
+    lastQrRequestedAt?: string | null;
+    createdById?: string | null;
+    eventType?: string;
+    rawResponse?: unknown;
+  } = {},
+) {
+  const now = new Date().toISOString();
+  const updatePayload: Record<string, unknown> = {
+    connection_status: status,
+    external_state: patch.externalState ?? null,
+    last_checked_at: now,
+    last_error: patch.lastError ?? null,
+  };
+
+  if (patch.lastQrRequestedAt) updatePayload.last_qr_requested_at = patch.lastQrRequestedAt;
+  if (status === 'CONNECTED') updatePayload.connected_at = now;
+  if (status === 'DISCONNECTED') updatePayload.disconnected_at = now;
+
+  const { data, error } = await supabaseAdmin
+    .from('admin_monitoring_channels')
+    .update(updatePayload)
+    .eq('id', channel.id)
+    .select(ADMIN_CHANNEL_SELECT)
+    .single();
+
+  if (error) throw error;
+
+  await insertChannelEvent(channel.id, patch.eventType || 'STATUS_SYNC', {
+    connectionStatus: status,
+    externalState: patch.externalState ?? null,
+    error: patch.lastError ?? null,
+    rawResponse: patch.rawResponse || {},
+    createdById: patch.createdById || null,
+  });
+
+  return data as unknown as AdminChannelRow;
+}
+
+async function ensureActiveChannel(body: any, adminId: string): Promise<AdminChannelRow> {
+  const active = await loadActiveChannel();
+  const label = String(body.label || active?.label || DEFAULT_ADMIN_CHANNEL_LABEL).trim() || DEFAULT_ADMIN_CHANNEL_LABEL;
+  const instanceName = normalizeInstanceName(body.instanceName || active?.evolution_instance_name || DEFAULT_ADMIN_INSTANCE_NAME);
+  const baseUrl = normalizeBaseUrl(body.baseUrl || active?.evolution_base_url || getDefaultEvolutionBaseUrl());
+
+  if (!/^https?:\/\//.test(baseUrl)) {
+    throw new Error('EVOLUTION_BASE_URL_INVALID');
+  }
+
+  if (active) {
+    const { data, error } = await supabaseAdmin
+      .from('admin_monitoring_channels')
+      .update({
+        label,
+        evolution_base_url: baseUrl,
+        evolution_instance_name: instanceName,
+        active: true,
+        last_error: null,
+      })
+      .eq('id', active.id)
+      .select(ADMIN_CHANNEL_SELECT)
+      .single();
+
+    if (error) throw error;
+    return data as unknown as AdminChannelRow;
+  }
+
+  const deactivateRes = await supabaseAdmin
+    .from('admin_monitoring_channels')
+    .update({ active: false })
+    .eq('active', true);
+  if (deactivateRes.error) throw deactivateRes.error;
+
+  const { data, error } = await supabaseAdmin
+    .from('admin_monitoring_channels')
+    .insert({
+      label,
+      evolution_base_url: baseUrl,
+      evolution_instance_name: instanceName,
+      active: true,
+      connection_status: 'UNKNOWN',
+      created_by_id: adminId,
+    })
+    .select(ADMIN_CHANNEL_SELECT)
+    .single();
+
+  if (error) throw error;
+  return data as unknown as AdminChannelRow;
+}
+
+async function refreshChannelStatus(channel: AdminChannelRow, requestQr: boolean, adminId?: string) {
+  const apiKey = getEvolutionApiKey();
+  if (!apiKey) {
+    const updated = await updateChannelStatus(channel, 'ERROR', {
+      lastError: 'EVOLUTION_API_KEY_NOT_CONFIGURED',
+      createdById: adminId || null,
+      eventType: 'STATUS_SYNC_FAILED',
+    });
+    return { channel: updated, qrcode: null };
+  }
+
+  let status: AdminChannelRow['connection_status'] = 'UNKNOWN';
+  let externalState: string | null = null;
+  let rawResponse: unknown = {};
+  let lastError: string | null = null;
+
+  try {
+    const instancesResult = await evolutionFetch(channel.evolution_base_url, apiKey, '/instance/fetchInstances');
+    rawResponse = instancesResult.data || instancesResult.text;
+
+    if (instancesResult.ok) {
+      const instance = findEvolutionInstance(instancesResult.data, channel.evolution_instance_name);
+      if (instance) {
+        const parsed = connectionStatusFromInstance(instance);
+        status = parsed.status;
+        externalState = parsed.externalState;
+      } else {
+        status = 'DISCONNECTED';
+        externalState = 'not_found';
+      }
+    } else {
+      const fallbackResult = await evolutionFetch(
+        channel.evolution_base_url,
+        apiKey,
+        `/instance/connectionState/${channel.evolution_instance_name}`,
+      );
+      rawResponse = fallbackResult.data || fallbackResult.text;
+      if (!fallbackResult.ok) {
+        status = 'ERROR';
+        lastError = `Evolution HTTP ${fallbackResult.status}`;
+      } else {
+        const parsed = connectionStatusFromInstance(fallbackResult.data);
+        status = parsed.status;
+        externalState = parsed.externalState;
+      }
+    }
+  } catch (err: unknown) {
+    status = 'ERROR';
+    lastError = err instanceof Error ? err.message.slice(0, 240) : 'EVOLUTION_STATUS_UNAVAILABLE';
+  }
+
+  let qrcode: string | null = null;
+  let lastQrRequestedAt: string | null = null;
+
+  if (requestQr && status !== 'CONNECTED' && apiKey) {
+    const qrResult = await evolutionFetch(
+      channel.evolution_base_url,
+      apiKey,
+      `/instance/connect/${channel.evolution_instance_name}`,
+    );
+    qrcode = extractQrCode(qrResult.data);
+    lastQrRequestedAt = new Date().toISOString();
+    rawResponse = qrResult.data || qrResult.text;
+    status = qrcode ? 'PENDING_QR' : status;
+    if (!qrResult.ok && !lastError) lastError = `Evolution QR HTTP ${qrResult.status}`;
+  }
+
+  const updated = await updateChannelStatus(channel, status, {
+    externalState,
+    lastError,
+    lastQrRequestedAt,
+    createdById: adminId || null,
+    eventType: requestQr ? 'QR_REFRESH_REQUESTED' : 'STATUS_SYNC',
+    rawResponse,
+  });
+
+  return { channel: updated, qrcode };
 }
 
 function errorResponse(message: string, status = 400, code = 'VALIDATION') {
@@ -94,33 +476,46 @@ async function invokeDispatcher(payload: Record<string, unknown>) {
   return data;
 }
 
-async function dispatcherChannelStatus() {
+async function dispatcherChannelStatus(channel: AdminChannelRow | null) {
   try {
     const data = await invokeDispatcher({ mode: 'status' });
-    return {
-      ...(data.channel || channelStatus()),
+    return serializeChannel(channel, {
+      ...(data.channel || {}),
       dispatcherReachable: true,
       dispatcherError: null,
-    };
+    });
   } catch (err: any) {
-    return {
-      ...channelStatus(),
+    return serializeChannel(channel, {
       dispatcherReachable: false,
       dispatcherError: err?.message || 'Dispatcher status unavailable',
-    };
+    });
   }
 }
 
 async function loadDashboard() {
+  const activeChannel = await loadActiveChannel();
   const [
     channel,
+    channelEventsRes,
     recipientsRes,
     schedulesRes,
     runsRes,
     deliveriesRes,
     tenantsRes,
   ] = await Promise.all([
-    dispatcherChannelStatus(),
+    dispatcherChannelStatus(activeChannel),
+    activeChannel
+      ? supabaseAdmin
+        .from('admin_monitoring_channel_events')
+        .select('id, channel_id, event_type, connection_status, external_state, error, raw_response_redacted, created_at')
+        .eq('channel_id', activeChannel.id)
+        .order('created_at', { ascending: false })
+        .limit(10)
+      : supabaseAdmin
+        .from('admin_monitoring_channel_events')
+        .select('id, channel_id, event_type, connection_status, external_state, error, raw_response_redacted, created_at')
+        .order('created_at', { ascending: false })
+        .limit(10),
     supabaseAdmin
       .from('admin_monitoring_recipients')
       .select('*')
@@ -131,12 +526,12 @@ async function loadDashboard() {
       .order('created_at', { ascending: false }),
     supabaseAdmin
       .from('admin_monitoring_report_runs')
-      .select('id, schedule_id, recipient_id, status, period_start, period_end, metrics, ai_summary, error, started_at, completed_at, created_at')
+      .select('id, schedule_id, recipient_id, channel_id, status, period_start, period_end, metrics, ai_summary, error, started_at, completed_at, created_at')
       .order('created_at', { ascending: false })
       .limit(25),
     supabaseAdmin
       .from('admin_disconnect_alert_deliveries')
-      .select('id, connection_event_id, operational_alert_id, tenant_id, recipient_id, incident_key, status, reason_code, external_state, ai_summary, error, created_at, sent_at, tenants(id, name, slug), admin_monitoring_recipients(id, label, whatsapp)')
+      .select('id, connection_event_id, operational_alert_id, tenant_id, recipient_id, channel_id, incident_key, status, reason_code, external_state, ai_summary, error, created_at, sent_at, tenants(id, name, slug), admin_monitoring_recipients(id, label, whatsapp)')
       .order('created_at', { ascending: false })
       .limit(25),
     supabaseAdmin
@@ -146,7 +541,7 @@ async function loadDashboard() {
       .order('name', { ascending: true }),
   ]);
 
-  for (const result of [recipientsRes, schedulesRes, runsRes, deliveriesRes, tenantsRes]) {
+  for (const result of [channelEventsRes, recipientsRes, schedulesRes, runsRes, deliveriesRes, tenantsRes]) {
     if (result.error) throw result.error;
   }
 
@@ -158,6 +553,7 @@ async function loadDashboard() {
   return {
     ok: true,
     channel,
+    channelEvents: channelEventsRes.data || [],
     summary: {
       recipients: recipients.length,
       activeRecipients: recipients.filter((r: any) => r.active).length,
@@ -197,6 +593,136 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    if (body.action === 'connect_channel') {
+      const apiKey = getEvolutionApiKey();
+      if (!apiKey) return errorResponse('Chave da Evolution API nao configurada para o canal administrativo.', 500, 'EVOLUTION_API_KEY_MISSING');
+
+      const channel = await ensureActiveChannel(body, auth.adminId);
+
+      const createResult = await evolutionFetch(channel.evolution_base_url, apiKey, '/instance/create', {
+        method: 'POST',
+        body: JSON.stringify({
+          instanceName: channel.evolution_instance_name,
+          integration: 'WHATSAPP-BAILEYS',
+          qrcode: true,
+        }),
+      });
+
+      if (!createResult.ok && !isInstanceAlreadyExists(createResult)) {
+        const updated = await updateChannelStatus(channel, 'ERROR', {
+          lastError: `Evolution create HTTP ${createResult.status}`,
+          createdById: auth.adminId,
+          eventType: 'CONNECT_CREATE_FAILED',
+          rawResponse: createResult.data || createResult.text,
+        });
+        await audit(auth.adminId, 'admin_monitoring.channel.connect_failed', 'admin_monitoring_channel', channel.id, {
+          status: createResult.status,
+        });
+        return NextResponse.json({ ok: false, message: 'Evolution recusou a criacao da instancia administrativa.', channel: serializeChannel(updated) }, { status: 502 });
+      }
+
+      const webhookUrl = `${process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || ''}/v1/webhooks/evolution`;
+      let webhookResult: EvolutionCallResult | null = null;
+      if (webhookUrl.startsWith('http')) {
+        webhookResult = await evolutionFetch(channel.evolution_base_url, apiKey, `/webhook/set/${channel.evolution_instance_name}`, {
+          method: 'POST',
+          body: JSON.stringify({
+            url: webhookUrl,
+            webhook_by_events: false,
+            webhook_base64: false,
+            events: ['CONNECTION_UPDATE', 'QRCODE_UPDATED'],
+          }),
+        });
+      }
+
+      const qrResult = await evolutionFetch(channel.evolution_base_url, apiKey, `/instance/connect/${channel.evolution_instance_name}`);
+      const qrcode = extractQrCode(qrResult.data);
+      const status: AdminChannelRow['connection_status'] = qrcode ? 'PENDING_QR' : 'UNKNOWN';
+      const now = new Date().toISOString();
+      const updated = await updateChannelStatus(channel, qrResult.ok ? status : 'ERROR', {
+        lastQrRequestedAt: now,
+        lastError: qrResult.ok ? null : `Evolution QR HTTP ${qrResult.status}`,
+        createdById: auth.adminId,
+        eventType: 'CONNECT_QR_REQUESTED',
+        rawResponse: {
+          create: { ok: createResult.ok, status: createResult.status, alreadyExists: isInstanceAlreadyExists(createResult) },
+          webhook: webhookResult ? { ok: webhookResult.ok, status: webhookResult.status } : { skipped: true },
+          qr: qrResult.data || qrResult.text,
+        },
+      });
+
+      await audit(auth.adminId, 'admin_monitoring.channel.connect', 'admin_monitoring_channel', updated.id, {
+        instanceName: updated.evolution_instance_name,
+        hasQrCode: Boolean(qrcode),
+        webhookConfigured: Boolean(webhookResult?.ok),
+      });
+
+      return NextResponse.json({
+        ok: true,
+        channel: serializeChannel(updated),
+        qrcode,
+      });
+    }
+
+    if (body.action === 'refresh_channel') {
+      const channel = await loadActiveChannel();
+      if (!channel) return errorResponse('Nenhum canal administrativo ativo cadastrado.', 404, 'CHANNEL_NOT_FOUND');
+
+      const result = await refreshChannelStatus(channel, asBoolean(body.requestQr, false), auth.adminId);
+      await audit(auth.adminId, 'admin_monitoring.channel.refresh', 'admin_monitoring_channel', channel.id, {
+        requestQr: asBoolean(body.requestQr, false),
+        status: result.channel.connection_status,
+      });
+
+      return NextResponse.json({
+        ok: true,
+        channel: serializeChannel(result.channel),
+        qrcode: result.qrcode,
+      });
+    }
+
+    if (body.action === 'disconnect_channel') {
+      const channel = await loadActiveChannel();
+      if (!channel) return errorResponse('Nenhum canal administrativo ativo cadastrado.', 404, 'CHANNEL_NOT_FOUND');
+
+      const apiKey = getEvolutionApiKey();
+      if (!apiKey) return errorResponse('Chave da Evolution API nao configurada para desconectar o canal.', 500, 'EVOLUTION_API_KEY_MISSING');
+
+      const logoutResult = await evolutionFetch(channel.evolution_base_url, apiKey, `/instance/logout/${channel.evolution_instance_name}`, {
+        method: 'DELETE',
+      });
+      const deleteResult = await evolutionFetch(channel.evolution_base_url, apiKey, `/instance/delete/${channel.evolution_instance_name}`, {
+        method: 'DELETE',
+      });
+
+      const errors = [
+        logoutResult.ok ? null : `logout HTTP ${logoutResult.status}`,
+        deleteResult.ok ? null : `delete HTTP ${deleteResult.status}`,
+      ].filter(Boolean);
+
+      const updated = await updateChannelStatus(channel, errors.length ? 'ERROR' : 'DISCONNECTED', {
+        externalState: errors.length ? 'disconnect_failed' : 'manual_disconnect',
+        lastError: errors.length ? errors.join(' | ') : null,
+        createdById: auth.adminId,
+        eventType: 'DISCONNECT_REQUESTED',
+        rawResponse: {
+          logout: { ok: logoutResult.ok, status: logoutResult.status },
+          delete: { ok: deleteResult.ok, status: deleteResult.status },
+        },
+      });
+
+      await audit(auth.adminId, 'admin_monitoring.channel.disconnect', 'admin_monitoring_channel', channel.id, {
+        status: updated.connection_status,
+        errors,
+      });
+
+      return NextResponse.json({
+        ok: errors.length === 0,
+        channel: serializeChannel(updated),
+        message: errors.length ? 'Evolution retornou erro ao desconectar a instancia administrativa.' : 'Canal administrativo desconectado.',
+      }, { status: errors.length ? 502 : 200 });
+    }
+
     if (body.action === 'create_recipient') {
       const label = String(body.label || '').trim();
       const whatsapp = normalizeWhatsapp(body.whatsapp);

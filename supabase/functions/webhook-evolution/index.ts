@@ -174,6 +174,22 @@ function classifyConnectionState(event: string, state: string | null, raw: unkno
   return { status: "PAUSED", reasonCode: "WA_CONNECTION_UPDATE", critical: false };
 }
 
+function mapAdminChannelStatus(
+  event: string,
+  state: string | null,
+  classification: { reasonCode: string; critical: boolean },
+): "UNKNOWN" | "PENDING_QR" | "CONNECTED" | "DISCONNECTED" | "ERROR" {
+  const normalizedEvent = normalizeEventName(event);
+  const normalizedState = String(state || "").toLowerCase();
+
+  if (normalizedEvent === "QRCODE_UPDATED" || classification.reasonCode === "WA_QR_UPDATED") return "PENDING_QR";
+  if (classification.reasonCode === "WA_CONNECTION_OPEN" || normalizedState === "open") return "CONNECTED";
+  if (classification.critical) return "DISCONNECTED";
+  if (normalizedState === "close" || normalizedState === "closed" || normalizedState === "disconnected") return "DISCONNECTED";
+  if (normalizedState === "connecting") return "PENDING_QR";
+  return "UNKNOWN";
+}
+
 async function recordConnectionEvent(params: {
   tenantId: string;
   instanceName: string;
@@ -294,6 +310,69 @@ async function createConnectionAlert(
   return alertId;
 }
 
+async function handleAdminChannelConnectionUpdate(params: {
+  instanceName: string;
+  event: string;
+  state: string | null;
+  raw: unknown;
+  classification: { reasonCode: string; critical: boolean };
+}): Promise<Response | null> {
+  try {
+    const { data: channel, error } = await supabase
+      .from("admin_monitoring_channels")
+      .select("id, connection_status")
+      .eq("evolution_instance_name", params.instanceName)
+      .eq("active", true)
+      .maybeSingle();
+
+    if (error || !channel?.id) return null;
+
+    const now = new Date().toISOString();
+    const status = mapAdminChannelStatus(params.event, params.state, params.classification);
+    const updatePayload: Record<string, unknown> = {
+      connection_status: status,
+      external_state: params.state,
+      last_checked_at: now,
+      last_error: null,
+    };
+
+    if (status === "CONNECTED") updatePayload.connected_at = now;
+    if (status === "DISCONNECTED") updatePayload.disconnected_at = now;
+    if (status === "PENDING_QR") updatePayload.last_qr_requested_at = now;
+
+    await supabase
+      .from("admin_monitoring_channels")
+      .update(updatePayload)
+      .eq("id", channel.id);
+
+    await supabase
+      .from("admin_monitoring_channel_events")
+      .insert({
+        channel_id: channel.id,
+        event_type: normalizeEventName(params.event),
+        connection_status: status,
+        external_state: params.state,
+        error: params.classification.critical ? params.classification.reasonCode : null,
+        raw_response_redacted: redactPayload(params.raw),
+      });
+
+    return new Response(JSON.stringify({
+      ok: true,
+      handled: true,
+      target: "admin_monitoring_channel",
+      event: normalizeEventName(params.event),
+      state: params.state,
+      status,
+      reason_code: params.classification.reasonCode,
+    }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    console.warn("Falha ao registrar admin_monitoring_channel:", err);
+    return null;
+  }
+}
+
 async function handleConnectionUpdate(payload: any): Promise<Response> {
   const event = payload?.event || "CONNECTION_UPDATE";
   const instanceName = extractConnectionInstanceName(payload);
@@ -304,6 +383,10 @@ async function handleConnectionUpdate(payload: any): Promise<Response> {
     });
   }
 
+  const state = extractConnectionState(payload);
+  const raw = extractConnectionRaw(payload);
+  const classification = classifyConnectionState(event, state, raw);
+
   const { data: tenantSecret } = await supabase
     .from("tenant_secrets")
     .select("tenant_id")
@@ -311,6 +394,15 @@ async function handleConnectionUpdate(payload: any): Promise<Response> {
     .maybeSingle();
 
   if (!tenantSecret?.tenant_id) {
+    const adminChannelResponse = await handleAdminChannelConnectionUpdate({
+      instanceName,
+      event,
+      state,
+      raw,
+      classification,
+    });
+    if (adminChannelResponse) return adminChannelResponse;
+
     console.log(`  No tenant found for connection event instance: ${instanceName}`);
     return new Response(JSON.stringify({ ok: true, skipped: true, reason: "unknown instance" }), {
       headers: { "Content-Type": "application/json" },
@@ -318,9 +410,6 @@ async function handleConnectionUpdate(payload: any): Promise<Response> {
   }
 
   const tenantId = tenantSecret.tenant_id;
-  const state = extractConnectionState(payload);
-  const raw = extractConnectionRaw(payload);
-  const classification = classifyConnectionState(event, state, raw);
   const { data: previousStatus } = await supabase
     .from("whatsapp_guardian_status")
     .select("status")

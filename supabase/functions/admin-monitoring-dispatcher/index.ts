@@ -386,9 +386,10 @@ async function processSchedule(schedule: Schedule, source: string) {
   try {
     const metrics = await collectMetrics(schedule, periodStart, periodEnd);
     const built = await buildReportMessage(schedule, metrics);
-    const result = await sendAdminMonitoringWhatsApp(recipient.whatsapp, built.body);
+    const result = await sendAdminMonitoringWhatsApp(recipient.whatsapp, built.body, supabase);
 
     await completeRun(runId, result.ok ? "SENT" : "FAILED", {
+      channel_id: result.channelId || null,
       metrics,
       ai_summary: built.aiSummary,
       message_body: built.body,
@@ -447,7 +448,7 @@ async function sendRecipientTest(recipientId: string) {
     "Canal administrativo operacional para este destinatario.",
   ].join("\n");
 
-  return await sendAdminMonitoringWhatsApp(recipient.whatsapp, body);
+  return await sendAdminMonitoringWhatsApp(recipient.whatsapp, body, supabase);
 }
 
 serve(async (request) => {
@@ -467,7 +468,7 @@ serve(async (request) => {
 
   try {
     if (mode === "status") {
-      return json({ ok: true, channel: getAdminMonitoringChannelStatus() });
+      return json({ ok: true, channel: await getAdminMonitoringChannelStatus(supabase) });
     }
 
     if (mode === "due") {

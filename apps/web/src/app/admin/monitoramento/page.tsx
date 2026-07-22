@@ -8,10 +8,14 @@ import {
   Clock3,
   Loader2,
   PlayCircle,
+  PlugZap,
+  QrCode,
   Radio,
   RefreshCw,
   Send,
   Trash2,
+  Wifi,
+  WifiOff,
   XCircle,
   type LucideIcon,
 } from 'lucide-react';
@@ -49,6 +53,7 @@ type ReportRun = {
   id: string;
   schedule_id: string | null;
   recipient_id: string;
+  channel_id: string | null;
   status: string;
   period_start: string;
   period_end: string;
@@ -62,6 +67,7 @@ type DisconnectDelivery = {
   id: string;
   tenant_id: string;
   recipient_id: string;
+  channel_id: string | null;
   status: string;
   reason_code: string;
   external_state: string | null;
@@ -80,12 +86,36 @@ type Tenant = {
   status: string;
 };
 
+type ChannelStatus = 'UNKNOWN' | 'PENDING_QR' | 'CONNECTED' | 'DISCONNECTED' | 'ERROR' | string;
+
+type ChannelEvent = {
+  id: string;
+  channel_id: string;
+  event_type: string;
+  connection_status: ChannelStatus | null;
+  external_state: string | null;
+  error: string | null;
+  created_at: string;
+};
+
 type Dashboard = {
   channel: {
     configured: boolean;
+    connected: boolean;
+    channelId: string | null;
+    label: string | null;
     source: string;
     instanceName: string | null;
     baseUrlConfigured: boolean;
+    apiKeyConfigured: boolean;
+    connectionStatus: ChannelStatus;
+    externalState: string | null;
+    lastQrRequestedAt: string | null;
+    connectedAt: string | null;
+    disconnectedAt: string | null;
+    lastCheckedAt: string | null;
+    lastError: string | null;
+    reason: string | null;
     dispatcherReachable?: boolean;
     dispatcherError?: string | null;
   };
@@ -100,6 +130,7 @@ type Dashboard = {
   schedules: Schedule[];
   reportRuns: ReportRun[];
   disconnectDeliveries: DisconnectDelivery[];
+  channelEvents: ChannelEvent[];
   tenants: Tenant[];
 };
 
@@ -127,12 +158,53 @@ function statusClass(status: string): string {
   return STATUS_STYLE[status] || 'bg-surface-sunken text-text-secondary border-border';
 }
 
+function channelStatusLabel(status: ChannelStatus | null | undefined): string {
+  switch (status) {
+    case 'CONNECTED':
+      return 'Conectado';
+    case 'PENDING_QR':
+      return 'Aguardando QR';
+    case 'DISCONNECTED':
+      return 'Desconectado';
+    case 'ERROR':
+      return 'Erro';
+    default:
+      return 'Pendente';
+  }
+}
+
+function channelStatusClass(status: ChannelStatus | null | undefined): string {
+  switch (status) {
+    case 'CONNECTED':
+      return 'bg-success-soft text-success-text border-success/30';
+    case 'PENDING_QR':
+      return 'bg-amber-50 text-amber-800 border-amber-300';
+    case 'DISCONNECTED':
+    case 'ERROR':
+      return 'bg-red-50 text-red-700 border-red-200';
+    default:
+      return 'bg-surface-sunken text-text-secondary border-border';
+  }
+}
+
+function qrImageSrc(value: string | null): string | null {
+  if (!value) return null;
+  if (value.startsWith('data:') || value.startsWith('http')) return value;
+  return `data:image/png;base64,${value}`;
+}
+
 export default function AdminMonitoringPage() {
   const [data, setData] = useState<Dashboard | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [createRecipientOpen, setCreateRecipientOpen] = useState(false);
   const [createScheduleOpen, setCreateScheduleOpen] = useState(false);
+  const [channelQr, setChannelQr] = useState<string | null>(null);
+  const [channelForm, setChannelForm] = useState({
+    label: 'Canal administrativo',
+    instanceName: 'prospix_admin_monitoring',
+    baseUrl: '',
+  });
 
   const [recipientForm, setRecipientForm] = useState({
     label: '',
@@ -171,10 +243,83 @@ export default function AdminMonitoringPage() {
     load();
   }, [load]);
 
+  useEffect(() => {
+    const currentChannel = data?.channel;
+    if (!currentChannel) return;
+    setChannelForm((form) => ({
+      ...form,
+      label: currentChannel.label || form.label,
+      instanceName: currentChannel.instanceName || form.instanceName,
+    }));
+  }, [data?.channel]);
+
   const activeRecipients = useMemo(
     () => (data?.recipients || []).filter((recipient) => recipient.active),
     [data?.recipients],
   );
+
+  const connectChannel = async () => {
+    if (!channelForm.instanceName.trim()) {
+      toast.error('Instancia obrigatoria', 'Informe o nome da instancia administrativa.');
+      return;
+    }
+
+    setBusyKey('channel:connect');
+    try {
+      const response = await adminNextApi.post('/api/admin/monitoring', {
+        action: 'connect_channel',
+        ...channelForm,
+      });
+      if (!response.data?.ok) throw new Error(response.data?.message || 'Falha ao gerar QR Code.');
+      setChannelQr(response.data.qrcode || null);
+      toast.success(response.data.qrcode ? 'QR Code gerado' : 'Canal solicitado');
+      await load();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Falha ao gerar QR Code.';
+      toast.error('Erro', message);
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
+  const refreshChannel = async (requestQr = false) => {
+    setBusyKey(requestQr ? 'channel:qr' : 'channel:refresh');
+    try {
+      const response = await adminNextApi.post('/api/admin/monitoring', {
+        action: 'refresh_channel',
+        requestQr,
+      });
+      if (!response.data?.ok) throw new Error(response.data?.message || 'Falha ao atualizar canal.');
+      if (response.data.qrcode) setChannelQr(response.data.qrcode);
+      if (!requestQr && response.data.channel?.connected) setChannelQr(null);
+      toast.success(requestQr && response.data.qrcode ? 'QR Code atualizado' : 'Status atualizado');
+      await load();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Falha ao atualizar canal.';
+      toast.error('Erro', message);
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
+  const disconnectChannel = async () => {
+    if (!confirm('Desconectar o canal administrativo de envio?')) return;
+    setBusyKey('channel:disconnect');
+    try {
+      const response = await adminNextApi.post('/api/admin/monitoring', {
+        action: 'disconnect_channel',
+      });
+      if (!response.data?.ok) throw new Error(response.data?.message || 'Falha ao desconectar canal.');
+      setChannelQr(null);
+      toast.success('Canal desconectado');
+      await load();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Falha ao desconectar canal.';
+      toast.error('Erro', message);
+    } finally {
+      setBusyKey(null);
+    }
+  };
 
   const createRecipient = async () => {
     if (!recipientForm.label.trim() || !recipientForm.whatsapp.trim()) {
@@ -311,6 +456,9 @@ export default function AdminMonitoringPage() {
   };
 
   const channel = data?.channel;
+  const qrSrc = qrImageSrc(channelQr);
+  const channelConnected = channel?.connectionStatus === 'CONNECTED';
+  const channelBusy = busyKey?.startsWith('channel:') || false;
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -340,15 +488,114 @@ export default function AdminMonitoringPage() {
         </div>
       </div>
 
+      <Card className="bg-white border-border shadow-sm">
+        <CardHeader className="pb-3">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+            <div>
+              <CardTitle className="text-base font-bold font-heading text-text flex items-center gap-2">
+                {channelConnected ? <Wifi className="w-4 h-4 text-success-text" aria-hidden /> : <WifiOff className="w-4 h-4 text-red-600" aria-hidden />}
+                Canal de envio administrativo
+              </CardTitle>
+              <CardDescription className="text-text-secondary text-xs mt-1">
+                Remetente proprio para relatorios e alertas operacionais.
+              </CardDescription>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge className={`text-[10px] px-2 py-0.5 border ${channelStatusClass(channel?.connectionStatus)}`}>
+                {channelStatusLabel(channel?.connectionStatus)}
+              </Badge>
+              <Button onClick={() => refreshChannel(false)} disabled={!channel?.channelId || channelBusy} className="bg-white hover:bg-surface-sunken text-text border border-border text-xs px-3 h-9 rounded-lg flex items-center gap-1.5">
+                {busyKey === 'channel:refresh' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                Status
+              </Button>
+              <Button onClick={connectChannel} disabled={channelBusy || channelConnected} className="bg-primary hover:bg-primary-hover text-white font-semibold text-xs px-3 h-9 rounded-lg flex items-center gap-1.5">
+                {busyKey === 'channel:connect' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <QrCode className="w-3.5 h-3.5" />}
+                Gerar QR
+              </Button>
+              <Button onClick={disconnectChannel} disabled={!channel?.channelId || channelBusy} className="bg-white hover:bg-red-50 text-red-700 border border-red-100 text-xs px-3 h-9 rounded-lg flex items-center gap-1.5">
+                {busyKey === 'channel:disconnect' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlugZap className="w-3.5 h-3.5" />}
+                Desconectar
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 xl:grid-cols-[1fr_260px] gap-4">
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <Field label="Nome">
+                  <Input value={channelForm.label} onChange={(event) => setChannelForm((form) => ({ ...form, label: event.target.value }))} className="h-9 text-xs" disabled={channelBusy} />
+                </Field>
+                <Field label="Instancia Evolution">
+                  <Input value={channelForm.instanceName} onChange={(event) => setChannelForm((form) => ({ ...form, instanceName: event.target.value }))} className="h-9 text-xs font-mono" disabled={channelBusy || channelConnected} />
+                </Field>
+                <Field label="Base URL Evolution">
+                  <Input value={channelForm.baseUrl} onChange={(event) => setChannelForm((form) => ({ ...form, baseUrl: event.target.value }))} placeholder="padrao do ambiente" className="h-9 text-xs font-mono" disabled={channelBusy || channelConnected} />
+                </Field>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+                <StatusCell label="Instancia ativa" value={channel?.instanceName || 'n/d'} mono />
+                <StatusCell label="Ultima checagem" value={formatDate(channel?.lastCheckedAt)} />
+                <StatusCell label="Estado externo" value={channel?.externalState || 'n/d'} mono />
+                <StatusCell label="Chave Evolution" value={channel?.apiKeyConfigured ? 'configurada' : 'ausente'} />
+              </div>
+
+              {(channel?.lastError || channel?.dispatcherReachable === false) && (
+                <div className="text-xs text-red-700 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+                  {channel?.lastError || channel?.dispatcherError || 'Dispatcher indisponivel.'}
+                </div>
+              )}
+
+              <div className="border border-border rounded-lg overflow-x-auto">
+                <div className="min-w-[620px]">
+                  <div className="grid grid-cols-[150px_120px_1fr_110px] gap-3 px-3 py-2 text-[10px] uppercase tracking-wider text-text-secondary bg-surface-sunken">
+                    <span>Evento</span>
+                    <span>Status</span>
+                    <span>Estado/erro</span>
+                    <span>Quando</span>
+                  </div>
+                  {(data?.channelEvents || []).slice(0, 4).map((event) => (
+                    <div key={event.id} className="grid grid-cols-[150px_120px_1fr_110px] gap-3 px-3 py-2 text-xs border-t border-border/60">
+                      <span className="font-mono text-text truncate">{event.event_type}</span>
+                      <span className="text-text-secondary truncate">{channelStatusLabel(event.connection_status || 'UNKNOWN')}</span>
+                      <span className="text-text-secondary truncate">{event.error || event.external_state || '-'}</span>
+                      <span className="text-text-secondary">{formatDate(event.created_at)}</span>
+                    </div>
+                  ))}
+                  {(data?.channelEvents || []).length === 0 && (
+                    <div className="px-3 py-4 text-xs text-center text-text-secondary border-t border-border/60">Nenhum evento do canal registrado.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col items-center justify-center border border-border rounded-lg bg-surface-sunken min-h-[260px] p-4">
+              {qrSrc ? (
+                <>
+                  <img src={qrSrc} alt="QR Code do canal administrativo" className="w-[220px] h-[220px] object-contain rounded bg-white border border-border shadow-sm" />
+                  <span className="text-[10px] text-text-secondary mt-3">Aguardando leitura no WhatsApp.</span>
+                </>
+              ) : (
+                <div className="w-[220px] h-[220px] rounded bg-white border border-dashed border-border flex flex-col items-center justify-center text-text-secondary">
+                  <QrCode className="w-8 h-8 mb-2" aria-hidden />
+                  <span className="text-xs">{channelConnected ? 'Canal conectado' : 'QR Code indisponivel'}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
         <Card className="bg-white shadow-sm border-border">
           <CardContent className="pt-4 pb-3">
             <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">Canal</span>
             <div className="mt-2 flex items-center gap-2">
-              {channel?.configured ? <CheckCircle2 className="w-4 h-4 text-success-text" /> : <XCircle className="w-4 h-4 text-error-text" />}
-              <span className="text-sm font-semibold text-text">{channel?.configured ? 'Configurado' : 'Pendente'}</span>
+              {channelConnected ? <CheckCircle2 className="w-4 h-4 text-success-text" /> : <XCircle className="w-4 h-4 text-error-text" />}
+              <span className="text-sm font-semibold text-text">{channelStatusLabel(channel?.connectionStatus)}</span>
             </div>
-            <p className="text-[10px] text-text-secondary mt-1 truncate">{channel?.source || 'n/d'}</p>
+            <p className="text-[10px] text-text-secondary mt-1 truncate">{channel?.instanceName || channel?.source || 'n/d'}</p>
             {channel?.dispatcherReachable === false && (
               <p className="text-[10px] text-red-600 mt-1 truncate">dispatcher indisponivel</p>
             )}
@@ -596,6 +843,15 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
       <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block mb-1">{label}</span>
       {children}
     </label>
+  );
+}
+
+function StatusCell({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="border border-border rounded-lg px-3 py-2 bg-white min-w-0">
+      <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">{label}</span>
+      <span className={`text-xs text-text block truncate mt-1 ${mono ? 'font-mono' : 'font-semibold'}`}>{value}</span>
+    </div>
   );
 }
 

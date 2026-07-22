@@ -8,16 +8,42 @@ type Recipient = {
 
 type SendResult = {
   ok: boolean;
+  channelId?: string | null;
+  channelInstanceName?: string | null;
   whatsappMessageId?: string | null;
   error?: string | null;
 };
 
+type AdminMonitoringChannelRow = {
+  id: string;
+  label: string;
+  evolution_base_url: string;
+  evolution_instance_name: string;
+  active: boolean;
+  connection_status: string;
+  external_state: string | null;
+  last_qr_requested_at: string | null;
+  connected_at: string | null;
+  disconnected_at: string | null;
+  last_checked_at: string | null;
+  last_error: string | null;
+};
+
 type AdminChannel = {
+  channelId: string | null;
+  label: string | null;
   baseUrl: string;
   instanceName: string;
   apiKey: string;
   configured: boolean;
   source: string;
+  connectionStatus: string | null;
+  externalState: string | null;
+  lastQrRequestedAt: string | null;
+  connectedAt: string | null;
+  disconnectedAt: string | null;
+  lastCheckedAt: string | null;
+  lastError: string | null;
 };
 
 type DisconnectAlertParams = {
@@ -64,50 +90,134 @@ function formatBrt(value: string | Date | null | undefined): string {
   }).format(date);
 }
 
-function getAdminChannel(): AdminChannel {
-  const adminBaseUrl = Deno.env.get("ADMIN_REPORT_EVOLUTION_BASE_URL");
-  const adminInstance = Deno.env.get("ADMIN_REPORT_EVOLUTION_INSTANCE_NAME");
-  const adminApiKey = Deno.env.get("ADMIN_REPORT_EVOLUTION_API_KEY");
+function normalizeBaseUrl(value: string | null | undefined): string {
+  return String(value || "").replace(/\/+$/, "");
+}
 
-  if (adminBaseUrl && adminInstance && adminApiKey) {
+function getAdminMonitoringApiKey(): string {
+  return Deno.env.get("ADMIN_REPORT_EVOLUTION_API_KEY") || Deno.env.get("EVOLUTION_GUILDS_API_KEY") || "";
+}
+
+function getDefaultAdminBaseUrl(): string {
+  return normalizeBaseUrl(
+    Deno.env.get("ADMIN_REPORT_EVOLUTION_BASE_URL")
+      || Deno.env.get("EVOLUTION_BASE_URL")
+      || DEFAULT_EVOLUTION_BASE_URL,
+  );
+}
+
+async function loadActiveAdminMonitoringChannel(
+  supabase?: SupabaseLike,
+): Promise<AdminMonitoringChannelRow | null> {
+  if (!supabase) return null;
+
+  const { data, error } = await supabase
+    .from("admin_monitoring_channels")
+    .select([
+      "id",
+      "label",
+      "evolution_base_url",
+      "evolution_instance_name",
+      "active",
+      "connection_status",
+      "external_state",
+      "last_qr_requested_at",
+      "connected_at",
+      "disconnected_at",
+      "last_checked_at",
+      "last_error",
+    ].join(", "))
+    .eq("active", true)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("[admin-monitoring] failed to load admin channel", error);
+    return null;
+  }
+
+  return (data || null) as AdminMonitoringChannelRow | null;
+}
+
+async function getAdminChannel(supabase?: SupabaseLike): Promise<AdminChannel> {
+  const row = await loadActiveAdminMonitoringChannel(supabase);
+  const apiKey = getAdminMonitoringApiKey();
+
+  if (row) {
+    const baseUrl = normalizeBaseUrl(row.evolution_base_url) || getDefaultAdminBaseUrl();
     return {
-      baseUrl: adminBaseUrl.replace(/\/+$/, ""),
-      instanceName: adminInstance,
-      apiKey: adminApiKey,
-      configured: true,
-      source: "ADMIN_REPORT_EVOLUTION_*",
+      channelId: row.id,
+      label: row.label,
+      baseUrl,
+      instanceName: row.evolution_instance_name || "",
+      apiKey,
+      configured: Boolean(baseUrl && row.evolution_instance_name && apiKey),
+      source: "admin_monitoring_channels",
+      connectionStatus: row.connection_status || "UNKNOWN",
+      externalState: row.external_state || null,
+      lastQrRequestedAt: row.last_qr_requested_at || null,
+      connectedAt: row.connected_at || null,
+      disconnectedAt: row.disconnected_at || null,
+      lastCheckedAt: row.last_checked_at || null,
+      lastError: row.last_error || null,
     };
   }
 
-  const fallbackBaseUrl = Deno.env.get("EVOLUTION_BASE_URL") || DEFAULT_EVOLUTION_BASE_URL;
-  const fallbackInstance = Deno.env.get("EVOLUTION_GUILDS_INSTANCE");
-  const fallbackApiKey = Deno.env.get("EVOLUTION_GUILDS_API_KEY");
-
   return {
-    baseUrl: fallbackBaseUrl.replace(/\/+$/, ""),
-    instanceName: fallbackInstance || "",
-    apiKey: fallbackApiKey || "",
-    configured: Boolean(fallbackInstance && fallbackApiKey),
-    source: "EVOLUTION_GUILDS_*",
+    channelId: null,
+    label: null,
+    baseUrl: getDefaultAdminBaseUrl(),
+    instanceName: "",
+    apiKey,
+    configured: false,
+    source: "NO_ACTIVE_ADMIN_MONITORING_CHANNEL",
+    connectionStatus: null,
+    externalState: null,
+    lastQrRequestedAt: null,
+    connectedAt: null,
+    disconnectedAt: null,
+    lastCheckedAt: null,
+    lastError: null,
   };
 }
 
-export function getAdminMonitoringChannelStatus() {
-  const channel = getAdminChannel();
+export async function getAdminMonitoringChannelStatus(supabase?: SupabaseLike) {
+  const channel = await getAdminChannel(supabase);
   return {
     configured: channel.configured,
+    connected: channel.connectionStatus === "CONNECTED",
+    channelId: channel.channelId,
+    label: channel.label,
     source: channel.source,
     instanceName: channel.instanceName || null,
     baseUrlConfigured: Boolean(channel.baseUrl),
+    apiKeyConfigured: Boolean(channel.apiKey),
+    connectionStatus: channel.connectionStatus,
+    externalState: channel.externalState,
+    lastQrRequestedAt: channel.lastQrRequestedAt,
+    connectedAt: channel.connectedAt,
+    disconnectedAt: channel.disconnectedAt,
+    lastCheckedAt: channel.lastCheckedAt,
+    lastError: channel.lastError,
+    reason: channel.channelId ? null : "NO_ACTIVE_ADMIN_MONITORING_CHANNEL",
   };
 }
 
-export async function sendAdminMonitoringWhatsApp(to: string, text: string): Promise<SendResult> {
-  const channel = getAdminChannel();
+export async function sendAdminMonitoringWhatsApp(
+  to: string,
+  text: string,
+  supabase?: SupabaseLike,
+): Promise<SendResult> {
+  const channel = await getAdminChannel(supabase);
   if (!channel.configured) {
     return {
       ok: false,
-      error: "ADMIN_MONITORING_CHANNEL_NOT_CONFIGURED",
+      channelId: channel.channelId,
+      channelInstanceName: channel.instanceName || null,
+      error: channel.channelId
+        ? "ADMIN_MONITORING_CHANNEL_INCOMPLETE"
+        : "ADMIN_MONITORING_CHANNEL_NOT_CONNECTED",
     };
   }
 
@@ -115,6 +225,8 @@ export async function sendAdminMonitoringWhatsApp(to: string, text: string): Pro
   if (number.length < 10) {
     return {
       ok: false,
+      channelId: channel.channelId,
+      channelInstanceName: channel.instanceName || null,
       error: "INVALID_RECIPIENT_WHATSAPP",
     };
   }
@@ -144,17 +256,23 @@ export async function sendAdminMonitoringWhatsApp(to: string, text: string): Pro
     if (!response.ok) {
       return {
         ok: false,
+        channelId: channel.channelId,
+        channelInstanceName: channel.instanceName,
         error: `HTTP ${response.status}: ${bodyText.slice(0, 240)}`,
       };
     }
 
     return {
       ok: true,
+      channelId: channel.channelId,
+      channelInstanceName: channel.instanceName,
       whatsappMessageId: body?.key?.id || body?.messageId || null,
     };
   } catch (err: any) {
     return {
       ok: false,
+      channelId: channel.channelId,
+      channelInstanceName: channel.instanceName || null,
       error: cleanText(err?.message || err, 240),
     };
   }
@@ -430,10 +548,11 @@ export async function dispatchAdminDisconnectAlert(params: DisconnectAlertParams
       }
     }
 
-    const result = await sendAdminMonitoringWhatsApp(recipient.whatsapp, built.body);
+    const result = await sendAdminMonitoringWhatsApp(recipient.whatsapp, built.body, params.supabase);
     await params.supabase
       .from("admin_disconnect_alert_deliveries")
       .update({
+        channel_id: result.channelId || null,
         status: result.ok ? "SENT" : "FAILED",
         sent_at: result.ok ? new Date().toISOString() : null,
         whatsapp_message_id: result.whatsappMessageId || null,
