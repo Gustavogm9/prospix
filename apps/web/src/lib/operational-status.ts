@@ -343,16 +343,19 @@ export function buildOperationalStatusView(
   if (operationState === 'THROTTLED' || activityState === 'WATCH') {
     const tone = toneFromSeverity(aiActivity?.severity || currentState?.impactLevel);
     const isNoEligibleLead = aiActivity?.label === 'Sem lead elegivel';
+    const isRecovery = String(currentState?.status || '').toUpperCase() === 'RECOVERY';
     return {
       connectionStatus,
-      indicatorLabel: 'IA em cuidado',
+      indicatorLabel: isRecovery ? 'Retomada segura' : 'IA em cuidado',
       indicatorTone: tone === 'green' ? 'blue' : tone,
       showBanner: true,
       bannerTone: tone === 'green' ? 'blue' : tone,
-      bannerTitle: 'IA em cuidado',
+      bannerTitle: isRecovery ? 'Retomada segura' : 'IA em cuidado',
       bannerBody: aiActivity?.summary || currentStateSummary,
       bannerDetail: compactDetail([
-        'Significa que a IA nao esta desconectada, mas ha uma condicao operacional que impede ou reduz novas acoes automaticas.',
+        isRecovery
+          ? 'Significa que o WhatsApp reconectou e a IA esta realinhando a fila antes de voltar ao ritmo normal.'
+          : 'Significa que a IA nao esta desconectada, mas ha uma condicao operacional que impede ou reduz novas acoes automaticas.',
         `Estado: ${currentStateLabel} ha ${durationLabel}.`,
         eligibilityDetail,
         executionDetail,
@@ -360,11 +363,13 @@ export function buildOperationalStatusView(
       ]),
       actionHref: SETTINGS_INTEGRATIONS_HREF,
       actionLabel: 'Ver diagnostico',
-      conversationTitle: 'IA conduzindo com cuidado',
+      conversationTitle: isRecovery ? 'IA em retomada segura' : 'IA conduzindo com cuidado',
       conversationBody: isNoEligibleLead
         ? 'A IA pode responder conversas existentes, mas nao iniciara novos contatos enquanto nao houver lead elegivel pelas regras atuais.'
+        : isRecovery
+          ? 'A IA pode responder conversas existentes e retomar apenas contatos recuperaveis, com cadencia reduzida ate normalizar.'
         : 'A IA pode responder, mas novas prospeccoes podem ser reduzidas ou adiadas ate a condicao operacional normalizar.',
-      conversationBadgeLabel: 'IA em cuidado',
+      conversationBadgeLabel: isRecovery ? 'Retomada segura' : 'IA em cuidado',
       conversationTone: tone === 'green' ? 'blue' : tone,
       currentStateLabel,
       currentStateSummary,

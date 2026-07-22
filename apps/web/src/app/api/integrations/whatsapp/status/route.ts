@@ -136,6 +136,7 @@ function stateLabel(status: string | null | undefined): string {
   const normalized = String(status || 'NORMAL').toUpperCase();
   if (normalized === 'NORMAL') return 'Operacional';
   if (normalized === 'COLD') return 'Em observacao';
+  if (normalized === 'RECOVERY') return 'Retomada segura';
   if (normalized === 'HIGH_LOAD') return 'Volume alto';
   if (normalized === 'COOLDOWN') return 'Em resfriamento';
   if (normalized === 'PAUSED') return 'Pausado';
@@ -197,6 +198,20 @@ function buildCurrentState(status: any, latestTransition: any | null): WhatsAppG
       summary: quarantined
         ? 'WhatsApp conectado em observacao. Respostas podem seguir, mas novas prospeccoes aguardam o fim da quarentena.'
         : 'WhatsApp conectado em observacao. A IA opera com ritmo reduzido para proteger o numero.',
+    };
+  }
+
+  if (normalized === 'RECOVERY') {
+    return {
+      status: normalized,
+      label: stateLabel(normalized),
+      impactLevel: 'OBSERVATION',
+      operationState: 'THROTTLED',
+      enteredAt,
+      durationSeconds,
+      allowSend: true,
+      allowNewActive: true,
+      summary: 'Retomada segura apos reconexao. A IA realinha a fila, retenta apenas contatos recuperaveis e envia em ritmo controlado.',
     };
   }
 

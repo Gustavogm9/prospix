@@ -416,7 +416,7 @@ function classifyActivity(input: {
     };
   }
 
-  if (input.contactableBacklog > 0 || input.duePending > 0 || input.unansweredConversations > 0 || ["COLD", "HIGH_LOAD", "COOLDOWN"].includes(guardian)) {
+  if (input.contactableBacklog > 0 || input.duePending > 0 || input.unansweredConversations > 0 || ["COLD", "RECOVERY", "HIGH_LOAD", "COOLDOWN"].includes(guardian)) {
     return {
       state: "WATCH",
       summary: "Operacao com pontos para acompanhamento.",

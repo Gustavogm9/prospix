@@ -18,7 +18,8 @@ import { dispatchAdminDisconnectAlert } from "../_shared/admin-monitoring.ts";
 import {
   buildGuardianStatePatch,
   recordGuardianStateTransition,
-  shouldPromoteColdToNormal,
+  shouldMoveColdToRecovery,
+  shouldPromoteRecoveryToNormal,
 } from "../_shared/whatsapp-guardian-state.ts";
 
 // ── Config ──────────────────────────────────────────────────────────────────
@@ -324,6 +325,7 @@ interface ConnectionGuardDecision {
   externalState: string | null;
   isQuarantined: boolean;
   quarantinedUntil: string | null;
+  numberState: string;
 }
 
 function getGuardMode(name: string, fallback: GuardMode): GuardMode {
@@ -347,11 +349,11 @@ function statusAfterHealthyExternalState(guardianStatus: any, externalState?: st
   const current = guardianStatus?.status || "NORMAL";
   const guardReason = guardianStatus?.last_disconnect_reason_code;
   if ((current === "PAUSED" || current === "SUSPENDED") && guardReason) return "COLD";
-  if (shouldPromoteColdToNormal({
+  if (shouldMoveColdToRecovery({
     guardianStatus,
     externalState,
     quarantineMinutes: getNumberEnv("WA_POST_RECONNECT_QUARANTINE_MINUTES", 60),
-  })) return "NORMAL";
+  })) return "RECOVERY";
   return current;
 }
 
@@ -483,6 +485,63 @@ async function countDuePending(tenantId: string): Promise<number> {
     .lte("scheduled_for", new Date().toISOString());
 
   return count || 0;
+}
+
+async function countSuccessfulRecoverySends(tenantId: string, sinceIso: string | null): Promise<number> {
+  let query = supabase
+    .from("messages")
+    .select("id", { count: "exact", head: true })
+    .eq("tenant_id", tenantId)
+    .eq("direction", "OUTBOUND")
+    .eq("sender", "AI");
+
+  if (sinceIso) query = query.gte("created_at", sinceIso);
+
+  const { count } = await query;
+  return count || 0;
+}
+
+async function countCriticalConnectionEvents(tenantId: string, sinceIso: string | null): Promise<number> {
+  const criticalReasonCodes = [
+    "WA_DEVICE_REMOVED",
+    "WA_STREAM_ERRORED",
+    "WA_SESSION_CONFLICT",
+    "WA_UNAUTHORIZED",
+    "SEND_CRITICAL_DEVICE_REMOVED",
+    "SEND_CRITICAL_STREAM_ERRORED",
+    "SEND_CRITICAL_SESSION_CONFLICT",
+    "SEND_CRITICAL_UNAUTHORIZED",
+    "SEND_CRITICAL_CONNECTION_CLOSED",
+    "SEND_EVOLUTION_INTERNAL_ERROR",
+    "SEND_CRITICAL_INSTANCE_NOT_FOUND",
+  ];
+
+  let query = supabase
+    .from("whatsapp_connection_events")
+    .select("id", { count: "exact", head: true })
+    .eq("tenant_id", tenantId)
+    .in("reason_code", criticalReasonCodes);
+
+  if (sinceIso) query = query.gte("created_at", sinceIso);
+
+  const { count } = await query;
+  return count || 0;
+}
+
+async function loadRecoveryEvidence(tenantId: string, guardianStatus: any) {
+  const sinceIso = guardianStatus?.state_entered_at || guardianStatus?.updated_at || null;
+  const [successfulSends, criticalEvents, duePending] = await Promise.all([
+    countSuccessfulRecoverySends(tenantId, sinceIso),
+    countCriticalConnectionEvents(tenantId, sinceIso),
+    countDuePending(tenantId),
+  ]);
+
+  return {
+    sinceIso,
+    successfulSends,
+    criticalEvents,
+    duePending,
+  };
 }
 
 async function triggerAdminMonitoringDue(source: string): Promise<void> {
@@ -680,6 +739,7 @@ async function runConnectionHealthGuard(
   tenantId: string,
   evoConfig: EvoConfig | null,
   guardianStatus: any,
+  guardianConfig: any,
 ): Promise<ConnectionGuardDecision> {
   const mode = getGuardMode("WA_PRE_SEND_HEALTH_CHECK_MODE", "BLOCK");
   const quarantineUntil = guardianStatus?.quarantined_until || null;
@@ -693,6 +753,7 @@ async function runConnectionHealthGuard(
       externalState: guardianStatus?.external_state || null,
       isQuarantined,
       quarantinedUntil: quarantineUntil,
+      numberState: guardianStatus?.status || "NORMAL",
     };
   }
 
@@ -721,6 +782,7 @@ async function runConnectionHealthGuard(
       externalState: null,
       isQuarantined,
       quarantinedUntil: quarantineUntil,
+      numberState: "PAUSED",
     };
   }
 
@@ -729,19 +791,62 @@ async function runConnectionHealthGuard(
 
   if (external.ok) {
     const previousStatus = guardianStatus?.status || null;
-    const healthyStatus = statusAfterHealthyExternalState(guardianStatus, external.state);
-    await updateGuardianConnectionState(tenantId, healthyStatus, external.state, null, {
+    let healthyStatus = statusAfterHealthyExternalState(guardianStatus, external.state);
+    let transitionReasonCode: string | null = null;
+    const recoveryGuardian = getGuardianByKey(guardianConfig, "G25_WHATSAPP_RECOVERY_REALIGNMENT");
+
+    if (String(previousStatus || "").toUpperCase() === "RECOVERY") {
+      const recoveryEvidence = await loadRecoveryEvidence(tenantId, guardianStatus);
+      const minDurationMinutes = guardianNumber(recoveryGuardian, "recovery_min_duration_minutes", 120);
+      const minSuccessfulSends = guardianNumber(recoveryGuardian, "recovery_min_successful_sends", 8);
+
+      if (shouldPromoteRecoveryToNormal({
+        guardianStatus: { ...guardianStatus, status: healthyStatus },
+        externalState: external.state,
+        minDurationMinutes,
+        minSuccessfulSends,
+        successfulSends: recoveryEvidence.successfulSends,
+        criticalEvents: recoveryEvidence.criticalEvents,
+        duePending: recoveryEvidence.duePending,
+      })) {
+        healthyStatus = "NORMAL";
+        transitionReasonCode = "WA_RECOVERY_PROMOTED_TO_NORMAL";
+      }
+    } else if (healthyStatus === "RECOVERY") {
+      transitionReasonCode = "WA_RECOVERY_STARTED";
+    }
+
+    await updateGuardianConnectionState(tenantId, healthyStatus, external.state, transitionReasonCode, {
       connected_at: guardianStatus?.connected_at || new Date().toISOString(),
     });
-    if (previousStatus === "COLD" && healthyStatus === "NORMAL") {
+    if (previousStatus === "COLD" && healthyStatus === "RECOVERY") {
       await recordConnectionEvent({
         tenantId,
         instanceName: evoConfig.instanceName,
         eventType: "STATE_TRANSITION",
         externalState: external.state,
-        reasonCode: "WA_COLD_PROMOTED_TO_NORMAL",
+        reasonCode: "WA_RECOVERY_STARTED",
         rawError: {
-          message: "Conexao saudavel; observacao encerrada automaticamente.",
+          message: "Quarentena encerrada; retomada segura iniciada automaticamente.",
+          connected_at: guardianStatus?.connected_at || null,
+          quarantined_until: guardianStatus?.quarantined_until || null,
+          circuit_open_until: guardianStatus?.circuit_open_until || null,
+          source: "send-messages:pre-send-health",
+        },
+        localStatusBefore: previousStatus,
+        localStatusAfter: healthyStatus,
+        pendingDueCount,
+      });
+    }
+    if (previousStatus === "RECOVERY" && healthyStatus === "NORMAL") {
+      await recordConnectionEvent({
+        tenantId,
+        instanceName: evoConfig.instanceName,
+        eventType: "STATE_TRANSITION",
+        externalState: external.state,
+        reasonCode: "WA_RECOVERY_PROMOTED_TO_NORMAL",
+        rawError: {
+          message: "Retomada segura concluida; operacao normal restaurada automaticamente.",
           connected_at: guardianStatus?.connected_at || null,
           quarantined_until: guardianStatus?.quarantined_until || null,
           circuit_open_until: guardianStatus?.circuit_open_until || null,
@@ -759,6 +864,7 @@ async function runConnectionHealthGuard(
       externalState: external.state,
       isQuarantined,
       quarantinedUntil: quarantineUntil,
+      numberState: healthyStatus,
     };
   }
 
@@ -815,6 +921,7 @@ async function runConnectionHealthGuard(
     externalState: external.state,
     isQuarantined,
     quarantinedUntil: quarantineUntil,
+    numberState: nextStatus,
   };
 }
 
@@ -1051,8 +1158,12 @@ async function processFirstTouch(
   tenantId: string,
   processedLeadIds: Set<string>,
   guardianConfig: Awaited<ReturnType<typeof GuardianRunner.loadConfig>>,
+  options: { maxToQueue?: number; selectiveRetryOnly?: boolean } = {},
 ): Promise<{ queued: number; failed: number }> {
   let queued = 0, failed = 0;
+  const maxToQueue = Math.max(0, Math.floor(options.maxToQueue ?? Number.POSITIVE_INFINITY));
+  if (maxToQueue === 0) return { queued, failed };
+
   const brtHour = getBrtHour();
   const brtDate = getBrtDateStr();
 
@@ -1068,6 +1179,8 @@ async function processFirstTouch(
   }
 
   for (const campaign of campaigns) {
+    if (queued >= maxToQueue) break;
+
     // ── Check hour window (BRT) ──────────────────────────────
     const windowStart = campaign.hour_window_start ?? 8;
     const windowEnd = campaign.hour_window_end ?? 20;
@@ -1151,11 +1264,15 @@ async function processFirstTouch(
     // ── Find canonically eligible ENRICHED leads for this campaign ────────────────
     let eligibilityQuery = supabase
       .from("first_touch_lead_eligibility")
-      .select("lead_id, fit_score, created_at")
+      .select("lead_id, fit_score, created_at, has_failed_first_touch_queue")
       .eq("campaign_id", campaign.id)
       .eq("tenant_id", tenantId)
       .eq("script_id", script.id)
       .eq("is_eligible_now", true);
+
+    if (options.selectiveRetryOnly) {
+      eligibilityQuery = eligibilityQuery.eq("has_failed_first_touch_queue", true);
+    }
 
     if (processedLeadIds.size > 0) {
       eligibilityQuery = eligibilityQuery.not("lead_id", "in", `(${Array.from(processedLeadIds).map(id => `'${id}'`).join(",")})`);
@@ -1169,6 +1286,11 @@ async function processFirstTouch(
     let leads: any[] | null = null;
 
     if (eligibilityError) {
+      if (options.selectiveRetryOnly) {
+        console.warn("  [First Touch] Canonical eligibility view unavailable; RECOVERY legacy fallback blocked to avoid broad reprocessing.");
+        continue;
+      }
+
       console.warn("  [First Touch] Canonical eligibility view unavailable, using legacy candidate query. Error: " + eligibilityError.message);
 
       let query = supabase
@@ -1607,6 +1729,7 @@ async function processFirstTouch(
 
         processedLeadIds.add(lead.id);
         queued++;
+        if (queued >= maxToQueue) return { queued, failed };
         break; // Processou 1 lead com sucesso para esta campanha, sai do loop de leads
       } catch (err: any) {
         console.error("  💥 Erro ao enfileirar lead: " + err.message);
@@ -1664,7 +1787,7 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
       }
 
       const evoConfig = await loadEvoConfig(tenantId);
-      const healthDecision = await runConnectionHealthGuard(tenantId, evoConfig, guardianStatus);
+      const healthDecision = await runConnectionHealthGuard(tenantId, evoConfig, guardianStatus, guardianConfig);
 
       if (!healthDecision.allowSend) {
         console.log("  [WhatsApp Guard] Envio bloqueado para tenant " + tenantId + ". Motivo: " + healthDecision.reasonCode);
@@ -1672,9 +1795,11 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
         continue;
       }
 
-      const numberState = healthDecision.reasonCode === "WA_CONNECTION_HEALTHY"
-        ? statusAfterHealthyExternalState(guardianStatus, healthDecision.externalState)
-        : guardianStatus?.status || "NORMAL";
+      const numberState = healthDecision.numberState || (
+        healthDecision.reasonCode === "WA_CONNECTION_HEALTHY"
+          ? statusAfterHealthyExternalState(guardianStatus, healthDecision.externalState)
+          : guardianStatus?.status || "NORMAL"
+      );
 
       if (numberState === "PAUSED" || numberState === "SUSPENDED") {
         console.log("  ⏸️ Guardião do tenant " + tenantId + " está pausado ou suspenso. Estado: " + numberState);
@@ -1707,9 +1832,16 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
         .eq("tenant_id", tenantId)
         .gte("started_at", startOfDay);
 
+      const { count: newChatsLastHour } = await supabase
+        .from("conversations")
+        .select("id", { count: "exact", head: true })
+        .eq("tenant_id", tenantId)
+        .gte("started_at", oneHourAgo);
+
       const msgsLastMin = sentLastMinute || 0;
       const msgsLastHr = sentLastHour || 0;
-      const chatsToday = newChatsToday || 0;
+      let chatsLastHr = newChatsLastHour || 0;
+      let chatsToday = newChatsToday || 0;
 
       // 3. Definir limites conforme o Estado do Número
       let globalMinDelay = 12;
@@ -1726,6 +1858,17 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
         maxMsgsPerHr = 45;
         maxNewChatsPerHr = 3;
         maxNewChatsPerDay = 20;
+      } else if (numberState === "RECOVERY") {
+        const recoveryGuardian = getGuardianByKey(guardianConfig, "G25_WHATSAPP_RECOVERY_REALIGNMENT");
+        globalMinDelay = guardianNumber(recoveryGuardian, "recovery_min_global_delay_seconds", 18);
+        globalDelayRange = {
+          min: guardianNumber(recoveryGuardian, "recovery_base_delay_min_seconds", 30),
+          max: guardianNumber(recoveryGuardian, "recovery_base_delay_max_seconds", 90),
+        };
+        maxMsgsPerMin = guardianNumber(recoveryGuardian, "recovery_max_messages_per_minute", 2);
+        maxMsgsPerHr = guardianNumber(recoveryGuardian, "recovery_max_messages_per_hour", 60);
+        maxNewChatsPerHr = guardianNumber(recoveryGuardian, "recovery_max_new_chats_per_hour", 4);
+        maxNewChatsPerDay = guardianNumber(recoveryGuardian, "recovery_max_new_chats_per_day", 30);
       } else if (numberState === "HIGH_LOAD") {
         globalMinDelay = 15;
         globalDelayRange = { min: 25, max: 70 };
@@ -1759,11 +1902,19 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
         numberState !== "SUSPENDED" &&
         !hasReactivePending &&
         msgsLastHr < maxMsgsPerHr &&
+        chatsLastHr < maxNewChatsPerHr &&
         chatsToday < maxNewChatsPerDay;
 
       if (canQueueNewActive) {
-        const { queued: q } = await processFirstTouch(tenantId, processedLeadIds, guardianConfig);
+        const remainingNewChatsThisHour = Math.max(0, maxNewChatsPerHr - chatsLastHr);
+        const remainingNewChatsToday = Math.max(0, maxNewChatsPerDay - chatsToday);
+        const { queued: q } = await processFirstTouch(tenantId, processedLeadIds, guardianConfig, {
+          maxToQueue: Math.min(remainingNewChatsThisHour, remainingNewChatsToday),
+          selectiveRetryOnly: numberState === "RECOVERY",
+        });
         queued += q;
+        chatsLastHr += q;
+        chatsToday += q;
       }
 
       // 6. Buscar a mensagem mais prioritária na fila a enviar

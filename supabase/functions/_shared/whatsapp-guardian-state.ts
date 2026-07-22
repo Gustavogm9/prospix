@@ -1,4 +1,4 @@
-export type GuardianStatus = "COLD" | "NORMAL" | "HIGH_LOAD" | "COOLDOWN" | "PAUSED" | "SUSPENDED" | string;
+export type GuardianStatus = "COLD" | "RECOVERY" | "NORMAL" | "HIGH_LOAD" | "COOLDOWN" | "PAUSED" | "SUSPENDED" | string;
 
 type SupabaseLike = {
   from: (table: string) => any;
@@ -35,7 +35,7 @@ export function isRecentConnectedAtWithoutQuarantine(
   return nowMs - connectedAtMs < quarantineMinutes * 60 * 1000;
 }
 
-export function shouldPromoteColdToNormal(params: {
+export function shouldMoveColdToRecovery(params: {
   guardianStatus: any;
   externalState: string | null | undefined;
   quarantineMinutes: number;
@@ -51,6 +51,41 @@ export function shouldPromoteColdToNormal(params: {
   if (isFutureTimestamp(guardianStatus?.circuit_open_until, nowMs)) return false;
   if (isRecentConnectedAtWithoutQuarantine(guardianStatus, params.quarantineMinutes, nowMs)) return false;
   return true;
+}
+
+export function shouldPromoteRecoveryToNormal(params: {
+  guardianStatus: any;
+  externalState: string | null | undefined;
+  minDurationMinutes: number;
+  minSuccessfulSends: number;
+  successfulSends: number;
+  criticalEvents: number;
+  duePending: number;
+  nowMs?: number;
+}): boolean {
+  const nowMs = params.nowMs ?? Date.now();
+  const guardianStatus = params.guardianStatus;
+  const current = String(guardianStatus?.status || "").toUpperCase();
+  const normalizedExternalState = String(params.externalState || guardianStatus?.external_state || "").toLowerCase();
+  const enteredAtMs = new Date(guardianStatus?.state_entered_at || guardianStatus?.updated_at || "").getTime();
+  const minDurationMs = Math.max(0, params.minDurationMinutes) * 60 * 1000;
+
+  if (current !== "RECOVERY" || normalizedExternalState !== "open") return false;
+  if (!Number.isFinite(enteredAtMs) || nowMs - enteredAtMs < minDurationMs) return false;
+  if (isFutureTimestamp(guardianStatus?.circuit_open_until, nowMs)) return false;
+  if (params.successfulSends < Math.max(0, params.minSuccessfulSends)) return false;
+  if (params.criticalEvents > 0) return false;
+  if (params.duePending > 0) return false;
+  return true;
+}
+
+export function shouldPromoteColdToNormal(params: {
+  guardianStatus: any;
+  externalState: string | null | undefined;
+  quarantineMinutes: number;
+  nowMs?: number;
+}): boolean {
+  return shouldMoveColdToRecovery(params);
 }
 
 export function describeGuardianState(
@@ -97,6 +132,16 @@ export function describeGuardianState(
     };
   }
 
+  if (normalized === "RECOVERY") {
+    return {
+      impactLevel: "OBSERVATION",
+      operationState: "THROTTLED",
+      allowSend: true,
+      allowNewActive: true,
+      operatorSummary: "Retomada segura apos reconexao. A IA realinha a fila e libera apenas contatos seletivos com ritmo controlado.",
+    };
+  }
+
   if (normalized === "HIGH_LOAD") {
     return {
       impactLevel: "OBSERVATION",
@@ -122,7 +167,7 @@ export function describeGuardianState(
     operationState: "ACTIVE",
     allowSend: true,
     allowNewActive: true,
-    operatorSummary: reasonCode === "WA_COLD_PROMOTED_TO_NORMAL"
+    operatorSummary: reasonCode === "WA_COLD_PROMOTED_TO_NORMAL" || reasonCode === "WA_RECOVERY_PROMOTED_TO_NORMAL"
       ? "Observacao encerrada. A IA pode operar dentro das regras normais de campanha e cadencia."
       : "WhatsApp operacional. A IA pode responder e iniciar conversas dentro das regras configuradas.",
   };

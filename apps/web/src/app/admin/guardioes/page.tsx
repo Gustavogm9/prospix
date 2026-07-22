@@ -258,10 +258,15 @@ const GUARDIAN_COPY: Record<string, { title: string; purpose: string; risk: stri
     purpose: 'Exige rascunho, motivo, validacao e auditoria para alterar regras.',
     risk: 'Sem isso, uma mudanca administrativa pode quebrar a operacao.',
   },
+  G25_WHATSAPP_RECOVERY_REALIGNMENT: {
+    title: 'Retomada segura do WhatsApp',
+    purpose: 'Realinha a fila apos reconexao e libera apenas retentativas seguras ate a operacao voltar ao normal.',
+    risk: 'Sem isso, a IA pode ficar presa em observacao ou voltar enviando em ritmo amplo apos uma queda.',
+  },
 };
 
 const GROUPS = [
-  { id: 'reputation', title: 'Seguranca do numero', keys: ['G03_PHONE_ENTITY', 'G18_BUSINESS_HOURS', 'G19_GLOBAL_CADENCE', 'G20_CONTACT_CADENCE', 'G21_CONCURRENCY_LOCK', 'G22_SEND_INTEGRITY'] },
+  { id: 'reputation', title: 'Seguranca do numero', keys: ['G03_PHONE_ENTITY', 'G18_BUSINESS_HOURS', 'G19_GLOBAL_CADENCE', 'G20_CONTACT_CADENCE', 'G21_CONCURRENCY_LOCK', 'G22_SEND_INTEGRITY', 'G25_WHATSAPP_RECOVERY_REALIGNMENT'] },
   { id: 'conversation', title: 'Qualidade da conversa', keys: ['G04_IDENTITY_PERSONALIZATION', 'G05_CONVERSATION_STATE', 'G06_REFUSAL_CLOSURE', 'G07_ANTI_LOOP', 'G08_OBJECTION_FRAMEWORK', 'G09_QUALIFICATION', 'G10_AGENDA', 'G11_SHORT_RESPONSES', 'G17_NATURALNESS'] },
   { id: 'safety', title: 'Privacidade e seguranca da IA', keys: ['G12_STRUCTURED_OUTPUT', 'G13_PLACEHOLDER_LEAK', 'G14_INTERNAL_LEAK', 'G15_PROMPT_INJECTION', 'G16_SEMANTIC_SCOPE'] },
   { id: 'admin', title: 'Controle operacional', keys: ['G00_ENGINE_CONFIG', 'G01_INBOUND_IDEMPOTENCY', 'G02_LEAD_RELEVANCE', 'G23_OBSERVABILITY', 'G24_ADMIN_CHANGE_CONTROL'] },

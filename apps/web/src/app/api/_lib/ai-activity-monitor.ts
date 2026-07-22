@@ -377,7 +377,7 @@ function guardianOperation(row: Record<string, any> | undefined) {
   if (operation) return operation;
   if (status === 'SUSPENDED') return 'REQUIRES_ACTION';
   if (status === 'PAUSED') return 'BLOCKED';
-  if (status === 'COLD' || status === 'HIGH_LOAD' || status === 'COOLDOWN') return 'THROTTLED';
+  if (status === 'COLD' || status === 'RECOVERY' || status === 'HIGH_LOAD' || status === 'COOLDOWN') return 'THROTTLED';
   return status ? 'ACTIVE' : null;
 }
 
@@ -499,6 +499,16 @@ function classifyTenantActivity(input: {
   }
 
   if (input.guardianOperationState === 'THROTTLED') {
+    if (String(input.guardianStatus || '').toUpperCase() === 'RECOVERY') {
+      return {
+        state: 'WATCH',
+        label: 'Retomada segura',
+        severity: 'OBSERVATION',
+        summary: 'A IA esta retomando apos reconexao: responde normalmente, mas novos contatos sao seletivos e enviados em ritmo controlado.',
+        requiredAction: 'Acompanhar se ha envios bem-sucedidos e se o estado volta para Operacional apos o periodo minimo de observacao.',
+      };
+    }
+
     return {
       state: 'WATCH',
       label: 'IA operando com cuidado',

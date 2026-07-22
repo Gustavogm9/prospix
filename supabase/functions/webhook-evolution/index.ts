@@ -13,7 +13,7 @@ import {
   buildGuardianStatePatch,
   isFutureTimestamp,
   recordGuardianStateTransition,
-  shouldPromoteColdToNormal,
+  shouldMoveColdToRecovery,
 } from "../_shared/whatsapp-guardian-state.ts";
 
 // ── Config ──────────────────────────────────────────────────────────────────
@@ -79,7 +79,7 @@ function normalizePhone(raw: string): string {
   return phone;
 }
 
-type ConnectionGuardStatus = "COLD" | "NORMAL" | "PAUSED" | "SUSPENDED";
+type ConnectionGuardStatus = "COLD" | "RECOVERY" | "NORMAL" | "PAUSED" | "SUSPENDED";
 
 function getNumberEnv(name: string, fallback: number): number {
   const raw = Deno.env.get(name);
@@ -480,13 +480,14 @@ async function handleConnectionUpdate(payload: any): Promise<Response> {
       extra.connected_at = new Date().toISOString();
       extra.quarantined_until = new Date(Date.now() + quarantineMinutes * 60 * 1000).toISOString();
       extra.circuit_open_until = null;
-    } else if (shouldPromoteColdToNormal({
+    } else if (shouldMoveColdToRecovery({
       guardianStatus: previousStatus,
       externalState: state,
       quarantineMinutes: getNumberEnv("WA_POST_RECONNECT_QUARANTINE_MINUTES", 60),
     })) {
-      nextStatus = "NORMAL";
-      eventReasonCode = "WA_COLD_PROMOTED_TO_NORMAL";
+      nextStatus = "RECOVERY";
+      eventReasonCode = "WA_RECOVERY_STARTED";
+      statusReasonCode = eventReasonCode;
       extra.circuit_open_until = null;
     } else {
       nextStatus = (previousStatus?.status as ConnectionGuardStatus | undefined) || "COLD";
@@ -536,7 +537,7 @@ async function handleConnectionUpdate(payload: any): Promise<Response> {
     event: normalizeEventName(event),
     state,
     reason_code: classification.reasonCode,
-    status: classification.status,
+    status: nextStatus,
   }), {
     headers: { "Content-Type": "application/json" },
   });

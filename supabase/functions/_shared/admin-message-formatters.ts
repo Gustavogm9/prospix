@@ -227,6 +227,9 @@ function classifyGuardian(row: AdminGuardianStatus) {
   if (status === "COLD") {
     return { level: "observation", text: "em aquecimento/observacao" };
   }
+  if (status === "RECOVERY") {
+    return { level: "observation", text: "em retomada segura" };
+  }
   if (status === "NORMAL" || !status) {
     return { level: "ok", text: "OK" };
   }
@@ -483,6 +486,7 @@ function translateLocalOutcome(value: string | null | undefined): string {
   if (normalized === "SUSPENDED") return "envios pausados para proteger a operacao";
   if (normalized === "PAUSED") return "envios temporariamente pausados";
   if (normalized === "COLD") return "numero mantido em observacao";
+  if (normalized === "RECOVERY") return "retomada segura em andamento";
   if (normalized === "NORMAL") return "estado local mantido como OK";
   return "acao preventiva registrada";
 }
