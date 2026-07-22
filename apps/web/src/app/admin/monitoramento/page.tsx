@@ -98,6 +98,21 @@ type ChannelEvent = {
   created_at: string;
 };
 
+type DispatcherRun = {
+  id: string;
+  mode: string;
+  source: string;
+  status: string;
+  claimed_count: number;
+  sent_count: number;
+  failed_count: number;
+  skipped_count: number;
+  error: string | null;
+  started_at: string;
+  completed_at: string | null;
+  created_at: string;
+};
+
 type Dashboard = {
   channel: {
     configured: boolean;
@@ -123,19 +138,35 @@ type Dashboard = {
     recipients: number;
     activeRecipients: number;
     activeSchedules: number;
+    overdueSchedules: number;
     failedReports24h: number;
     disconnectAlerts24h: number;
+  };
+  scheduler: {
+    lastRunAt: string | null;
+    lastCompletedAt: string | null;
+    lastStatus: string | null;
+    lastSource: string | null;
+    lastError: string | null;
+    lastClaimedCount: number | null;
+    lastSentCount: number | null;
+    lastFailedCount: number | null;
+    overdueSchedules: number;
+    nextDueAt: string | null;
   };
   recipients: Recipient[];
   schedules: Schedule[];
   reportRuns: ReportRun[];
   disconnectDeliveries: DisconnectDelivery[];
   channelEvents: ChannelEvent[];
+  dispatcherRuns: DispatcherRun[];
   tenants: Tenant[];
 };
 
 const STATUS_STYLE: Record<string, string> = {
   SENT: 'bg-success-soft text-success-text border-success/30',
+  SUCCEEDED: 'bg-success-soft text-success-text border-success/30',
+  COMPLETED_WITH_FAILURES: 'bg-amber-50 text-amber-800 border-amber-300',
   RUNNING: 'bg-blue-50 text-blue-700 border-blue-200',
   PENDING: 'bg-amber-50 text-amber-800 border-amber-300',
   FAILED: 'bg-red-50 text-red-700 border-red-200',
@@ -156,6 +187,12 @@ function formatDate(value: string | null | undefined): string {
 
 function statusClass(status: string): string {
   return STATUS_STYLE[status] || 'bg-surface-sunken text-text-secondary border-border';
+}
+
+function isScheduleOverdue(schedule: Schedule): boolean {
+  if (!schedule.active) return false;
+  const nextRunAt = new Date(schedule.next_run_at).getTime();
+  return Number.isFinite(nextRunAt) && nextRunAt <= Date.now();
 }
 
 function channelStatusLabel(status: ChannelStatus | null | undefined): string {
@@ -456,6 +493,7 @@ export default function AdminMonitoringPage() {
   };
 
   const channel = data?.channel;
+  const scheduler = data?.scheduler;
   const qrSrc = qrImageSrc(channelQr);
   const channelConnected = channel?.connectionStatus === 'CONNECTED';
   const channelBusy = busyKey?.startsWith('channel:') || false;
@@ -534,16 +572,24 @@ export default function AdminMonitoringPage() {
                 </Field>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+              <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-3 text-xs">
                 <StatusCell label="Instancia ativa" value={channel?.instanceName || 'n/d'} mono />
                 <StatusCell label="Ultima checagem" value={formatDate(channel?.lastCheckedAt)} />
                 <StatusCell label="Estado externo" value={channel?.externalState || 'n/d'} mono />
                 <StatusCell label="Chave Evolution" value={channel?.apiKeyConfigured ? 'configurada' : 'ausente'} />
+                <StatusCell label="Scheduler" value={scheduler?.lastStatus || 'sem run'} />
+                <StatusCell label="Ultimo check" value={formatDate(scheduler?.lastRunAt)} />
               </div>
 
-              {(channel?.lastError || channel?.dispatcherReachable === false) && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                <StatusCell label="Agendas vencidas" value={String(scheduler?.overdueSchedules ?? 0)} />
+                <StatusCell label="Ultimo claim" value={scheduler?.lastClaimedCount == null ? 'n/d' : String(scheduler.lastClaimedCount)} />
+                <StatusCell label="Proxima agenda" value={formatDate(scheduler?.nextDueAt)} />
+              </div>
+
+              {(channel?.lastError || channel?.dispatcherReachable === false || scheduler?.lastError) && (
                 <div className="text-xs text-red-700 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
-                  {channel?.lastError || channel?.dispatcherError || 'Dispatcher indisponivel.'}
+                  {channel?.lastError || channel?.dispatcherError || scheduler?.lastError || 'Dispatcher indisponivel.'}
                 </div>
               )}
 
@@ -587,7 +633,7 @@ export default function AdminMonitoringPage() {
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-3">
         <Card className="bg-white shadow-sm border-border">
           <CardContent className="pt-4 pb-3">
             <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">Canal</span>
@@ -603,6 +649,7 @@ export default function AdminMonitoringPage() {
         </Card>
         <MetricCard label="Destinatarios ativos" value={data?.summary.activeRecipients ?? 0} />
         <MetricCard label="Agendas ativas" value={data?.summary.activeSchedules ?? 0} />
+        <MetricCard label="Agendas vencidas" value={data?.summary.overdueSchedules ?? 0} tone={(data?.summary.overdueSchedules ?? 0) > 0 ? 'red' : 'normal'} />
         <MetricCard label="Falhas recentes" value={data?.summary.failedReports24h ?? 0} tone={(data?.summary.failedReports24h ?? 0) > 0 ? 'red' : 'normal'} />
         <MetricCard label="Alertas recentes" value={data?.summary.disconnectAlerts24h ?? 0} />
       </div>
@@ -757,11 +804,16 @@ export default function AdminMonitoringPage() {
                       <tr key={schedule.id} className="border-b border-border/50">
                         <td className="py-3 pr-3">
                           <div className="font-semibold text-text">{schedule.name}</div>
-                          <div className="text-[10px] text-text-secondary">{schedule.active ? 'Ativa' : 'Pausada'} - janela {schedule.window_minutes}min</div>
+                          <div className="text-[10px] text-text-secondary flex flex-wrap items-center gap-1.5">
+                            <span>{schedule.active ? 'Ativa' : 'Pausada'} - janela {schedule.window_minutes}min</span>
+                            {isScheduleOverdue(schedule) && (
+                              <Badge className="text-[9px] px-1.5 py-0 border bg-red-50 text-red-700 border-red-200">vencida</Badge>
+                            )}
+                          </div>
                         </td>
                         <td className="py-3 pr-3 text-text-secondary">{schedule.admin_monitoring_recipients?.label || schedule.recipient_id}</td>
                         <td className="py-3 pr-3 font-mono text-text-secondary">{schedule.interval_minutes}min</td>
-                        <td className="py-3 pr-3 text-text-secondary">{formatDate(schedule.next_run_at)}</td>
+                        <td className={`py-3 pr-3 ${isScheduleOverdue(schedule) ? 'text-red-700 font-semibold' : 'text-text-secondary'}`}>{formatDate(schedule.next_run_at)}</td>
                         <td className="py-3 pr-3 text-text-secondary max-w-[260px] truncate">{schedule.last_error || '-'}</td>
                         <td className="py-3 pr-3">
                           <div className="flex items-center justify-end gap-2">
@@ -779,7 +831,7 @@ export default function AdminMonitoringPage() {
             </CardContent>
           </Card>
 
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
             <Card className="bg-white border-border shadow-sm">
               <CardHeader className="pb-3">
                 <CardTitle className="text-base font-bold font-heading text-text">Ultimos relatorios</CardTitle>
@@ -817,6 +869,28 @@ export default function AdminMonitoringPage() {
                   </div>
                 ))}
                 {(data?.disconnectDeliveries || []).length === 0 && <p className="text-xs text-text-secondary py-4">Nenhum alerta de desconexao entregue.</p>}
+              </CardContent>
+            </Card>
+
+            <Card className="bg-white border-border shadow-sm">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base font-bold font-heading text-text">Execucoes do scheduler</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {(data?.dispatcherRuns || []).map((run) => (
+                  <div key={run.id} className="border border-border rounded-lg p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <Badge className={`text-[9px] px-1.5 py-0 border ${statusClass(run.status)}`}>{run.status}</Badge>
+                      <span className="text-[10px] text-text-secondary">{formatDate(run.started_at)}</span>
+                    </div>
+                    <p className="text-[10px] font-mono text-text-secondary mt-2 truncate">{run.source}</p>
+                    <p className="text-xs text-text mt-1">
+                      claim {run.claimed_count} / enviados {run.sent_count} / falhas {run.failed_count} / pulados {run.skipped_count}
+                    </p>
+                    {run.error && <p className="text-xs text-red-700 mt-1 line-clamp-2">{run.error}</p>}
+                  </div>
+                ))}
+                {(data?.dispatcherRuns || []).length === 0 && <p className="text-xs text-text-secondary py-4">Nenhum check do scheduler registrado.</p>}
               </CardContent>
             </Card>
           </div>

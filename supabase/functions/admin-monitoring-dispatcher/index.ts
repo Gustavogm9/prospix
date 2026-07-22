@@ -41,6 +41,8 @@ type CountResult = {
   error?: string | null;
 };
 
+type DispatcherRunStatus = "SUCCEEDED" | "COMPLETED_WITH_FAILURES" | "FAILED";
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -362,6 +364,61 @@ async function completeRun(runId: string, status: "SENT" | "FAILED" | "SKIPPED",
     .eq("id", runId);
 }
 
+async function createDispatcherRun(mode: string, source: string): Promise<string | null> {
+  try {
+    const { data, error } = await supabase
+      .from("admin_monitoring_dispatcher_runs")
+      .insert({
+        mode,
+        source,
+        status: "RUNNING",
+      })
+      .select("id")
+      .single();
+
+    if (error) throw error;
+    return data?.id || null;
+  } catch (err: any) {
+    console.warn("[admin-monitoring-dispatcher] run audit insert failed", cleanText(err?.message || err, 240));
+    return null;
+  }
+}
+
+function summarizeDueResults(results: Array<Record<string, unknown>>) {
+  let sent = 0;
+  let failed = 0;
+  let skipped = 0;
+
+  for (const result of results) {
+    if (result.status === "SENT") sent++;
+    else if (result.status === "FAILED") failed++;
+    else if (result.status === "SKIPPED") skipped++;
+  }
+
+  return { sent, failed, skipped };
+}
+
+async function completeDispatcherRun(
+  runId: string | null,
+  status: DispatcherRunStatus,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  if (!runId) return;
+
+  try {
+    await supabase
+      .from("admin_monitoring_dispatcher_runs")
+      .update({
+        status,
+        completed_at: new Date().toISOString(),
+        ...patch,
+      })
+      .eq("id", runId);
+  } catch (err: any) {
+    console.warn("[admin-monitoring-dispatcher] run audit update failed", cleanText(err?.message || err, 240));
+  }
+}
+
 async function processSchedule(schedule: Schedule, source: string) {
   const recipient = await loadRecipient(schedule.recipient_id);
   const periodEnd = new Date().toISOString();
@@ -472,7 +529,30 @@ serve(async (request) => {
     }
 
     if (mode === "due") {
-      return json({ ok: true, ...(await processDue(body?.limit || 10, source)) });
+      const dispatcherRunId = await createDispatcherRun(mode, source);
+      try {
+        const result = await processDue(body?.limit || 10, source);
+        const summary = summarizeDueResults(result.results);
+        await completeDispatcherRun(
+          dispatcherRunId,
+          summary.failed > 0 ? "COMPLETED_WITH_FAILURES" : "SUCCEEDED",
+          {
+            claimed_count: result.claimed,
+            sent_count: summary.sent,
+            failed_count: summary.failed,
+            skipped_count: summary.skipped,
+            result_summary: result,
+          },
+        );
+        return json({ ok: true, ...result, dispatcher_run_id: dispatcherRunId });
+      } catch (err: any) {
+        const errorMessage = cleanText(err?.message || err, 500);
+        await completeDispatcherRun(dispatcherRunId, "FAILED", {
+          error: errorMessage,
+          result_summary: { source, mode },
+        });
+        throw new Error(errorMessage);
+      }
     }
 
     if (mode === "schedule") {

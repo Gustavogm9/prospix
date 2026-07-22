@@ -497,6 +497,7 @@ async function loadDashboard() {
   const [
     channel,
     channelEventsRes,
+    dispatcherRunsRes,
     recipientsRes,
     schedulesRes,
     runsRes,
@@ -516,6 +517,11 @@ async function loadDashboard() {
         .select('id, channel_id, event_type, connection_status, external_state, error, raw_response_redacted, created_at')
         .order('created_at', { ascending: false })
         .limit(10),
+    supabaseAdmin
+      .from('admin_monitoring_dispatcher_runs')
+      .select('id, mode, source, status, claimed_count, sent_count, failed_count, skipped_count, error, started_at, completed_at, created_at')
+      .order('created_at', { ascending: false })
+      .limit(10),
     supabaseAdmin
       .from('admin_monitoring_recipients')
       .select('*')
@@ -541,7 +547,7 @@ async function loadDashboard() {
       .order('name', { ascending: true }),
   ]);
 
-  for (const result of [channelEventsRes, recipientsRes, schedulesRes, runsRes, deliveriesRes, tenantsRes]) {
+  for (const result of [channelEventsRes, dispatcherRunsRes, recipientsRes, schedulesRes, runsRes, deliveriesRes, tenantsRes]) {
     if (result.error) throw result.error;
   }
 
@@ -549,15 +555,40 @@ async function loadDashboard() {
   const schedules = schedulesRes.data || [];
   const runs = runsRes.data || [];
   const deliveries = deliveriesRes.data || [];
+  const dispatcherRuns = dispatcherRunsRes.data || [];
+  const nowMs = Date.now();
+  const activeSchedules = schedules.filter((s: any) => s.active);
+  const overdueSchedules = activeSchedules.filter((s: any) => {
+    const nextRunAt = new Date(s.next_run_at).getTime();
+    return Number.isFinite(nextRunAt) && nextRunAt <= nowMs;
+  }).length;
+  const nextDueAt = activeSchedules
+    .map((s: any) => s.next_run_at)
+    .filter(Boolean)
+    .sort((a: string, b: string) => a.localeCompare(b))[0] || null;
+  const lastDispatcherRun: any = dispatcherRuns[0] || null;
 
   return {
     ok: true,
     channel,
     channelEvents: channelEventsRes.data || [],
+    scheduler: {
+      lastRunAt: lastDispatcherRun?.started_at || null,
+      lastCompletedAt: lastDispatcherRun?.completed_at || null,
+      lastStatus: lastDispatcherRun?.status || null,
+      lastSource: lastDispatcherRun?.source || null,
+      lastError: lastDispatcherRun?.error || null,
+      lastClaimedCount: lastDispatcherRun?.claimed_count ?? null,
+      lastSentCount: lastDispatcherRun?.sent_count ?? null,
+      lastFailedCount: lastDispatcherRun?.failed_count ?? null,
+      overdueSchedules,
+      nextDueAt,
+    },
     summary: {
       recipients: recipients.length,
       activeRecipients: recipients.filter((r: any) => r.active).length,
-      activeSchedules: schedules.filter((s: any) => s.active).length,
+      activeSchedules: activeSchedules.length,
+      overdueSchedules,
       failedReports24h: runs.filter((r: any) => r.status === 'FAILED').length,
       disconnectAlerts24h: deliveries.length,
     },
@@ -565,6 +596,7 @@ async function loadDashboard() {
     schedules,
     reportRuns: runs,
     disconnectDeliveries: deliveries,
+    dispatcherRuns,
     tenants: tenantsRes.data || [],
   };
 }
