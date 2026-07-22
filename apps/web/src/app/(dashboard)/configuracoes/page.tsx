@@ -7,6 +7,8 @@ import { Settings as SettingsIcon, Shield, CreditCard, Key, Calendar, Phone, Loa
 import { useAuthStore } from '@/store/auth-store';
 import { profileQueries, billingQueries } from '@/lib/queries';
 import { apiFetch } from '@/lib/api-fetch';
+import { supabase } from '@/lib/supabase';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 import { z } from 'zod';
 import PrivacyTab from './settings/PrivacyTab';
 import AIContextPage from './contexto/page';
@@ -188,6 +190,16 @@ type TenantBillingData = {
 
 type TabKey = 'perfil' | 'integracoes' | 'agenda' | 'credenciais' | 'financeiro' | 'privacidade' | 'contexto';
 
+type WhatsAppStatusSyncState = {
+  mode: 'starting' | 'live' | 'polling' | 'error';
+  lastRefreshAt: string | null;
+  error: string | null;
+};
+
+const WHATSAPP_STATUS_VISIBLE_POLL_MS = 3000;
+const WHATSAPP_STATUS_HIDDEN_POLL_MS = 15000;
+const WHATSAPP_REALTIME_REFRESH_DELAY_MS = 350;
+
 import { BrainCircuit } from 'lucide-react';
 
 const tabConfig: { key: TabKey; label: string; icon: React.ElementType }[] = [
@@ -231,6 +243,11 @@ export default function Settings() {
   const [whatsappStatus, setWhatsappStatus] = useState<'connected' | 'disconnected' | 'loading'>('loading');
   const [instanceName, setInstanceName] = useState<string | null>(null);
   const [whatsappTrace, setWhatsappTrace] = useState<WhatsAppGuardianTrace | null>(null);
+  const [whatsappStatusSync, setWhatsappStatusSync] = useState<WhatsAppStatusSyncState>({
+    mode: 'starting',
+    lastRefreshAt: null,
+    error: null,
+  });
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [qrCountdown, setQrCountdown] = useState<number>(0);
   const [isGeneratingQr, setIsGeneratingQr] = useState(false);
@@ -256,6 +273,9 @@ export default function Settings() {
   const [isLoadingCalendars, setIsLoadingCalendars] = useState(false);
 
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const statusPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const statusRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const statusRealtimeChannelRef = useRef<RealtimeChannel | null>(null);
   const canManageCredentials = user?.role !== 'ASSISTANT';
 
   // Agenda settings state
@@ -326,6 +346,20 @@ export default function Settings() {
     if (severity === 'ATTENTION') return 'bg-[#FFFAEB] text-[#B54708] border-[#FEDF89]';
     if (severity === 'OBSERVATION') return 'bg-[#EFF8FF] text-[#175CD3] border-[#B2DDFF]';
     return 'bg-[#ECFDF3] text-[#027A48] border-[#A7F3D0]';
+  };
+
+  const syncClass = (mode: WhatsAppStatusSyncState['mode']) => {
+    if (mode === 'live') return 'bg-[#ECFDF3] text-[#027A48] border-[#A7F3D0]';
+    if (mode === 'error') return 'bg-[#FEF3F2] text-[#B42318] border-[#FECDCA]';
+    if (mode === 'polling') return 'bg-[#FFFAEB] text-[#B54708] border-[#FEDF89]';
+    return 'bg-[#EFF8FF] text-[#175CD3] border-[#B2DDFF]';
+  };
+
+  const syncLabel = (mode: WhatsAppStatusSyncState['mode']) => {
+    if (mode === 'live') return 'Ao vivo';
+    if (mode === 'polling') return 'Atualizacao automatica';
+    if (mode === 'error') return 'Atualizacao instavel';
+    return 'Sincronizando';
   };
 
   const fetchProfile = useCallback(async () => {
@@ -563,12 +597,34 @@ export default function Settings() {
         setWhatsappStatus('disconnected');
         setInstanceName(data.instanceName);
       }
+      setWhatsappStatusSync((current) => ({
+        ...current,
+        lastRefreshAt: new Date().toISOString(),
+        error: null,
+      }));
     } catch (err) {
       console.error('Error checking WhatsApp status:', err);
+      const message = err instanceof Error ? err.message : 'Falha ao atualizar status do WhatsApp.';
+      setWhatsappStatusSync((current) => ({
+        ...current,
+        mode: silent ? current.mode : 'error',
+        lastRefreshAt: new Date().toISOString(),
+        error: message,
+      }));
       if (!silent) setWhatsappTrace(null);
       if (!silent) setWhatsappStatus('disconnected');
     }
   }, []);
+
+  const scheduleWhatsAppStatusRefresh = useCallback((delayMs = WHATSAPP_REALTIME_REFRESH_DELAY_MS) => {
+    if (statusRefreshTimeoutRef.current) {
+      clearTimeout(statusRefreshTimeoutRef.current);
+    }
+    statusRefreshTimeoutRef.current = setTimeout(() => {
+      statusRefreshTimeoutRef.current = null;
+      void checkStatus(true);
+    }, delayMs);
+  }, [checkStatus]);
 
   useEffect(() => {
     if (activeTab === 'perfil') {
@@ -637,6 +693,109 @@ export default function Settings() {
       }
     };
   }, [activeTab, fetchProfile, checkStatus, fetchCredentialState, fetchBilling, fetchAgendaSettings]);
+
+  useEffect(() => {
+    if (activeTab !== 'integracoes' || !tenantId) return;
+
+    let disposed = false;
+
+    const stopPolling = () => {
+      if (statusPollIntervalRef.current) {
+        clearInterval(statusPollIntervalRef.current);
+        statusPollIntervalRef.current = null;
+      }
+    };
+
+    const startPolling = () => {
+      stopPolling();
+      const delay = document.visibilityState === 'visible'
+        ? WHATSAPP_STATUS_VISIBLE_POLL_MS
+        : WHATSAPP_STATUS_HIDDEN_POLL_MS;
+      statusPollIntervalRef.current = setInterval(() => {
+        scheduleWhatsAppStatusRefresh(0);
+      }, delay);
+    };
+
+    const handleRealtimeChange = () => {
+      scheduleWhatsAppStatusRefresh();
+    };
+
+    setWhatsappStatusSync((current) => ({
+      ...current,
+      mode: current.mode === 'live' ? 'live' : 'starting',
+      error: null,
+    }));
+
+    scheduleWhatsAppStatusRefresh(0);
+    startPolling();
+
+    const tables = [
+      'whatsapp_guardian_status',
+      'whatsapp_connection_events',
+      'whatsapp_guardian_state_transitions',
+      'pending_outbound',
+      'leads',
+      'conversations',
+      'messages',
+    ];
+
+    const channel = supabase.channel(`whatsapp-operational-status:${tenantId}`);
+    for (const table of tables) {
+      channel.on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table,
+          filter: `tenant_id=eq.${tenantId}`,
+        },
+        handleRealtimeChange,
+      );
+    }
+
+    statusRealtimeChannelRef.current = channel;
+    channel.subscribe((status) => {
+      if (disposed) return;
+      if (status === 'SUBSCRIBED') {
+        setWhatsappStatusSync((current) => ({
+          ...current,
+          mode: 'live',
+          error: null,
+        }));
+        scheduleWhatsAppStatusRefresh(0);
+      }
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        setWhatsappStatusSync((current) => ({
+          ...current,
+          mode: 'polling',
+          error: status === 'CHANNEL_ERROR' ? 'Realtime indisponivel; usando atualizacao automatica.' : current.error,
+        }));
+      }
+    });
+
+    const handleVisibilityChange = () => {
+      startPolling();
+      if (document.visibilityState === 'visible') {
+        scheduleWhatsAppStatusRefresh(0);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      disposed = true;
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      stopPolling();
+      if (statusRefreshTimeoutRef.current) {
+        clearTimeout(statusRefreshTimeoutRef.current);
+        statusRefreshTimeoutRef.current = null;
+      }
+      if (statusRealtimeChannelRef.current) {
+        supabase.removeChannel(statusRealtimeChannelRef.current);
+        statusRealtimeChannelRef.current = null;
+      }
+    };
+  }, [activeTab, tenantId, scheduleWhatsAppStatusRefresh]);
 
   useEffect(() => {
     if (qrCountdown <= 0 || !qrCode) return;
@@ -746,13 +905,18 @@ export default function Settings() {
               Estado registrado no banco e eventos consolidados das últimas 24h.
             </p>
           </div>
-          <Badge className={`text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 ${
-            status?.status === 'SUSPENDED' || status?.lastDisconnectReasonCode
-              ? 'bg-[#FEF3F2] text-[#B42318] border border-[#FECDCA]'
-              : 'bg-[#ECFDF3] text-[#027A48] border border-[#A7F3D0]'
-          }`}>
-            {formatTraceLabel(status?.status)}
-          </Badge>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge className={`text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 ${
+              status?.status === 'SUSPENDED' || status?.lastDisconnectReasonCode
+                ? 'bg-[#FEF3F2] text-[#B42318] border border-[#FECDCA]'
+                : 'bg-[#ECFDF3] text-[#027A48] border border-[#A7F3D0]'
+            }`}>
+              {formatTraceLabel(status?.status)}
+            </Badge>
+            <Badge className={`text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 border ${syncClass(whatsappStatusSync.mode)}`}>
+              {syncLabel(whatsappStatusSync.mode)}
+            </Badge>
+          </div>
         </div>
 
         {currentState && (
@@ -866,9 +1030,15 @@ export default function Settings() {
               : 'Nenhuma pendência ativa sem evidência Guardian'}
           </div>
           <div className="text-[10px] text-[#64748B]">
-            Última checagem: {formatDateTime(status?.externalCheckedAt || status?.updatedAt)}
+            Última leitura da tela: {formatDateTime(whatsappStatusSync.lastRefreshAt)} · Última checagem do gateway: {formatDateTime(status?.externalCheckedAt || status?.updatedAt)}
           </div>
         </div>
+
+        {whatsappStatusSync.error && (
+          <div className="mt-3 rounded-lg border border-[#FEDF89] bg-[#FFFAEB] px-3 py-2 text-[11px] text-[#B54708]">
+            {whatsappStatusSync.error}
+          </div>
+        )}
 
         {whatsappTrace.recentEvents.length > 0 && (
           <div className="mt-3 border-t border-[#E5E7EB] pt-3">
@@ -1185,7 +1355,9 @@ export default function Settings() {
                         </div>
                         <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E5E7EB]">
                           <span className="text-[10px] text-[#64748B] font-bold uppercase tracking-wider block mb-1">Taxa de Resposta da IA</span>
-                          <span className="text-[12px] text-[#0F172A] font-semibold font-mono">Real-time / Instantânea</span>
+                          <span className="text-[12px] text-[#0F172A] font-semibold font-mono">
+                            {whatsappStatusSync.mode === 'live' ? 'Ao vivo / fallback 3s' : 'Auto / 3s'}
+                          </span>
                         </div>
                         <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E5E7EB]">
                           <span className="text-[10px] text-[#64748B] font-bold uppercase tracking-wider block mb-1">Status do Servidor</span>
