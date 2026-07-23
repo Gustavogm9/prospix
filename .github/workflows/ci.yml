@@ -106,6 +106,7 @@ jobs:
   e2e-smoke:
     name: E2E smoke (Playwright · landing/web/admin)
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
     needs: [lint, typecheck, openapi-drift]
     timeout-minutes: 15
     steps:
