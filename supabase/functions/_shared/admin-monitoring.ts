@@ -78,6 +78,10 @@ type AiActivityAlertParams = {
     outbound_last_60m?: number | null;
     inbound_today?: number | null;
     guardian_status?: string | null;
+    guardian_reason_code?: string | null;
+    blocking_reason?: string | null;
+    blocker_kind?: string | null;
+    guardian_blocking_send?: boolean | null;
   };
   source: string;
 };
@@ -90,6 +94,15 @@ type RecoveryStructuralAlertParams = {
   details?: string | null;
   pendingDueCount?: number | null;
   source: string;
+};
+
+type DisconnectIncident = {
+  id: string | null;
+  incident_key: string;
+  status: string;
+  alert_sent_at?: string | null;
+  alert_send_attempts?: number | null;
+  occurrence_count?: number | null;
 };
 
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
@@ -112,6 +125,30 @@ function normalizeWhatsAppNumber(value: string): string {
 
 function normalizeBaseUrl(value: string | null | undefined): string {
   return String(value || '').replace(/\/+$/, '');
+}
+
+function canonicalReasonCode(reasonCode: unknown): string {
+  return cleanText(reasonCode || 'UNKNOWN', 120) || 'UNKNOWN';
+}
+
+function stableToken(value: unknown, fallback = 'GENERAL'): string {
+  return (
+    cleanText(value || fallback, 80)
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '') || fallback
+  );
+}
+
+function buildAiActivityIncidentKey(tenantId: string, state: string, activity: AiActivityAlertParams['activity']) {
+  const reason =
+    activity.blocking_reason ||
+    activity.guardian_reason_code ||
+    activity.guardian_status ||
+    activity.blocker_kind ||
+    activity.summary ||
+    state;
+  return `ai_activity:${tenantId}:${stableToken(state)}:${stableToken(reason)}`;
 }
 
 function getAdminMonitoringApiKey(): string {
@@ -363,6 +400,188 @@ async function loadTenant(supabase: SupabaseLike, tenantId: string) {
   return data || { id: tenantId, name: tenantId, slug: null };
 }
 
+async function loadOpenDisconnectIncident(
+  supabase: SupabaseLike,
+  tenantId: string,
+  reasonCode?: string | null,
+): Promise<DisconnectIncident | null> {
+  let query = supabase
+    .from('admin_disconnect_incidents')
+    .select('id, incident_key, status, alert_sent_at, alert_send_attempts, occurrence_count')
+    .eq('tenant_id', tenantId)
+    .eq('status', 'OPEN')
+    .order('last_seen_at', { ascending: false })
+    .limit(1);
+
+  if (reasonCode) query = query.eq('reason_code', canonicalReasonCode(reasonCode));
+
+  const { data, error } = await query.maybeSingle();
+  if (error) {
+    console.warn('[admin-monitoring] failed to load disconnect incident', error);
+    return null;
+  }
+  return (data || null) as DisconnectIncident | null;
+}
+
+async function touchDisconnectIncident(
+  supabase: SupabaseLike,
+  incident: DisconnectIncident,
+  params: DisconnectAlertParams,
+  eventAt: string,
+  externalState: string | null,
+): Promise<DisconnectIncident> {
+  if (!incident.id) return incident;
+
+  const occurrenceCount = Math.max(1, Number(incident.occurrence_count || 1)) + 1;
+  const patch: Record<string, unknown> = {
+    last_connection_event_id: params.connectionEventId || null,
+    operational_alert_id: params.operationalAlertId || null,
+    last_external_state: externalState,
+    last_seen_at: eventAt,
+    occurrence_count: occurrenceCount,
+    pending_due_count: params.pendingDueCount ?? null,
+    source: params.source,
+    last_error: null,
+  };
+
+  const { data, error } = await supabase
+    .from('admin_disconnect_incidents')
+    .update(patch)
+    .eq('id', incident.id)
+    .select('id, incident_key, status, alert_sent_at, alert_send_attempts, occurrence_count')
+    .single();
+
+  if (error) {
+    console.warn('[admin-monitoring] failed to touch disconnect incident', error);
+    return incident;
+  }
+
+  return (data || incident) as DisconnectIncident;
+}
+
+async function openOrTouchDisconnectIncident(
+  params: DisconnectAlertParams,
+  eventAt: string,
+  externalState: string | null,
+): Promise<DisconnectIncident> {
+  const reasonCode = canonicalReasonCode(params.reasonCode);
+  const existing = await loadOpenDisconnectIncident(params.supabase, params.tenantId, reasonCode);
+  if (existing) {
+    return touchDisconnectIncident(params.supabase, existing, params, eventAt, externalState);
+  }
+
+  const incidentId = uuid();
+  const incidentKey = `disconnect_incident:${incidentId}`;
+  const { data, error } = await params.supabase
+    .from('admin_disconnect_incidents')
+    .insert({
+      id: incidentId,
+      tenant_id: params.tenantId,
+      reason_code: reasonCode,
+      incident_key: incidentKey,
+      status: 'OPEN',
+      first_connection_event_id: params.connectionEventId || null,
+      last_connection_event_id: params.connectionEventId || null,
+      operational_alert_id: params.operationalAlertId || null,
+      first_external_state: externalState,
+      last_external_state: externalState,
+      first_seen_at: eventAt,
+      last_seen_at: eventAt,
+      occurrence_count: 1,
+      pending_due_count: params.pendingDueCount ?? null,
+      source: params.source,
+    })
+    .select('id, incident_key, status, alert_sent_at, alert_send_attempts, occurrence_count')
+    .single();
+
+  if (!error && data) return data as DisconnectIncident;
+
+  const raced = await loadOpenDisconnectIncident(params.supabase, params.tenantId, reasonCode);
+  if (raced) {
+    return touchDisconnectIncident(params.supabase, raced, params, eventAt, externalState);
+  }
+
+  console.warn('[admin-monitoring] failed to open disconnect incident', error);
+  return {
+    id: null,
+    incident_key: `disconnect_fallback:${params.tenantId}:${reasonCode}`,
+    status: 'OPEN',
+    alert_sent_at: null,
+    alert_send_attempts: 0,
+    occurrence_count: 1,
+  };
+}
+
+async function markDisconnectIncidentAlertAttempted(
+  supabase: SupabaseLike,
+  incident: DisconnectIncident,
+  params: { sent: number; failed: number; lastError?: string | null },
+) {
+  if (!incident.id) return;
+
+  const attempted = params.sent + params.failed;
+  const patch: Record<string, unknown> = {
+    alert_send_attempts: Number(incident.alert_send_attempts || 0) + attempted,
+    last_error: params.lastError || null,
+  };
+  if (params.sent > 0) patch.alert_sent_at = new Date().toISOString();
+
+  const { error } = await supabase
+    .from('admin_disconnect_incidents')
+    .update(patch)
+    .eq('id', incident.id);
+
+  if (error) {
+    console.warn('[admin-monitoring] failed to mark disconnect incident alert attempt', error);
+  }
+}
+
+export async function hasOpenAdminDisconnectIncident(
+  supabase: SupabaseLike,
+  tenantId: string,
+  reasonCode?: string | null,
+): Promise<boolean> {
+  if (!tenantId) return false;
+  return Boolean(await loadOpenDisconnectIncident(supabase, tenantId, reasonCode));
+}
+
+export async function resolveAdminDisconnectIncidents(params: {
+  supabase: SupabaseLike;
+  tenantId: string;
+  externalState?: string | null;
+  reasonCode?: string | null;
+  connectionEventId?: string | null;
+  source: string;
+}) {
+  if (!params.tenantId) return { resolved: 0 };
+
+  const now = new Date().toISOString();
+  const patch: Record<string, unknown> = {
+    status: 'RESOLVED',
+    resolved_at: now,
+    resolved_reason_code: canonicalReasonCode(params.reasonCode || 'WA_CONNECTION_HEALTHY'),
+    last_external_state: params.externalState || 'open',
+    last_seen_at: now,
+    source: params.source,
+    last_error: null,
+  };
+  if (params.connectionEventId) patch.last_connection_event_id = params.connectionEventId;
+
+  const { data, error } = await params.supabase
+    .from('admin_disconnect_incidents')
+    .update(patch)
+    .eq('tenant_id', params.tenantId)
+    .eq('status', 'OPEN')
+    .select('id');
+
+  if (error) {
+    console.warn('[admin-monitoring] failed to resolve disconnect incidents', error);
+    return { resolved: 0, error: error.message };
+  }
+
+  return { resolved: (data || []).length };
+}
+
 async function createOrLoadAiActivityOperationalAlert(
   params: AiActivityAlertParams,
   incidentKey: string,
@@ -374,9 +593,27 @@ async function createOrLoadAiActivityOperationalAlert(
     .from('operational_alerts')
     .select('id')
     .eq('dedup_key', incidentKey)
+    .is('resolved_at', null)
     .maybeSingle();
 
-  if (existing?.id) return existing.id;
+  if (existing?.id) {
+    await params.supabase
+      .from('operational_alerts')
+      .update({
+        message: cleanText(
+          params.activity.summary || 'Monitor de atividade detectou atraso operacional da IA.',
+          500,
+        ),
+        context: {
+          source: params.source,
+          activity: params.activity,
+          dedupe: 'same_tenant_state_reason',
+        },
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', existing.id);
+    return existing.id;
+  }
 
   const alertId = uuid();
   const state = String(params.activity.state || 'STALLED').toUpperCase();
@@ -394,6 +631,7 @@ async function createOrLoadAiActivityOperationalAlert(
     context: {
       source: params.source,
       activity: params.activity,
+      dedupe: 'same_tenant_state_reason',
     },
     dedup_key: incidentKey,
     created_at: new Date().toISOString(),
@@ -416,6 +654,7 @@ async function createOrLoadRecoveryStructuralOperationalAlert(
     .from('operational_alerts')
     .select('id')
     .eq('dedup_key', incidentKey)
+    .is('resolved_at', null)
     .maybeSingle();
 
   if (existing?.id) return existing.id;
@@ -666,26 +905,44 @@ async function buildDisconnectMessage(params: {
 }
 
 export async function dispatchAdminDisconnectAlert(params: DisconnectAlertParams) {
-  const recipients = await loadRecipients(params.supabase);
-  if (recipients.length === 0) {
-    return { sent: 0, failed: 0, skipped: 0, reason: 'NO_ACTIVE_RECIPIENTS' };
-  }
-
   const event = await loadConnectionEvent(params.supabase, params.connectionEventId);
   const eventAt = event?.created_at || new Date().toISOString();
   const tenant = await loadTenant(params.supabase, params.tenantId);
   const recentMessages = await loadRecentMessages(params.supabase, params.tenantId, eventAt);
   const connectionLogs = await loadRecentConnectionLogs(params.supabase, params.tenantId, eventAt);
   const queueImpact = await loadQueueImpact(params.supabase, params.tenantId, eventAt);
-  const incidentKey = params.connectionEventId
-    ? `connection_event:${params.connectionEventId}`
-    : `tenant:${params.tenantId}:${params.reasonCode}:${eventAt.slice(0, 16)}`;
+  const externalState = params.externalState ?? event?.external_state ?? null;
+  const incident = await openOrTouchDisconnectIncident(params, eventAt, externalState);
+  const incidentKey = incident.incident_key;
+
+  const recipients = await loadRecipients(params.supabase);
+  if (recipients.length === 0) {
+    return {
+      sent: 0,
+      failed: 0,
+      skipped: 0,
+      reason: 'NO_ACTIVE_RECIPIENTS',
+      incident_id: incident.id,
+      incident_key: incidentKey,
+    };
+  }
+
+  if (incident.alert_sent_at) {
+    return {
+      sent: 0,
+      failed: 0,
+      skipped: recipients.length,
+      reason: 'INCIDENT_ALREADY_ALERTED',
+      incident_id: incident.id,
+      incident_key: incidentKey,
+    };
+  }
 
   const built = await buildDisconnectMessage({
     tenant,
     event,
     reasonCode: params.reasonCode,
-    externalState: params.externalState ?? event?.external_state ?? null,
+    externalState,
     source: params.source,
     pendingDueCount: params.pendingDueCount ?? event?.pending_due_count ?? null,
     recentMessages,
@@ -705,33 +962,38 @@ export async function dispatchAdminDisconnectAlert(params: DisconnectAlertParams
       .eq('recipient_id', recipient.id)
       .maybeSingle();
 
-    if (existing?.status === 'SENT') {
+    if (existing?.id) {
       skipped++;
       continue;
     }
 
-    const deliveryId = existing?.id || uuid();
-    if (!existing?.id) {
-      const { error: insertError } = await params.supabase
-        .from('admin_disconnect_alert_deliveries')
-        .insert({
-          id: deliveryId,
-          connection_event_id: params.connectionEventId || null,
-          operational_alert_id: params.operationalAlertId || null,
-          tenant_id: params.tenantId,
-          recipient_id: recipient.id,
-          incident_key: incidentKey,
-          status: 'PENDING',
-          reason_code: params.reasonCode,
-          external_state: params.externalState ?? event?.external_state ?? null,
-          ai_summary: built.summary,
-          message_body: built.body,
-        });
+    const deliveryId = uuid();
+    const insertPayload: Record<string, unknown> = {
+      id: deliveryId,
+      connection_event_id: params.connectionEventId || null,
+      operational_alert_id: params.operationalAlertId || null,
+      tenant_id: params.tenantId,
+      recipient_id: recipient.id,
+      incident_key: incidentKey,
+      status: 'PENDING',
+      reason_code: canonicalReasonCode(params.reasonCode),
+      external_state: externalState,
+      ai_summary: built.summary,
+      message_body: built.body,
+    };
+    if (incident.id) insertPayload.disconnect_incident_id = incident.id;
 
-      if (insertError) {
+    const { error: insertError } = await params.supabase
+      .from('admin_disconnect_alert_deliveries')
+      .insert(insertPayload);
+
+    if (insertError) {
+      if (insertError.code === '23505') {
+        skipped++;
+      } else {
         failed++;
-        continue;
       }
+      continue;
     }
 
     const result = await sendAdminMonitoringWhatsApp(
@@ -756,7 +1018,13 @@ export async function dispatchAdminDisconnectAlert(params: DisconnectAlertParams
     else failed++;
   }
 
-  return { sent, failed, skipped };
+  await markDisconnectIncidentAlertAttempted(params.supabase, incident, {
+    sent,
+    failed,
+    lastError: failed > 0 && sent === 0 ? 'ADMIN_DISCONNECT_ALERT_SEND_FAILED' : null,
+  });
+
+  return { sent, failed, skipped, incident_id: incident.id, incident_key: incidentKey };
 }
 
 export async function dispatchAdminRecoveryStructuralAlert(params: RecoveryStructuralAlertParams) {
@@ -873,14 +1141,22 @@ export async function dispatchAdminAiActivityAlert(params: AiActivityAlertParams
     return { sent: 0, failed: 0, skipped: 0, reason: 'NOT_ACTIONABLE' };
   }
 
+  if (await hasOpenAdminDisconnectIncident(params.supabase, tenantId)) {
+    return {
+      sent: 0,
+      failed: 0,
+      skipped: 1,
+      reason: 'SUPPRESSED_OPEN_DISCONNECT_INCIDENT',
+    };
+  }
+
   const recipients = await loadRecipients(params.supabase);
   if (recipients.length === 0) {
     return { sent: 0, failed: 0, skipped: 0, reason: 'NO_ACTIVE_RECIPIENTS' };
   }
 
   const now = new Date();
-  const alertBucket = now.toISOString().slice(0, 13);
-  const incidentKey = `ai_activity:${tenantId}:${state}:${alertBucket}`;
+  const incidentKey = buildAiActivityIncidentKey(tenantId, state, params.activity);
   const tenant = await loadTenant(params.supabase, tenantId);
   const operationalAlertId = await createOrLoadAiActivityOperationalAlert(params, incidentKey);
   const built = buildAdminAiActivityAlertMessage({

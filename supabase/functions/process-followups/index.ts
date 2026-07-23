@@ -124,6 +124,8 @@ async function buildFollowupGuardianDecision(params: {
       active_contacts_30m: activeContacts30m,
       ai_handling: params.conversation.ai_handling === true,
       conversation_status: params.conversation.status || null,
+      lead_name: params.conversation.leads?.name || null,
+      lead_whatsapp: params.conversation.leads?.whatsapp || null,
     },
   });
   configVersionId = cadenceRun.configVersionId || configVersionId;

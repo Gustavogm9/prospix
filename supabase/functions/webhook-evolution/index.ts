@@ -8,7 +8,10 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { GuardianRunner } from '../_shared/guardians/runner.ts';
 import { sha256Hex } from '../_shared/guardians/evidence.ts';
 import { buildCandidatePayload } from '../_shared/guardians/candidate.ts';
-import { dispatchAdminDisconnectAlert } from '../_shared/admin-monitoring.ts';
+import {
+  dispatchAdminDisconnectAlert,
+  resolveAdminDisconnectIncidents,
+} from '../_shared/admin-monitoring.ts';
 import {
   buildGuardianStatePatch,
   isFutureTimestamp,
@@ -672,6 +675,15 @@ async function handleConnectionUpdate(payload: any): Promise<Response> {
     } catch (err) {
       console.warn('Falha ao disparar alerta admin de desconexao:', err);
     }
+  } else if (String(state || '').toLowerCase() === 'open') {
+    await resolveAdminDisconnectIncidents({
+      supabase,
+      tenantId,
+      externalState: state,
+      reasonCode: eventReasonCode,
+      connectionEventId,
+      source: 'webhook-evolution',
+    });
   }
 
   return new Response(

@@ -17,6 +17,7 @@ import type { GuardianRunResult } from '../_shared/guardians/types.ts';
 import {
   dispatchAdminDisconnectAlert,
   dispatchAdminRecoveryStructuralAlert,
+  resolveAdminDisconnectIncidents,
 } from '../_shared/admin-monitoring.ts';
 import {
   buildGuardianStatePatch,
@@ -732,6 +733,120 @@ async function loadRecoveryEvidence(tenantId: string, guardianStatus: any) {
   };
 }
 
+async function observeRecoveryGuardian(params: {
+  tenantId: string;
+  guardianConfig: Awaited<ReturnType<typeof GuardianRunner.loadConfig>>;
+  guardianStatus: any;
+  previousStatus: string | null;
+  proposedStatus: string;
+  externalState: string | null;
+  transitionReasonCode: string | null;
+  recoveryEvidence?: {
+    sinceIso: string | null;
+    successfulSends: number;
+    criticalEvents: number;
+    duePending: number;
+  } | null;
+  pendingDueCount: number;
+}): Promise<void> {
+  const currentStatus = String(params.guardianStatus?.status || params.previousStatus || '').toUpperCase();
+  const proposedStatus = String(params.proposedStatus || '').toUpperCase();
+  const previousStatus = String(params.previousStatus || '').toUpperCase();
+  const recoveryRelevant =
+    previousStatus === 'COLD' ||
+    currentStatus === 'RECOVERY' ||
+    proposedStatus === 'RECOVERY' ||
+    params.transitionReasonCode === 'WA_RECOVERY_PROMOTED_TO_NORMAL';
+
+  if (!recoveryRelevant) return;
+
+  const enteredAt = params.guardianStatus?.state_entered_at || params.guardianStatus?.updated_at || null;
+  const enteredAtMs = enteredAt ? new Date(enteredAt).getTime() : NaN;
+  const minutesInRecovery =
+    Number.isFinite(enteredAtMs) && currentStatus === 'RECOVERY'
+      ? Math.max(0, Math.floor((Date.now() - enteredAtMs) / 60000))
+      : 0;
+
+  try {
+    await GuardianRunner.observe({
+      supabase,
+      config: params.guardianConfig,
+      tenantId: params.tenantId,
+      stage: 'CONNECTION_RECOVERY',
+      functionScope: 'send-messages',
+      input: {
+        source: 'send-messages:pre-send-health',
+        transition_reason_code: params.transitionReasonCode,
+      },
+      output: {
+        proposed_status: params.proposedStatus,
+        external_state: params.externalState,
+      },
+      facts: {
+        previous_status: params.previousStatus,
+        current_status: params.guardianStatus?.status || null,
+        proposed_status: params.proposedStatus,
+        external_state: params.externalState,
+        transition_reason_code: params.transitionReasonCode,
+        minutes_in_recovery: minutesInRecovery,
+        successful_sends: params.recoveryEvidence?.successfulSends ?? 0,
+        critical_events: params.recoveryEvidence?.criticalEvents ?? 0,
+        due_pending: params.recoveryEvidence?.duePending ?? params.pendingDueCount,
+        recovery_since: params.recoveryEvidence?.sinceIso || enteredAt || null,
+      },
+    });
+  } catch (err) {
+    console.warn('  [Guardian V3] Falha ao registrar G25 recovery:', redactText(err));
+  }
+}
+
+async function observeSendIntegrityGuardian(params: {
+  tenantId: string;
+  guardianConfig: Awaited<ReturnType<typeof GuardianRunner.loadConfig>>;
+  leadId: string | null;
+  conversationId: string;
+  pendingOutboundId: string;
+  candidateId?: string | null;
+  messageType: string | null;
+  numberState: string;
+  sendError: string | null;
+  failure: SendFailureClassification;
+  retryAt?: string | null;
+}): Promise<void> {
+  try {
+    await GuardianRunner.observe({
+      supabase,
+      config: params.guardianConfig,
+      tenantId: params.tenantId,
+      leadId: params.leadId,
+      conversationId: params.conversationId,
+      pendingOutboundId: params.pendingOutboundId,
+      candidateId: params.candidateId || null,
+      stage: 'POST_SEND_ERROR',
+      functionScope: 'send-messages',
+      input: {
+        source: 'send-messages:send-failure',
+        message_type: params.messageType,
+      },
+      output: {
+        send_error: redactText(params.sendError || ''),
+      },
+      facts: {
+        number_state: params.numberState,
+        message_type: params.messageType,
+        send_error: params.sendError || null,
+        send_failure_critical: params.failure.critical,
+        send_failure_status: params.failure.status,
+        send_failure_reason_code: params.failure.reasonCode,
+        send_failure_should_backoff: params.failure.shouldBackoff,
+        retry_at: params.retryAt || null,
+      },
+    });
+  } catch (err) {
+    console.warn('  [Guardian V3] Falha ao registrar G22 send integrity:', redactText(err));
+  }
+}
+
 async function triggerAdminMonitoringDue(source: string): Promise<void> {
   try {
     const response = await fetch(`${SUPABASE_URL}/functions/v1/admin-monitoring-dispatcher`, {
@@ -824,6 +939,7 @@ async function createCriticalConnectionAlert(
     .from('operational_alerts')
     .select('id')
     .eq('dedup_key', dedupKey)
+    .is('resolved_at', null)
     .maybeSingle();
 
   if (existingAlert) return existingAlert.id;
@@ -1054,9 +1170,10 @@ async function runConnectionHealthGuard(
     let healthyStatus = statusAfterHealthyExternalState(guardianStatus, external.state);
     let transitionReasonCode: string | null = null;
     const recoveryGuardian = getGuardianByKey(guardianConfig, 'G25_WHATSAPP_RECOVERY_REALIGNMENT');
+    let recoveryEvidence: Awaited<ReturnType<typeof loadRecoveryEvidence>> | null = null;
 
     if (String(previousStatus || '').toUpperCase() === 'RECOVERY') {
-      const recoveryEvidence = await loadRecoveryEvidence(tenantId, guardianStatus);
+      recoveryEvidence = await loadRecoveryEvidence(tenantId, guardianStatus);
       const minDurationMinutes = guardianNumber(
         recoveryGuardian,
         'recovery_min_duration_minutes',
@@ -1086,6 +1203,18 @@ async function runConnectionHealthGuard(
       transitionReasonCode = 'WA_RECOVERY_STARTED';
     }
 
+    await observeRecoveryGuardian({
+      tenantId,
+      guardianConfig,
+      guardianStatus,
+      previousStatus,
+      proposedStatus: healthyStatus,
+      externalState: external.state,
+      transitionReasonCode,
+      recoveryEvidence,
+      pendingDueCount,
+    });
+
     await updateGuardianConnectionState(
       tenantId,
       healthyStatus,
@@ -1095,6 +1224,13 @@ async function runConnectionHealthGuard(
         connected_at: guardianStatus?.connected_at || new Date().toISOString(),
       },
     );
+    await resolveAdminDisconnectIncidents({
+      supabase,
+      tenantId,
+      externalState: external.state,
+      reasonCode: transitionReasonCode || 'WA_CONNECTION_HEALTHY',
+      source: 'send-messages:pre-send-health',
+    });
     if (previousStatus === 'COLD' && healthyStatus === 'RECOVERY') {
       await recordConnectionEvent({
         tenantId,
@@ -2439,6 +2575,12 @@ async function runGuardianWorkerForTenant(
             '. Motivo: ' +
             healthDecision.reasonCode,
         );
+        if (CRITICAL_DISCONNECT_REASON_CODES.has(healthDecision.reasonCode)) {
+          console.log(
+            '  [WhatsApp Guard] Queda critica confirmada; encerrando a rodada do tenant para evitar alertas repetidos.',
+          );
+          break;
+        }
         await sleep(5000);
         continue;
       }
@@ -2853,6 +2995,11 @@ async function runGuardianWorkerForTenant(
               ai_handling: conversation.ai_handling === true,
               conversation_status: conversation.status || null,
               lead_status: leadRecord.status || null,
+              lead_name: leadRecord.name || null,
+              lead_whatsapp: phone,
+              phone_validation_status: leadRecord.phone_validation_status ?? null,
+              phone_validation_confidence: leadRecord.phone_validation_confidence ?? null,
+              entity_type: leadRecord.entity_type ?? null,
             },
           });
 
@@ -2913,6 +3060,8 @@ async function runGuardianWorkerForTenant(
               ai_handling: conversation.ai_handling === true,
               conversation_status: conversation.status || null,
               lead_status: leadRecord.status || null,
+              lead_name: leadRecord.name || null,
+              lead_whatsapp: phone,
               relevance_score: leadRecord.relevance_score ?? null,
               relevance_status: leadRecord.relevance_status ?? null,
               fit_score: leadRecord.fit_score ?? null,
@@ -3293,6 +3442,20 @@ async function runGuardianWorkerForTenant(
                   ? getNumberEnv('WA_CRITICAL_CIRCUIT_OPEN_MINUTES', 60)
                   : getNumberEnv('WA_TRANSIENT_CIRCUIT_OPEN_MINUTES', 15);
 
+              await observeSendIntegrityGuardian({
+                tenantId,
+                guardianConfig,
+                leadId,
+                conversationId: item.conversation_id,
+                pendingOutboundId: item.id,
+                candidateId: item.candidate_id || null,
+                messageType: item.message_type,
+                numberState,
+                sendError: sendResult.error || null,
+                failure,
+                retryAt,
+              });
+
               await updateGuardianConnectionState(
                 tenantId,
                 failure.status,
@@ -3380,6 +3543,20 @@ async function runGuardianWorkerForTenant(
               const retryDelayMinutes = getNumberEnv('WA_TRANSIENT_SEND_RETRY_DELAY_MINUTES', 5);
               const retryAt = new Date(Date.now() + retryDelayMinutes * 60 * 1000).toISOString();
 
+              await observeSendIntegrityGuardian({
+                tenantId,
+                guardianConfig,
+                leadId,
+                conversationId: item.conversation_id,
+                pendingOutboundId: item.id,
+                candidateId: item.candidate_id || null,
+                messageType: item.message_type,
+                numberState,
+                sendError: sendResult.error || null,
+                failure,
+                retryAt,
+              });
+
               await recordConnectionEvent({
                 tenantId,
                 instanceName: evoConfig.instanceName,
@@ -3435,6 +3612,19 @@ async function runGuardianWorkerForTenant(
             }
 
             // Fluxo de erro normal que nao indica desconexao nem backoff seguro.
+            await observeSendIntegrityGuardian({
+              tenantId,
+              guardianConfig,
+              leadId,
+              conversationId: item.conversation_id,
+              pendingOutboundId: item.id,
+              candidateId: item.candidate_id || null,
+              messageType: item.message_type,
+              numberState,
+              sendError: sendResult.error || null,
+              failure,
+            });
+
             const attempts = (item.attempts || 0) + 1;
             const updateData: any = {
               attempts,

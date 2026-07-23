@@ -21,6 +21,7 @@ export type GuardianStage =
   | "QUEUE_SELECTION"
   | "PRE_SEND"
   | "POST_SEND_ERROR"
+  | "CONNECTION_RECOVERY"
   | "ALL_STAGES"
   | "ADMIN_VALIDATE"
   | "SIMULATION";

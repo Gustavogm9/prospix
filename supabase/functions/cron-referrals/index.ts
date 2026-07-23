@@ -213,6 +213,11 @@ async function buildReferralGuardianDecision(params: {
       active_contacts_30m: activeContacts30m,
       ai_handling: params.conversation.ai_handling === true,
       conversation_status: params.conversation.status || null,
+      lead_name: params.lead.name || null,
+      lead_whatsapp: params.lead.whatsapp || null,
+      phone_validation_status: params.lead.phone_validation_status ?? null,
+      phone_validation_confidence: params.lead.phone_validation_confidence ?? null,
+      entity_type: params.lead.entity_type ?? null,
     },
   });
   configVersionId = cadenceRun.configVersionId || configVersionId;

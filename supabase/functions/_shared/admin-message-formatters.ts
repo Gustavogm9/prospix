@@ -670,11 +670,11 @@ function translateLocalOutcome(value: string | null | undefined): string {
 function shortLocalState(value: string | null | undefined): string {
   const normalized = String(value || '').toUpperCase();
   if (!normalized) return 'sem registro';
-  if (normalized === 'SUSPENDED') return 'suspenso';
-  if (normalized === 'PAUSED') return 'pausado';
+  if (normalized === 'SUSPENDED') return 'envios pausados';
+  if (normalized === 'PAUSED') return 'envios temporariamente pausados';
   if (normalized === 'COLD') return 'em cuidado';
   if (normalized === 'RECOVERY') return 'em retomada';
-  if (normalized === 'NORMAL') return 'normal';
+  if (normalized === 'NORMAL') return 'operacao normal';
   return cleanText(normalized.toLowerCase(), 60);
 }
 
@@ -684,20 +684,48 @@ function localStateTransition(event: AdminConnectionLog | null | undefined): str
   const before = shortLocalState(beforeRaw);
   const after = shortLocalState(afterRaw);
   if (!beforeRaw && !afterRaw) return 'sem registro local';
-  if (beforeRaw && afterRaw) return `${before} -> ${after} (${beforeRaw} -> ${afterRaw})`;
-  if (afterRaw) return `${after} (${afterRaw})`;
-  return beforeRaw;
+  if (beforeRaw && afterRaw) return before === after ? after : `${before} -> ${after}`;
+  if (afterRaw) return after;
+  return before;
 }
 
 function externalStateText(value: string | null | undefined): string {
   const raw = cleanText(value || '', 80);
   const normalized = raw.toLowerCase();
   if (!raw) return 'sem registro';
-  if (['open', 'connected'].includes(normalized)) return `${raw} - conexao aberta`;
-  if (['close', 'closed', 'disconnected'].includes(normalized)) return `${raw} - conexao fechada`;
-  if (['connecting', 'connection'].includes(normalized)) return `${raw} - conectando`;
-  if (['qrcode', 'qr'].includes(normalized)) return `${raw} - aguardando QR Code`;
+  if (['open', 'connected'].includes(normalized)) return 'conexao aberta';
+  if (['close', 'closed', 'disconnected'].includes(normalized)) return 'conexao fechada';
+  if (['connecting', 'connection'].includes(normalized)) return 'conectando';
+  if (['qrcode', 'qr'].includes(normalized)) return 'aguardando QR Code';
   return raw;
+}
+
+function humanErrorEvidence(value: unknown): string {
+  const text = rawEvidenceText(value);
+  if (!text) return '';
+
+  const lower = text.toLowerCase();
+  const parts: string[] = [];
+  if (lower.includes('unauthorized') || lower.includes('401')) parts.push('Unauthorized');
+  if (lower.includes('stream errored') || lower.includes('stream:error'))
+    parts.push('Stream Errored');
+  if (lower.includes('conflict')) parts.push('conflict');
+  if (lower.includes('device_removed')) parts.push('aparelho removido');
+  if (lower.includes('instance not found')) parts.push('instancia nao encontrada');
+
+  if (parts.length > 0) {
+    const unique = Array.from(new Set(parts));
+    if (
+      unique.includes('Unauthorized') &&
+      unique.includes('Stream Errored') &&
+      unique.includes('conflict')
+    ) {
+      return 'Unauthorized / Stream Errored (conflict)';
+    }
+    return unique.join(' / ');
+  }
+
+  return sanitizePreview(text.replace(/[{}"\\]/g, ' '), 180);
 }
 
 function latestRawError(input: DisconnectMessageInput | RecoveryStructuralAlertInput): string {
@@ -708,7 +736,7 @@ function latestRawError(input: DisconnectMessageInput | RecoveryStructuralAlertI
     'details' in input ? input.details : null,
   ];
   for (const value of values) {
-    const text = rawEvidenceText(value);
+    const text = humanErrorEvidence(value);
     if (text) return text.slice(0, 260);
   }
   return '';
@@ -814,7 +842,6 @@ export function buildAdminDisconnectAlertMessage(input: DisconnectMessageInput) 
     input.event || null,
     reason.short,
   );
-  const reasonCode = cleanText(input.reasonCode || input.event?.reason_code || 'sem codigo', 120);
   const externalState = input.externalState ?? input.event?.external_state ?? null;
   const rawError = latestRawError(input);
   const bodyLines = [
@@ -825,7 +852,7 @@ export function buildAdminDisconnectAlertMessage(input: DisconnectMessageInput) 
     `Quando: ${formatBrtMinute(eventAt)}`,
     `Tenant: ${tenantName}`,
     `Estado local: ${localStateTransition(input.event || null)}.`,
-    `Motivo do sistema: ${reasonCode}.`,
+    `Motivo do sistema: ${reason.short}.`,
     `Estado Evolution: ${externalStateText(externalState)}.`,
     'Impacto: a IA foi pausada para esse numero e nao deve enviar novas mensagens ate a reconexao.',
     '',

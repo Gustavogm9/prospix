@@ -46,6 +46,19 @@ type DispatcherRunStatus = 'SUCCEEDED' | 'COMPLETED_WITH_FAILURES' | 'FAILED';
 type ActivityState = 'OK' | 'WATCH' | 'STALLED' | 'BLOCKED' | 'OFF_HOURS';
 type WebhookReprocessStatus = 'DRY_RUN' | 'ACCEPTED' | 'FAILED' | 'SKIPPED';
 
+type OpenDisconnectIncident = {
+  id: string;
+  tenant_id: string;
+  reason_code: string;
+  incident_key: string;
+  first_seen_at: string;
+  last_seen_at: string;
+  occurrence_count: number;
+  last_external_state: string | null;
+  pending_due_count: number | null;
+  tenants?: { name?: string | null; slug?: string | null } | null;
+};
+
 const OPERATING_START_HOUR = 9;
 const OPERATING_END_HOUR = 18;
 const BRT_UTC_OFFSET_HOURS = 3;
@@ -807,6 +820,56 @@ async function collectAllTenantGuardianStatus(schedule: Schedule) {
   return { rows: data || [], error: null };
 }
 
+async function loadOpenDisconnectIncidents(schedule: Schedule) {
+  let query = supabase
+    .from('admin_disconnect_incidents')
+    .select(
+      [
+        'id',
+        'tenant_id',
+        'reason_code',
+        'incident_key',
+        'first_seen_at',
+        'last_seen_at',
+        'occurrence_count',
+        'last_external_state',
+        'pending_due_count',
+        'tenants(name, slug)',
+      ].join(', '),
+    )
+    .eq('status', 'OPEN')
+    .order('last_seen_at', { ascending: false })
+    .limit(20);
+
+  query = applyTenantScope(query, schedule);
+  const { data, error } = await query;
+  if (error) {
+    return {
+      incidents: [] as OpenDisconnectIncident[],
+      error: `disconnectIncidents: ${error.message}`,
+    };
+  }
+
+  return {
+    incidents: (data || []) as OpenDisconnectIncident[],
+    error: null,
+  };
+}
+
+function summarizeOpenDisconnectIncidents(incidents: OpenDisconnectIncident[]) {
+  return incidents.map((incident) => ({
+    incident_id: incident.id,
+    tenant_id: incident.tenant_id,
+    tenant_name: incident.tenants?.name || incident.tenants?.slug || incident.tenant_id,
+    reason_code: incident.reason_code,
+    first_seen_at: incident.first_seen_at,
+    last_seen_at: incident.last_seen_at,
+    occurrence_count: Number(incident.occurrence_count || 1),
+    external_state: incident.last_external_state || null,
+    pending_due_count: incident.pending_due_count ?? null,
+  }));
+}
+
 async function processAiActivityAlerts(source: string) {
   const schedule: Schedule = {
     id: 'ai-activity-alert-monitor',
@@ -995,6 +1058,42 @@ async function processSchedule(schedule: Schedule, source: string) {
   const runId = await createRun(schedule, recipient, periodStart, periodEnd);
 
   try {
+    const openDisconnects = await loadOpenDisconnectIncidents(schedule);
+    if (openDisconnects.incidents.length > 0) {
+      const incidents = summarizeOpenDisconnectIncidents(openDisconnects.incidents);
+      const firstIncident = incidents[0];
+      const summary = firstIncident
+        ? `Relatorio nao enviado: ha uma desconexao aberta em ${firstIncident.tenant_name}.`
+        : 'Relatorio nao enviado: ha desconexao aberta no escopo da agenda.';
+
+      await completeRun(runId, 'SKIPPED', {
+        metrics: {
+          source,
+          suppressed: true,
+          suppression_reason: 'OPEN_DISCONNECT_INCIDENT',
+          open_disconnect_incidents: incidents,
+          suppression_error: openDisconnects.error || null,
+        },
+        ai_summary: summary,
+        message_body: null,
+        error: 'SUPPRESSED_DISCONNECTED',
+      });
+
+      await supabase
+        .from('admin_monitoring_schedules')
+        .update({ last_error: 'SUPPRESSED_DISCONNECTED' })
+        .eq('id', schedule.id);
+
+      return {
+        schedule_id: schedule.id,
+        run_id: runId,
+        status: 'SKIPPED',
+        suppressed: true,
+        reason: 'OPEN_DISCONNECT_INCIDENT',
+        incidents,
+      };
+    }
+
     const metrics = await collectMetrics(schedule, periodStart, periodEnd);
     const built = await buildReportMessage(schedule, metrics);
     const result = await sendAdminMonitoringWhatsApp(recipient.whatsapp, built.body, supabase);
