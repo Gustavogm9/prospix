@@ -965,6 +965,17 @@ export default function Settings() {
       scheduleWhatsAppStatusRefresh();
     };
 
+    const authenticateRealtimeSocket = async () => {
+      const { data, error } = await supabase.auth.getSession();
+      if (error) {
+        throw new Error(error.message);
+      }
+      if (!data.session?.access_token) {
+        throw new Error('Sessao autenticada ausente para acompanhar status em tempo real.');
+      }
+      supabase.realtime.setAuth(data.session.access_token);
+    };
+
     setWhatsappStatusSync((current) => ({
       ...current,
       mode: current.mode === 'live' ? 'live' : 'starting',
@@ -999,24 +1010,36 @@ export default function Settings() {
     }
 
     statusRealtimeChannelRef.current = channel;
-    channel.subscribe((status) => {
-      if (disposed) return;
-      if (status === 'SUBSCRIBED') {
-        setWhatsappStatusSync((current) => ({
-          ...current,
-          mode: 'live',
-          error: null,
-        }));
-        scheduleWhatsAppStatusRefresh(0);
-      }
-      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+    void authenticateRealtimeSocket()
+      .then(() => {
+        if (disposed) return;
+        channel.subscribe((status) => {
+          if (disposed) return;
+          if (status === 'SUBSCRIBED') {
+            setWhatsappStatusSync((current) => ({
+              ...current,
+              mode: 'live',
+              error: null,
+            }));
+            scheduleWhatsAppStatusRefresh(0);
+          }
+          if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+            setWhatsappStatusSync((current) => ({
+              ...current,
+              mode: 'polling',
+              error: status === 'CHANNEL_ERROR' ? 'Realtime indisponivel; usando atualizacao automatica.' : current.error,
+            }));
+          }
+        });
+      })
+      .catch((error) => {
+        if (disposed) return;
         setWhatsappStatusSync((current) => ({
           ...current,
           mode: 'polling',
-          error: status === 'CHANNEL_ERROR' ? 'Realtime indisponivel; usando atualizacao automatica.' : current.error,
+          error: `Realtime indisponivel; usando atualizacao automatica. ${error instanceof Error ? error.message : ''}`.trim(),
         }));
-      }
-    });
+      });
 
     const handleVisibilityChange = () => {
       startPolling();

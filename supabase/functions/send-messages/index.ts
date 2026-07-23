@@ -14,7 +14,10 @@ import {
   guardianNumber,
 } from "../_shared/guardians/validators/cadence.ts";
 import type { GuardianRunResult } from "../_shared/guardians/types.ts";
-import { dispatchAdminDisconnectAlert } from "../_shared/admin-monitoring.ts";
+import {
+  dispatchAdminDisconnectAlert,
+  dispatchAdminRecoveryStructuralAlert,
+} from "../_shared/admin-monitoring.ts";
 import {
   buildGuardianStatePatch,
   recordGuardianStateTransition,
@@ -51,6 +54,13 @@ type GuardianDelayDecision = {
   reasonCode: string;
   scheduledFor: string;
   finalDecision: "DELAY";
+};
+
+type SendFailureClassification = {
+  critical: boolean;
+  status: "PAUSED" | "SUSPENDED";
+  reasonCode: string;
+  shouldBackoff: boolean;
 };
 
 function isValidFutureIso(value: unknown): value is string {
@@ -191,6 +201,65 @@ async function countFirstTouchAttemptsForLead(tenantId: string, leadId: string):
     .in("conversation_id", conversationIds);
 
   return count || 0;
+}
+
+function buildWorkerOwner(tenantId: string, lockToken: string): string {
+  return `send-messages:${tenantId}:${lockToken}`;
+}
+
+async function claimDuePendingOutbound(params: {
+  tenantId: string;
+  owner: string;
+  excludedConversationIds: string[];
+}): Promise<any | null> {
+  const claimTtlSeconds = getNumberEnv("PENDING_OUTBOUND_CLAIM_TTL_SECONDS", 1800);
+  const { data, error } = await supabase.rpc("claim_due_pending_outbound", {
+    p_tenant_id: params.tenantId,
+    p_owner: params.owner,
+    p_limit: 1,
+    p_claim_ttl_seconds: claimTtlSeconds,
+    p_excluded_conversation_ids: params.excludedConversationIds,
+  });
+
+  if (error) {
+    console.warn("  [Queue Claim] Falha ao reclamar pendencia atomicamente:", redactText(error.message));
+    await recordConnectionEvent({
+      tenantId: params.tenantId,
+      instanceName: "send-messages",
+      eventType: "QUEUE_CLAIM_FAILURE",
+      externalState: null,
+      reasonCode: "PENDING_OUTBOUND_CLAIM_FAILED",
+      rawError: {
+        error: redactText(error.message),
+        source: "send-messages:claimDuePendingOutbound",
+      },
+    });
+    return null;
+  }
+
+  const rows = Array.isArray(data) ? data : [];
+  return rows[0] || null;
+}
+
+async function releasePendingClaim(tenantId: string, pendingOutboundId: string, owner: string): Promise<void> {
+  try {
+    const { error } = await supabase
+      .from("pending_outbound")
+      .update({
+        processing_owner: null,
+        processing_started_at: null,
+        processing_expires_at: null,
+      })
+      .eq("tenant_id", tenantId)
+      .eq("id", pendingOutboundId)
+      .eq("processing_owner", owner);
+
+    if (error) {
+      console.warn("  [Queue Claim] Falha ao liberar claim:", redactText(error.message));
+    }
+  } catch (err) {
+    console.warn("  [Queue Claim] Excecao ao liberar claim:", redactText(err));
+  }
 }
 
 async function acquireConversationLock(params: {
@@ -341,6 +410,21 @@ function getNumberEnv(name: string, fallback: number): number {
   return Number.isFinite(value) && value >= 0 ? value : fallback;
 }
 
+function clampTimeoutMs(value: number, fallback: number, min = 1000, max = 120000): number {
+  const timeout = Number.isFinite(value) ? value : fallback;
+  return Math.min(max, Math.max(min, timeout));
+}
+
+function isTimeoutLikeError(err: unknown): boolean {
+  const name = String((err as any)?.name || "").toLowerCase();
+  const message = String((err as any)?.message || err || "").toLowerCase();
+  return name.includes("timeout")
+    || name.includes("abort")
+    || message.includes("timeout")
+    || message.includes("timed out")
+    || message.includes("aborted");
+}
+
 function isBlockingMode(mode: GuardMode): boolean {
   return mode === "BLOCK";
 }
@@ -379,6 +463,44 @@ function redactPayload(value: unknown): Record<string, unknown> {
   } catch (_err) {
     return { preview: redactText(value) };
   }
+}
+
+const CRITICAL_DISCONNECT_REASON_CODES = new Set([
+  "WA_DEVICE_REMOVED",
+  "WA_STREAM_ERRORED",
+  "WA_SESSION_CONFLICT",
+  "WA_UNAUTHORIZED",
+]);
+
+function sanitizeGuardianStatusExtra(extra: Record<string, unknown>): Record<string, unknown> {
+  const allowed = new Set([
+    "locked_at",
+    "connected_at",
+    "quarantined_until",
+    "circuit_open_until",
+    "state_source",
+  ]);
+  return Object.fromEntries(Object.entries(extra).filter(([key]) => allowed.has(key)));
+}
+
+function buildLastDisconnectReasonPatch(
+  status: string,
+  externalState: string | null,
+  reasonCode: string | null,
+): Record<string, string | null> {
+  if (String(externalState || "").toLowerCase() === "open") {
+    return { last_disconnect_reason_code: null };
+  }
+
+  if (
+    String(status || "").toUpperCase() === "SUSPENDED" &&
+    reasonCode &&
+    CRITICAL_DISCONNECT_REASON_CODES.has(reasonCode)
+  ) {
+    return { last_disconnect_reason_code: reasonCode };
+  }
+
+  return {};
 }
 
 async function shortHash(value: string): Promise<string> {
@@ -693,16 +815,18 @@ async function updateGuardianConnectionState(
     nowIso,
     previousStateEnteredAt: previousStatus?.state_entered_at || null,
   });
+  const safeExtra = sanitizeGuardianStatusExtra(extra);
+  const lastDisconnectPatch = buildLastDisconnectReasonPatch(status, externalState, reasonCode);
   const payload = {
     status,
     external_state: externalState,
     external_checked_at: nowIso,
-    last_disconnect_reason_code: reasonCode,
     updated_at: nowIso,
     state_entered_at: statePatch.state_entered_at,
     ...(statePatch.state_reason_code !== undefined ? { state_reason_code: statePatch.state_reason_code } : {}),
     ...(statePatch.state_source !== undefined ? { state_source: statePatch.state_source } : {}),
-    ...extra,
+    ...safeExtra,
+    ...lastDisconnectPatch,
   };
 
   const { error } = await supabase
@@ -710,14 +834,63 @@ async function updateGuardianConnectionState(
     .update(payload)
     .eq("tenant_id", tenantId);
 
+  let statusPersisted = !error;
   if (error) {
-    await supabase
+    console.warn("  [WhatsApp Guard] Falha ao persistir estado completo:", redactText(error.message));
+    await recordConnectionEvent({
+      tenantId,
+      instanceName: "send-messages",
+      eventType: "STATE_PERSISTENCE_FAILURE",
+      externalState,
+      reasonCode: "WA_GUARDIAN_STATUS_UPDATE_FAILED",
+      rawError: {
+        error: redactText(error.message),
+        attempted_status: status,
+        attempted_reason_code: reasonCode,
+        source: "send-messages:updateGuardianConnectionState",
+      },
+      localStatusBefore: previousStatus?.status || null,
+      localStatusAfter: status,
+    });
+
+    const fallbackPayload = {
+      status,
+      external_state: externalState,
+      external_checked_at: nowIso,
+      updated_at: nowIso,
+      state_entered_at: statePatch.state_entered_at,
+      ...(statePatch.state_reason_code !== undefined ? { state_reason_code: statePatch.state_reason_code } : {}),
+      ...(statePatch.state_source !== undefined ? { state_source: statePatch.state_source } : {}),
+      ...safeExtra,
+      ...lastDisconnectPatch,
+    };
+    const { error: fallbackError } = await supabase
       .from("whatsapp_guardian_status")
-      .update({ status, updated_at: new Date().toISOString() })
+      .update(fallbackPayload)
       .eq("tenant_id", tenantId);
+    if (fallbackError) {
+      console.warn("  [WhatsApp Guard] Falha tambem no fallback de estado:", redactText(fallbackError.message));
+      await recordConnectionEvent({
+        tenantId,
+        instanceName: "send-messages",
+        eventType: "STATE_PERSISTENCE_FAILURE",
+        externalState,
+        reasonCode: "WA_GUARDIAN_STATUS_FALLBACK_FAILED",
+        rawError: {
+          error: redactText(fallbackError.message),
+          attempted_status: status,
+          attempted_reason_code: reasonCode,
+          source: "send-messages:updateGuardianConnectionState:fallback",
+        },
+        localStatusBefore: previousStatus?.status || null,
+        localStatusAfter: status,
+      });
+      return;
+    }
+    statusPersisted = true;
   }
 
-  if (!error) {
+  if (statusPersisted) {
     await recordGuardianStateTransition({
       supabase,
       tenantId,
@@ -925,23 +1098,42 @@ async function runConnectionHealthGuard(
   };
 }
 
-function classifySendFailure(error: string): { critical: boolean; status: "PAUSED" | "SUSPENDED"; reasonCode: string } {
+function classifySendFailure(error: string): SendFailureClassification {
   const errText = (error || "").toLowerCase();
 
-  if (errText.includes("device_removed")) return { critical: true, status: "SUSPENDED", reasonCode: "SEND_CRITICAL_DEVICE_REMOVED" };
-  if (errText.includes("stream errored") || errText.includes("stream:error")) return { critical: true, status: "SUSPENDED", reasonCode: "SEND_CRITICAL_STREAM_ERRORED" };
-  if (errText.includes("conflict")) return { critical: true, status: "SUSPENDED", reasonCode: "SEND_CRITICAL_SESSION_CONFLICT" };
-  if (errText.includes("401") || errText.includes("unauthorized")) return { critical: true, status: "SUSPENDED", reasonCode: "SEND_CRITICAL_UNAUTHORIZED" };
-  if (errText.includes("connection closed")) return { critical: true, status: "PAUSED", reasonCode: "SEND_CRITICAL_CONNECTION_CLOSED" };
-  if (errText.includes("cannot read properties of undefined")) return { critical: true, status: "PAUSED", reasonCode: "SEND_EVOLUTION_INTERNAL_ERROR" };
-  if (errText.includes("instance does not exist") || errText.includes("not found")) return { critical: true, status: "SUSPENDED", reasonCode: "SEND_CRITICAL_INSTANCE_NOT_FOUND" };
+  if (errText.includes("device_removed")) return { critical: true, status: "SUSPENDED", reasonCode: "SEND_CRITICAL_DEVICE_REMOVED", shouldBackoff: false };
+  if (errText.includes("stream errored") || errText.includes("stream:error")) return { critical: true, status: "SUSPENDED", reasonCode: "SEND_CRITICAL_STREAM_ERRORED", shouldBackoff: false };
+  if (errText.includes("conflict")) return { critical: true, status: "SUSPENDED", reasonCode: "SEND_CRITICAL_SESSION_CONFLICT", shouldBackoff: false };
+  if (errText.includes("401") || errText.includes("unauthorized")) return { critical: true, status: "SUSPENDED", reasonCode: "SEND_CRITICAL_UNAUTHORIZED", shouldBackoff: false };
+  if (errText.includes("connection closed")) return { critical: true, status: "PAUSED", reasonCode: "SEND_CRITICAL_CONNECTION_CLOSED", shouldBackoff: false };
+  if (errText.includes("cannot read properties of undefined")) return { critical: true, status: "PAUSED", reasonCode: "SEND_EVOLUTION_INTERNAL_ERROR", shouldBackoff: false };
+  if (errText.includes("instance does not exist") || errText.includes("not found")) return { critical: true, status: "SUSPENDED", reasonCode: "SEND_CRITICAL_INSTANCE_NOT_FOUND", shouldBackoff: false };
+  if (
+    errText.includes("evolution_send_timeout")
+    || errText.includes("timeout")
+    || errText.includes("timed out")
+    || errText.includes("abort")
+  ) {
+    return { critical: false, status: "PAUSED", reasonCode: "SEND_TRANSIENT_TIMEOUT", shouldBackoff: true };
+  }
+  if (
+    errText.includes("http 408")
+    || errText.includes("http 429")
+    || errText.includes("http 500")
+    || errText.includes("http 502")
+    || errText.includes("http 503")
+    || errText.includes("http 504")
+  ) {
+    return { critical: false, status: "PAUSED", reasonCode: "SEND_TRANSIENT_EVOLUTION_HTTP", shouldBackoff: true };
+  }
 
-  return { critical: false, status: "PAUSED", reasonCode: "SEND_TRANSIENT_ERROR" };
+  return { critical: false, status: "PAUSED", reasonCode: "SEND_TRANSIENT_ERROR", shouldBackoff: false };
 }
 
 // ── OpenAI Helper ───────────────────────────────────────────────────────────
 async function callOpenAI(systemPrompt: string, userMessage: string, maxTokens = 100): Promise<string> {
   try {
+    const timeoutMs = clampTimeoutMs(getNumberEnv("OPENAI_HELPER_TIMEOUT_MS", 15000), 15000);
     const payload = {
       model: MODEL,
       messages: [
@@ -959,13 +1151,18 @@ async function callOpenAI(systemPrompt: string, userMessage: string, maxTokens =
         Authorization: `Bearer ${OPENAI_API_KEY}`,
       },
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
     if (!resp.ok) return "";
     const data = await resp.json();
     return data.choices?.[0]?.message?.content?.trim() || "";
   } catch (err) {
-    console.error("OpenAI Error:", err);
+    if (isTimeoutLikeError(err)) {
+      console.warn("OpenAI helper timeout; seguindo com fallback sem quebra-gelo.");
+    } else {
+      console.error("OpenAI Error:", err);
+    }
     return "";
   }
 }
@@ -1001,6 +1198,7 @@ async function sendWhatsApp(
   mediaType?: string | null
 ): Promise<{ ok: boolean; whatsappMsgId?: string; error?: string }> {
   try {
+    const timeoutMs = clampTimeoutMs(getNumberEnv("EVOLUTION_SEND_TIMEOUT_MS", 12000), 12000, 1000, 60000);
     let url = `${evoConfig.baseUrl}/message/sendText/${evoConfig.instanceName}`;
     let body: any = { number: phone, text };
 
@@ -1023,6 +1221,7 @@ async function sendWhatsApp(
         apikey: evoConfig.apiKey,
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
     if (!resp.ok) {
@@ -1035,7 +1234,11 @@ async function sendWhatsApp(
     const whatsappMsgId = data?.key?.id || data?.messageId || null;
     return { ok: true, whatsappMsgId };
   } catch (err: any) {
-    return { ok: false, error: err.message?.slice(0, 200) };
+    if (isTimeoutLikeError(err)) {
+      const timeoutMs = clampTimeoutMs(getNumberEnv("EVOLUTION_SEND_TIMEOUT_MS", 12000), 12000, 1000, 60000);
+      return { ok: false, error: `EVOLUTION_SEND_TIMEOUT_${timeoutMs}MS` };
+    }
+    return { ok: false, error: redactText(err?.message || err || "EVOLUTION_SEND_UNKNOWN_ERROR").slice(0, 200) };
   }
 }
 
@@ -1288,6 +1491,19 @@ async function processFirstTouch(
     if (eligibilityError) {
       if (options.selectiveRetryOnly) {
         console.warn("  [First Touch] Canonical eligibility view unavailable; RECOVERY legacy fallback blocked to avoid broad reprocessing.");
+        try {
+          await dispatchAdminRecoveryStructuralAlert({
+            supabase,
+            tenantId,
+            reasonCode: "RECOVERY_ELIGIBILITY_VIEW_UNAVAILABLE",
+            structuralReason: "A retomada segura precisa da visao canonica de elegibilidade para selecionar somente leads realmente aptos. A consulta falhou, entao o sistema bloqueou o fallback legado para evitar disparos amplos ou duplicados.",
+            details: eligibilityError.message || null,
+            pendingDueCount: await countDuePending(tenantId),
+            source: "send-messages:first-touch-recovery",
+          });
+        } catch (err) {
+          console.warn("Falha ao disparar alerta admin de RECOVERY estrutural:", err);
+        }
         continue;
       }
 
@@ -1767,6 +1983,7 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
   const processedLeadIds = new Set<string>();
   const processedConversationIds = new Set<string>();
   const guardianConfig = await GuardianRunner.loadConfig({ supabase, tenantId });
+  const workerOwner = buildWorkerOwner(tenantId, nowTime);
 
   try {
     while (Date.now() < runEndTime) {
@@ -1917,34 +2134,21 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
         chatsToday += q;
       }
 
-      // 6. Buscar a mensagem mais prioritária na fila a enviar
-      let queueQuery = supabase
-        .from("pending_outbound")
-        .select("*")
-        .eq("tenant_id", tenantId)
-        .is("sent_at", null)
-        .is("failed_at", null)
-        .lte("scheduled_for", new Date().toISOString())
-        .lt("attempts", 3);
+      // 6. Reclamar atomicamente a pendencia mais prioritaria da fila.
+      const item = await claimDuePendingOutbound({
+        tenantId,
+        owner: workerOwner,
+        excludedConversationIds: Array.from(processedConversationIds),
+      });
 
-      if (processedConversationIds.size > 0) {
-        queueQuery = queueQuery.not("conversation_id", "in", `(${Array.from(processedConversationIds).map(id => `'${id}'`).join(",")})`);
-      }
-
-      const { data: queueItems } = await queueQuery
-        .order("priority", { ascending: true })
-        .order("scheduled_for", { ascending: true })
-        .limit(1);
-
-
-      if (!queueItems || queueItems.length === 0) {
+      if (!item) {
         await sleep(2000);
         continue;
       }
 
-      const item = queueItems[0];
       processedConversationIds.add(item.conversation_id);
 
+      try {
       if (healthDecision.isQuarantined && item.message_type === "OUTBOUND_START") {
         const newScheduled = healthDecision.quarantinedUntil || new Date(Date.now() + 10 * 60 * 1000).toISOString();
         await supabase.from("pending_outbound").update({
@@ -2593,7 +2797,54 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
           break;
         }
 
-        // Fluxo de erro normal (que não é suspensão)
+        // Falhas transitorias recebem backoff sem consumir tentativa.
+        if (failure.shouldBackoff) {
+          const retryDelayMinutes = getNumberEnv("WA_TRANSIENT_SEND_RETRY_DELAY_MINUTES", 5);
+          const retryAt = new Date(Date.now() + retryDelayMinutes * 60 * 1000).toISOString();
+
+          await recordConnectionEvent({
+            tenantId,
+            instanceName: evoConfig.instanceName,
+            eventType: "SEND_TRANSIENT_GUARD",
+            externalState: healthDecision.externalState,
+            reasonCode: failure.reasonCode,
+            rawError: {
+              error: redactText(sendResult.error),
+              retry_at: retryAt,
+              retry_delay_minutes: retryDelayMinutes,
+              source: "send-messages:send-transient-backoff",
+            },
+            localStatusBefore: numberState,
+            localStatusAfter: numberState,
+            pendingDueCount: await countDuePending(tenantId),
+          });
+
+          await supabase.from("pending_outbound").update({
+            scheduled_for: retryAt,
+            failed_reason: failure.reasonCode,
+          }).eq("id", item.id);
+
+          try {
+            await supabase.from("whatsapp_guardian_telemetry").insert({
+              tenant_id: tenantId,
+              conversation_id: item.conversation_id,
+              message_type: item.message_type,
+              queued_at: item.created_at,
+              scheduled_for: item.scheduled_for,
+              error: failure.reasonCode,
+              number_state: numberState,
+              is_reactive: ["REACTIVE_REPLY", "CHAT_CONTINUATION", "LOOKUP_REPLY"].includes(item.message_type || ""),
+              is_followup: item.message_type === "COMMERCIAL_FOLLOWUP",
+            });
+          } catch (_) {}
+
+          failed++;
+          console.warn("  [WhatsApp Guard] Envio adiado por falha transitoria. Pending: " + item.id + " Reason: " + failure.reasonCode + " Retry: " + retryAt);
+          await sleep(500);
+          continue;
+        }
+
+        // Fluxo de erro normal que nao indica desconexao nem backoff seguro.
         const attempts = (item.attempts || 0) + 1;
         const updateData: any = {
           attempts,
@@ -2624,6 +2875,10 @@ async function runGuardianWorkerForTenant(tenantId: string, runEndTime: number):
 
       } finally {
         await releaseConversationLock(tenantId, item.conversation_id, conversationLock.requestedLockUntil);
+      }
+
+      } finally {
+        await releasePendingClaim(tenantId, item.id, workerOwner);
       }
 
       await sleep(1500);

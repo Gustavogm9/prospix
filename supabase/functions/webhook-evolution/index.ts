@@ -88,6 +88,11 @@ function getNumberEnv(name: string, fallback: number): number {
   return Number.isFinite(value) && value >= 0 ? value : fallback;
 }
 
+function clampTimeoutMs(value: number, fallback: number, min = 1000, max = 120000): number {
+  const timeout = Number.isFinite(value) ? value : fallback;
+  return Math.min(max, Math.max(min, timeout));
+}
+
 function toLoggableText(value: unknown): string {
   if (typeof value === "string") return value;
   try {
@@ -110,6 +115,40 @@ function redactPayload(value: unknown): Record<string, unknown> {
   } catch (_err) {
     return { preview: redactText(value) };
   }
+}
+
+const CRITICAL_DISCONNECT_REASON_CODES = new Set([
+  "WA_DEVICE_REMOVED",
+  "WA_STREAM_ERRORED",
+  "WA_SESSION_CONFLICT",
+  "WA_UNAUTHORIZED",
+]);
+
+function sanitizeGuardianStatusExtra(extra: Record<string, unknown>): Record<string, unknown> {
+  const allowed = new Set([
+    "locked_at",
+    "connected_at",
+    "quarantined_until",
+    "circuit_open_until",
+    "state_source",
+  ]);
+  return Object.fromEntries(Object.entries(extra).filter(([key]) => allowed.has(key)));
+}
+
+function buildLastDisconnectReasonPatch(
+  status: ConnectionGuardStatus,
+  externalState: string | null,
+  reasonCode: string | null,
+): Record<string, string | null> {
+  if (String(externalState || "").toLowerCase() === "open") {
+    return { last_disconnect_reason_code: null };
+  }
+
+  if (status === "SUSPENDED" && reasonCode && CRITICAL_DISCONNECT_REASON_CODES.has(reasonCode)) {
+    return { last_disconnect_reason_code: reasonCode };
+  }
+
+  return {};
 }
 
 async function shortHash(value: string): Promise<string> {
@@ -252,30 +291,82 @@ async function updateGuardianConnectionStatus(
     nowIso,
     previousStateEnteredAt: previousStatus?.state_entered_at || null,
   });
+  const safeExtra = sanitizeGuardianStatusExtra(extra);
+  const lastDisconnectPatch = buildLastDisconnectReasonPatch(status, externalState, reasonCode);
   const payload = {
     tenant_id: tenantId,
     status,
     external_state: externalState,
     external_checked_at: nowIso,
-    last_disconnect_reason_code: reasonCode,
     updated_at: nowIso,
     state_entered_at: statePatch.state_entered_at,
     ...(statePatch.state_reason_code !== undefined ? { state_reason_code: statePatch.state_reason_code } : {}),
     ...(statePatch.state_source !== undefined ? { state_source: statePatch.state_source } : {}),
-    ...extra,
+    ...safeExtra,
+    ...lastDisconnectPatch,
   };
 
   const { error } = await supabase
     .from("whatsapp_guardian_status")
     .upsert(payload, { onConflict: "tenant_id" });
 
+  let statusPersisted = !error;
   if (error) {
-    await supabase
+    console.warn("Falha ao persistir estado completo do WhatsApp Guardian:", redactText(error.message));
+    await recordConnectionEvent({
+      tenantId,
+      instanceName: "webhook-evolution",
+      eventType: "STATE_PERSISTENCE_FAILURE",
+      externalState,
+      reasonCode: "WA_GUARDIAN_STATUS_UPDATE_FAILED",
+      rawError: {
+        error: redactText(error.message),
+        attempted_status: status,
+        attempted_reason_code: reasonCode,
+        source: "webhook-evolution:updateGuardianConnectionStatus",
+      },
+      localStatusBefore: previousStatus?.status || null,
+      localStatusAfter: status,
+    });
+
+    const fallbackPayload = {
+      tenant_id: tenantId,
+      status,
+      external_state: externalState,
+      external_checked_at: nowIso,
+      updated_at: nowIso,
+      state_entered_at: statePatch.state_entered_at,
+      ...(statePatch.state_reason_code !== undefined ? { state_reason_code: statePatch.state_reason_code } : {}),
+      ...(statePatch.state_source !== undefined ? { state_source: statePatch.state_source } : {}),
+      ...safeExtra,
+      ...lastDisconnectPatch,
+    };
+    const { error: fallbackError } = await supabase
       .from("whatsapp_guardian_status")
-      .upsert({ tenant_id: tenantId, status, updated_at: new Date().toISOString() }, { onConflict: "tenant_id" });
+      .upsert(fallbackPayload, { onConflict: "tenant_id" });
+    if (fallbackError) {
+      console.warn("Falha tambem no fallback do WhatsApp Guardian:", redactText(fallbackError.message));
+      await recordConnectionEvent({
+        tenantId,
+        instanceName: "webhook-evolution",
+        eventType: "STATE_PERSISTENCE_FAILURE",
+        externalState,
+        reasonCode: "WA_GUARDIAN_STATUS_FALLBACK_FAILED",
+        rawError: {
+          error: redactText(fallbackError.message),
+          attempted_status: status,
+          attempted_reason_code: reasonCode,
+          source: "webhook-evolution:updateGuardianConnectionStatus:fallback",
+        },
+        localStatusBefore: previousStatus?.status || null,
+        localStatusAfter: status,
+      });
+      return;
+    }
+    statusPersisted = true;
   }
 
-  if (!error) {
+  if (statusPersisted) {
     await recordGuardianStateTransition({
       supabase,
       tenantId,
@@ -551,6 +642,7 @@ async function callOpenAI(
   tools?: any[]
 ): Promise<{ content: string; toolCalls: any[]; tokensIn: number; tokensOut: number; latencyMs: number }> {
   const start = Date.now();
+  const timeoutMs = clampTimeoutMs(getNumberEnv("OPENAI_WEBHOOK_TIMEOUT_MS", 25000), 25000);
 
   const payload: any = {
     model,
@@ -574,6 +666,7 @@ async function callOpenAI(
       Authorization: `Bearer ${OPENAI_API_KEY}`,
     },
     body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(timeoutMs),
   });
 
   const latencyMs = Date.now() - start;
@@ -901,6 +994,163 @@ function getConversationStatusFromIntent(intent: string): string | null {
 // ══════════════════════════════════════════════════════════════════════════════
 // Main Webhook Handler
 // ══════════════════════════════════════════════════════════════════════════════
+function runWebhookBackgroundTask(task: Promise<Response>, context: Record<string, unknown>): void {
+  const monitored = task
+    .then(async (response) => {
+      if (!response.ok) {
+        let body = "";
+        try {
+          body = await response.clone().text();
+        } catch (_err) {}
+        console.warn("[webhook-evolution] background task returned non-ok response:", {
+          ...context,
+          status: response.status,
+          body: redactText(body),
+        });
+      }
+    })
+    .catch((err) => {
+      console.error("[webhook-evolution] background task failed:", {
+        ...context,
+        error: redactText(err?.message || err),
+      });
+    });
+
+  const edgeRuntime = (globalThis as any).EdgeRuntime;
+  if (edgeRuntime && typeof edgeRuntime.waitUntil === "function") {
+    edgeRuntime.waitUntil(monitored);
+    return;
+  }
+
+  void monitored;
+}
+
+function jsonSafe(value: unknown): unknown {
+  try {
+    return JSON.parse(JSON.stringify(value ?? {}));
+  } catch (_err) {
+    return {};
+  }
+}
+
+async function parseResponseJson(response: Response): Promise<any> {
+  try {
+    return await response.clone().json();
+  } catch (_err) {
+    return {};
+  }
+}
+
+async function startWebhookProcessingLedger(payload: any): Promise<string | null> {
+  try {
+    const data = payload?.data || {};
+    const key = data?.key || {};
+    const eventName = String(payload?.event || "");
+    const instanceName = String(payload?.instance || payload?.instanceName || "");
+    const whatsappMessageId = String(key?.id || "");
+    const remoteJid = String(key?.remoteJid || "");
+    const now = new Date().toISOString();
+    const row = {
+      event_name: eventName,
+      instance_name: instanceName || null,
+      whatsapp_message_id: whatsappMessageId || null,
+      whatsapp_message_id_hash: whatsappMessageId ? await shortHash(whatsappMessageId) : null,
+      remote_jid_hash: remoteJid ? await shortHash(remoteJid) : null,
+      from_me: typeof key?.fromMe === "boolean" ? key.fromMe : null,
+      status: "PROCESSING",
+      payload: jsonSafe(payload),
+      payload_redacted: redactPayload(payload),
+      processing_started_at: now,
+      last_seen_at: now,
+      updated_at: now,
+    };
+
+    const { data: inserted, error } = await supabase
+      .from("evolution_webhook_processing_events")
+      .insert(row)
+      .select("id")
+      .single();
+
+    if (!error) return inserted?.id || null;
+
+    if (error.code === "23505" && whatsappMessageId) {
+      const { data: existing } = await supabase
+        .from("evolution_webhook_processing_events")
+        .select("id, attempts")
+        .eq("event_name", eventName)
+        .eq("instance_name", instanceName)
+        .eq("whatsapp_message_id", whatsappMessageId)
+        .maybeSingle();
+
+      if (existing?.id) {
+        await supabase
+          .from("evolution_webhook_processing_events")
+          .update({
+            status: "PROCESSING",
+            attempts: (existing.attempts || 1) + 1,
+            last_seen_at: now,
+            processing_started_at: now,
+            updated_at: now,
+            error_message: null,
+          })
+          .eq("id", existing.id);
+        return existing.id;
+      }
+    }
+
+    console.warn("[webhook-evolution] failed to start processing ledger:", redactText(error.message));
+    return null;
+  } catch (err) {
+    console.warn("[webhook-evolution] processing ledger start exception:", redactText(err));
+    return null;
+  }
+}
+
+async function updateWebhookProcessingLedger(id: string | null, patch: Record<string, unknown>): Promise<void> {
+  if (!id) return;
+  try {
+    const { error } = await supabase
+      .from("evolution_webhook_processing_events")
+      .update({
+        ...patch,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id);
+    if (error) {
+      console.warn("[webhook-evolution] processing ledger update failed:", redactText(error.message));
+    }
+  } catch (err) {
+    console.warn("[webhook-evolution] processing ledger update exception:", redactText(err));
+  }
+}
+
+async function finishWebhookProcessingLedger(id: string | null, response: Response): Promise<void> {
+  if (!id) return;
+  const body = await parseResponseJson(response);
+  const now = new Date().toISOString();
+  const failed = !response.ok || body?.ok === false;
+  const skipped = Boolean(body?.skipped);
+  await updateWebhookProcessingLedger(id, {
+    status: failed ? "FAILED" : skipped ? "SKIPPED" : "PROCESSED",
+    skip_reason: skipped ? String(body?.reason || body?.action || "skipped") : null,
+    error_message: failed ? redactText(body?.error || `HTTP ${response.status}`) : null,
+    result: jsonSafe(body),
+    processed_at: failed ? null : now,
+    failed_at: failed ? now : null,
+  });
+}
+
+async function failWebhookProcessingLedger(id: string | null, err: unknown): Promise<void> {
+  if (!id) return;
+  const now = new Date().toISOString();
+  await updateWebhookProcessingLedger(id, {
+    status: "FAILED",
+    error_message: redactText((err as any)?.message || err),
+    failed_at: now,
+    result: { error: redactText((err as any)?.message || err) },
+  });
+}
+
 serve(async (req: Request) => {
   // CORS preflight
   if (req.method === "OPTIONS") {
@@ -934,6 +1184,46 @@ serve(async (req: Request) => {
       });
     }
 
+    const messageData = payload.data || {};
+    const whatsappMessageId = messageData.key?.id || "";
+    runWebhookBackgroundTask(handleMessageUpsert(payload), {
+      event,
+      instance: payload.instance || payload.instanceName || "",
+      whatsapp_message_id: whatsappMessageId ? await shortHash(whatsappMessageId) : null,
+    });
+
+    return new Response(JSON.stringify({
+      ok: true,
+      accepted: true,
+      async: true,
+      event,
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err: any) {
+    console.error("💥 Webhook ACK error:", err.message);
+    return new Response(JSON.stringify({ ok: false, error: err.message }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+});
+
+async function handleMessageUpsert(payload: any): Promise<Response> {
+  const ledgerId = await startWebhookProcessingLedger(payload);
+  try {
+    const response = await processMessageUpsert(payload, ledgerId);
+    await finishWebhookProcessingLedger(ledgerId, response);
+    return response;
+  } catch (err) {
+    await failWebhookProcessingLedger(ledgerId, err);
+    throw err;
+  }
+}
+
+async function processMessageUpsert(payload: any, ledgerId: string | null): Promise<Response> {
+  try {
     // ── Extract message data from webhook payload ────────────
     const messageData = payload.data;
     if (!messageData) {
@@ -995,6 +1285,7 @@ serve(async (req: Request) => {
     }
 
     const tenantId = tenantSecret.tenant_id;
+    await updateWebhookProcessingLedger(ledgerId, { tenant_id: tenantId });
     console.log(`  🏢 Tenant: ${tenantId}`);
 
     // ── Find lead by phone number ────────────────────────────
@@ -1016,6 +1307,8 @@ serve(async (req: Request) => {
     console.log(`  👤 Lead: ${lead.name} (${lead.id})`);
 
     // ── Find or create conversation ──────────────────────────
+    await updateWebhookProcessingLedger(ledgerId, { lead_id: lead.id });
+
     let conversation: any = null;
 
     // Look for an active conversation with this lead
@@ -1076,6 +1369,8 @@ serve(async (req: Request) => {
       });
     }
 
+    await updateWebhookProcessingLedger(ledgerId, { conversation_id: conversation.id });
+
     // Buscar o script_variation_id da primeira mensagem outbound se houver
     let scriptVariationId: string | null = null;
     try {
@@ -1108,6 +1403,7 @@ serve(async (req: Request) => {
         .maybeSingle();
 
       if (existingMsg) {
+        await updateWebhookProcessingLedger(ledgerId, { message_id: existingMsg.id });
         // We already know about this message
         return new Response(JSON.stringify({ ok: true, skipped: true, reason: "outbound message already logged" }), {
           headers: { "Content-Type": "application/json" },
@@ -1116,7 +1412,7 @@ serve(async (req: Request) => {
 
       // If not found, it's a manual message from Giovane's phone!
       const outMsgId = uuid();
-      await supabase.from("messages").insert({
+      const { error: outboundInsertError } = await supabase.from("messages").insert({
         id: outMsgId,
         tenant_id: tenantId,
         conversation_id: conversation.id,
@@ -1129,6 +1425,31 @@ serve(async (req: Request) => {
         script_node_id: conversation.current_node_id || null,
         script_variation_id: scriptVariationId || null,
       });
+      if (outboundInsertError) {
+        if (outboundInsertError.code === "23505" && whatsappMessageId) {
+          const { data: existingOutboundMsg } = await supabase
+            .from("messages")
+            .select("id")
+            .eq("tenant_id", tenantId)
+            .eq("whatsapp_message_id", whatsappMessageId)
+            .limit(1)
+            .maybeSingle();
+
+          if (existingOutboundMsg?.id) {
+            await updateWebhookProcessingLedger(ledgerId, { message_id: existingOutboundMsg.id });
+            return new Response(JSON.stringify({
+              ok: true,
+              skipped: true,
+              reason: "outbound message already logged",
+              message_id: existingOutboundMsg.id,
+            }), {
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+        }
+        throw new Error("Failed to insert outbound message: " + outboundInsertError.message);
+      }
+      await updateWebhookProcessingLedger(ledgerId, { message_id: outMsgId });
 
       // Update conversation and turn OFF AI handling
       await supabase.from("conversations").update({
@@ -1147,7 +1468,29 @@ serve(async (req: Request) => {
     // ── Proceed with inbound message processing ─────────────────
     const inboundMsgId = uuid();
 
-    await supabase.from("messages").insert({
+    if (whatsappMessageId) {
+      const { data: existingInboundMsg } = await supabase
+        .from("messages")
+        .select("id")
+        .eq("tenant_id", tenantId)
+        .eq("whatsapp_message_id", whatsappMessageId)
+        .limit(1)
+        .maybeSingle();
+
+      if (existingInboundMsg?.id) {
+        await updateWebhookProcessingLedger(ledgerId, { message_id: existingInboundMsg.id });
+        return new Response(JSON.stringify({
+          ok: true,
+          skipped: true,
+          reason: "inbound message already logged",
+          message_id: existingInboundMsg.id,
+        }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    }
+
+    const { error: inboundInsertError } = await supabase.from("messages").insert({
       id: inboundMsgId,
       tenant_id: tenantId,
       conversation_id: conversation.id,
@@ -1160,6 +1503,31 @@ serve(async (req: Request) => {
       script_node_id: conversation.current_node_id || null,
       script_variation_id: scriptVariationId || null,
     });
+    if (inboundInsertError) {
+      if (inboundInsertError.code === "23505" && whatsappMessageId) {
+        const { data: existingInboundMsg } = await supabase
+          .from("messages")
+          .select("id")
+          .eq("tenant_id", tenantId)
+          .eq("whatsapp_message_id", whatsappMessageId)
+          .limit(1)
+          .maybeSingle();
+
+        if (existingInboundMsg?.id) {
+          await updateWebhookProcessingLedger(ledgerId, { message_id: existingInboundMsg.id });
+          return new Response(JSON.stringify({
+            ok: true,
+            skipped: true,
+            reason: "inbound message already logged",
+            message_id: existingInboundMsg.id,
+          }), {
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      }
+      throw new Error("Failed to insert inbound message: " + inboundInsertError.message);
+    }
+    await updateWebhookProcessingLedger(ledgerId, { message_id: inboundMsgId });
 
     // Update conversation timestamps + last message preview
     await supabase.from("conversations").update({
@@ -2147,7 +2515,7 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
       headers: { "Content-Type": "application/json" },
     });
   }
-});
+}
 
 // ── Handle message status updates (DELIVERED, READ) ─────────────────────────
 async function handleMessageStatusUpdate(payload: any): Promise<Response> {

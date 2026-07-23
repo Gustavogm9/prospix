@@ -3,15 +3,18 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badge, Input, toast } from '@prospix/ui';
 import {
+  AlertTriangle,
   Bell,
   CheckCircle2,
   Clock3,
+  Inbox,
   Loader2,
   PlayCircle,
   PlugZap,
   QrCode,
   Radio,
   RefreshCw,
+  RotateCcw,
   Send,
   Trash2,
   Wifi,
@@ -262,6 +265,38 @@ type WorkerDueQueueDiagnostic = {
   recommendedAction: string;
 };
 
+type WebhookProcessingHealth = {
+  total24h: number;
+  processed24h: number;
+  skipped24h: number;
+  failed24h: number;
+  staleProcessing: number;
+  duplicateAttempts24h: number;
+  failedOrStale24h: number;
+  latestEventAt: string | null;
+  latestFailedAt: string | null;
+  generatedAt: string | null;
+};
+
+type WebhookProcessingFailure = {
+  id: string;
+  tenantId: string | null;
+  tenantName: string;
+  status: string;
+  skipReason: string | null;
+  errorMessage: string | null;
+  attempts: number;
+  acceptedAt: string | null;
+  processingStartedAt: string | null;
+  processedAt: string | null;
+  failedAt: string | null;
+  lastSeenAt: string | null;
+  updatedAt: string | null;
+  processingAgeSeconds: number | null;
+  operatorSummary: string | null;
+  recommendedAction: string | null;
+};
+
 type Dashboard = {
   channel: {
     configured: boolean;
@@ -294,6 +329,10 @@ type Dashboard = {
     aiActivityIssues?: number;
     aiActivityAlerts24h?: number;
     dueQueueItems?: number;
+    webhookProcessingFailures24h?: number;
+    webhookProcessingStale?: number;
+    webhookProcessingDuplicates24h?: number;
+    webhookProcessingIssues?: number;
   };
   scheduler: {
     lastRunAt: string | null;
@@ -352,6 +391,12 @@ type Dashboard = {
     available: boolean;
     error: string | null;
     rows: WorkerDueQueueDiagnostic[];
+  };
+  webhookProcessing?: {
+    available: boolean;
+    error: string | null;
+    health: WebhookProcessingHealth | null;
+    rows: WebhookProcessingFailure[];
   };
 };
 
@@ -477,6 +522,41 @@ function blockerKindClass(row: WorkerDueQueueDiagnostic): string {
   return 'bg-blue-50 text-blue-700 border-blue-200';
 }
 
+function webhookProcessingStatusLabel(row: WebhookProcessingFailure): string {
+  const status = String(row.status || '').toUpperCase();
+  if (status === 'FAILED') return 'Falhou ao registrar';
+  if (status === 'PROCESSING') return 'Aberta em processamento';
+  if (status === 'SKIPPED') return 'Ignorada corretamente';
+  if (status === 'PROCESSED') return 'Registrada';
+  return 'Precisa de revisao';
+}
+
+function webhookProcessingStatusClass(row: WebhookProcessingFailure): string {
+  const status = String(row.status || '').toUpperCase();
+  if (status === 'FAILED') return 'bg-red-50 text-red-700 border-red-200';
+  if (status === 'PROCESSING') return 'bg-amber-50 text-amber-800 border-amber-300';
+  if (row.attempts > 1) return 'bg-blue-50 text-blue-700 border-blue-200';
+  return 'bg-surface-sunken text-text-secondary border-border';
+}
+
+function webhookIssueTime(row: WebhookProcessingFailure): string | null {
+  return row.failedAt || row.updatedAt || row.acceptedAt;
+}
+
+function webhookHealthText(health: WebhookProcessingHealth | null | undefined): string {
+  if (!health) return 'Diagnostico indisponivel.';
+  if (health.failedOrStale24h > 0) {
+    return `${countLabel(health.failedOrStale24h, 'entrada precisa', 'entradas precisam')} de revisao agora.`;
+  }
+  if (health.total24h === 0) return 'Nenhuma entrada recebida nas ultimas 24h.';
+  return 'Entradas recebidas sem falhas ativas.';
+}
+
+function canExecuteWebhookReprocess(row: WebhookProcessingFailure): boolean {
+  const status = String(row.status || '').toUpperCase();
+  return status === 'FAILED' || status === 'PROCESSING';
+}
+
 function countLabel(count: number, singular: string, plural: string): string {
   return `${count} ${count === 1 ? singular : plural}`;
 }
@@ -539,6 +619,15 @@ export default function AdminMonitoringPage() {
 
   useEffect(() => {
     load();
+  }, [load]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void load();
+      }
+    }, 30000);
+    return () => window.clearInterval(timer);
   }, [load]);
 
   useEffect(() => {
@@ -753,6 +842,44 @@ export default function AdminMonitoringPage() {
     }
   };
 
+  const reprocessWebhookEvent = async (row: WebhookProcessingFailure, dryRun: boolean) => {
+    const reason = dryRun
+      ? `Validacao operacional solicitada pelo painel para ${row.tenantName}.`
+      : window.prompt('Informe o motivo do reprocessamento desta entrada do WhatsApp:')?.trim() || '';
+
+    if (!reason || reason.length < 10) {
+      toast.error('Motivo obrigatorio', 'Informe um motivo claro com pelo menos 10 caracteres.');
+      return;
+    }
+
+    const key = dryRun ? `webhook:dry:${row.id}` : `webhook:run:${row.id}`;
+    setBusyKey(key);
+    try {
+      const response = await adminNextApi.post('/api/admin/monitoring', {
+        action: 'webhook_reprocess',
+        processingEventId: row.id,
+        dryRun,
+        reason,
+      });
+      if (!response.data?.ok) throw new Error(response.data?.message || 'Falha ao processar entrada.');
+      const result = response.data.result || {};
+      if (dryRun) {
+        toast.success(
+          result.replayable ? 'Entrada elegivel' : 'Entrada nao elegivel',
+          result.reason || 'Validacao concluida.',
+        );
+      } else {
+        toast.success('Reprocessamento aceito', 'A entrada foi reenviada para processamento seguro.');
+      }
+      await load();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Falha ao processar entrada.';
+      toast.error('Erro', message);
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
   const channel = data?.channel;
   const scheduler = data?.scheduler;
   const qrSrc = qrImageSrc(channelQr);
@@ -766,6 +893,9 @@ export default function AdminMonitoringPage() {
   const aiActivityAlertDeliveries = data?.aiActivityAlertDeliveries;
   const workerDueQueueDiagnostics = data?.workerDueQueueDiagnostics;
   const workerDueRows = workerDueQueueDiagnostics?.rows || [];
+  const webhookProcessing = data?.webhookProcessing;
+  const webhookHealth = webhookProcessing?.health || null;
+  const webhookRows = webhookProcessing?.rows || [];
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -924,7 +1054,102 @@ export default function AdminMonitoringPage() {
         <MetricCard label="IA em atencao" value={data?.summary.aiActivityIssues ?? 0} tone={(data?.summary.aiActivityIssues ?? 0) > 0 ? 'red' : 'normal'} />
         <MetricCard label="Alertas IA" value={data?.summary.aiActivityAlerts24h ?? 0} tone={(data?.summary.aiActivityAlerts24h ?? 0) > 0 ? 'red' : 'normal'} />
         <MetricCard label="Fila IA vencida" value={data?.summary.dueQueueItems ?? 0} tone={(data?.summary.dueQueueItems ?? 0) > 0 ? 'red' : 'normal'} />
+        <MetricCard label="Entradas com falha" value={data?.summary.webhookProcessingFailures24h ?? 0} tone={(data?.summary.webhookProcessingFailures24h ?? 0) > 0 ? 'red' : 'normal'} />
+        <MetricCard label="Entradas abertas" value={data?.summary.webhookProcessingStale ?? 0} tone={(data?.summary.webhookProcessingStale ?? 0) > 0 ? 'red' : 'normal'} />
+        <MetricCard label="Reenvios seguros" value={data?.summary.webhookProcessingDuplicates24h ?? 0} />
       </div>
+
+      <Card className="bg-white border-border shadow-sm">
+        <CardHeader className="pb-3">
+          <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+            <div>
+              <CardTitle className="text-base font-bold font-heading text-text flex items-center gap-2">
+                <Inbox className="w-4 h-4 text-primary" aria-hidden />
+                Entrada de mensagens do WhatsApp
+              </CardTitle>
+              <CardDescription className="text-text-secondary text-xs mt-1">
+                Confirma se as mensagens recebidas pela Evolution entraram no Prospix sem travar ou duplicar conversas.
+              </CardDescription>
+            </div>
+            <Badge className={`text-[10px] px-2 py-0.5 border ${(webhookHealth?.failedOrStale24h ?? 0) > 0 ? 'bg-red-50 text-red-700 border-red-200' : 'bg-success-soft text-success-text border-success/30'}`}>
+              {webhookProcessing?.available !== false ? webhookHealthText(webhookHealth) : 'diagnostico indisponivel'}
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {webhookProcessing?.error && (
+            <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-800 flex items-start gap-2">
+              <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-none" aria-hidden />
+              <span>Diagnostico pendente no banco: {webhookProcessing.error}</span>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-3 text-xs">
+            <StatusCell label="Recebidas 24h" value={String(webhookHealth?.total24h ?? 0)} />
+            <StatusCell label="Registradas" value={String(webhookHealth?.processed24h ?? 0)} />
+            <StatusCell label="Ignoradas" value={String(webhookHealth?.skipped24h ?? 0)} />
+            <StatusCell label="Falhas" value={String(webhookHealth?.failed24h ?? 0)} />
+            <StatusCell label="Abertas" value={String(webhookHealth?.staleProcessing ?? 0)} />
+            <StatusCell label="Ultima entrada" value={formatDate(webhookHealth?.latestEventAt)} />
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="text-left text-[10px] uppercase tracking-wider text-text-secondary border-b border-border">
+                <tr>
+                  <th className="py-2 pr-3">Conta</th>
+                  <th className="py-2 pr-3">Situacao</th>
+                  <th className="py-2 pr-3">Quando</th>
+                  <th className="py-2 pr-3">Tentativas</th>
+                  <th className="py-2 pr-3">Resumo</th>
+                  <th className="py-2 pr-3">Acao</th>
+                  <th className="py-2 pr-3 text-right">Acoes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {webhookRows.map((row) => (
+                  <tr key={row.id} className="border-b border-border/50 align-top">
+                    <td className="py-3 pr-3 min-w-[220px]">
+                      <div className="font-semibold text-text">{row.tenantName}</div>
+                      <div className="text-[10px] text-text-secondary">{row.tenantId ? 'Conta identificada' : 'Sem conta associada'}</div>
+                    </td>
+                    <td className="py-3 pr-3 min-w-[160px]">
+                      <Badge className={`text-[9px] px-1.5 py-0 border ${webhookProcessingStatusClass(row)}`}>
+                        {webhookProcessingStatusLabel(row)}
+                      </Badge>
+                      {row.skipReason && <div className="text-[10px] text-text-secondary mt-1">{formatToken(row.skipReason)}</div>}
+                    </td>
+                    <td className="py-3 pr-3 text-text-secondary whitespace-nowrap">
+                      {formatDate(webhookIssueTime(row))}
+                      {row.processingAgeSeconds != null && (
+                        <div className="text-[10px]">{formatDuration(row.processingAgeSeconds)}</div>
+                      )}
+                    </td>
+                    <td className="py-3 pr-3 text-text-secondary whitespace-nowrap">
+                      {countLabel(row.attempts, 'tentativa', 'tentativas')}
+                    </td>
+                    <td className="py-3 pr-3 text-text-secondary min-w-[300px] max-w-[460px]">
+                      {row.operatorSummary || row.errorMessage || 'Entrada registrada para acompanhamento.'}
+                    </td>
+                    <td className="py-3 pr-3 text-text-secondary min-w-[300px] max-w-[460px]">
+                      {row.recommendedAction || 'Acompanhar na proxima leitura.'}
+                    </td>
+                    <td className="py-3 pr-3">
+                      <div className="flex items-center justify-end gap-2">
+                        <ActionButton title="Validar" busy={busyKey === `webhook:dry:${row.id}`} onClick={() => reprocessWebhookEvent(row, true)} icon={CheckCircle2} />
+                        {canExecuteWebhookReprocess(row) && (
+                          <ActionButton title="Reprocessar" busy={busyKey === `webhook:run:${row.id}`} onClick={() => reprocessWebhookEvent(row, false)} icon={RotateCcw} />
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {webhookRows.length === 0 && <EmptyRow columns={7} label="Nenhuma falha de entrada encontrada." />}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card className="bg-white border-border shadow-sm">
         <CardHeader className="pb-3">

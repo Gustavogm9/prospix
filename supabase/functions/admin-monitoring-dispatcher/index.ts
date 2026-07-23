@@ -44,6 +44,7 @@ type CountResult = {
 
 type DispatcherRunStatus = "SUCCEEDED" | "COMPLETED_WITH_FAILURES" | "FAILED";
 type ActivityState = "OK" | "WATCH" | "STALLED" | "BLOCKED" | "OFF_HOURS";
+type WebhookReprocessStatus = "DRY_RUN" | "ACCEPTED" | "FAILED" | "SKIPPED";
 
 const OPERATING_START_HOUR = 9;
 const OPERATING_END_HOUR = 18;
@@ -61,6 +62,22 @@ function cleanText(value: unknown, max = 500): string {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, max);
+}
+
+function isUuid(value: unknown): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || ""));
+}
+
+function jsonPreview(value: unknown, max = 2000): Record<string, unknown> {
+  try {
+    const text = JSON.stringify(value ?? {})
+      .replace(/[A-Za-z0-9_=-]{40,}/g, "[REDACTED]")
+      .replace(/55\d{10,13}/g, "[PHONE_REDACTED]")
+      .slice(0, max);
+    return { preview: text };
+  } catch (_err) {
+    return { preview: cleanText(value, max) };
+  }
 }
 
 function countLabel(count: number, singular: string, plural: string): string {
@@ -277,6 +294,18 @@ async function collectMetrics(schedule: Schedule, periodStart: string, periodEnd
         schedule,
       )
     ),
+    webhookEvents: await safeCount("webhookEvents", "evolution_webhook_processing_events", (q) =>
+      applyTenantScope(q.gte("accepted_at", periodStart).lte("accepted_at", periodEnd), schedule)
+    ),
+    webhookFailed: await safeCount("webhookFailed", "evolution_webhook_processing_events", (q) =>
+      applyTenantScope(q.eq("status", "FAILED").gte("failed_at", periodStart).lte("failed_at", periodEnd), schedule)
+    ),
+    webhookStaleProcessing: await safeCount("webhookStaleProcessing", "evolution_webhook_processing_events", (q) =>
+      applyTenantScope(q.eq("status", "PROCESSING").lte("processing_started_at", new Date(Date.now() - 5 * 60 * 1000).toISOString()), schedule)
+    ),
+    webhookDuplicateAttempts: await safeCount("webhookDuplicateAttempts", "evolution_webhook_processing_events", (q) =>
+      applyTenantScope(q.gt("attempts", 1).gte("last_seen_at", periodStart).lte("last_seen_at", periodEnd), schedule)
+    ),
   };
 
   let guardianQuery = supabase
@@ -288,11 +317,13 @@ async function collectMetrics(schedule: Schedule, periodStart: string, periodEnd
   const { data: guardianStatus, error: guardianError } = await guardianQuery;
   const tenantById = new Map((tenants || []).map((tenant: any) => [tenant.id, tenant]));
   const aiActivity = await collectAiActivity(schedule, tenants, guardianStatus || [], periodEnd);
+  const webhookProcessing = await collectWebhookProcessing(schedule);
 
   const recentMessages = await loadRecentMessages(schedule, periodStart, periodEnd);
   const errors = [
     ...Object.values(counts).map((count) => count.error).filter(Boolean),
     guardianError ? `guardianStatus: ${guardianError.message}` : null,
+    ...(webhookProcessing.errors || []),
     ...aiActivity.errors,
   ].filter(Boolean);
 
@@ -311,8 +342,52 @@ async function collectMetrics(schedule: Schedule, periodStart: string, periodEnd
       tenant_name: tenantById.get(row.tenant_id)?.name || tenantById.get(row.tenant_id)?.slug || null,
     })),
     aiActivity,
+    webhookProcessing,
     recentMessages,
     errors,
+  };
+}
+
+async function collectWebhookProcessing(schedule: Schedule) {
+  let issueQuery = supabase
+    .from("evolution_webhook_operational_failures")
+    .select([
+      "id",
+      "tenant_id",
+      "tenant_name",
+      "status",
+      "skip_reason",
+      "error_message",
+      "attempts",
+      "accepted_at",
+      "failed_at",
+      "updated_at",
+      "processing_age_seconds",
+      "operator_summary",
+      "recommended_action",
+    ].join(", "))
+    .order("updated_at", { ascending: false })
+    .limit(10);
+  issueQuery = applyTenantScope(issueQuery, schedule);
+
+  const issueResult = await safeRows("webhookProcessingIssues", issueQuery);
+
+  return {
+    issues: issueResult.rows.map((row: any) => ({
+      tenant_id: row.tenant_id || null,
+      tenant_name: row.tenant_name || "Conta nao identificada",
+      status: row.status || "UNKNOWN",
+      skip_reason: row.skip_reason || null,
+      error_message: row.error_message || null,
+      attempts: Number(row.attempts || 0),
+      accepted_at: row.accepted_at || null,
+      failed_at: row.failed_at || null,
+      updated_at: row.updated_at || null,
+      processing_age_seconds: row.processing_age_seconds == null ? null : Number(row.processing_age_seconds),
+      operator_summary: row.operator_summary || null,
+      recommended_action: row.recommended_action || null,
+    })),
+    errors: [issueResult.error].filter(Boolean),
   };
 }
 
@@ -883,6 +958,150 @@ async function sendRecipientTest(recipientId: string) {
   return await sendAdminMonitoringWhatsApp(recipient.whatsapp, body, supabase);
 }
 
+function isWebhookEventStale(row: any): boolean {
+  if (String(row?.status || "").toUpperCase() !== "PROCESSING") return false;
+  const startedAt = row?.processing_started_at ? new Date(row.processing_started_at).getTime() : NaN;
+  return Number.isFinite(startedAt) && Date.now() - startedAt >= 5 * 60 * 1000;
+}
+
+function isWebhookEventReplayable(row: any): boolean {
+  const status = String(row?.status || "").toUpperCase();
+  return status === "FAILED" || isWebhookEventStale(row);
+}
+
+async function updateWebhookReprocessRun(
+  runId: string,
+  status: WebhookReprocessStatus,
+  patch: Record<string, unknown>,
+) {
+  await supabase
+    .from("evolution_webhook_reprocess_runs")
+    .update({
+      status,
+      completed_at: new Date().toISOString(),
+      ...patch,
+    })
+    .eq("id", runId);
+}
+
+async function processWebhookReprocess(body: any, source: string) {
+  const processingEventId = String(body?.processing_event_id || body?.event_id || "");
+  const dryRun = body?.dry_run !== false;
+  const requestedById = isUuid(body?.requested_by_id) ? String(body.requested_by_id) : null;
+  const reason = cleanText(body?.reason, 500);
+
+  if (!isUuid(processingEventId)) return { ok: false, error: "processing_event_id is required" };
+  if (reason.length < 10) return { ok: false, error: "reason must have at least 10 characters" };
+
+  const { data: event, error: eventError } = await supabase
+    .from("evolution_webhook_processing_events")
+    .select("id, event_name, instance_name, status, attempts, payload, accepted_at, processing_started_at, failed_at, updated_at")
+    .eq("id", processingEventId)
+    .maybeSingle();
+
+  if (eventError) throw new Error(eventError.message);
+  if (!event) return { ok: false, error: "WEBHOOK_PROCESSING_EVENT_NOT_FOUND" };
+
+  const replayable = isWebhookEventReplayable(event);
+  const status = String(event.status || "UNKNOWN").toUpperCase();
+  const eligibility = {
+    replayable,
+    previous_status: status,
+    attempts: Number(event.attempts || 0),
+    accepted_at: event.accepted_at || null,
+    processing_started_at: event.processing_started_at || null,
+    failed_at: event.failed_at || null,
+    updated_at: event.updated_at || null,
+    reason: replayable
+      ? "Evento elegivel para reprocessamento seletivo."
+      : "Somente eventos com falha ou processamento travado ha mais de 5 minutos podem ser reprocessados.",
+  };
+
+  const { data: run, error: runError } = await supabase
+    .from("evolution_webhook_reprocess_runs")
+    .insert({
+      processing_event_id: event.id,
+      requested_by_id: requestedById,
+      source,
+      dry_run: dryRun,
+      status: "PENDING",
+      reason,
+      previous_status: status,
+      previous_attempts: Number(event.attempts || 0),
+    })
+    .select("id")
+    .single();
+
+  if (runError) throw new Error(runError.message);
+  const runId = run.id as string;
+
+  if (dryRun) {
+    await updateWebhookReprocessRun(runId, "DRY_RUN", {
+      response_body_redacted: { status: "DRY_RUN", ...eligibility },
+    });
+    return { ok: true, dry_run: true, status: "DRY_RUN", run_id: runId, ...eligibility };
+  }
+
+  if (!replayable) {
+    await updateWebhookReprocessRun(runId, "SKIPPED", {
+      error: "WEBHOOK_EVENT_NOT_REPLAYABLE",
+      response_body_redacted: eligibility,
+    });
+    return { ok: false, status: "SKIPPED", run_id: runId, error: "WEBHOOK_EVENT_NOT_REPLAYABLE", ...eligibility };
+  }
+
+  if (!event.payload || typeof event.payload !== "object") {
+    await updateWebhookReprocessRun(runId, "FAILED", {
+      error: "WEBHOOK_EVENT_PAYLOAD_UNAVAILABLE",
+      response_body_redacted: eligibility,
+    });
+    return { ok: false, status: "FAILED", run_id: runId, error: "WEBHOOK_EVENT_PAYLOAD_UNAVAILABLE", ...eligibility };
+  }
+
+  try {
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/webhook-evolution`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SUPABASE_KEY}`,
+      },
+      body: JSON.stringify(event.payload),
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    const text = await response.text();
+    let parsed: any = null;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch (_err) {
+      parsed = { raw: text.slice(0, 500) };
+    }
+
+    const accepted = response.ok && parsed?.ok !== false;
+    await updateWebhookReprocessRun(runId, accepted ? "ACCEPTED" : "FAILED", {
+      response_status: response.status,
+      response_body_redacted: jsonPreview(parsed || text),
+      error: accepted ? null : cleanText(parsed?.error || parsed?.message || text || `HTTP ${response.status}`, 500),
+    });
+
+    return {
+      ok: accepted,
+      status: accepted ? "ACCEPTED" : "FAILED",
+      run_id: runId,
+      response_status: response.status,
+      webhook_response: jsonPreview(parsed || text, 800),
+      ...eligibility,
+    };
+  } catch (err: any) {
+    const errorMessage = cleanText(err?.message || err, 500);
+    await updateWebhookReprocessRun(runId, "FAILED", {
+      error: errorMessage,
+      response_body_redacted: { error: errorMessage },
+    });
+    return { ok: false, status: "FAILED", run_id: runId, error: errorMessage, ...eligibility };
+  }
+}
+
 serve(async (request) => {
   if (request.method !== "POST") {
     return json({ ok: false, error: "METHOD_NOT_ALLOWED" }, 405);
@@ -944,6 +1163,11 @@ serve(async (request) => {
     if (mode === "recipient_test") {
       if (!body?.recipient_id) return json({ ok: false, error: "recipient_id is required" }, 400);
       return json({ ok: true, result: await sendRecipientTest(body.recipient_id) });
+    }
+
+    if (mode === "webhook_reprocess") {
+      const result = await processWebhookReprocess(body, source);
+      return json(result.ok ? { ok: true, result } : { ok: false, result, error: result.error || "WEBHOOK_REPROCESS_FAILED" }, result.ok ? 200 : 400);
     }
 
     if (mode === "disconnect_alert") {

@@ -1,4 +1,8 @@
-import { buildAdminAiActivityAlertMessage, buildAdminDisconnectAlertMessage } from "./admin-message-formatters.ts";
+import {
+  buildAdminAiActivityAlertMessage,
+  buildAdminDisconnectAlertMessage,
+  buildAdminRecoveryStructuralAlertMessage,
+} from "./admin-message-formatters.ts";
 
 type SupabaseLike = any;
 
@@ -75,6 +79,16 @@ type AiActivityAlertParams = {
     inbound_today?: number | null;
     guardian_status?: string | null;
   };
+  source: string;
+};
+
+type RecoveryStructuralAlertParams = {
+  supabase: SupabaseLike;
+  tenantId: string;
+  reasonCode: string;
+  structuralReason: string;
+  details?: string | null;
+  pendingDueCount?: number | null;
   source: string;
 };
 
@@ -384,6 +398,46 @@ async function createOrLoadAiActivityOperationalAlert(params: AiActivityAlertPar
   return alertId;
 }
 
+async function createOrLoadRecoveryStructuralOperationalAlert(
+  params: RecoveryStructuralAlertParams,
+  incidentKey: string,
+) {
+  const { data: existing } = await params.supabase
+    .from("operational_alerts")
+    .select("id")
+    .eq("dedup_key", incidentKey)
+    .maybeSingle();
+
+  if (existing?.id) return existing.id;
+
+  const alertId = uuid();
+  const { error } = await params.supabase.from("operational_alerts").insert({
+    id: alertId,
+    type: "ai_recovery_structural_block",
+    severity: "CRITICAL",
+    tenant_id: params.tenantId,
+    title: "RECOVERY bloqueado por erro estrutural",
+    message: cleanText(params.structuralReason || "RECOVERY bloqueado por dependencia estrutural indisponivel.", 500),
+    context: {
+      source: params.source,
+      reason_code: params.reasonCode,
+      structural_reason: params.structuralReason,
+      details: params.details || null,
+      pending_due_count: params.pendingDueCount ?? null,
+    },
+    dedup_key: incidentKey,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  });
+
+  if (error) {
+    console.warn("[admin-monitoring] failed to create RECOVERY structural operational_alert", error);
+    return null;
+  }
+
+  return alertId;
+}
+
 async function loadConnectionEvent(supabase: SupabaseLike, eventId?: string | null) {
   if (!eventId) return null;
   const { data } = await supabase
@@ -448,6 +502,95 @@ async function loadRecentMessages(supabase: SupabaseLike, tenantId: string, refe
   });
 }
 
+async function loadRecentOutboundMessages(supabase: SupabaseLike, tenantId: string, referenceAt: string) {
+  const messages = await loadRecentMessages(supabase, tenantId, referenceAt);
+  return messages.filter((message: any) => String(message.direction || "").toUpperCase() === "OUTBOUND");
+}
+
+async function loadQueueImpact(supabase: SupabaseLike, tenantId: string, referenceAt: string) {
+  const baseQuery = () => supabase
+    .from("pending_outbound")
+    .select("id", { count: "exact", head: true })
+    .eq("tenant_id", tenantId)
+    .is("sent_at", null)
+    .is("failed_at", null);
+
+  const { count: activePending } = await baseQuery();
+  const { count: duePending } = await baseQuery().lte("scheduled_for", referenceAt);
+
+  const { data: oldestDueRows } = await supabase
+    .from("pending_outbound")
+    .select("scheduled_for")
+    .eq("tenant_id", tenantId)
+    .is("sent_at", null)
+    .is("failed_at", null)
+    .lte("scheduled_for", referenceAt)
+    .order("scheduled_for", { ascending: true })
+    .limit(1);
+
+  const { data: nextRows } = await supabase
+    .from("pending_outbound")
+    .select("scheduled_for")
+    .eq("tenant_id", tenantId)
+    .is("sent_at", null)
+    .is("failed_at", null)
+    .order("scheduled_for", { ascending: true })
+    .limit(1);
+
+  const { data: queueRows } = await supabase
+    .from("pending_outbound")
+    .select("id, conversation_id, message_type, scheduled_for, attempts")
+    .eq("tenant_id", tenantId)
+    .is("sent_at", null)
+    .is("failed_at", null)
+    .order("scheduled_for", { ascending: true })
+    .limit(5);
+
+  const rows = queueRows || [];
+  const conversationIds = Array.from(new Set(rows.map((row: any) => row.conversation_id).filter(Boolean)));
+  const conversationLead = new Map<string, string>();
+
+  if (conversationIds.length > 0) {
+    const { data: conversations } = await supabase
+      .from("conversations")
+      .select("id, lead_id")
+      .in("id", conversationIds);
+    for (const row of conversations || []) {
+      if (row.id && row.lead_id) conversationLead.set(row.id, row.lead_id);
+    }
+  }
+
+  const leadIds = Array.from(new Set(Array.from(conversationLead.values())));
+  const leads = new Map<string, any>();
+
+  if (leadIds.length > 0) {
+    const { data: leadRows } = await supabase
+      .from("leads")
+      .select("id, name, whatsapp")
+      .in("id", leadIds);
+    for (const lead of leadRows || []) {
+      leads.set(lead.id, lead);
+    }
+  }
+
+  return {
+    activePending: activePending ?? null,
+    duePending: duePending ?? null,
+    oldestDueAt: oldestDueRows?.[0]?.scheduled_for || null,
+    nextScheduledFor: nextRows?.[0]?.scheduled_for || null,
+    sample: rows.map((row: any) => {
+      const lead = leads.get(conversationLead.get(row.conversation_id) || "");
+      return {
+        scheduled_for: row.scheduled_for,
+        message_type: row.message_type,
+        attempts: row.attempts,
+        lead_name: lead?.name || null,
+        lead_whatsapp: lead?.whatsapp || null,
+      };
+    }),
+  };
+}
+
 async function loadRecentConnectionLogs(supabase: SupabaseLike, tenantId: string, referenceAt: string) {
   const ref = new Date(referenceAt);
   const since = new Date(ref.getTime() - 10 * 60 * 1000).toISOString();
@@ -474,6 +617,7 @@ async function buildDisconnectMessage(params: {
   pendingDueCount?: number | null;
   recentMessages: any[];
   connectionLogs: any[];
+  queueImpact?: any | null;
 }) {
   return buildAdminDisconnectAlertMessage({
     tenant: params.tenant,
@@ -484,6 +628,7 @@ async function buildDisconnectMessage(params: {
     pendingDueCount: params.pendingDueCount ?? params.event?.pending_due_count ?? null,
     recentMessages: params.recentMessages,
     connectionLogs: params.connectionLogs,
+    queueImpact: params.queueImpact || null,
   });
 }
 
@@ -498,6 +643,7 @@ export async function dispatchAdminDisconnectAlert(params: DisconnectAlertParams
   const tenant = await loadTenant(params.supabase, params.tenantId);
   const recentMessages = await loadRecentMessages(params.supabase, params.tenantId, eventAt);
   const connectionLogs = await loadRecentConnectionLogs(params.supabase, params.tenantId, eventAt);
+  const queueImpact = await loadQueueImpact(params.supabase, params.tenantId, eventAt);
   const incidentKey = params.connectionEventId
     ? `connection_event:${params.connectionEventId}`
     : `tenant:${params.tenantId}:${params.reasonCode}:${eventAt.slice(0, 16)}`;
@@ -511,6 +657,7 @@ export async function dispatchAdminDisconnectAlert(params: DisconnectAlertParams
     pendingDueCount: params.pendingDueCount ?? event?.pending_due_count ?? null,
     recentMessages,
     connectionLogs,
+    queueImpact,
   });
 
   let sent = 0;
@@ -557,6 +704,99 @@ export async function dispatchAdminDisconnectAlert(params: DisconnectAlertParams
     const result = await sendAdminMonitoringWhatsApp(recipient.whatsapp, built.body, params.supabase);
     await params.supabase
       .from("admin_disconnect_alert_deliveries")
+      .update({
+        channel_id: result.channelId || null,
+        status: result.ok ? "SENT" : "FAILED",
+        sent_at: result.ok ? new Date().toISOString() : null,
+        whatsapp_message_id: result.whatsappMessageId || null,
+        error: result.error || null,
+        ai_summary: built.summary,
+        message_body: built.body,
+      })
+      .eq("id", deliveryId);
+
+    if (result.ok) sent++;
+    else failed++;
+  }
+
+  return { sent, failed, skipped };
+}
+
+export async function dispatchAdminRecoveryStructuralAlert(params: RecoveryStructuralAlertParams) {
+  const tenantId = String(params.tenantId || "");
+  if (!tenantId || !params.reasonCode) {
+    return { sent: 0, failed: 0, skipped: 0, reason: "NOT_ACTIONABLE" };
+  }
+
+  const recipients = await loadRecipients(params.supabase);
+  if (recipients.length === 0) {
+    return { sent: 0, failed: 0, skipped: 0, reason: "NO_ACTIVE_RECIPIENTS" };
+  }
+
+  const now = new Date();
+  const referenceAt = now.toISOString();
+  const alertBucket = referenceAt.slice(0, 13);
+  const incidentKey = `recovery_structural:${tenantId}:${params.reasonCode}:${alertBucket}`;
+  const tenant = await loadTenant(params.supabase, tenantId);
+  const queueImpact = await loadQueueImpact(params.supabase, tenantId, referenceAt);
+  const recentOutboundMessages = await loadRecentOutboundMessages(params.supabase, tenantId, referenceAt);
+  const operationalAlertId = await createOrLoadRecoveryStructuralOperationalAlert(params, incidentKey);
+  const built = buildAdminRecoveryStructuralAlertMessage({
+    tenant,
+    reasonCode: params.reasonCode,
+    structuralReason: params.structuralReason,
+    details: params.details || null,
+    source: params.source,
+    createdAt: referenceAt,
+    pendingDueCount: params.pendingDueCount ?? queueImpact.duePending ?? null,
+    recentOutboundMessages,
+    queueImpact,
+  });
+
+  let sent = 0;
+  let failed = 0;
+  let skipped = 0;
+
+  for (const recipient of recipients) {
+    const { data: existing } = await params.supabase
+      .from("admin_ai_activity_alert_deliveries")
+      .select("id, status")
+      .eq("incident_key", incidentKey)
+      .eq("recipient_id", recipient.id)
+      .maybeSingle();
+
+    if (existing?.status === "SENT") {
+      skipped++;
+      continue;
+    }
+
+    const deliveryId = existing?.id || uuid();
+    if (!existing?.id) {
+      const { error: insertError } = await params.supabase
+        .from("admin_ai_activity_alert_deliveries")
+        .insert({
+          id: deliveryId,
+          operational_alert_id: operationalAlertId,
+          tenant_id: tenantId,
+          recipient_id: recipient.id,
+          incident_key: incidentKey,
+          status: "PENDING",
+          activity_state: "BLOCKED",
+          severity: "CRITICAL",
+          ai_summary: built.summary,
+          message_body: built.body,
+        });
+
+      if (insertError) {
+        console.warn("[admin-monitoring] failed to insert RECOVERY structural alert delivery", insertError);
+        failed++;
+        continue;
+      }
+    }
+
+    const result = await sendAdminMonitoringWhatsApp(recipient.whatsapp, built.body, params.supabase);
+    await params.supabase
+      .from("admin_ai_activity_alert_deliveries")
       .update({
         channel_id: result.channelId || null,
         status: result.ok ? "SENT" : "FAILED",

@@ -70,6 +70,10 @@ function sanitizeTenantIds(value: unknown): string[] | null {
   return ids.length > 0 ? Array.from(new Set(ids)) : null;
 }
 
+function isUuid(value: unknown): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || '').trim());
+}
+
 function normalizeBaseUrl(value: unknown): string {
   return String(value || '').trim().replace(/\/+$/, '');
 }
@@ -789,6 +793,82 @@ async function loadWorkerDueQueueDiagnostics() {
   };
 }
 
+function numericMetric(value: unknown): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function mapWebhookProcessingFailure(row: any) {
+  return {
+    id: row.id,
+    eventName: row.event_name || null,
+    instanceName: row.instance_name || null,
+    whatsappMessageIdHash: row.whatsapp_message_id_hash || null,
+    remoteJidHash: row.remote_jid_hash || null,
+    fromMe: row.from_me ?? null,
+    tenantId: row.tenant_id || null,
+    tenantName: row.tenant_name || 'Conta nao identificada',
+    leadId: row.lead_id || null,
+    conversationId: row.conversation_id || null,
+    messageId: row.message_id || null,
+    status: row.status || 'UNKNOWN',
+    skipReason: row.skip_reason || null,
+    errorMessage: row.error_message || null,
+    attempts: numericMetric(row.attempts),
+    acceptedAt: row.accepted_at || null,
+    processingStartedAt: row.processing_started_at || null,
+    processedAt: row.processed_at || null,
+    failedAt: row.failed_at || null,
+    lastSeenAt: row.last_seen_at || null,
+    updatedAt: row.updated_at || null,
+    processingAgeSeconds: row.processing_age_seconds == null ? null : numericMetric(row.processing_age_seconds),
+    operatorSummary: row.operator_summary || null,
+    recommendedAction: row.recommended_action || null,
+  };
+}
+
+async function loadWebhookProcessingDiagnostics() {
+  const [healthResult, failureResult] = await Promise.all([
+    supabaseAdmin
+      .from('evolution_webhook_operational_health')
+      .select('*')
+      .maybeSingle(),
+    supabaseAdmin
+      .from('evolution_webhook_operational_failures')
+      .select('*')
+      .order('updated_at', { ascending: false })
+      .limit(25),
+  ]);
+
+  if (healthResult.error || failureResult.error) {
+    return {
+      available: false,
+      error: healthResult.error?.message || failureResult.error?.message || 'Diagnostico de entrada indisponivel.',
+      health: null,
+      rows: [],
+    };
+  }
+
+  const health = healthResult.data || {};
+  return {
+    available: true,
+    error: null,
+    health: {
+      total24h: numericMetric(health.total_24h),
+      processed24h: numericMetric(health.processed_24h),
+      skipped24h: numericMetric(health.skipped_24h),
+      failed24h: numericMetric(health.failed_24h),
+      staleProcessing: numericMetric(health.stale_processing),
+      duplicateAttempts24h: numericMetric(health.duplicate_attempts_24h),
+      failedOrStale24h: numericMetric(health.failed_or_stale_24h),
+      latestEventAt: health.latest_event_at || null,
+      latestFailedAt: health.latest_failed_at || null,
+      generatedAt: health.generated_at || null,
+    },
+    rows: (failureResult.data || []).map(mapWebhookProcessingFailure),
+  };
+}
+
 async function loadDashboard() {
   const activeChannel = await loadActiveChannel();
   const [
@@ -861,6 +941,7 @@ async function loadDashboard() {
   });
   const aiActivityAlertDeliveries = await loadAiActivityAlertDeliveries();
   const workerDueQueueDiagnostics = await loadWorkerDueQueueDiagnostics();
+  const webhookProcessing = await loadWebhookProcessingDiagnostics();
   const nowMs = Date.now();
   const activeSchedules = schedules.filter((s: any) => s.active);
   const overdueSchedules = activeSchedules.filter((s: any) => {
@@ -900,6 +981,10 @@ async function loadDashboard() {
       aiActivityIssues: aiActivity.summary.blocked + aiActivity.summary.stalled + aiActivity.summary.watch,
       aiActivityAlerts24h: aiActivityAlertDeliveries.rows.length,
       dueQueueItems: workerDueQueueDiagnostics.rows.length,
+      webhookProcessingFailures24h: webhookProcessing.health?.failed24h ?? 0,
+      webhookProcessingStale: webhookProcessing.health?.staleProcessing ?? 0,
+      webhookProcessingDuplicates24h: webhookProcessing.health?.duplicateAttempts24h ?? 0,
+      webhookProcessingIssues: webhookProcessing.health?.failedOrStale24h ?? 0,
     },
     recipients,
     schedules,
@@ -911,6 +996,7 @@ async function loadDashboard() {
     aiActivity,
     aiActivityAlertDeliveries,
     workerDueQueueDiagnostics,
+    webhookProcessing,
   };
 }
 
@@ -1145,6 +1231,45 @@ export async function POST(request: NextRequest) {
       const result = await invokeDispatcher({ mode: 'schedule', schedule_id: scheduleId });
       await audit(auth.adminId, 'admin_monitoring.schedule.run_now', 'admin_monitoring_schedule', scheduleId, result);
       return NextResponse.json({ ok: true, result });
+    }
+
+    if (body.action === 'webhook_reprocess') {
+      const processingEventId = String(body.processingEventId || body.processing_event_id || '').trim();
+      const reason = String(body.reason || '').trim();
+      const dryRun = asBoolean(body.dryRun, true);
+      if (!isUuid(processingEventId)) return errorResponse('Evento de entrada invalido.', 400, 'INVALID_WEBHOOK_EVENT_ID');
+      if (reason.length < 10) return errorResponse('Informe um motivo com pelo menos 10 caracteres.', 400, 'REPROCESS_REASON_REQUIRED');
+
+      const result = await invokeDispatcher({
+        mode: 'webhook_reprocess',
+        processing_event_id: processingEventId,
+        requested_by_id: auth.adminId,
+        dry_run: dryRun,
+        reason,
+      });
+      const dispatcherResult = result?.result || result;
+
+      await audit(
+        auth.adminId,
+        dryRun ? 'admin_monitoring.webhook_reprocess.dry_run' : 'admin_monitoring.webhook_reprocess.execute',
+        'evolution_webhook_processing_event',
+        processingEventId,
+        {
+          dryRun,
+          reason,
+          dispatcherResult,
+        },
+      );
+
+      if (!dryRun && dispatcherResult?.ok !== true) {
+        return errorResponse(
+          dispatcherResult?.error || dispatcherResult?.reason || 'Reprocessamento nao aceito pelo dispatcher.',
+          409,
+          'WEBHOOK_REPROCESS_FAILED',
+        );
+      }
+
+      return NextResponse.json({ ok: true, result: dispatcherResult });
     }
 
     return errorResponse('Acao POST desconhecida.');
