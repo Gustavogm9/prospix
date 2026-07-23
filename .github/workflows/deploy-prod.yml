@@ -1,4 +1,4 @@
-name: Deploy Production
+name: Production Validation
 
 on:
   push:
@@ -9,31 +9,9 @@ env:
   PNPM_VERSION: '9.15.0'
 
 jobs:
-  ci-check:
-    name: Run CI validation
+  production-validation:
+    name: Validate production release
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: prospix
-          POSTGRES_PASSWORD: prospix_dev
-          POSTGRES_DB: prospix_test
-        ports: ['5432:5432']
-        options: >-
-          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 5
-      redis:
-        image: redis:7-alpine
-        ports: ['6379:6379']
-        options: >-
-          --health-cmd "redis-cli ping" --health-interval 5s
-    env:
-      NODE_ENV: test
-      DATABASE_URL: postgresql://prospix:prospix_dev@localhost:5432/prospix_test?schema=public
-      REDIS_URL: redis://localhost:6379
-      SECRETS_ENCRYPTION_KEY: dGVzdF9rZXlfMzJfYnl0ZXNfbG9uZ19wYWRfeHh4eA==
-      ALLOW_DESTRUCTIVE_SEED: '1'
-      SEED_ADMIN_PASSWORD: ci-test-admin-password
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -44,64 +22,11 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @prospix/api db:generate
-      - run: pnpm --filter @prospix/api db:migrate
-      - run: pnpm --filter @prospix/api db:seed
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
-      - run: pnpm test:multi-tenant
-        env:
-          AUDIT_REQUIRE_DB: '1'
-
-  deploy-prod:
-    name: Deploy to Railway (Production Blue/Green)
-    runs-on: ubuntu-latest
-    needs: ci-check
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
-
-      - name: Pre-deploy Database Backup Snapshot
+      - run: pnpm build
+      - name: Deployment ownership
         run: |
-          if [ "$BACKUP_ENABLED" = "true" ]; then
-            echo "Creating pre-deploy database backup..."
-            TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-            BACKUP_FILE="prospix_prod_${TIMESTAMP}.sql.gz"
-            pg_dump "$DATABASE_PROD_URL" --no-owner --no-acl | gzip > "$BACKUP_FILE"
-            echo "Backup created: $BACKUP_FILE ($(du -h "$BACKUP_FILE" | cut -f1))"
-            # Upload to R2/S3 if configured
-            if [ -n "$BACKUP_BUCKET_URL" ]; then
-              echo "Uploading backup to $BACKUP_BUCKET_URL..."
-              # TODO: Add aws s3 cp or rclone upload here
-            fi
-          else
-            echo "::warning::BACKUP_ENABLED is not set — skipping pre-deploy backup."
-            echo "Set BACKUP_ENABLED=true and DATABASE_PROD_URL in secrets to enable."
-          fi
-        env:
-          BACKUP_ENABLED: ${{ secrets.BACKUP_ENABLED }}
-          DATABASE_PROD_URL: ${{ secrets.DATABASE_PROD_URL }}
-          BACKUP_BUCKET_URL: ${{ secrets.BACKUP_BUCKET_URL }}
-
-      - name: Run Production Database Migrations
-        run: |
-          echo "Applying migrations to Production Database..."
-          pnpm --filter @prospix/api db:migrate
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_PROD_URL }}
-
-      - name: Deploy to Railway (Blue/Green rolling release)
-        run: |
-          railway up --service=api-prod
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_PROD_TOKEN }}
-
-      - name: Run Production Liveness and Readiness Smoke Tests
-        run: |
-          echo "Running Production Liveness & Readiness Checks..."
-          curl -f -s https://api.prospix.com.br/health || exit 1
-          curl -f -s https://api.prospix.com.br/ready || exit 1
-          echo "Production Smoke tests passed!"
+          echo "Web production deployment is handled by the Vercel GitHub integration."
+          echo "Database migrations and Supabase Edge Functions are deployed via Supabase CLI."

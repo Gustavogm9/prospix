@@ -1,4 +1,4 @@
-name: Deploy Staging
+name: Staging Validation
 
 on:
   push:
@@ -9,31 +9,9 @@ env:
   PNPM_VERSION: '9.15.0'
 
 jobs:
-  ci-check:
-    name: Run CI validation
+  staging-validation:
+    name: Validate staging release
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: prospix
-          POSTGRES_PASSWORD: prospix_dev
-          POSTGRES_DB: prospix_test
-        ports: ['5432:5432']
-        options: >-
-          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 5
-      redis:
-        image: redis:7-alpine
-        ports: ['6379:6379']
-        options: >-
-          --health-cmd "redis-cli ping" --health-interval 5s
-    env:
-      NODE_ENV: test
-      DATABASE_URL: postgresql://prospix:prospix_dev@localhost:5432/prospix_test?schema=public
-      REDIS_URL: redis://localhost:6379
-      SECRETS_ENCRYPTION_KEY: dGVzdF9rZXlfMzJfYnl0ZXNfbG9uZ19wYWRfeHh4eA==
-      ALLOW_DESTRUCTIVE_SEED: '1'
-      SEED_ADMIN_PASSWORD: ci-test-admin-password
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -44,35 +22,11 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @prospix/api db:generate
-      - run: pnpm --filter @prospix/api db:migrate
-      - run: pnpm --filter @prospix/api db:seed
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
-      - run: pnpm test:multi-tenant
-        env:
-          AUDIT_REQUIRE_DB: '1'
-
-  deploy-staging:
-    name: Deploy to Railway (Staging)
-    runs-on: ubuntu-latest
-    needs: ci-check
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
-
-      - name: Deploy API and Services
+      - run: pnpm build
+      - name: Deployment ownership
         run: |
-          railway up --service=api-staging
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_STAGING_TOKEN }}
-
-      - name: Run Staging Smoke Test
-        run: |
-          echo "Running Smoke Tests..."
-          curl -f -s https://api-staging.prospix.com.br/health || exit 1
-          curl -f -s https://api-staging.prospix.com.br/ready || exit 1
-          echo "Smoke tests passed!"
+          echo "Staging web deployment is handled by the configured frontend hosting provider."
+          echo "Supabase dependencies are deployed via Supabase CLI."

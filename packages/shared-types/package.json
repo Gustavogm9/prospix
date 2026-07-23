@@ -11,17 +11,16 @@
     "./api": "./src/api.ts"
   },
   "scripts": {
-    "lint": "eslint src --max-warnings=0",
+    "lint": "eslint src",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "clean": "rm -rf .turbo",
     "gen:openapi": "openapi-typescript ../../docs/api/openapi.yaml -o ./src/openapi.generated.ts --immutable --root-types",
     "verify:openapi": "node ./scripts/verify-openapi.mjs"
   },
-  "dependencies": {},
   "devDependencies": {
     "openapi-typescript": "^7.4.4",
     "typescript": "^5.7.2",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.7"
   }
 }

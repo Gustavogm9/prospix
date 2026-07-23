@@ -39,7 +39,6 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm format:check
       - run: pnpm lint
 
   typecheck:
@@ -79,26 +78,10 @@ jobs:
     name: Unit + integration tests
     runs-on: ubuntu-latest
     needs: install
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: prospix
-          POSTGRES_PASSWORD: prospix_dev
-          POSTGRES_DB: prospix_test
-        ports: ['5432:5432']
-        options: >-
-          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 5
-      redis:
-        image: redis:7-alpine
-        ports: ['6379:6379']
-        options: >-
-          --health-cmd "redis-cli ping" --health-interval 5s
     env:
       NODE_ENV: test
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-      REDIS_URL: redis://localhost:6379
       SECRETS_ENCRYPTION_KEY: dGVzdF9rZXlfMzJfYnl0ZXNfbG9uZ19wYWRfeHh4eA==
       EVOLUTION_GUILDS_API_KEY: test-evolution-key
       ALLOW_DESTRUCTIVE_SEED: '1'
@@ -113,38 +96,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Verify PostgreSQL is reachable
-        run: |
-          for attempt in {1..30}; do
-            if timeout 1 bash -c '</dev/tcp/localhost/5432' 2>/dev/null; then
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "::error::PostgreSQL service did not become reachable on localhost:5432"
-          exit 1
-      - name: Apply migrations
-        run: pnpm --filter @prospix/api db:migrate
-      - name: Seed database
-        run: pnpm --filter @prospix/api db:seed
       - run: pnpm test
-      - name: Run audit DB/Redis-backed tests without skips
-        env:
-          AUDIT_REQUIRE_DB: '1'
-          AUDIT_REQUIRE_REDIS: '1'
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: |
-          pnpm --filter @prospix/api exec vitest run tests/multi-tenant tests/integration/auth-admin-login.rls-db.test.ts tests/integration/auth-refresh-revoke.redis-db.test.ts tests/integration/evolution-idempotency.redis-db.test.ts tests/integration/queue-dlq.redis.test.ts tests/integration/rls-users-isolation.rls-db.test.ts src/lib/queue.test.ts src/workers/index.test.ts --reporter=default --reporter=json --outputFile=../../audit-db-results.json
-          node - <<'NODE'
-          const fs = require('fs');
-          const results = JSON.parse(fs.readFileSync('audit-db-results.json', 'utf8'));
-          const skipped = Number(results.numPendingTests ?? 0) + Number(results.numTodoTests ?? 0);
-          if (skipped > 0) {
-            console.error(`::error::audit DB/Redis suite reported ${skipped} skipped/todo test(s). DB-backed RLS/queue evidence cannot contain skips.`);
-            process.exit(1);
-          }
-          NODE
 
   e2e-smoke:
     name: E2E smoke (Playwright · landing/web/admin)

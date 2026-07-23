@@ -2,7 +2,7 @@ import {
   buildAdminAiActivityAlertMessage,
   buildAdminDisconnectAlertMessage,
   buildAdminRecoveryStructuralAlertMessage,
-} from "./admin-message-formatters.ts";
+} from './admin-message-formatters.ts';
 
 type SupabaseLike = any;
 
@@ -92,37 +92,39 @@ type RecoveryStructuralAlertParams = {
   source: string;
 };
 
-const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
-const DEFAULT_EVOLUTION_BASE_URL = "https://evolution-evolution-api.qr4jgl.easypanel.host";
+const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
+const DEFAULT_EVOLUTION_BASE_URL = 'https://evolution-evolution-api.qr4jgl.easypanel.host';
 
 function uuid(): string {
   return crypto.randomUUID();
 }
 
 function cleanText(value: unknown, max = 600): string {
-  return String(value ?? "")
-    .replace(/\s+/g, " ")
+  return String(value ?? '')
+    .replace(/\s+/g, ' ')
     .trim()
     .slice(0, max);
 }
 
 function normalizeWhatsAppNumber(value: string): string {
-  return String(value || "").replace(/\D/g, "");
+  return String(value || '').replace(/\D/g, '');
 }
 
 function normalizeBaseUrl(value: string | null | undefined): string {
-  return String(value || "").replace(/\/+$/, "");
+  return String(value || '').replace(/\/+$/, '');
 }
 
 function getAdminMonitoringApiKey(): string {
-  return Deno.env.get("ADMIN_REPORT_EVOLUTION_API_KEY") || Deno.env.get("EVOLUTION_GUILDS_API_KEY") || "";
+  return (
+    Deno.env.get('ADMIN_REPORT_EVOLUTION_API_KEY') || Deno.env.get('EVOLUTION_GUILDS_API_KEY') || ''
+  );
 }
 
 function getDefaultAdminBaseUrl(): string {
   return normalizeBaseUrl(
-    Deno.env.get("ADMIN_REPORT_EVOLUTION_BASE_URL")
-      || Deno.env.get("EVOLUTION_BASE_URL")
-      || DEFAULT_EVOLUTION_BASE_URL,
+    Deno.env.get('ADMIN_REPORT_EVOLUTION_BASE_URL') ||
+      Deno.env.get('EVOLUTION_BASE_URL') ||
+      DEFAULT_EVOLUTION_BASE_URL,
   );
 }
 
@@ -132,28 +134,30 @@ async function loadActiveAdminMonitoringChannel(
   if (!supabase) return null;
 
   const { data, error } = await supabase
-    .from("admin_monitoring_channels")
-    .select([
-      "id",
-      "label",
-      "evolution_base_url",
-      "evolution_instance_name",
-      "active",
-      "connection_status",
-      "external_state",
-      "last_qr_requested_at",
-      "connected_at",
-      "disconnected_at",
-      "last_checked_at",
-      "last_error",
-    ].join(", "))
-    .eq("active", true)
-    .order("created_at", { ascending: false })
+    .from('admin_monitoring_channels')
+    .select(
+      [
+        'id',
+        'label',
+        'evolution_base_url',
+        'evolution_instance_name',
+        'active',
+        'connection_status',
+        'external_state',
+        'last_qr_requested_at',
+        'connected_at',
+        'disconnected_at',
+        'last_checked_at',
+        'last_error',
+      ].join(', '),
+    )
+    .eq('active', true)
+    .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
 
   if (error) {
-    console.warn("[admin-monitoring] failed to load admin channel", error);
+    console.warn('[admin-monitoring] failed to load admin channel', error);
     return null;
   }
 
@@ -170,11 +174,11 @@ async function getAdminChannel(supabase?: SupabaseLike): Promise<AdminChannel> {
       channelId: row.id,
       label: row.label,
       baseUrl,
-      instanceName: row.evolution_instance_name || "",
+      instanceName: row.evolution_instance_name || '',
       apiKey,
       configured: Boolean(baseUrl && row.evolution_instance_name && apiKey),
-      source: "admin_monitoring_channels",
-      connectionStatus: row.connection_status || "UNKNOWN",
+      source: 'admin_monitoring_channels',
+      connectionStatus: row.connection_status || 'UNKNOWN',
       externalState: row.external_state || null,
       lastQrRequestedAt: row.last_qr_requested_at || null,
       connectedAt: row.connected_at || null,
@@ -188,10 +192,10 @@ async function getAdminChannel(supabase?: SupabaseLike): Promise<AdminChannel> {
     channelId: null,
     label: null,
     baseUrl: getDefaultAdminBaseUrl(),
-    instanceName: "",
+    instanceName: '',
     apiKey,
     configured: false,
-    source: "NO_ACTIVE_ADMIN_MONITORING_CHANNEL",
+    source: 'NO_ACTIVE_ADMIN_MONITORING_CHANNEL',
     connectionStatus: null,
     externalState: null,
     lastQrRequestedAt: null,
@@ -206,7 +210,7 @@ export async function getAdminMonitoringChannelStatus(supabase?: SupabaseLike) {
   const channel = await getAdminChannel(supabase);
   return {
     configured: channel.configured,
-    connected: channel.connectionStatus === "CONNECTED",
+    connected: channel.connectionStatus === 'CONNECTED',
     channelId: channel.channelId,
     label: channel.label,
     source: channel.source,
@@ -220,7 +224,7 @@ export async function getAdminMonitoringChannelStatus(supabase?: SupabaseLike) {
     disconnectedAt: channel.disconnectedAt,
     lastCheckedAt: channel.lastCheckedAt,
     lastError: channel.lastError,
-    reason: channel.channelId ? null : "NO_ACTIVE_ADMIN_MONITORING_CHANNEL",
+    reason: channel.channelId ? null : 'NO_ACTIVE_ADMIN_MONITORING_CHANNEL',
   };
 }
 
@@ -236,8 +240,8 @@ export async function sendAdminMonitoringWhatsApp(
       channelId: channel.channelId,
       channelInstanceName: channel.instanceName || null,
       error: channel.channelId
-        ? "ADMIN_MONITORING_CHANNEL_INCOMPLETE"
-        : "ADMIN_MONITORING_CHANNEL_NOT_CONNECTED",
+        ? 'ADMIN_MONITORING_CHANNEL_INCOMPLETE'
+        : 'ADMIN_MONITORING_CHANNEL_NOT_CONNECTED',
     };
   }
 
@@ -247,15 +251,15 @@ export async function sendAdminMonitoringWhatsApp(
       ok: false,
       channelId: channel.channelId,
       channelInstanceName: channel.instanceName || null,
-      error: "INVALID_RECIPIENT_WHATSAPP",
+      error: 'INVALID_RECIPIENT_WHATSAPP',
     };
   }
 
   try {
     const response = await fetch(`${channel.baseUrl}/message/sendText/${channel.instanceName}`, {
-      method: "POST",
+      method: 'POST',
       headers: {
-        "Content-Type": "application/json",
+        'Content-Type': 'application/json',
         apikey: channel.apiKey,
       },
       body: JSON.stringify({
@@ -304,21 +308,21 @@ export async function summarizeWithExistingAI(params: {
   fallback: string;
   maxTokens?: number;
 }): Promise<string> {
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
+  const apiKey = Deno.env.get('OPENAI_API_KEY');
   if (!apiKey) return params.fallback;
 
   try {
     const response = await fetch(OPENAI_URL, {
-      method: "POST",
+      method: 'POST',
       headers: {
-        "Content-Type": "application/json",
+        'Content-Type': 'application/json',
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: Deno.env.get("ADMIN_MONITORING_OPENAI_MODEL") || "gpt-4o-mini",
+        model: Deno.env.get('ADMIN_MONITORING_OPENAI_MODEL') || 'gpt-4o-mini',
         messages: [
-          { role: "system", content: params.systemPrompt },
-          { role: "user", content: params.userPrompt },
+          { role: 'system', content: params.systemPrompt },
+          { role: 'user', content: params.userPrompt },
         ],
         temperature: 0.1,
         max_tokens: params.maxTokens || 220,
@@ -336,14 +340,14 @@ export async function summarizeWithExistingAI(params: {
 
 async function loadRecipients(supabase: SupabaseLike): Promise<Recipient[]> {
   const { data, error } = await supabase
-    .from("admin_monitoring_recipients")
-    .select("id, label, whatsapp")
-    .eq("active", true)
-    .eq("disconnect_alerts_enabled", true)
-    .order("created_at", { ascending: true });
+    .from('admin_monitoring_recipients')
+    .select('id, label, whatsapp')
+    .eq('active', true)
+    .eq('disconnect_alerts_enabled', true)
+    .order('created_at', { ascending: true });
 
   if (error) {
-    console.warn("[admin-monitoring] failed to load recipients", error);
+    console.warn('[admin-monitoring] failed to load recipients', error);
     return [];
   }
 
@@ -352,35 +356,41 @@ async function loadRecipients(supabase: SupabaseLike): Promise<Recipient[]> {
 
 async function loadTenant(supabase: SupabaseLike, tenantId: string) {
   const { data } = await supabase
-    .from("tenants")
-    .select("id, name, slug")
-    .eq("id", tenantId)
+    .from('tenants')
+    .select('id, name, slug')
+    .eq('id', tenantId)
     .maybeSingle();
   return data || { id: tenantId, name: tenantId, slug: null };
 }
 
-async function createOrLoadAiActivityOperationalAlert(params: AiActivityAlertParams, incidentKey: string) {
-  const tenantId = String(params.activity.tenant_id || "");
+async function createOrLoadAiActivityOperationalAlert(
+  params: AiActivityAlertParams,
+  incidentKey: string,
+) {
+  const tenantId = String(params.activity.tenant_id || '');
   if (!tenantId) return null;
 
   const { data: existing } = await params.supabase
-    .from("operational_alerts")
-    .select("id")
-    .eq("dedup_key", incidentKey)
+    .from('operational_alerts')
+    .select('id')
+    .eq('dedup_key', incidentKey)
     .maybeSingle();
 
   if (existing?.id) return existing.id;
 
   const alertId = uuid();
-  const state = String(params.activity.state || "STALLED").toUpperCase();
-  const severity = state === "BLOCKED" ? "CRITICAL" : "ATTENTION";
-  const { error } = await params.supabase.from("operational_alerts").insert({
+  const state = String(params.activity.state || 'STALLED').toUpperCase();
+  const severity = state === 'BLOCKED' ? 'CRITICAL' : 'ATTENTION';
+  const { error } = await params.supabase.from('operational_alerts').insert({
     id: alertId,
-    type: "ai_activity_monitor",
+    type: 'ai_activity_monitor',
     severity,
     tenant_id: tenantId,
-    title: state === "BLOCKED" ? "IA bloqueada operacionalmente" : "IA com atividade atrasada",
-    message: cleanText(params.activity.summary || "Monitor de atividade detectou atraso operacional da IA.", 500),
+    title: state === 'BLOCKED' ? 'IA bloqueada operacionalmente' : 'IA com atividade atrasada',
+    message: cleanText(
+      params.activity.summary || 'Monitor de atividade detectou atraso operacional da IA.',
+      500,
+    ),
     context: {
       source: params.source,
       activity: params.activity,
@@ -391,7 +401,7 @@ async function createOrLoadAiActivityOperationalAlert(params: AiActivityAlertPar
   });
 
   if (error) {
-    console.warn("[admin-monitoring] failed to create AI activity operational_alert", error);
+    console.warn('[admin-monitoring] failed to create AI activity operational_alert', error);
     return null;
   }
 
@@ -403,21 +413,24 @@ async function createOrLoadRecoveryStructuralOperationalAlert(
   incidentKey: string,
 ) {
   const { data: existing } = await params.supabase
-    .from("operational_alerts")
-    .select("id")
-    .eq("dedup_key", incidentKey)
+    .from('operational_alerts')
+    .select('id')
+    .eq('dedup_key', incidentKey)
     .maybeSingle();
 
   if (existing?.id) return existing.id;
 
   const alertId = uuid();
-  const { error } = await params.supabase.from("operational_alerts").insert({
+  const { error } = await params.supabase.from('operational_alerts').insert({
     id: alertId,
-    type: "ai_recovery_structural_block",
-    severity: "CRITICAL",
+    type: 'ai_recovery_structural_block',
+    severity: 'CRITICAL',
     tenant_id: params.tenantId,
-    title: "RECOVERY bloqueado por erro estrutural",
-    message: cleanText(params.structuralReason || "RECOVERY bloqueado por dependencia estrutural indisponivel.", 500),
+    title: 'RECOVERY bloqueado por erro estrutural',
+    message: cleanText(
+      params.structuralReason || 'RECOVERY bloqueado por dependencia estrutural indisponivel.',
+      500,
+    ),
     context: {
       source: params.source,
       reason_code: params.reasonCode,
@@ -431,7 +444,10 @@ async function createOrLoadRecoveryStructuralOperationalAlert(
   });
 
   if (error) {
-    console.warn("[admin-monitoring] failed to create RECOVERY structural operational_alert", error);
+    console.warn(
+      '[admin-monitoring] failed to create RECOVERY structural operational_alert',
+      error,
+    );
     return null;
   }
 
@@ -441,9 +457,9 @@ async function createOrLoadRecoveryStructuralOperationalAlert(
 async function loadConnectionEvent(supabase: SupabaseLike, eventId?: string | null) {
   if (!eventId) return null;
   const { data } = await supabase
-    .from("whatsapp_connection_events")
-    .select("*")
-    .eq("id", eventId)
+    .from('whatsapp_connection_events')
+    .select('*')
+    .eq('id', eventId)
     .maybeSingle();
   return data || null;
 }
@@ -453,23 +469,25 @@ async function loadRecentMessages(supabase: SupabaseLike, tenantId: string, refe
   const since = new Date(ref.getTime() - 5 * 60 * 60 * 1000).toISOString();
 
   const { data: messages } = await supabase
-    .from("messages")
-    .select("id, conversation_id, direction, sender, content, delivery_status, created_at")
-    .eq("tenant_id", tenantId)
-    .gte("created_at", since)
-    .lte("created_at", referenceAt)
-    .order("created_at", { ascending: false })
+    .from('messages')
+    .select('id, conversation_id, direction, sender, content, delivery_status, created_at')
+    .eq('tenant_id', tenantId)
+    .gte('created_at', since)
+    .lte('created_at', referenceAt)
+    .order('created_at', { ascending: false })
     .limit(12);
 
   const rows = messages || [];
-  const conversationIds = Array.from(new Set(rows.map((m: any) => m.conversation_id).filter(Boolean)));
+  const conversationIds = Array.from(
+    new Set(rows.map((m: any) => m.conversation_id).filter(Boolean)),
+  );
   const conversationLead = new Map<string, string>();
 
   if (conversationIds.length > 0) {
     const { data: conversations } = await supabase
-      .from("conversations")
-      .select("id, lead_id")
-      .in("id", conversationIds);
+      .from('conversations')
+      .select('id, lead_id')
+      .in('id', conversationIds);
     for (const row of conversations || []) {
       if (row.id && row.lead_id) conversationLead.set(row.id, row.lead_id);
     }
@@ -480,16 +498,16 @@ async function loadRecentMessages(supabase: SupabaseLike, tenantId: string, refe
 
   if (leadIds.length > 0) {
     const { data: leadRows } = await supabase
-      .from("leads")
-      .select("id, name, whatsapp")
-      .in("id", leadIds);
+      .from('leads')
+      .select('id, name, whatsapp')
+      .in('id', leadIds);
     for (const lead of leadRows || []) {
       leads.set(lead.id, lead);
     }
   }
 
   return rows.reverse().map((message: any) => {
-    const lead = leads.get(conversationLead.get(message.conversation_id) || "");
+    const lead = leads.get(conversationLead.get(message.conversation_id) || '');
     return {
       created_at: message.created_at,
       direction: message.direction,
@@ -502,59 +520,68 @@ async function loadRecentMessages(supabase: SupabaseLike, tenantId: string, refe
   });
 }
 
-async function loadRecentOutboundMessages(supabase: SupabaseLike, tenantId: string, referenceAt: string) {
+async function loadRecentOutboundMessages(
+  supabase: SupabaseLike,
+  tenantId: string,
+  referenceAt: string,
+) {
   const messages = await loadRecentMessages(supabase, tenantId, referenceAt);
-  return messages.filter((message: any) => String(message.direction || "").toUpperCase() === "OUTBOUND");
+  return messages.filter(
+    (message: any) => String(message.direction || '').toUpperCase() === 'OUTBOUND',
+  );
 }
 
 async function loadQueueImpact(supabase: SupabaseLike, tenantId: string, referenceAt: string) {
-  const baseQuery = () => supabase
-    .from("pending_outbound")
-    .select("id", { count: "exact", head: true })
-    .eq("tenant_id", tenantId)
-    .is("sent_at", null)
-    .is("failed_at", null);
+  const baseQuery = () =>
+    supabase
+      .from('pending_outbound')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId)
+      .is('sent_at', null)
+      .is('failed_at', null);
 
   const { count: activePending } = await baseQuery();
-  const { count: duePending } = await baseQuery().lte("scheduled_for", referenceAt);
+  const { count: duePending } = await baseQuery().lte('scheduled_for', referenceAt);
 
   const { data: oldestDueRows } = await supabase
-    .from("pending_outbound")
-    .select("scheduled_for")
-    .eq("tenant_id", tenantId)
-    .is("sent_at", null)
-    .is("failed_at", null)
-    .lte("scheduled_for", referenceAt)
-    .order("scheduled_for", { ascending: true })
+    .from('pending_outbound')
+    .select('scheduled_for')
+    .eq('tenant_id', tenantId)
+    .is('sent_at', null)
+    .is('failed_at', null)
+    .lte('scheduled_for', referenceAt)
+    .order('scheduled_for', { ascending: true })
     .limit(1);
 
   const { data: nextRows } = await supabase
-    .from("pending_outbound")
-    .select("scheduled_for")
-    .eq("tenant_id", tenantId)
-    .is("sent_at", null)
-    .is("failed_at", null)
-    .order("scheduled_for", { ascending: true })
+    .from('pending_outbound')
+    .select('scheduled_for')
+    .eq('tenant_id', tenantId)
+    .is('sent_at', null)
+    .is('failed_at', null)
+    .order('scheduled_for', { ascending: true })
     .limit(1);
 
   const { data: queueRows } = await supabase
-    .from("pending_outbound")
-    .select("id, conversation_id, message_type, scheduled_for, attempts")
-    .eq("tenant_id", tenantId)
-    .is("sent_at", null)
-    .is("failed_at", null)
-    .order("scheduled_for", { ascending: true })
+    .from('pending_outbound')
+    .select('id, conversation_id, message_type, scheduled_for, attempts')
+    .eq('tenant_id', tenantId)
+    .is('sent_at', null)
+    .is('failed_at', null)
+    .order('scheduled_for', { ascending: true })
     .limit(5);
 
   const rows = queueRows || [];
-  const conversationIds = Array.from(new Set(rows.map((row: any) => row.conversation_id).filter(Boolean)));
+  const conversationIds = Array.from(
+    new Set(rows.map((row: any) => row.conversation_id).filter(Boolean)),
+  );
   const conversationLead = new Map<string, string>();
 
   if (conversationIds.length > 0) {
     const { data: conversations } = await supabase
-      .from("conversations")
-      .select("id, lead_id")
-      .in("id", conversationIds);
+      .from('conversations')
+      .select('id, lead_id')
+      .in('id', conversationIds);
     for (const row of conversations || []) {
       if (row.id && row.lead_id) conversationLead.set(row.id, row.lead_id);
     }
@@ -565,9 +592,9 @@ async function loadQueueImpact(supabase: SupabaseLike, tenantId: string, referen
 
   if (leadIds.length > 0) {
     const { data: leadRows } = await supabase
-      .from("leads")
-      .select("id, name, whatsapp")
-      .in("id", leadIds);
+      .from('leads')
+      .select('id, name, whatsapp')
+      .in('id', leadIds);
     for (const lead of leadRows || []) {
       leads.set(lead.id, lead);
     }
@@ -579,7 +606,7 @@ async function loadQueueImpact(supabase: SupabaseLike, tenantId: string, referen
     oldestDueAt: oldestDueRows?.[0]?.scheduled_for || null,
     nextScheduledFor: nextRows?.[0]?.scheduled_for || null,
     sample: rows.map((row: any) => {
-      const lead = leads.get(conversationLead.get(row.conversation_id) || "");
+      const lead = leads.get(conversationLead.get(row.conversation_id) || '');
       return {
         scheduled_for: row.scheduled_for,
         message_type: row.message_type,
@@ -591,18 +618,24 @@ async function loadQueueImpact(supabase: SupabaseLike, tenantId: string, referen
   };
 }
 
-async function loadRecentConnectionLogs(supabase: SupabaseLike, tenantId: string, referenceAt: string) {
+async function loadRecentConnectionLogs(
+  supabase: SupabaseLike,
+  tenantId: string,
+  referenceAt: string,
+) {
   const ref = new Date(referenceAt);
   const since = new Date(ref.getTime() - 10 * 60 * 1000).toISOString();
   const until = new Date(ref.getTime() + 60 * 1000).toISOString();
 
   const { data } = await supabase
-    .from("whatsapp_connection_events")
-    .select("created_at, event_type, external_state, reason_code, raw_error_redacted, local_status_before, local_status_after, pending_due_count")
-    .eq("tenant_id", tenantId)
-    .gte("created_at", since)
-    .lte("created_at", until)
-    .order("created_at", { ascending: true })
+    .from('whatsapp_connection_events')
+    .select(
+      'created_at, event_type, external_state, reason_code, raw_error_redacted, local_status_before, local_status_after, pending_due_count',
+    )
+    .eq('tenant_id', tenantId)
+    .gte('created_at', since)
+    .lte('created_at', until)
+    .order('created_at', { ascending: true })
     .limit(12);
 
   return data || [];
@@ -635,7 +668,7 @@ async function buildDisconnectMessage(params: {
 export async function dispatchAdminDisconnectAlert(params: DisconnectAlertParams) {
   const recipients = await loadRecipients(params.supabase);
   if (recipients.length === 0) {
-    return { sent: 0, failed: 0, skipped: 0, reason: "NO_ACTIVE_RECIPIENTS" };
+    return { sent: 0, failed: 0, skipped: 0, reason: 'NO_ACTIVE_RECIPIENTS' };
   }
 
   const event = await loadConnectionEvent(params.supabase, params.connectionEventId);
@@ -666,13 +699,13 @@ export async function dispatchAdminDisconnectAlert(params: DisconnectAlertParams
 
   for (const recipient of recipients) {
     const { data: existing } = await params.supabase
-      .from("admin_disconnect_alert_deliveries")
-      .select("id, status")
-      .eq("incident_key", incidentKey)
-      .eq("recipient_id", recipient.id)
+      .from('admin_disconnect_alert_deliveries')
+      .select('id, status')
+      .eq('incident_key', incidentKey)
+      .eq('recipient_id', recipient.id)
       .maybeSingle();
 
-    if (existing?.status === "SENT") {
+    if (existing?.status === 'SENT') {
       skipped++;
       continue;
     }
@@ -680,7 +713,7 @@ export async function dispatchAdminDisconnectAlert(params: DisconnectAlertParams
     const deliveryId = existing?.id || uuid();
     if (!existing?.id) {
       const { error: insertError } = await params.supabase
-        .from("admin_disconnect_alert_deliveries")
+        .from('admin_disconnect_alert_deliveries')
         .insert({
           id: deliveryId,
           connection_event_id: params.connectionEventId || null,
@@ -688,7 +721,7 @@ export async function dispatchAdminDisconnectAlert(params: DisconnectAlertParams
           tenant_id: params.tenantId,
           recipient_id: recipient.id,
           incident_key: incidentKey,
-          status: "PENDING",
+          status: 'PENDING',
           reason_code: params.reasonCode,
           external_state: params.externalState ?? event?.external_state ?? null,
           ai_summary: built.summary,
@@ -701,19 +734,23 @@ export async function dispatchAdminDisconnectAlert(params: DisconnectAlertParams
       }
     }
 
-    const result = await sendAdminMonitoringWhatsApp(recipient.whatsapp, built.body, params.supabase);
+    const result = await sendAdminMonitoringWhatsApp(
+      recipient.whatsapp,
+      built.body,
+      params.supabase,
+    );
     await params.supabase
-      .from("admin_disconnect_alert_deliveries")
+      .from('admin_disconnect_alert_deliveries')
       .update({
         channel_id: result.channelId || null,
-        status: result.ok ? "SENT" : "FAILED",
+        status: result.ok ? 'SENT' : 'FAILED',
         sent_at: result.ok ? new Date().toISOString() : null,
         whatsapp_message_id: result.whatsappMessageId || null,
         error: result.error || null,
         ai_summary: built.summary,
         message_body: built.body,
       })
-      .eq("id", deliveryId);
+      .eq('id', deliveryId);
 
     if (result.ok) sent++;
     else failed++;
@@ -723,14 +760,14 @@ export async function dispatchAdminDisconnectAlert(params: DisconnectAlertParams
 }
 
 export async function dispatchAdminRecoveryStructuralAlert(params: RecoveryStructuralAlertParams) {
-  const tenantId = String(params.tenantId || "");
+  const tenantId = String(params.tenantId || '');
   if (!tenantId || !params.reasonCode) {
-    return { sent: 0, failed: 0, skipped: 0, reason: "NOT_ACTIONABLE" };
+    return { sent: 0, failed: 0, skipped: 0, reason: 'NOT_ACTIONABLE' };
   }
 
   const recipients = await loadRecipients(params.supabase);
   if (recipients.length === 0) {
-    return { sent: 0, failed: 0, skipped: 0, reason: "NO_ACTIVE_RECIPIENTS" };
+    return { sent: 0, failed: 0, skipped: 0, reason: 'NO_ACTIVE_RECIPIENTS' };
   }
 
   const now = new Date();
@@ -739,8 +776,15 @@ export async function dispatchAdminRecoveryStructuralAlert(params: RecoveryStruc
   const incidentKey = `recovery_structural:${tenantId}:${params.reasonCode}:${alertBucket}`;
   const tenant = await loadTenant(params.supabase, tenantId);
   const queueImpact = await loadQueueImpact(params.supabase, tenantId, referenceAt);
-  const recentOutboundMessages = await loadRecentOutboundMessages(params.supabase, tenantId, referenceAt);
-  const operationalAlertId = await createOrLoadRecoveryStructuralOperationalAlert(params, incidentKey);
+  const recentOutboundMessages = await loadRecentOutboundMessages(
+    params.supabase,
+    tenantId,
+    referenceAt,
+  );
+  const operationalAlertId = await createOrLoadRecoveryStructuralOperationalAlert(
+    params,
+    incidentKey,
+  );
   const built = buildAdminRecoveryStructuralAlertMessage({
     tenant,
     reasonCode: params.reasonCode,
@@ -759,13 +803,13 @@ export async function dispatchAdminRecoveryStructuralAlert(params: RecoveryStruc
 
   for (const recipient of recipients) {
     const { data: existing } = await params.supabase
-      .from("admin_ai_activity_alert_deliveries")
-      .select("id, status")
-      .eq("incident_key", incidentKey)
-      .eq("recipient_id", recipient.id)
+      .from('admin_ai_activity_alert_deliveries')
+      .select('id, status')
+      .eq('incident_key', incidentKey)
+      .eq('recipient_id', recipient.id)
       .maybeSingle();
 
-    if (existing?.status === "SENT") {
+    if (existing?.status === 'SENT') {
       skipped++;
       continue;
     }
@@ -773,40 +817,47 @@ export async function dispatchAdminRecoveryStructuralAlert(params: RecoveryStruc
     const deliveryId = existing?.id || uuid();
     if (!existing?.id) {
       const { error: insertError } = await params.supabase
-        .from("admin_ai_activity_alert_deliveries")
+        .from('admin_ai_activity_alert_deliveries')
         .insert({
           id: deliveryId,
           operational_alert_id: operationalAlertId,
           tenant_id: tenantId,
           recipient_id: recipient.id,
           incident_key: incidentKey,
-          status: "PENDING",
-          activity_state: "BLOCKED",
-          severity: "CRITICAL",
+          status: 'PENDING',
+          activity_state: 'BLOCKED',
+          severity: 'CRITICAL',
           ai_summary: built.summary,
           message_body: built.body,
         });
 
       if (insertError) {
-        console.warn("[admin-monitoring] failed to insert RECOVERY structural alert delivery", insertError);
+        console.warn(
+          '[admin-monitoring] failed to insert RECOVERY structural alert delivery',
+          insertError,
+        );
         failed++;
         continue;
       }
     }
 
-    const result = await sendAdminMonitoringWhatsApp(recipient.whatsapp, built.body, params.supabase);
+    const result = await sendAdminMonitoringWhatsApp(
+      recipient.whatsapp,
+      built.body,
+      params.supabase,
+    );
     await params.supabase
-      .from("admin_ai_activity_alert_deliveries")
+      .from('admin_ai_activity_alert_deliveries')
       .update({
         channel_id: result.channelId || null,
-        status: result.ok ? "SENT" : "FAILED",
+        status: result.ok ? 'SENT' : 'FAILED',
         sent_at: result.ok ? new Date().toISOString() : null,
         whatsapp_message_id: result.whatsappMessageId || null,
         error: result.error || null,
         ai_summary: built.summary,
         message_body: built.body,
       })
-      .eq("id", deliveryId);
+      .eq('id', deliveryId);
 
     if (result.ok) sent++;
     else failed++;
@@ -816,15 +867,15 @@ export async function dispatchAdminRecoveryStructuralAlert(params: RecoveryStruc
 }
 
 export async function dispatchAdminAiActivityAlert(params: AiActivityAlertParams) {
-  const state = String(params.activity.state || "").toUpperCase();
-  const tenantId = String(params.activity.tenant_id || "");
-  if (!tenantId || !["BLOCKED", "STALLED"].includes(state)) {
-    return { sent: 0, failed: 0, skipped: 0, reason: "NOT_ACTIONABLE" };
+  const state = String(params.activity.state || '').toUpperCase();
+  const tenantId = String(params.activity.tenant_id || '');
+  if (!tenantId || !['BLOCKED', 'STALLED'].includes(state)) {
+    return { sent: 0, failed: 0, skipped: 0, reason: 'NOT_ACTIONABLE' };
   }
 
   const recipients = await loadRecipients(params.supabase);
   if (recipients.length === 0) {
-    return { sent: 0, failed: 0, skipped: 0, reason: "NO_ACTIVE_RECIPIENTS" };
+    return { sent: 0, failed: 0, skipped: 0, reason: 'NO_ACTIVE_RECIPIENTS' };
   }
 
   const now = new Date();
@@ -845,13 +896,13 @@ export async function dispatchAdminAiActivityAlert(params: AiActivityAlertParams
 
   for (const recipient of recipients) {
     const { data: existing } = await params.supabase
-      .from("admin_ai_activity_alert_deliveries")
-      .select("id, status")
-      .eq("incident_key", incidentKey)
-      .eq("recipient_id", recipient.id)
+      .from('admin_ai_activity_alert_deliveries')
+      .select('id, status')
+      .eq('incident_key', incidentKey)
+      .eq('recipient_id', recipient.id)
       .maybeSingle();
 
-    if (existing?.status === "SENT") {
+    if (existing?.status === 'SENT') {
       skipped++;
       continue;
     }
@@ -859,40 +910,44 @@ export async function dispatchAdminAiActivityAlert(params: AiActivityAlertParams
     const deliveryId = existing?.id || uuid();
     if (!existing?.id) {
       const { error: insertError } = await params.supabase
-        .from("admin_ai_activity_alert_deliveries")
+        .from('admin_ai_activity_alert_deliveries')
         .insert({
           id: deliveryId,
           operational_alert_id: operationalAlertId,
           tenant_id: tenantId,
           recipient_id: recipient.id,
           incident_key: incidentKey,
-          status: "PENDING",
+          status: 'PENDING',
           activity_state: state,
-          severity: state === "BLOCKED" ? "CRITICAL" : "ATTENTION",
+          severity: state === 'BLOCKED' ? 'CRITICAL' : 'ATTENTION',
           ai_summary: built.summary,
           message_body: built.body,
         });
 
       if (insertError) {
-        console.warn("[admin-monitoring] failed to insert AI activity alert delivery", insertError);
+        console.warn('[admin-monitoring] failed to insert AI activity alert delivery', insertError);
         failed++;
         continue;
       }
     }
 
-    const result = await sendAdminMonitoringWhatsApp(recipient.whatsapp, built.body, params.supabase);
+    const result = await sendAdminMonitoringWhatsApp(
+      recipient.whatsapp,
+      built.body,
+      params.supabase,
+    );
     await params.supabase
-      .from("admin_ai_activity_alert_deliveries")
+      .from('admin_ai_activity_alert_deliveries')
       .update({
         channel_id: result.channelId || null,
-        status: result.ok ? "SENT" : "FAILED",
+        status: result.ok ? 'SENT' : 'FAILED',
         sent_at: result.ok ? new Date().toISOString() : null,
         whatsapp_message_id: result.whatsappMessageId || null,
         error: result.error || null,
         ai_summary: built.summary,
         message_body: built.body,
       })
-      .eq("id", deliveryId);
+      .eq('id', deliveryId);
 
     if (result.ok) sent++;
     else failed++;

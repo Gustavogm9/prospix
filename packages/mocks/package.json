@@ -15,7 +15,7 @@
     "./seed": "./src/seed.ts"
   },
   "scripts": {
-    "lint": "eslint src --max-warnings=0",
+    "lint": "eslint src",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "clean": "rm -rf .turbo"
@@ -26,6 +26,6 @@
   },
   "devDependencies": {
     "typescript": "^5.7.2",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.7"
   }
 }

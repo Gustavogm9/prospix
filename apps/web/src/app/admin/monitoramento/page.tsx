@@ -1,7 +1,17 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badge, Input, toast } from '@prospix/ui';
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  Button,
+  Badge,
+  Input,
+  toast,
+} from '@prospix/ui';
 import {
   AlertTriangle,
   Bell,
@@ -49,7 +59,12 @@ type Schedule = {
   last_run_at: string | null;
   last_success_at: string | null;
   last_error: string | null;
-  admin_monitoring_recipients?: { id: string; label: string; whatsapp: string; active: boolean } | null;
+  admin_monitoring_recipients?: {
+    id: string;
+    label: string;
+    whatsapp: string;
+    active: boolean;
+  } | null;
 };
 
 type ReportRun = {
@@ -517,7 +532,8 @@ function blockerKindLabel(kind: string | null | undefined): string {
 }
 
 function blockerKindClass(row: WorkerDueQueueDiagnostic): string {
-  if (row.blocksSend && row.blockerKind === 'CONNECTION') return 'bg-red-50 text-red-700 border-red-200';
+  if (row.blocksSend && row.blockerKind === 'CONNECTION')
+    return 'bg-red-50 text-red-700 border-red-200';
   if (row.blocksSend) return 'bg-amber-50 text-amber-800 border-amber-300';
   return 'bg-blue-50 text-blue-700 border-blue-200';
 }
@@ -676,7 +692,8 @@ export default function AdminMonitoringPage() {
         action: 'refresh_channel',
         requestQr,
       });
-      if (!response.data?.ok) throw new Error(response.data?.message || 'Falha ao atualizar canal.');
+      if (!response.data?.ok)
+        throw new Error(response.data?.message || 'Falha ao atualizar canal.');
       if (response.data.qrcode) setChannelQr(response.data.qrcode);
       if (!requestQr && response.data.channel?.connected) setChannelQr(null);
       toast.success(requestQr && response.data.qrcode ? 'QR Code atualizado' : 'Status atualizado');
@@ -696,7 +713,8 @@ export default function AdminMonitoringPage() {
       const response = await adminNextApi.post('/api/admin/monitoring', {
         action: 'disconnect_channel',
       });
-      if (!response.data?.ok) throw new Error(response.data?.message || 'Falha ao desconectar canal.');
+      if (!response.data?.ok)
+        throw new Error(response.data?.message || 'Falha ao desconectar canal.');
       setChannelQr(null);
       toast.success('Canal desconectado');
       await load();
@@ -720,10 +738,17 @@ export default function AdminMonitoringPage() {
         action: 'create_recipient',
         ...recipientForm,
       });
-      if (!response.data?.ok) throw new Error(response.data?.message || 'Falha ao salvar destinatario.');
+      if (!response.data?.ok)
+        throw new Error(response.data?.message || 'Falha ao salvar destinatario.');
       toast.success('Destinatario salvo');
       setCreateRecipientOpen(false);
-      setRecipientForm({ label: '', whatsapp: '', reportEnabled: true, disconnectAlertsEnabled: true, notes: '' });
+      setRecipientForm({
+        label: '',
+        whatsapp: '',
+        reportEnabled: true,
+        disconnectAlertsEnabled: true,
+        notes: '',
+      });
       await load();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Falha ao salvar.';
@@ -747,7 +772,10 @@ export default function AdminMonitoringPage() {
         recipientId: scheduleForm.recipientId,
         intervalMinutes: scheduleForm.intervalMinutes,
         windowMinutes: scheduleForm.windowMinutes,
-        tenantIds: scheduleForm.tenantScope === 'one' && scheduleForm.tenantId ? [scheduleForm.tenantId] : null,
+        tenantIds:
+          scheduleForm.tenantScope === 'one' && scheduleForm.tenantId
+            ? [scheduleForm.tenantId]
+            : null,
         includeNumbers: scheduleForm.includeNumbers,
         includeRecentMessages: scheduleForm.includeRecentMessages,
       });
@@ -773,7 +801,11 @@ export default function AdminMonitoringPage() {
     }
   };
 
-  const patchItem = async (type: 'recipient' | 'schedule', id: string, patch: Record<string, unknown>) => {
+  const patchItem = async (
+    type: 'recipient' | 'schedule',
+    id: string,
+    patch: Record<string, unknown>,
+  ) => {
     setBusyKey(`${type}:${id}`);
     try {
       const response = await adminNextApi.patch('/api/admin/monitoring', { type, id, ...patch });
@@ -845,7 +877,8 @@ export default function AdminMonitoringPage() {
   const reprocessWebhookEvent = async (row: WebhookProcessingFailure, dryRun: boolean) => {
     const reason = dryRun
       ? `Validacao operacional solicitada pelo painel para ${row.tenantName}.`
-      : window.prompt('Informe o motivo do reprocessamento desta entrada do WhatsApp:')?.trim() || '';
+      : window.prompt('Informe o motivo do reprocessamento desta entrada do WhatsApp:')?.trim() ||
+        '';
 
     if (!reason || reason.length < 10) {
       toast.error('Motivo obrigatorio', 'Informe um motivo claro com pelo menos 10 caracteres.');
@@ -861,7 +894,8 @@ export default function AdminMonitoringPage() {
         dryRun,
         reason,
       });
-      if (!response.data?.ok) throw new Error(response.data?.message || 'Falha ao processar entrada.');
+      if (!response.data?.ok)
+        throw new Error(response.data?.message || 'Falha ao processar entrada.');
       const result = response.data.result || {};
       if (dryRun) {
         toast.success(
@@ -869,7 +903,10 @@ export default function AdminMonitoringPage() {
           result.reason || 'Validacao concluida.',
         );
       } else {
-        toast.success('Reprocessamento aceito', 'A entrada foi reenviada para processamento seguro.');
+        toast.success(
+          'Reprocessamento aceito',
+          'A entrada foi reenviada para processamento seguro.',
+        );
       }
       await load();
     } catch (err: unknown) {
@@ -898,133 +935,229 @@ export default function AdminMonitoringPage() {
   const webhookRows = webhookProcessing?.rows || [];
 
   return (
-    <div className="space-y-6 animate-fadeIn">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div className="animate-fadeIn space-y-6">
+      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
-          <h2 className="text-2xl font-bold font-heading text-text tracking-tight flex items-center gap-2">
-            <Radio className="w-5 h-5 text-primary" aria-hidden />
+          <h2 className="flex items-center gap-2 font-heading text-2xl font-bold tracking-tight text-text">
+            <Radio className="h-5 w-5 text-primary" aria-hidden />
             Monitoramento ativo
           </h2>
-          <p className="text-text-secondary text-xs mt-1">
-            Relatorios programados, alertas de desconexao e trilha auditavel de entregas administrativas.
+          <p className="mt-1 text-xs text-text-secondary">
+            Relatorios programados, alertas de desconexao e trilha auditavel de entregas
+            administrativas.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button onClick={load} disabled={isLoading} className="bg-white hover:bg-surface-sunken text-text border border-border text-xs px-3 h-9 rounded-lg flex items-center gap-1.5">
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} aria-hidden />
+          <Button
+            onClick={load}
+            disabled={isLoading}
+            className="flex h-9 items-center gap-1.5 rounded-lg border border-border bg-white px-3 text-xs text-text hover:bg-surface-sunken"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin' : ''}`} aria-hidden />
             Atualizar
           </Button>
-          <Button onClick={() => setCreateRecipientOpen((open) => !open)} className="bg-white hover:bg-surface-sunken text-text border border-border text-xs px-3 h-9 rounded-lg flex items-center gap-1.5">
-            <Bell className="w-3.5 h-3.5" aria-hidden />
+          <Button
+            onClick={() => setCreateRecipientOpen((open) => !open)}
+            className="flex h-9 items-center gap-1.5 rounded-lg border border-border bg-white px-3 text-xs text-text hover:bg-surface-sunken"
+          >
+            <Bell className="h-3.5 w-3.5" aria-hidden />
             Destinatario
           </Button>
-          <Button onClick={() => setCreateScheduleOpen((open) => !open)} className="bg-primary hover:bg-primary-hover text-white font-semibold text-xs px-3 h-9 rounded-lg flex items-center gap-1.5">
-            <Clock3 className="w-3.5 h-3.5" aria-hidden />
+          <Button
+            onClick={() => setCreateScheduleOpen((open) => !open)}
+            className="flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3 text-xs font-semibold text-white hover:bg-primary-hover"
+          >
+            <Clock3 className="h-3.5 w-3.5" aria-hidden />
             Nova agenda
           </Button>
         </div>
       </div>
 
-      <Card className="bg-white border-border shadow-sm">
+      <Card className="border-border bg-white shadow-sm">
         <CardHeader className="pb-3">
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
             <div>
-              <CardTitle className="text-base font-bold font-heading text-text flex items-center gap-2">
-                {channelConnected ? <Wifi className="w-4 h-4 text-success-text" aria-hidden /> : <WifiOff className="w-4 h-4 text-red-600" aria-hidden />}
+              <CardTitle className="flex items-center gap-2 font-heading text-base font-bold text-text">
+                {channelConnected ? (
+                  <Wifi className="h-4 w-4 text-success-text" aria-hidden />
+                ) : (
+                  <WifiOff className="h-4 w-4 text-red-600" aria-hidden />
+                )}
                 Canal de envio administrativo
               </CardTitle>
-              <CardDescription className="text-text-secondary text-xs mt-1">
+              <CardDescription className="mt-1 text-xs text-text-secondary">
                 Remetente proprio para relatorios e alertas operacionais.
               </CardDescription>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <Badge className={`text-[10px] px-2 py-0.5 border ${channelStatusClass(channel?.connectionStatus)}`}>
+              <Badge
+                className={`border px-2 py-0.5 text-[10px] ${channelStatusClass(channel?.connectionStatus)}`}
+              >
                 {channelStatusLabel(channel?.connectionStatus)}
               </Badge>
-              <Button onClick={() => refreshChannel(false)} disabled={!channel?.channelId || channelBusy} className="bg-white hover:bg-surface-sunken text-text border border-border text-xs px-3 h-9 rounded-lg flex items-center gap-1.5">
-                {busyKey === 'channel:refresh' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+              <Button
+                onClick={() => refreshChannel(false)}
+                disabled={!channel?.channelId || channelBusy}
+                className="flex h-9 items-center gap-1.5 rounded-lg border border-border bg-white px-3 text-xs text-text hover:bg-surface-sunken"
+              >
+                {busyKey === 'channel:refresh' ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3.5 w-3.5" />
+                )}
                 Status
               </Button>
-              <Button onClick={connectChannel} disabled={channelBusy || channelConnected} className="bg-primary hover:bg-primary-hover text-white font-semibold text-xs px-3 h-9 rounded-lg flex items-center gap-1.5">
-                {busyKey === 'channel:connect' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <QrCode className="w-3.5 h-3.5" />}
+              <Button
+                onClick={connectChannel}
+                disabled={channelBusy || channelConnected}
+                className="flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3 text-xs font-semibold text-white hover:bg-primary-hover"
+              >
+                {busyKey === 'channel:connect' ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <QrCode className="h-3.5 w-3.5" />
+                )}
                 Gerar QR
               </Button>
-              <Button onClick={disconnectChannel} disabled={!channel?.channelId || channelBusy} className="bg-white hover:bg-red-50 text-red-700 border border-red-100 text-xs px-3 h-9 rounded-lg flex items-center gap-1.5">
-                {busyKey === 'channel:disconnect' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlugZap className="w-3.5 h-3.5" />}
+              <Button
+                onClick={disconnectChannel}
+                disabled={!channel?.channelId || channelBusy}
+                className="flex h-9 items-center gap-1.5 rounded-lg border border-red-100 bg-white px-3 text-xs text-red-700 hover:bg-red-50"
+              >
+                {busyKey === 'channel:disconnect' ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <PlugZap className="h-3.5 w-3.5" />
+                )}
                 Desconectar
               </Button>
             </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 xl:grid-cols-[1fr_260px] gap-4">
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_260px]">
             <div className="space-y-3">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                 <Field label="Nome">
-                  <Input value={channelForm.label} onChange={(event) => setChannelForm((form) => ({ ...form, label: event.target.value }))} className="h-9 text-xs" disabled={channelBusy} />
+                  <Input
+                    value={channelForm.label}
+                    onChange={(event) =>
+                      setChannelForm((form) => ({ ...form, label: event.target.value }))
+                    }
+                    className="h-9 text-xs"
+                    disabled={channelBusy}
+                  />
                 </Field>
                 <Field label="Instancia Evolution">
-                  <Input value={channelForm.instanceName} onChange={(event) => setChannelForm((form) => ({ ...form, instanceName: event.target.value }))} className="h-9 text-xs font-mono" disabled={channelBusy || channelConnected} />
+                  <Input
+                    value={channelForm.instanceName}
+                    onChange={(event) =>
+                      setChannelForm((form) => ({ ...form, instanceName: event.target.value }))
+                    }
+                    className="h-9 font-mono text-xs"
+                    disabled={channelBusy || channelConnected}
+                  />
                 </Field>
                 <Field label="Base URL Evolution">
-                  <Input value={channelForm.baseUrl} onChange={(event) => setChannelForm((form) => ({ ...form, baseUrl: event.target.value }))} placeholder="padrao do ambiente" className="h-9 text-xs font-mono" disabled={channelBusy || channelConnected} />
+                  <Input
+                    value={channelForm.baseUrl}
+                    onChange={(event) =>
+                      setChannelForm((form) => ({ ...form, baseUrl: event.target.value }))
+                    }
+                    placeholder="padrao do ambiente"
+                    className="h-9 font-mono text-xs"
+                    disabled={channelBusy || channelConnected}
+                  />
                 </Field>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-3 text-xs">
+              <div className="grid grid-cols-1 gap-3 text-xs md:grid-cols-3 xl:grid-cols-6">
                 <StatusCell label="Instancia ativa" value={channel?.instanceName || 'n/d'} mono />
                 <StatusCell label="Ultima checagem" value={formatDate(channel?.lastCheckedAt)} />
                 <StatusCell label="Estado externo" value={channel?.externalState || 'n/d'} mono />
-                <StatusCell label="Chave Evolution" value={channel?.apiKeyConfigured ? 'configurada' : 'ausente'} />
+                <StatusCell
+                  label="Chave Evolution"
+                  value={channel?.apiKeyConfigured ? 'configurada' : 'ausente'}
+                />
                 <StatusCell label="Scheduler" value={scheduler?.lastStatus || 'sem run'} />
                 <StatusCell label="Ultimo check" value={formatDate(scheduler?.lastRunAt)} />
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-                <StatusCell label="Agendas vencidas" value={String(scheduler?.overdueSchedules ?? 0)} />
-                <StatusCell label="Ultimo claim" value={scheduler?.lastClaimedCount == null ? 'n/d' : String(scheduler.lastClaimedCount)} />
+              <div className="grid grid-cols-1 gap-3 text-xs md:grid-cols-3">
+                <StatusCell
+                  label="Agendas vencidas"
+                  value={String(scheduler?.overdueSchedules ?? 0)}
+                />
+                <StatusCell
+                  label="Ultimo claim"
+                  value={
+                    scheduler?.lastClaimedCount == null ? 'n/d' : String(scheduler.lastClaimedCount)
+                  }
+                />
                 <StatusCell label="Proxima agenda" value={formatDate(scheduler?.nextDueAt)} />
               </div>
 
-              {(channel?.lastError || channel?.dispatcherReachable === false || scheduler?.lastError) && (
-                <div className="text-xs text-red-700 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
-                  {channel?.lastError || channel?.dispatcherError || scheduler?.lastError || 'Dispatcher indisponivel.'}
+              {(channel?.lastError ||
+                channel?.dispatcherReachable === false ||
+                scheduler?.lastError) && (
+                <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700">
+                  {channel?.lastError ||
+                    channel?.dispatcherError ||
+                    scheduler?.lastError ||
+                    'Dispatcher indisponivel.'}
                 </div>
               )}
 
-              <div className="border border-border rounded-lg overflow-x-auto">
+              <div className="overflow-x-auto rounded-lg border border-border">
                 <div className="min-w-[620px]">
-                  <div className="grid grid-cols-[150px_120px_1fr_110px] gap-3 px-3 py-2 text-[10px] uppercase tracking-wider text-text-secondary bg-surface-sunken">
+                  <div className="grid grid-cols-[150px_120px_1fr_110px] gap-3 bg-surface-sunken px-3 py-2 text-[10px] uppercase tracking-wider text-text-secondary">
                     <span>Evento</span>
                     <span>Status</span>
                     <span>Estado/erro</span>
                     <span>Quando</span>
                   </div>
                   {(data?.channelEvents || []).slice(0, 4).map((event) => (
-                    <div key={event.id} className="grid grid-cols-[150px_120px_1fr_110px] gap-3 px-3 py-2 text-xs border-t border-border/60">
-                      <span className="font-mono text-text truncate">{event.event_type}</span>
-                      <span className="text-text-secondary truncate">{channelStatusLabel(event.connection_status || 'UNKNOWN')}</span>
-                      <span className="text-text-secondary truncate">{event.error || event.external_state || '-'}</span>
+                    <div
+                      key={event.id}
+                      className="border-border/60 grid grid-cols-[150px_120px_1fr_110px] gap-3 border-t px-3 py-2 text-xs"
+                    >
+                      <span className="truncate font-mono text-text">{event.event_type}</span>
+                      <span className="truncate text-text-secondary">
+                        {channelStatusLabel(event.connection_status || 'UNKNOWN')}
+                      </span>
+                      <span className="truncate text-text-secondary">
+                        {event.error || event.external_state || '-'}
+                      </span>
                       <span className="text-text-secondary">{formatDate(event.created_at)}</span>
                     </div>
                   ))}
                   {(data?.channelEvents || []).length === 0 && (
-                    <div className="px-3 py-4 text-xs text-center text-text-secondary border-t border-border/60">Nenhum evento do canal registrado.</div>
+                    <div className="border-border/60 border-t px-3 py-4 text-center text-xs text-text-secondary">
+                      Nenhum evento do canal registrado.
+                    </div>
                   )}
                 </div>
               </div>
             </div>
 
-            <div className="flex flex-col items-center justify-center border border-border rounded-lg bg-surface-sunken min-h-[260px] p-4">
+            <div className="flex min-h-[260px] flex-col items-center justify-center rounded-lg border border-border bg-surface-sunken p-4">
               {qrSrc ? (
                 <>
-                  <img src={qrSrc} alt="QR Code do canal administrativo" className="w-[220px] h-[220px] object-contain rounded bg-white border border-border shadow-sm" />
-                  <span className="text-[10px] text-text-secondary mt-3">Aguardando leitura no WhatsApp.</span>
+                  <img
+                    src={qrSrc}
+                    alt="QR Code do canal administrativo"
+                    className="h-[220px] w-[220px] rounded border border-border bg-white object-contain shadow-sm"
+                  />
+                  <span className="mt-3 text-[10px] text-text-secondary">
+                    Aguardando leitura no WhatsApp.
+                  </span>
                 </>
               ) : (
-                <div className="w-[220px] h-[220px] rounded bg-white border border-dashed border-border flex flex-col items-center justify-center text-text-secondary">
-                  <QrCode className="w-8 h-8 mb-2" aria-hidden />
-                  <span className="text-xs">{channelConnected ? 'Canal conectado' : 'QR Code indisponivel'}</span>
+                <div className="flex h-[220px] w-[220px] flex-col items-center justify-center rounded border border-dashed border-border bg-white text-text-secondary">
+                  <QrCode className="mb-2 h-8 w-8" aria-hidden />
+                  <span className="text-xs">
+                    {channelConnected ? 'Canal conectado' : 'QR Code indisponivel'}
+                  </span>
                 </div>
               )}
             </div>
@@ -1032,59 +1165,105 @@ export default function AdminMonitoringPage() {
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-3">
-        <Card className="bg-white shadow-sm border-border">
-          <CardContent className="pt-4 pb-3">
-            <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">Canal</span>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <Card className="border-border bg-white shadow-sm">
+          <CardContent className="pb-3 pt-4">
+            <span className="block text-[10px] font-semibold uppercase tracking-wider text-text-secondary">
+              Canal
+            </span>
             <div className="mt-2 flex items-center gap-2">
-              {channelConnected ? <CheckCircle2 className="w-4 h-4 text-success-text" /> : <XCircle className="w-4 h-4 text-error-text" />}
-              <span className="text-sm font-semibold text-text">{channelStatusLabel(channel?.connectionStatus)}</span>
+              {channelConnected ? (
+                <CheckCircle2 className="h-4 w-4 text-success-text" />
+              ) : (
+                <XCircle className="h-4 w-4 text-error-text" />
+              )}
+              <span className="text-sm font-semibold text-text">
+                {channelStatusLabel(channel?.connectionStatus)}
+              </span>
             </div>
-            <p className="text-[10px] text-text-secondary mt-1 truncate">{channel?.instanceName || channel?.source || 'n/d'}</p>
+            <p className="mt-1 truncate text-[10px] text-text-secondary">
+              {channel?.instanceName || channel?.source || 'n/d'}
+            </p>
             {channel?.dispatcherReachable === false && (
-              <p className="text-[10px] text-red-600 mt-1 truncate">dispatcher indisponivel</p>
+              <p className="mt-1 truncate text-[10px] text-red-600">dispatcher indisponivel</p>
             )}
           </CardContent>
         </Card>
         <MetricCard label="Destinatarios ativos" value={data?.summary.activeRecipients ?? 0} />
         <MetricCard label="Agendas ativas" value={data?.summary.activeSchedules ?? 0} />
-        <MetricCard label="Agendas vencidas" value={data?.summary.overdueSchedules ?? 0} tone={(data?.summary.overdueSchedules ?? 0) > 0 ? 'red' : 'normal'} />
-        <MetricCard label="Falhas recentes" value={data?.summary.failedReports24h ?? 0} tone={(data?.summary.failedReports24h ?? 0) > 0 ? 'red' : 'normal'} />
+        <MetricCard
+          label="Agendas vencidas"
+          value={data?.summary.overdueSchedules ?? 0}
+          tone={(data?.summary.overdueSchedules ?? 0) > 0 ? 'red' : 'normal'}
+        />
+        <MetricCard
+          label="Falhas recentes"
+          value={data?.summary.failedReports24h ?? 0}
+          tone={(data?.summary.failedReports24h ?? 0) > 0 ? 'red' : 'normal'}
+        />
         <MetricCard label="Alertas recentes" value={data?.summary.disconnectAlerts24h ?? 0} />
-        <MetricCard label="IA em atencao" value={data?.summary.aiActivityIssues ?? 0} tone={(data?.summary.aiActivityIssues ?? 0) > 0 ? 'red' : 'normal'} />
-        <MetricCard label="Alertas IA" value={data?.summary.aiActivityAlerts24h ?? 0} tone={(data?.summary.aiActivityAlerts24h ?? 0) > 0 ? 'red' : 'normal'} />
-        <MetricCard label="Fila IA vencida" value={data?.summary.dueQueueItems ?? 0} tone={(data?.summary.dueQueueItems ?? 0) > 0 ? 'red' : 'normal'} />
-        <MetricCard label="Entradas com falha" value={data?.summary.webhookProcessingFailures24h ?? 0} tone={(data?.summary.webhookProcessingFailures24h ?? 0) > 0 ? 'red' : 'normal'} />
-        <MetricCard label="Entradas abertas" value={data?.summary.webhookProcessingStale ?? 0} tone={(data?.summary.webhookProcessingStale ?? 0) > 0 ? 'red' : 'normal'} />
-        <MetricCard label="Reenvios seguros" value={data?.summary.webhookProcessingDuplicates24h ?? 0} />
+        <MetricCard
+          label="IA em atencao"
+          value={data?.summary.aiActivityIssues ?? 0}
+          tone={(data?.summary.aiActivityIssues ?? 0) > 0 ? 'red' : 'normal'}
+        />
+        <MetricCard
+          label="Alertas IA"
+          value={data?.summary.aiActivityAlerts24h ?? 0}
+          tone={(data?.summary.aiActivityAlerts24h ?? 0) > 0 ? 'red' : 'normal'}
+        />
+        <MetricCard
+          label="Fila IA vencida"
+          value={data?.summary.dueQueueItems ?? 0}
+          tone={(data?.summary.dueQueueItems ?? 0) > 0 ? 'red' : 'normal'}
+        />
+        <MetricCard
+          label="Entradas com falha"
+          value={data?.summary.webhookProcessingFailures24h ?? 0}
+          tone={(data?.summary.webhookProcessingFailures24h ?? 0) > 0 ? 'red' : 'normal'}
+        />
+        <MetricCard
+          label="Entradas abertas"
+          value={data?.summary.webhookProcessingStale ?? 0}
+          tone={(data?.summary.webhookProcessingStale ?? 0) > 0 ? 'red' : 'normal'}
+        />
+        <MetricCard
+          label="Reenvios seguros"
+          value={data?.summary.webhookProcessingDuplicates24h ?? 0}
+        />
       </div>
 
-      <Card className="bg-white border-border shadow-sm">
+      <Card className="border-border bg-white shadow-sm">
         <CardHeader className="pb-3">
-          <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+          <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-start">
             <div>
-              <CardTitle className="text-base font-bold font-heading text-text flex items-center gap-2">
-                <Inbox className="w-4 h-4 text-primary" aria-hidden />
+              <CardTitle className="flex items-center gap-2 font-heading text-base font-bold text-text">
+                <Inbox className="h-4 w-4 text-primary" aria-hidden />
                 Entrada de mensagens do WhatsApp
               </CardTitle>
-              <CardDescription className="text-text-secondary text-xs mt-1">
-                Confirma se as mensagens recebidas pela Evolution entraram no Prospix sem travar ou duplicar conversas.
+              <CardDescription className="mt-1 text-xs text-text-secondary">
+                Confirma se as mensagens recebidas pela Evolution entraram no Prospix sem travar ou
+                duplicar conversas.
               </CardDescription>
             </div>
-            <Badge className={`text-[10px] px-2 py-0.5 border ${(webhookHealth?.failedOrStale24h ?? 0) > 0 ? 'bg-red-50 text-red-700 border-red-200' : 'bg-success-soft text-success-text border-success/30'}`}>
-              {webhookProcessing?.available !== false ? webhookHealthText(webhookHealth) : 'diagnostico indisponivel'}
+            <Badge
+              className={`border px-2 py-0.5 text-[10px] ${(webhookHealth?.failedOrStale24h ?? 0) > 0 ? 'border-red-200 bg-red-50 text-red-700' : 'border-success/30 bg-success-soft text-success-text'}`}
+            >
+              {webhookProcessing?.available !== false
+                ? webhookHealthText(webhookHealth)
+                : 'diagnostico indisponivel'}
             </Badge>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
           {webhookProcessing?.error && (
-            <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-800 flex items-start gap-2">
-              <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-none" aria-hidden />
+            <div className="flex items-start gap-2 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-none" aria-hidden />
               <span>Diagnostico pendente no banco: {webhookProcessing.error}</span>
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-3 text-xs">
+          <div className="grid grid-cols-1 gap-3 text-xs md:grid-cols-3 xl:grid-cols-6">
             <StatusCell label="Recebidas 24h" value={String(webhookHealth?.total24h ?? 0)} />
             <StatusCell label="Registradas" value={String(webhookHealth?.processed24h ?? 0)} />
             <StatusCell label="Ignoradas" value={String(webhookHealth?.skipped24h ?? 0)} />
@@ -1095,7 +1274,7 @@ export default function AdminMonitoringPage() {
 
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
-              <thead className="text-left text-[10px] uppercase tracking-wider text-text-secondary border-b border-border">
+              <thead className="border-b border-border text-left text-[10px] uppercase tracking-wider text-text-secondary">
                 <tr>
                   <th className="py-2 pr-3">Conta</th>
                   <th className="py-2 pr-3">Situacao</th>
@@ -1108,72 +1287,103 @@ export default function AdminMonitoringPage() {
               </thead>
               <tbody>
                 {webhookRows.map((row) => (
-                  <tr key={row.id} className="border-b border-border/50 align-top">
-                    <td className="py-3 pr-3 min-w-[220px]">
+                  <tr key={row.id} className="border-border/50 border-b align-top">
+                    <td className="min-w-[220px] py-3 pr-3">
                       <div className="font-semibold text-text">{row.tenantName}</div>
-                      <div className="text-[10px] text-text-secondary">{row.tenantId ? 'Conta identificada' : 'Sem conta associada'}</div>
+                      <div className="text-[10px] text-text-secondary">
+                        {row.tenantId ? 'Conta identificada' : 'Sem conta associada'}
+                      </div>
                     </td>
-                    <td className="py-3 pr-3 min-w-[160px]">
-                      <Badge className={`text-[9px] px-1.5 py-0 border ${webhookProcessingStatusClass(row)}`}>
+                    <td className="min-w-[160px] py-3 pr-3">
+                      <Badge
+                        className={`border px-1.5 py-0 text-[9px] ${webhookProcessingStatusClass(row)}`}
+                      >
                         {webhookProcessingStatusLabel(row)}
                       </Badge>
-                      {row.skipReason && <div className="text-[10px] text-text-secondary mt-1">{formatToken(row.skipReason)}</div>}
-                    </td>
-                    <td className="py-3 pr-3 text-text-secondary whitespace-nowrap">
-                      {formatDate(webhookIssueTime(row))}
-                      {row.processingAgeSeconds != null && (
-                        <div className="text-[10px]">{formatDuration(row.processingAgeSeconds)}</div>
+                      {row.skipReason && (
+                        <div className="mt-1 text-[10px] text-text-secondary">
+                          {formatToken(row.skipReason)}
+                        </div>
                       )}
                     </td>
-                    <td className="py-3 pr-3 text-text-secondary whitespace-nowrap">
+                    <td className="whitespace-nowrap py-3 pr-3 text-text-secondary">
+                      {formatDate(webhookIssueTime(row))}
+                      {row.processingAgeSeconds != null && (
+                        <div className="text-[10px]">
+                          {formatDuration(row.processingAgeSeconds)}
+                        </div>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap py-3 pr-3 text-text-secondary">
                       {countLabel(row.attempts, 'tentativa', 'tentativas')}
                     </td>
-                    <td className="py-3 pr-3 text-text-secondary min-w-[300px] max-w-[460px]">
-                      {row.operatorSummary || row.errorMessage || 'Entrada registrada para acompanhamento.'}
+                    <td className="min-w-[300px] max-w-[460px] py-3 pr-3 text-text-secondary">
+                      {row.operatorSummary ||
+                        row.errorMessage ||
+                        'Entrada registrada para acompanhamento.'}
                     </td>
-                    <td className="py-3 pr-3 text-text-secondary min-w-[300px] max-w-[460px]">
+                    <td className="min-w-[300px] max-w-[460px] py-3 pr-3 text-text-secondary">
                       {row.recommendedAction || 'Acompanhar na proxima leitura.'}
                     </td>
                     <td className="py-3 pr-3">
                       <div className="flex items-center justify-end gap-2">
-                        <ActionButton title="Validar" busy={busyKey === `webhook:dry:${row.id}`} onClick={() => reprocessWebhookEvent(row, true)} icon={CheckCircle2} />
+                        <ActionButton
+                          title="Validar"
+                          busy={busyKey === `webhook:dry:${row.id}`}
+                          onClick={() => reprocessWebhookEvent(row, true)}
+                          icon={CheckCircle2}
+                        />
                         {canExecuteWebhookReprocess(row) && (
-                          <ActionButton title="Reprocessar" busy={busyKey === `webhook:run:${row.id}`} onClick={() => reprocessWebhookEvent(row, false)} icon={RotateCcw} />
+                          <ActionButton
+                            title="Reprocessar"
+                            busy={busyKey === `webhook:run:${row.id}`}
+                            onClick={() => reprocessWebhookEvent(row, false)}
+                            icon={RotateCcw}
+                          />
                         )}
                       </div>
                     </td>
                   </tr>
                 ))}
-                {webhookRows.length === 0 && <EmptyRow columns={7} label="Nenhuma falha de entrada encontrada." />}
+                {webhookRows.length === 0 && (
+                  <EmptyRow columns={7} label="Nenhuma falha de entrada encontrada." />
+                )}
               </tbody>
             </table>
           </div>
         </CardContent>
       </Card>
 
-      <Card className="bg-white border-border shadow-sm">
+      <Card className="border-border bg-white shadow-sm">
         <CardHeader className="pb-3">
-          <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+          <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-start">
             <div>
-              <CardTitle className="text-base font-bold font-heading text-text">Fila vencida da IA</CardTitle>
-              <CardDescription className="text-text-secondary text-xs mt-1">
-                Mostra mensagens prontas que ja passaram do horario e o motivo operacional de nao terem avancado.
+              <CardTitle className="font-heading text-base font-bold text-text">
+                Fila vencida da IA
+              </CardTitle>
+              <CardDescription className="mt-1 text-xs text-text-secondary">
+                Mostra mensagens prontas que ja passaram do horario e o motivo operacional de nao
+                terem avancado.
               </CardDescription>
             </div>
-            <Badge className={`text-[10px] px-2 py-0.5 border ${workerDueQueueDiagnostics?.available !== false ? 'bg-success-soft text-success-text border-success/30' : 'bg-amber-50 text-amber-800 border-amber-300'}`}>
-              {workerDueQueueDiagnostics?.available !== false ? countLabel(workerDueRows.length, 'item', 'itens') : 'diagnostico indisponivel'}
+            <Badge
+              className={`border px-2 py-0.5 text-[10px] ${workerDueQueueDiagnostics?.available !== false ? 'border-success/30 bg-success-soft text-success-text' : 'border-amber-300 bg-amber-50 text-amber-800'}`}
+            >
+              {workerDueQueueDiagnostics?.available !== false
+                ? countLabel(workerDueRows.length, 'item', 'itens')
+                : 'diagnostico indisponivel'}
             </Badge>
           </div>
         </CardHeader>
         <CardContent>
           {workerDueQueueDiagnostics?.error && (
-            <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-800 mb-3">
+            <div className="mb-3 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-800">
               Diagnostico pendente no banco: {workerDueQueueDiagnostics.error}
             </div>
           )}
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
-              <thead className="text-left text-[10px] uppercase tracking-wider text-text-secondary border-b border-border">
+              <thead className="border-b border-border text-left text-[10px] uppercase tracking-wider text-text-secondary">
                 <tr>
                   <th className="py-2 pr-3">Tenant</th>
                   <th className="py-2 pr-3">Lead</th>
@@ -1185,49 +1395,74 @@ export default function AdminMonitoringPage() {
               </thead>
               <tbody>
                 {workerDueRows.map((row) => (
-                  <tr key={row.pendingOutboundId} className="border-b border-border/50 align-top">
-                    <td className="py-3 pr-3 min-w-[210px]">
+                  <tr key={row.pendingOutboundId} className="border-border/50 border-b align-top">
+                    <td className="min-w-[210px] py-3 pr-3">
                       <div className="font-semibold text-text">{row.tenantName}</div>
-                      <div className="text-[10px] text-text-secondary">{row.tenantSlug || row.tenantId}</div>
+                      <div className="text-[10px] text-text-secondary">
+                        {row.tenantSlug || row.tenantId}
+                      </div>
                     </td>
-                    <td className="py-3 pr-3 min-w-[190px]">
-                      <div className="font-semibold text-text">{row.leadName || 'Lead sem nome'}</div>
-                      <div className="text-[10px] text-text-secondary">{row.campaignName || row.leadSource || 'sem campanha registrada'}</div>
+                    <td className="min-w-[190px] py-3 pr-3">
+                      <div className="font-semibold text-text">
+                        {row.leadName || 'Lead sem nome'}
+                      </div>
+                      <div className="text-[10px] text-text-secondary">
+                        {row.campaignName || row.leadSource || 'sem campanha registrada'}
+                      </div>
                     </td>
-                    <td className="py-3 pr-3 min-w-[130px]">
-                      <div className="font-semibold text-text">{messageTypeLabel(row.messageType)}</div>
-                      <div className="text-[10px] text-text-secondary">agendada {formatDate(row.scheduledFor)}</div>
+                    <td className="min-w-[130px] py-3 pr-3">
+                      <div className="font-semibold text-text">
+                        {messageTypeLabel(row.messageType)}
+                      </div>
+                      <div className="text-[10px] text-text-secondary">
+                        agendada {formatDate(row.scheduledFor)}
+                      </div>
                     </td>
-                    <td className="py-3 pr-3 whitespace-nowrap">
-                      <div className="font-semibold text-text">{formatDuration(row.dueAgeSeconds)}</div>
-                      <div className="text-[10px] text-text-secondary">{countLabel(row.attempts, 'tentativa', 'tentativas')}</div>
+                    <td className="whitespace-nowrap py-3 pr-3">
+                      <div className="font-semibold text-text">
+                        {formatDuration(row.dueAgeSeconds)}
+                      </div>
+                      <div className="text-[10px] text-text-secondary">
+                        {countLabel(row.attempts, 'tentativa', 'tentativas')}
+                      </div>
                     </td>
-                    <td className="py-3 pr-3 min-w-[280px] max-w-[420px]">
-                      <Badge className={`text-[9px] px-1.5 py-0 border ${blockerKindClass(row)}`}>{blockerKindLabel(row.blockerKind)}</Badge>
-                      <p className="text-text-secondary mt-1 leading-relaxed">{row.operatorSummary}</p>
+                    <td className="min-w-[280px] max-w-[420px] py-3 pr-3">
+                      <Badge className={`border px-1.5 py-0 text-[9px] ${blockerKindClass(row)}`}>
+                        {blockerKindLabel(row.blockerKind)}
+                      </Badge>
+                      <p className="mt-1 leading-relaxed text-text-secondary">
+                        {row.operatorSummary}
+                      </p>
                     </td>
-                    <td className="py-3 pr-3 min-w-[280px] max-w-[420px] text-text-secondary">
+                    <td className="min-w-[280px] max-w-[420px] py-3 pr-3 text-text-secondary">
                       {row.recommendedAction}
                     </td>
                   </tr>
                 ))}
-                {workerDueRows.length === 0 && <EmptyRow columns={6} label="Nenhuma mensagem vencida na fila da IA." />}
+                {workerDueRows.length === 0 && (
+                  <EmptyRow columns={6} label="Nenhuma mensagem vencida na fila da IA." />
+                )}
               </tbody>
             </table>
           </div>
         </CardContent>
       </Card>
 
-      <Card className="bg-white border-border shadow-sm">
+      <Card className="border-border bg-white shadow-sm">
         <CardHeader className="pb-3">
-          <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+          <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-start">
             <div>
-              <CardTitle className="text-base font-bold font-heading text-text">Atividade operacional da IA</CardTitle>
-              <CardDescription className="text-text-secondary text-xs mt-1">
-                Verifica se a IA esta iniciando contatos, respondendo conversas e esvaziando a fila dentro da tolerancia.
+              <CardTitle className="font-heading text-base font-bold text-text">
+                Atividade operacional da IA
+              </CardTitle>
+              <CardDescription className="mt-1 text-xs text-text-secondary">
+                Verifica se a IA esta iniciando contatos, respondendo conversas e esvaziando a fila
+                dentro da tolerancia.
               </CardDescription>
             </div>
-            <Badge className={`text-[10px] px-2 py-0.5 border ${aiActivity?.operatingWindow.isOpen ? 'bg-success-soft text-success-text border-success/30' : 'bg-surface-sunken text-text-secondary border-border'}`}>
+            <Badge
+              className={`border px-2 py-0.5 text-[10px] ${aiActivity?.operatingWindow.isOpen ? 'border-success/30 bg-success-soft text-success-text' : 'border-border bg-surface-sunken text-text-secondary'}`}
+            >
               {aiActivity?.operatingWindow.label || 'janela nao calculada'}
             </Badge>
           </div>
@@ -1241,7 +1476,7 @@ export default function AdminMonitoringPage() {
 
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
-              <thead className="text-left text-[10px] uppercase tracking-wider text-text-secondary border-b border-border">
+              <thead className="border-b border-border text-left text-[10px] uppercase tracking-wider text-text-secondary">
                 <tr>
                   <th className="py-2 pr-3">Tenant</th>
                   <th className="py-2 pr-3">Estado IA</th>
@@ -1254,83 +1489,146 @@ export default function AdminMonitoringPage() {
               </thead>
               <tbody>
                 {aiActivityRows.map((row) => (
-                  <tr key={row.tenantId} className="border-b border-border/50 align-top">
-                    <td className="py-3 pr-3 min-w-[220px]">
+                  <tr key={row.tenantId} className="border-border/50 border-b align-top">
+                    <td className="min-w-[220px] py-3 pr-3">
                       <div className="font-semibold text-text">{row.tenantName}</div>
                       <div className="text-[10px] text-text-secondary">{row.tenantSlug}</div>
                     </td>
                     <td className="py-3 pr-3">
-                      <Badge className={`text-[9px] px-1.5 py-0 border ${aiActivityClass(row.severity)}`}>{row.label}</Badge>
-                      <div className="text-[10px] text-text-secondary mt-1">{formatToken(row.guardianStatus)}</div>
+                      <Badge
+                        className={`border px-1.5 py-0 text-[9px] ${aiActivityClass(row.severity)}`}
+                      >
+                        {row.label}
+                      </Badge>
+                      <div className="mt-1 text-[10px] text-text-secondary">
+                        {formatToken(row.guardianStatus)}
+                      </div>
                     </td>
-                    <td className="py-3 pr-3 text-text-secondary min-w-[150px]">
-                      <div>Leads hoje: <span className="font-semibold text-text">{row.leadsCreatedToday}</span></div>
-                      <div>Elegiveis agora: <span className="font-semibold text-text">{row.contactableBacklog}</span></div>
+                    <td className="min-w-[150px] py-3 pr-3 text-text-secondary">
+                      <div>
+                        Leads hoje:{' '}
+                        <span className="font-semibold text-text">{row.leadsCreatedToday}</span>
+                      </div>
+                      <div>
+                        Elegiveis agora:{' '}
+                        <span className="font-semibold text-text">{row.contactableBacklog}</span>
+                      </div>
                       {row.firstTouchEligibility && (
                         <>
                           <div className="text-[10px]">
-                            Avaliados: <span className="font-semibold text-text">{row.firstTouchEligibility.totalEvaluated}</span>
+                            Avaliados:{' '}
+                            <span className="font-semibold text-text">
+                              {row.firstTouchEligibility.totalEvaluated}
+                            </span>
                           </div>
                           {row.firstTouchEligibility.topBlockingReasonLabel && (
                             <div className="text-[10px]">
-                              Bloqueio: <span className="font-semibold text-text">{row.firstTouchEligibility.topBlockingReasonLabel}</span> ({row.firstTouchEligibility.topBlockingReasonCount})
+                              Bloqueio:{' '}
+                              <span className="font-semibold text-text">
+                                {row.firstTouchEligibility.topBlockingReasonLabel}
+                              </span>{' '}
+                              ({row.firstTouchEligibility.topBlockingReasonCount})
                             </div>
                           )}
                         </>
                       )}
-                      <div className="text-[10px]">Mais antigo: {formatDate(row.oldestContactableLeadAt)}</div>
+                      <div className="text-[10px]">
+                        Mais antigo: {formatDate(row.oldestContactableLeadAt)}
+                      </div>
                     </td>
-                    <td className="py-3 pr-3 text-text-secondary min-w-[150px]">
-                      <div>Sem resposta: <span className="font-semibold text-text">{row.unansweredConversations}</span></div>
-                      <div>Entradas hoje: <span className="font-semibold text-text">{row.inboundToday}</span></div>
-                      <div className="text-[10px]">Mais antiga: {formatDate(row.oldestUnansweredInboundAt)}</div>
+                    <td className="min-w-[150px] py-3 pr-3 text-text-secondary">
+                      <div>
+                        Sem resposta:{' '}
+                        <span className="font-semibold text-text">
+                          {row.unansweredConversations}
+                        </span>
+                      </div>
+                      <div>
+                        Entradas hoje:{' '}
+                        <span className="font-semibold text-text">{row.inboundToday}</span>
+                      </div>
+                      <div className="text-[10px]">
+                        Mais antiga: {formatDate(row.oldestUnansweredInboundAt)}
+                      </div>
                     </td>
-                    <td className="py-3 pr-3 text-text-secondary min-w-[150px]">
-                      <div>Hoje: <span className="font-semibold text-text">{row.outboundToday}</span></div>
-                      <div>Ultima hora: <span className="font-semibold text-text">{row.outboundLast60m}</span></div>
-                      <div>Fila vencida: <span className="font-semibold text-text">{row.duePending}</span></div>
+                    <td className="min-w-[150px] py-3 pr-3 text-text-secondary">
+                      <div>
+                        Hoje: <span className="font-semibold text-text">{row.outboundToday}</span>
+                      </div>
+                      <div>
+                        Ultima hora:{' '}
+                        <span className="font-semibold text-text">{row.outboundLast60m}</span>
+                      </div>
+                      <div>
+                        Fila vencida:{' '}
+                        <span className="font-semibold text-text">{row.duePending}</span>
+                      </div>
                       {row.workerSnapshot && (
                         <>
-                          <div className="text-[10px]">Fila atual: <span className="font-semibold text-text">{row.workerSnapshot.activePending}</span></div>
-                          <div className="text-[10px]">Situacao: <span className="font-semibold text-text">{workerQueueLabel(row)}</span></div>
-                          <div className="text-[10px]">Bloqueios/falhas 24h: <span className="font-semibold text-text">{row.workerSnapshot.blockedOrFailedLast24h}</span></div>
+                          <div className="text-[10px]">
+                            Fila atual:{' '}
+                            <span className="font-semibold text-text">
+                              {row.workerSnapshot.activePending}
+                            </span>
+                          </div>
+                          <div className="text-[10px]">
+                            Situacao:{' '}
+                            <span className="font-semibold text-text">{workerQueueLabel(row)}</span>
+                          </div>
+                          <div className="text-[10px]">
+                            Bloqueios/falhas 24h:{' '}
+                            <span className="font-semibold text-text">
+                              {row.workerSnapshot.blockedOrFailedLast24h}
+                            </span>
+                          </div>
                         </>
                       )}
                     </td>
-                    <td className="py-3 pr-3 text-text-secondary min-w-[300px] max-w-[460px]">
+                    <td className="min-w-[300px] max-w-[460px] py-3 pr-3 text-text-secondary">
                       <div>{row.summary}</div>
-                      <div className="text-[10px] mt-1">Acao: {row.requiredAction}</div>
+                      <div className="mt-1 text-[10px]">Acao: {row.requiredAction}</div>
                       {row.workerSnapshot?.guardianBlockSummary && (
-                        <div className="text-[10px] mt-1">Conexao: {row.workerSnapshot.guardianBlockSummary}</div>
+                        <div className="mt-1 text-[10px]">
+                          Conexao: {row.workerSnapshot.guardianBlockSummary}
+                        </div>
                       )}
                     </td>
-                    <td className="py-3 pr-3 text-text-secondary whitespace-nowrap">
+                    <td className="whitespace-nowrap py-3 pr-3 text-text-secondary">
                       <div>IA: {formatDate(row.lastOutboundAt)}</div>
                       <div>Lead: {formatDate(row.lastInboundAt)}</div>
                     </td>
                   </tr>
                 ))}
-                {aiActivityRows.length === 0 && <EmptyRow columns={7} label="Nenhuma evidencia de atividade coletada." />}
+                {aiActivityRows.length === 0 && (
+                  <EmptyRow columns={7} label="Nenhuma evidencia de atividade coletada." />
+                )}
               </tbody>
             </table>
           </div>
         </CardContent>
       </Card>
 
-      <Card className="bg-white border-border shadow-sm">
+      <Card className="border-border bg-white shadow-sm">
         <CardHeader className="pb-3">
-          <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+          <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-start">
             <div>
-              <CardTitle className="text-base font-bold font-heading text-text">Estado dos WhatsApps dos usuarios</CardTitle>
-              <CardDescription className="text-text-secondary text-xs mt-1">
-                Mostra se a IA pode responder, iniciar conversas e ha quanto tempo cada numero esta no estado atual.
+              <CardTitle className="font-heading text-base font-bold text-text">
+                Estado dos WhatsApps dos usuarios
+              </CardTitle>
+              <CardDescription className="mt-1 text-xs text-text-secondary">
+                Mostra se a IA pode responder, iniciar conversas e ha quanto tempo cada numero esta
+                no estado atual.
               </CardDescription>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <Badge className={`text-[10px] px-2 py-0.5 border ${guardianStates?.available ? 'bg-success-soft text-success-text border-success/30' : 'bg-red-50 text-red-700 border-red-200'}`}>
+              <Badge
+                className={`border px-2 py-0.5 text-[10px] ${guardianStates?.available ? 'border-success/30 bg-success-soft text-success-text' : 'border-red-200 bg-red-50 text-red-700'}`}
+              >
                 {guardianStates?.available ? 'Status disponivel' : 'Status indisponivel'}
               </Badge>
-              <Badge className={`text-[10px] px-2 py-0.5 border ${guardianStates?.transitionLogAvailable ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-amber-50 text-amber-800 border-amber-300'}`}>
+              <Badge
+                className={`border px-2 py-0.5 text-[10px] ${guardianStates?.transitionLogAvailable ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-amber-300 bg-amber-50 text-amber-800'}`}
+              >
                 {guardianStates?.transitionLogAvailable ? 'Historico ativo' : 'Historico pendente'}
               </Badge>
             </div>
@@ -1344,13 +1642,14 @@ export default function AdminMonitoringPage() {
           )}
           {guardianStates?.transitionLogError && (
             <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              Historico de mudancas ainda nao esta ativo no banco: {guardianStates.transitionLogError}
+              Historico de mudancas ainda nao esta ativo no banco:{' '}
+              {guardianStates.transitionLogError}
             </div>
           )}
 
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
-              <thead className="text-left text-[10px] uppercase tracking-wider text-text-secondary border-b border-border">
+              <thead className="border-b border-border text-left text-[10px] uppercase tracking-wider text-text-secondary">
                 <tr>
                   <th className="py-2 pr-3">Tenant</th>
                   <th className="py-2 pr-3">Estado</th>
@@ -1363,46 +1662,70 @@ export default function AdminMonitoringPage() {
               </thead>
               <tbody>
                 {guardianCurrent.map((state) => (
-                  <tr key={state.tenantId} className="border-b border-border/50 align-top">
-                    <td className="py-3 pr-3 min-w-[220px]">
+                  <tr key={state.tenantId} className="border-border/50 border-b align-top">
+                    <td className="min-w-[220px] py-3 pr-3">
                       <div className="font-semibold text-text">{state.tenantName}</div>
                       <div className="text-[10px] text-text-secondary">{state.tenantSlug}</div>
                     </td>
                     <td className="py-3 pr-3">
-                      <Badge className={`text-[9px] px-1.5 py-0 border ${guardianImpactClass(state.impactLevel)}`}>{state.label}</Badge>
-                      <div className="text-[10px] text-text-secondary mt-1">{formatToken(state.externalState)}</div>
+                      <Badge
+                        className={`border px-1.5 py-0 text-[9px] ${guardianImpactClass(state.impactLevel)}`}
+                      >
+                        {state.label}
+                      </Badge>
+                      <div className="mt-1 text-[10px] text-text-secondary">
+                        {formatToken(state.externalState)}
+                      </div>
                     </td>
-                    <td className="py-3 pr-3 text-text-secondary whitespace-nowrap">
+                    <td className="whitespace-nowrap py-3 pr-3 text-text-secondary">
                       {formatDuration(state.durationSeconds)}
                       <div className="text-[10px]">{formatDate(state.enteredAt)}</div>
                     </td>
                     <td className="py-3 pr-3">
                       <div className="font-semibold text-text">{state.operationLabel}</div>
-                      <div className="text-[10px] text-text-secondary">{formatToken(state.reasonCode)}</div>
+                      <div className="text-[10px] text-text-secondary">
+                        {formatToken(state.reasonCode)}
+                      </div>
                     </td>
-                    <td className="py-3 pr-3 min-w-[150px]">
-                      <div className={state.allowSend ? 'text-success-text font-semibold' : 'text-red-700 font-semibold'}>
+                    <td className="min-w-[150px] py-3 pr-3">
+                      <div
+                        className={
+                          state.allowSend
+                            ? 'font-semibold text-success-text'
+                            : 'font-semibold text-red-700'
+                        }
+                      >
                         Responder: {state.allowSend ? 'sim' : 'nao'}
                       </div>
-                      <div className={state.allowNewActive ? 'text-success-text font-semibold' : 'text-amber-800 font-semibold'}>
+                      <div
+                        className={
+                          state.allowNewActive
+                            ? 'font-semibold text-success-text'
+                            : 'font-semibold text-amber-800'
+                        }
+                      >
                         Prospec. nova: {state.allowNewActive ? 'sim' : 'cuidado'}
                       </div>
                     </td>
-                    <td className="py-3 pr-3 text-text-secondary min-w-[280px] max-w-[420px]">
+                    <td className="min-w-[280px] max-w-[420px] py-3 pr-3 text-text-secondary">
                       {state.summary}
                     </td>
-                    <td className="py-3 pr-3 text-text-secondary whitespace-nowrap">{formatDate(state.lastCheckedAt || state.updatedAt)}</td>
+                    <td className="whitespace-nowrap py-3 pr-3 text-text-secondary">
+                      {formatDate(state.lastCheckedAt || state.updatedAt)}
+                    </td>
                   </tr>
                 ))}
-                {guardianCurrent.length === 0 && <EmptyRow columns={7} label="Nenhum status Guardian encontrado." />}
+                {guardianCurrent.length === 0 && (
+                  <EmptyRow columns={7} label="Nenhum status Guardian encontrado." />
+                )}
               </tbody>
             </table>
           </div>
 
           {guardianTransitions.length > 0 && (
-            <div className="border border-border rounded-lg overflow-x-auto">
+            <div className="overflow-x-auto rounded-lg border border-border">
               <div className="min-w-[780px]">
-                <div className="grid grid-cols-[220px_160px_130px_1fr_120px] gap-3 px-3 py-2 text-[10px] uppercase tracking-wider text-text-secondary bg-surface-sunken">
+                <div className="grid grid-cols-[220px_160px_130px_1fr_120px] gap-3 bg-surface-sunken px-3 py-2 text-[10px] uppercase tracking-wider text-text-secondary">
                   <span>Tenant</span>
                   <span>Mudanca</span>
                   <span>Tempo</span>
@@ -1410,11 +1733,24 @@ export default function AdminMonitoringPage() {
                   <span>Quando</span>
                 </div>
                 {guardianTransitions.slice(0, 8).map((transition, index) => (
-                  <div key={`${transition.tenantId}-${transition.enteredAt}-${index}`} className="grid grid-cols-[220px_160px_130px_1fr_120px] gap-3 px-3 py-2 text-xs border-t border-border/60">
-                    <span className="font-semibold text-text truncate">{transition.tenantName}</span>
-                    <span className="text-text-secondary truncate">{formatToken(transition.previousStatus)} para {formatToken(transition.status)}</span>
-                    <span className="text-text-secondary">{transition.exitedAt ? formatDuration(transition.durationSeconds) : 'estado atual'}</span>
-                    <span className="text-text-secondary truncate">{transition.operatorSummary || transition.operationLabel || '-'}</span>
+                  <div
+                    key={`${transition.tenantId}-${transition.enteredAt}-${index}`}
+                    className="border-border/60 grid grid-cols-[220px_160px_130px_1fr_120px] gap-3 border-t px-3 py-2 text-xs"
+                  >
+                    <span className="truncate font-semibold text-text">
+                      {transition.tenantName}
+                    </span>
+                    <span className="truncate text-text-secondary">
+                      {formatToken(transition.previousStatus)} para {formatToken(transition.status)}
+                    </span>
+                    <span className="text-text-secondary">
+                      {transition.exitedAt
+                        ? formatDuration(transition.durationSeconds)
+                        : 'estado atual'}
+                    </span>
+                    <span className="truncate text-text-secondary">
+                      {transition.operatorSummary || transition.operationLabel || '-'}
+                    </span>
                     <span className="text-text-secondary">{formatDate(transition.enteredAt)}</span>
                   </div>
                 ))}
@@ -1425,28 +1761,71 @@ export default function AdminMonitoringPage() {
       </Card>
 
       {createRecipientOpen && (
-        <Card className="bg-white border-primary/30 shadow-sm">
+        <Card className="border-primary/30 bg-white shadow-sm">
           <CardHeader className="pb-3">
-            <CardTitle className="text-base font-bold font-heading text-text">Cadastrar destinatario</CardTitle>
-            <CardDescription className="text-text-secondary text-xs">Numero em E.164; exemplo +5517999999999.</CardDescription>
+            <CardTitle className="font-heading text-base font-bold text-text">
+              Cadastrar destinatario
+            </CardTitle>
+            <CardDescription className="text-xs text-text-secondary">
+              Numero em E.164; exemplo +5517999999999.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
               <Field label="Nome">
-                <Input value={recipientForm.label} onChange={(event) => setRecipientForm((form) => ({ ...form, label: event.target.value }))} className="h-9 text-xs" />
+                <Input
+                  value={recipientForm.label}
+                  onChange={(event) =>
+                    setRecipientForm((form) => ({ ...form, label: event.target.value }))
+                  }
+                  className="h-9 text-xs"
+                />
               </Field>
               <Field label="WhatsApp">
-                <Input value={recipientForm.whatsapp} onChange={(event) => setRecipientForm((form) => ({ ...form, whatsapp: event.target.value }))} placeholder="+5517999999999" className="h-9 text-xs font-mono" />
+                <Input
+                  value={recipientForm.whatsapp}
+                  onChange={(event) =>
+                    setRecipientForm((form) => ({ ...form, whatsapp: event.target.value }))
+                  }
+                  placeholder="+5517999999999"
+                  className="h-9 font-mono text-xs"
+                />
               </Field>
               <Field label="Notas">
-                <Input value={recipientForm.notes} onChange={(event) => setRecipientForm((form) => ({ ...form, notes: event.target.value }))} className="h-9 text-xs" />
+                <Input
+                  value={recipientForm.notes}
+                  onChange={(event) =>
+                    setRecipientForm((form) => ({ ...form, notes: event.target.value }))
+                  }
+                  className="h-9 text-xs"
+                />
               </Field>
             </div>
             <div className="flex flex-wrap items-center gap-4 text-xs text-text-secondary">
-              <CheckboxLabel checked={recipientForm.reportEnabled} onChange={(checked) => setRecipientForm((form) => ({ ...form, reportEnabled: checked }))} label="Receber relatorios" />
-              <CheckboxLabel checked={recipientForm.disconnectAlertsEnabled} onChange={(checked) => setRecipientForm((form) => ({ ...form, disconnectAlertsEnabled: checked }))} label="Receber quedas" />
-              <Button onClick={createRecipient} disabled={busyKey === 'recipient:create'} className="ml-auto bg-primary hover:bg-primary-hover text-white text-xs px-3 h-9 rounded-lg flex items-center gap-1.5">
-                {busyKey === 'recipient:create' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+              <CheckboxLabel
+                checked={recipientForm.reportEnabled}
+                onChange={(checked) =>
+                  setRecipientForm((form) => ({ ...form, reportEnabled: checked }))
+                }
+                label="Receber relatorios"
+              />
+              <CheckboxLabel
+                checked={recipientForm.disconnectAlertsEnabled}
+                onChange={(checked) =>
+                  setRecipientForm((form) => ({ ...form, disconnectAlertsEnabled: checked }))
+                }
+                label="Receber quedas"
+              />
+              <Button
+                onClick={createRecipient}
+                disabled={busyKey === 'recipient:create'}
+                className="ml-auto flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3 text-xs text-white hover:bg-primary-hover"
+              >
+                {busyKey === 'recipient:create' ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Send className="h-3.5 w-3.5" />
+                )}
                 Salvar
               </Button>
             </div>
@@ -1455,30 +1834,84 @@ export default function AdminMonitoringPage() {
       )}
 
       {createScheduleOpen && (
-        <Card className="bg-white border-primary/30 shadow-sm">
+        <Card className="border-primary/30 bg-white shadow-sm">
           <CardHeader className="pb-3">
-            <CardTitle className="text-base font-bold font-heading text-text">Criar agenda</CardTitle>
-            <CardDescription className="text-text-secondary text-xs">A primeira execucao fica programada para o fim do intervalo informado.</CardDescription>
+            <CardTitle className="font-heading text-base font-bold text-text">
+              Criar agenda
+            </CardTitle>
+            <CardDescription className="text-xs text-text-secondary">
+              A primeira execucao fica programada para o fim do intervalo informado.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
               <Field label="Nome">
-                <Input value={scheduleForm.name} onChange={(event) => setScheduleForm((form) => ({ ...form, name: event.target.value }))} className="h-9 text-xs" />
+                <Input
+                  value={scheduleForm.name}
+                  onChange={(event) =>
+                    setScheduleForm((form) => ({ ...form, name: event.target.value }))
+                  }
+                  className="h-9 text-xs"
+                />
               </Field>
               <Field label="Destinatario">
-                <select value={scheduleForm.recipientId} onChange={(event) => setScheduleForm((form) => ({ ...form, recipientId: event.target.value }))} className="w-full h-9 px-3 text-xs rounded-lg border border-border bg-white text-text focus:outline-none focus:border-primary/50">
+                <select
+                  value={scheduleForm.recipientId}
+                  onChange={(event) =>
+                    setScheduleForm((form) => ({ ...form, recipientId: event.target.value }))
+                  }
+                  className="focus:border-primary/50 h-9 w-full rounded-lg border border-border bg-white px-3 text-xs text-text focus:outline-none"
+                >
                   <option value="">Selecione</option>
-                  {activeRecipients.map((recipient) => <option key={recipient.id} value={recipient.id}>{recipient.label}</option>)}
+                  {activeRecipients.map((recipient) => (
+                    <option key={recipient.id} value={recipient.id}>
+                      {recipient.label}
+                    </option>
+                  ))}
                 </select>
               </Field>
               <Field label="Intervalo min">
-                <Input type="number" min={5} max={1440} value={scheduleForm.intervalMinutes} onChange={(event) => setScheduleForm((form) => ({ ...form, intervalMinutes: Number(event.target.value) }))} className="h-9 text-xs" />
+                <Input
+                  type="number"
+                  min={5}
+                  max={1440}
+                  value={scheduleForm.intervalMinutes}
+                  onChange={(event) =>
+                    setScheduleForm((form) => ({
+                      ...form,
+                      intervalMinutes: Number(event.target.value),
+                    }))
+                  }
+                  className="h-9 text-xs"
+                />
               </Field>
               <Field label="Janela min">
-                <Input type="number" min={5} max={10080} value={scheduleForm.windowMinutes} onChange={(event) => setScheduleForm((form) => ({ ...form, windowMinutes: Number(event.target.value) }))} className="h-9 text-xs" />
+                <Input
+                  type="number"
+                  min={5}
+                  max={10080}
+                  value={scheduleForm.windowMinutes}
+                  onChange={(event) =>
+                    setScheduleForm((form) => ({
+                      ...form,
+                      windowMinutes: Number(event.target.value),
+                    }))
+                  }
+                  className="h-9 text-xs"
+                />
               </Field>
               <Field label="Escopo">
-                <select value={scheduleForm.tenantScope} onChange={(event) => setScheduleForm((form) => ({ ...form, tenantScope: event.target.value, tenantId: '' }))} className="w-full h-9 px-3 text-xs rounded-lg border border-border bg-white text-text focus:outline-none focus:border-primary/50">
+                <select
+                  value={scheduleForm.tenantScope}
+                  onChange={(event) =>
+                    setScheduleForm((form) => ({
+                      ...form,
+                      tenantScope: event.target.value,
+                      tenantId: '',
+                    }))
+                  }
+                  className="focus:border-primary/50 h-9 w-full rounded-lg border border-border bg-white px-3 text-xs text-text focus:outline-none"
+                >
                   <option value="all">Todos</option>
                   <option value="one">Um tenant</option>
                 </select>
@@ -1486,17 +1919,47 @@ export default function AdminMonitoringPage() {
             </div>
             {scheduleForm.tenantScope === 'one' && (
               <Field label="Tenant">
-                <select value={scheduleForm.tenantId} onChange={(event) => setScheduleForm((form) => ({ ...form, tenantId: event.target.value }))} className="w-full h-9 px-3 text-xs rounded-lg border border-border bg-white text-text focus:outline-none focus:border-primary/50">
+                <select
+                  value={scheduleForm.tenantId}
+                  onChange={(event) =>
+                    setScheduleForm((form) => ({ ...form, tenantId: event.target.value }))
+                  }
+                  className="focus:border-primary/50 h-9 w-full rounded-lg border border-border bg-white px-3 text-xs text-text focus:outline-none"
+                >
                   <option value="">Selecione</option>
-                  {(data?.tenants || []).map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.name}</option>)}
+                  {(data?.tenants || []).map((tenant) => (
+                    <option key={tenant.id} value={tenant.id}>
+                      {tenant.name}
+                    </option>
+                  ))}
                 </select>
               </Field>
             )}
             <div className="flex flex-wrap items-center gap-4 text-xs text-text-secondary">
-              <CheckboxLabel checked={scheduleForm.includeNumbers} onChange={(checked) => setScheduleForm((form) => ({ ...form, includeNumbers: checked }))} label="Mostrar numeros" />
-              <CheckboxLabel checked={scheduleForm.includeRecentMessages} onChange={(checked) => setScheduleForm((form) => ({ ...form, includeRecentMessages: checked }))} label="Mostrar mensagens recentes" />
-              <Button onClick={createSchedule} disabled={busyKey === 'schedule:create'} className="ml-auto bg-primary hover:bg-primary-hover text-white text-xs px-3 h-9 rounded-lg flex items-center gap-1.5">
-                {busyKey === 'schedule:create' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Clock3 className="w-3.5 h-3.5" />}
+              <CheckboxLabel
+                checked={scheduleForm.includeNumbers}
+                onChange={(checked) =>
+                  setScheduleForm((form) => ({ ...form, includeNumbers: checked }))
+                }
+                label="Mostrar numeros"
+              />
+              <CheckboxLabel
+                checked={scheduleForm.includeRecentMessages}
+                onChange={(checked) =>
+                  setScheduleForm((form) => ({ ...form, includeRecentMessages: checked }))
+                }
+                label="Mostrar mensagens recentes"
+              />
+              <Button
+                onClick={createSchedule}
+                disabled={busyKey === 'schedule:create'}
+                className="ml-auto flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3 text-xs text-white hover:bg-primary-hover"
+              >
+                {busyKey === 'schedule:create' ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Clock3 className="h-3.5 w-3.5" />
+                )}
                 Salvar agenda
               </Button>
             </div>
@@ -1505,22 +1968,24 @@ export default function AdminMonitoringPage() {
       )}
 
       {isLoading && !data ? (
-        <Card className="bg-white border-border shadow-sm">
-          <CardContent className="py-10 flex items-center justify-center text-text-secondary text-sm">
-            <Loader2 className="w-4 h-4 animate-spin mr-2" />
+        <Card className="border-border bg-white shadow-sm">
+          <CardContent className="flex items-center justify-center py-10 text-sm text-text-secondary">
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             Carregando monitoramento...
           </CardContent>
         </Card>
       ) : (
         <>
-          <Card className="bg-white border-border shadow-sm">
+          <Card className="border-border bg-white shadow-sm">
             <CardHeader className="pb-3">
-              <CardTitle className="text-base font-bold font-heading text-text">Destinatarios</CardTitle>
+              <CardTitle className="font-heading text-base font-bold text-text">
+                Destinatarios
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
-                  <thead className="text-left text-[10px] uppercase tracking-wider text-text-secondary border-b border-border">
+                  <thead className="border-b border-border text-left text-[10px] uppercase tracking-wider text-text-secondary">
                     <tr>
                       <th className="py-2 pr-3">Nome</th>
                       <th className="py-2 pr-3">WhatsApp</th>
@@ -1531,35 +1996,61 @@ export default function AdminMonitoringPage() {
                   </thead>
                   <tbody>
                     {(data?.recipients || []).map((recipient) => (
-                      <tr key={recipient.id} className="border-b border-border/50">
+                      <tr key={recipient.id} className="border-border/50 border-b">
                         <td className="py-3 pr-3 font-semibold text-text">{recipient.label}</td>
-                        <td className="py-3 pr-3 font-mono text-text-secondary">{recipient.whatsapp}</td>
-                        <td className="py-3 pr-3"><BooleanBadge value={recipient.report_enabled} /></td>
-                        <td className="py-3 pr-3"><BooleanBadge value={recipient.disconnect_alerts_enabled} /></td>
+                        <td className="py-3 pr-3 font-mono text-text-secondary">
+                          {recipient.whatsapp}
+                        </td>
+                        <td className="py-3 pr-3">
+                          <BooleanBadge value={recipient.report_enabled} />
+                        </td>
+                        <td className="py-3 pr-3">
+                          <BooleanBadge value={recipient.disconnect_alerts_enabled} />
+                        </td>
                         <td className="py-3 pr-3">
                           <div className="flex items-center justify-end gap-2">
-                            <ActionButton title="Teste" busy={busyKey === `test:${recipient.id}`} onClick={() => sendTest(recipient.id)} icon={Send} />
-                            <ActionButton title={recipient.active ? 'Pausar' : 'Ativar'} busy={busyKey === `recipient:${recipient.id}`} onClick={() => patchItem('recipient', recipient.id, { active: !recipient.active })} icon={recipient.active ? XCircle : CheckCircle2} />
-                            <ActionButton title="Excluir" busy={busyKey === `recipient:delete:${recipient.id}`} onClick={() => deleteItem('recipient', recipient.id)} icon={Trash2} danger />
+                            <ActionButton
+                              title="Teste"
+                              busy={busyKey === `test:${recipient.id}`}
+                              onClick={() => sendTest(recipient.id)}
+                              icon={Send}
+                            />
+                            <ActionButton
+                              title={recipient.active ? 'Pausar' : 'Ativar'}
+                              busy={busyKey === `recipient:${recipient.id}`}
+                              onClick={() =>
+                                patchItem('recipient', recipient.id, { active: !recipient.active })
+                              }
+                              icon={recipient.active ? XCircle : CheckCircle2}
+                            />
+                            <ActionButton
+                              title="Excluir"
+                              busy={busyKey === `recipient:delete:${recipient.id}`}
+                              onClick={() => deleteItem('recipient', recipient.id)}
+                              icon={Trash2}
+                              danger
+                            />
                           </div>
                         </td>
                       </tr>
                     ))}
-                    {(data?.recipients || []).length === 0 && <EmptyRow columns={5} label="Nenhum destinatario cadastrado." />}
+                    {(data?.recipients || []).length === 0 && (
+                      <EmptyRow columns={5} label="Nenhum destinatario cadastrado." />
+                    )}
                   </tbody>
                 </table>
               </div>
             </CardContent>
           </Card>
 
-          <Card className="bg-white border-border shadow-sm">
+          <Card className="border-border bg-white shadow-sm">
             <CardHeader className="pb-3">
-              <CardTitle className="text-base font-bold font-heading text-text">Agendas</CardTitle>
+              <CardTitle className="font-heading text-base font-bold text-text">Agendas</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
-                  <thead className="text-left text-[10px] uppercase tracking-wider text-text-secondary border-b border-border">
+                  <thead className="border-b border-border text-left text-[10px] uppercase tracking-wider text-text-secondary">
                     <tr>
                       <th className="py-2 pr-3">Nome</th>
                       <th className="py-2 pr-3">Destinatario</th>
@@ -1571,125 +2062,219 @@ export default function AdminMonitoringPage() {
                   </thead>
                   <tbody>
                     {(data?.schedules || []).map((schedule) => (
-                      <tr key={schedule.id} className="border-b border-border/50">
+                      <tr key={schedule.id} className="border-border/50 border-b">
                         <td className="py-3 pr-3">
                           <div className="font-semibold text-text">{schedule.name}</div>
-                          <div className="text-[10px] text-text-secondary flex flex-wrap items-center gap-1.5">
-                            <span>{schedule.active ? 'Ativa' : 'Pausada'} - janela {schedule.window_minutes}min</span>
+                          <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-text-secondary">
+                            <span>
+                              {schedule.active ? 'Ativa' : 'Pausada'} - janela{' '}
+                              {schedule.window_minutes}min
+                            </span>
                             {isScheduleOverdue(schedule) && (
-                              <Badge className="text-[9px] px-1.5 py-0 border bg-red-50 text-red-700 border-red-200">vencida</Badge>
+                              <Badge className="border border-red-200 bg-red-50 px-1.5 py-0 text-[9px] text-red-700">
+                                vencida
+                              </Badge>
                             )}
                           </div>
                         </td>
-                        <td className="py-3 pr-3 text-text-secondary">{schedule.admin_monitoring_recipients?.label || schedule.recipient_id}</td>
-                        <td className="py-3 pr-3 font-mono text-text-secondary">{schedule.interval_minutes}min</td>
-                        <td className={`py-3 pr-3 ${isScheduleOverdue(schedule) ? 'text-red-700 font-semibold' : 'text-text-secondary'}`}>{formatDate(schedule.next_run_at)}</td>
-                        <td className="py-3 pr-3 text-text-secondary max-w-[260px] truncate">{schedule.last_error || '-'}</td>
+                        <td className="py-3 pr-3 text-text-secondary">
+                          {schedule.admin_monitoring_recipients?.label || schedule.recipient_id}
+                        </td>
+                        <td className="py-3 pr-3 font-mono text-text-secondary">
+                          {schedule.interval_minutes}min
+                        </td>
+                        <td
+                          className={`py-3 pr-3 ${isScheduleOverdue(schedule) ? 'font-semibold text-red-700' : 'text-text-secondary'}`}
+                        >
+                          {formatDate(schedule.next_run_at)}
+                        </td>
+                        <td className="max-w-[260px] truncate py-3 pr-3 text-text-secondary">
+                          {schedule.last_error || '-'}
+                        </td>
                         <td className="py-3 pr-3">
                           <div className="flex items-center justify-end gap-2">
-                            <ActionButton title="Executar" busy={busyKey === `run:${schedule.id}`} onClick={() => runScheduleNow(schedule.id)} icon={PlayCircle} />
-                            <ActionButton title={schedule.active ? 'Pausar' : 'Ativar'} busy={busyKey === `schedule:${schedule.id}`} onClick={() => patchItem('schedule', schedule.id, { active: !schedule.active })} icon={schedule.active ? XCircle : CheckCircle2} />
-                            <ActionButton title="Excluir" busy={busyKey === `schedule:delete:${schedule.id}`} onClick={() => deleteItem('schedule', schedule.id)} icon={Trash2} danger />
+                            <ActionButton
+                              title="Executar"
+                              busy={busyKey === `run:${schedule.id}`}
+                              onClick={() => runScheduleNow(schedule.id)}
+                              icon={PlayCircle}
+                            />
+                            <ActionButton
+                              title={schedule.active ? 'Pausar' : 'Ativar'}
+                              busy={busyKey === `schedule:${schedule.id}`}
+                              onClick={() =>
+                                patchItem('schedule', schedule.id, { active: !schedule.active })
+                              }
+                              icon={schedule.active ? XCircle : CheckCircle2}
+                            />
+                            <ActionButton
+                              title="Excluir"
+                              busy={busyKey === `schedule:delete:${schedule.id}`}
+                              onClick={() => deleteItem('schedule', schedule.id)}
+                              icon={Trash2}
+                              danger
+                            />
                           </div>
                         </td>
                       </tr>
                     ))}
-                    {(data?.schedules || []).length === 0 && <EmptyRow columns={6} label="Nenhuma agenda cadastrada." />}
+                    {(data?.schedules || []).length === 0 && (
+                      <EmptyRow columns={6} label="Nenhuma agenda cadastrada." />
+                    )}
                   </tbody>
                 </table>
               </div>
             </CardContent>
           </Card>
 
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-            <Card className="bg-white border-border shadow-sm">
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+            <Card className="border-border bg-white shadow-sm">
               <CardHeader className="pb-3">
-                <CardTitle className="text-base font-bold font-heading text-text">Ultimos relatorios</CardTitle>
+                <CardTitle className="font-heading text-base font-bold text-text">
+                  Ultimos relatorios
+                </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
                 {(data?.reportRuns || []).map((run) => (
-                  <div key={run.id} className="border border-border rounded-lg p-3">
+                  <div key={run.id} className="rounded-lg border border-border p-3">
                     <div className="flex items-center justify-between gap-3">
-                      <Badge className={`text-[9px] px-1.5 py-0 border ${statusClass(run.status)}`}>{run.status}</Badge>
-                      <span className="text-[10px] text-text-secondary">{formatDate(run.created_at)}</span>
+                      <Badge className={`border px-1.5 py-0 text-[9px] ${statusClass(run.status)}`}>
+                        {run.status}
+                      </Badge>
+                      <span className="text-[10px] text-text-secondary">
+                        {formatDate(run.created_at)}
+                      </span>
                     </div>
-                    <p className="text-xs text-text mt-2 line-clamp-2">{run.ai_summary || run.error || 'Sem resumo registrado.'}</p>
+                    <p className="mt-2 line-clamp-2 text-xs text-text">
+                      {run.ai_summary || run.error || 'Sem resumo registrado.'}
+                    </p>
                   </div>
                 ))}
-                {(data?.reportRuns || []).length === 0 && <p className="text-xs text-text-secondary py-4">Nenhum relatorio executado.</p>}
+                {(data?.reportRuns || []).length === 0 && (
+                  <p className="py-4 text-xs text-text-secondary">Nenhum relatorio executado.</p>
+                )}
               </CardContent>
             </Card>
 
-            <Card className="bg-white border-border shadow-sm">
+            <Card className="border-border bg-white shadow-sm">
               <CardHeader className="pb-3">
-                <CardTitle className="text-base font-bold font-heading text-text">Alertas de desconexao</CardTitle>
+                <CardTitle className="font-heading text-base font-bold text-text">
+                  Alertas de desconexao
+                </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
                 {(data?.disconnectDeliveries || []).map((delivery) => (
-                  <div key={delivery.id} className="border border-border rounded-lg p-3">
+                  <div key={delivery.id} className="rounded-lg border border-border p-3">
                     <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <Badge className={`text-[9px] px-1.5 py-0 border ${statusClass(delivery.status)}`}>{delivery.status}</Badge>
-                        <span className="text-xs font-semibold text-text truncate">{delivery.tenants?.name || delivery.tenant_id}</span>
+                      <div className="flex min-w-0 items-center gap-2">
+                        <Badge
+                          className={`border px-1.5 py-0 text-[9px] ${statusClass(delivery.status)}`}
+                        >
+                          {delivery.status}
+                        </Badge>
+                        <span className="truncate text-xs font-semibold text-text">
+                          {delivery.tenants?.name || delivery.tenant_id}
+                        </span>
                       </div>
-                      <span className="text-[10px] text-text-secondary">{formatDate(delivery.sent_at || delivery.created_at)}</span>
+                      <span className="text-[10px] text-text-secondary">
+                        {formatDate(delivery.sent_at || delivery.created_at)}
+                      </span>
                     </div>
-                    <p className="text-[10px] font-mono text-text-secondary mt-2">{delivery.reason_code} / {delivery.external_state || 'sem estado'}</p>
-                    <p className="text-xs text-text mt-1 line-clamp-2">{delivery.ai_summary || delivery.error || 'Sem resumo registrado.'}</p>
+                    <p className="mt-2 font-mono text-[10px] text-text-secondary">
+                      {delivery.reason_code} / {delivery.external_state || 'sem estado'}
+                    </p>
+                    <p className="mt-1 line-clamp-2 text-xs text-text">
+                      {delivery.ai_summary || delivery.error || 'Sem resumo registrado.'}
+                    </p>
                   </div>
                 ))}
-                {(data?.disconnectDeliveries || []).length === 0 && <p className="text-xs text-text-secondary py-4">Nenhum alerta de desconexao entregue.</p>}
+                {(data?.disconnectDeliveries || []).length === 0 && (
+                  <p className="py-4 text-xs text-text-secondary">
+                    Nenhum alerta de desconexao entregue.
+                  </p>
+                )}
               </CardContent>
             </Card>
 
-            <Card className="bg-white border-border shadow-sm">
+            <Card className="border-border bg-white shadow-sm">
               <CardHeader className="pb-3">
-                <CardTitle className="text-base font-bold font-heading text-text">Alertas de atividade da IA</CardTitle>
+                <CardTitle className="font-heading text-base font-bold text-text">
+                  Alertas de atividade da IA
+                </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
                 {aiActivityAlertDeliveries?.error && (
-                  <p className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                  <p className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                     Historico pendente no banco: {aiActivityAlertDeliveries.error}
                   </p>
                 )}
                 {(aiActivityAlertDeliveries?.rows || []).map((delivery) => (
-                  <div key={delivery.id} className="border border-border rounded-lg p-3">
+                  <div key={delivery.id} className="rounded-lg border border-border p-3">
                     <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <Badge className={`text-[9px] px-1.5 py-0 border ${statusClass(delivery.status)}`}>{delivery.status}</Badge>
-                        <span className="text-xs font-semibold text-text truncate">{delivery.tenants?.name || delivery.tenant_id}</span>
+                      <div className="flex min-w-0 items-center gap-2">
+                        <Badge
+                          className={`border px-1.5 py-0 text-[9px] ${statusClass(delivery.status)}`}
+                        >
+                          {delivery.status}
+                        </Badge>
+                        <span className="truncate text-xs font-semibold text-text">
+                          {delivery.tenants?.name || delivery.tenant_id}
+                        </span>
                       </div>
-                      <span className="text-[10px] text-text-secondary">{formatDate(delivery.sent_at || delivery.created_at)}</span>
+                      <span className="text-[10px] text-text-secondary">
+                        {formatDate(delivery.sent_at || delivery.created_at)}
+                      </span>
                     </div>
-                    <p className="text-[10px] font-mono text-text-secondary mt-2">{delivery.activity_state} / {delivery.severity}</p>
-                    <p className="text-xs text-text mt-1 line-clamp-2">{delivery.ai_summary || delivery.error || 'Sem resumo registrado.'}</p>
+                    <p className="mt-2 font-mono text-[10px] text-text-secondary">
+                      {delivery.activity_state} / {delivery.severity}
+                    </p>
+                    <p className="mt-1 line-clamp-2 text-xs text-text">
+                      {delivery.ai_summary || delivery.error || 'Sem resumo registrado.'}
+                    </p>
                   </div>
                 ))}
                 {(aiActivityAlertDeliveries?.rows || []).length === 0 && (
-                  <p className="text-xs text-text-secondary py-4">Nenhum alerta de atividade da IA entregue.</p>
+                  <p className="py-4 text-xs text-text-secondary">
+                    Nenhum alerta de atividade da IA entregue.
+                  </p>
                 )}
               </CardContent>
             </Card>
 
-            <Card className="bg-white border-border shadow-sm">
+            <Card className="border-border bg-white shadow-sm">
               <CardHeader className="pb-3">
-                <CardTitle className="text-base font-bold font-heading text-text">Execucoes do scheduler</CardTitle>
+                <CardTitle className="font-heading text-base font-bold text-text">
+                  Execucoes do scheduler
+                </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
                 {(data?.dispatcherRuns || []).map((run) => (
-                  <div key={run.id} className="border border-border rounded-lg p-3">
+                  <div key={run.id} className="rounded-lg border border-border p-3">
                     <div className="flex items-center justify-between gap-3">
-                      <Badge className={`text-[9px] px-1.5 py-0 border ${statusClass(run.status)}`}>{run.status}</Badge>
-                      <span className="text-[10px] text-text-secondary">{formatDate(run.started_at)}</span>
+                      <Badge className={`border px-1.5 py-0 text-[9px] ${statusClass(run.status)}`}>
+                        {run.status}
+                      </Badge>
+                      <span className="text-[10px] text-text-secondary">
+                        {formatDate(run.started_at)}
+                      </span>
                     </div>
-                    <p className="text-[10px] font-mono text-text-secondary mt-2 truncate">{run.source}</p>
-                    <p className="text-xs text-text mt-1">
-                      claim {run.claimed_count} / enviados {run.sent_count} / falhas {run.failed_count} / pulados {run.skipped_count}
+                    <p className="mt-2 truncate font-mono text-[10px] text-text-secondary">
+                      {run.source}
                     </p>
-                    {run.error && <p className="text-xs text-red-700 mt-1 line-clamp-2">{run.error}</p>}
+                    <p className="mt-1 text-xs text-text">
+                      claim {run.claimed_count} / enviados {run.sent_count} / falhas{' '}
+                      {run.failed_count} / pulados {run.skipped_count}
+                    </p>
+                    {run.error && (
+                      <p className="mt-1 line-clamp-2 text-xs text-red-700">{run.error}</p>
+                    )}
                   </div>
                 ))}
-                {(data?.dispatcherRuns || []).length === 0 && <p className="text-xs text-text-secondary py-4">Nenhum check do scheduler registrado.</p>}
+                {(data?.dispatcherRuns || []).length === 0 && (
+                  <p className="py-4 text-xs text-text-secondary">
+                    Nenhum check do scheduler registrado.
+                  </p>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -1699,12 +2284,26 @@ export default function AdminMonitoringPage() {
   );
 }
 
-function MetricCard({ label, value, tone = 'normal' }: { label: string; value: number; tone?: 'normal' | 'red' }) {
+function MetricCard({
+  label,
+  value,
+  tone = 'normal',
+}: {
+  label: string;
+  value: number;
+  tone?: 'normal' | 'red';
+}) {
   return (
     <Card className={`bg-white shadow-sm ${tone === 'red' ? 'border-red-300' : 'border-border'}`}>
-      <CardContent className="pt-4 pb-3">
-        <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">{label}</span>
-        <span className={`text-2xl font-bold font-heading font-mono ${tone === 'red' ? 'text-error-text' : 'text-text'}`}>{value}</span>
+      <CardContent className="pb-3 pt-4">
+        <span className="block text-[10px] font-semibold uppercase tracking-wider text-text-secondary">
+          {label}
+        </span>
+        <span
+          className={`font-heading font-mono text-2xl font-bold ${tone === 'red' ? 'text-error-text' : 'text-text'}`}
+        >
+          {value}
+        </span>
       </CardContent>
     </Card>
   );
@@ -1713,25 +2312,54 @@ function MetricCard({ label, value, tone = 'normal' }: { label: string; value: n
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="block">
-      <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block mb-1">{label}</span>
+      <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-text-secondary">
+        {label}
+      </span>
       {children}
     </label>
   );
 }
 
-function StatusCell({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+function StatusCell({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
   return (
-    <div className="border border-border rounded-lg px-3 py-2 bg-white min-w-0">
-      <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">{label}</span>
-      <span className={`text-xs text-text block truncate mt-1 ${mono ? 'font-mono' : 'font-semibold'}`}>{value}</span>
+    <div className="min-w-0 rounded-lg border border-border bg-white px-3 py-2">
+      <span className="block text-[10px] font-semibold uppercase tracking-wider text-text-secondary">
+        {label}
+      </span>
+      <span
+        className={`mt-1 block truncate text-xs text-text ${mono ? 'font-mono' : 'font-semibold'}`}
+      >
+        {value}
+      </span>
     </div>
   );
 }
 
-function CheckboxLabel({ checked, onChange, label }: { checked: boolean; onChange: (checked: boolean) => void; label: string }) {
+function CheckboxLabel({
+  checked,
+  onChange,
+  label,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  label: string;
+}) {
   return (
     <label className="inline-flex items-center gap-2">
-      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="h-4 w-4 rounded border-border text-primary focus:ring-primary/30" />
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        className="focus:ring-primary/30 h-4 w-4 rounded border-border text-primary"
+      />
       <span>{label}</span>
     </label>
   );
@@ -1739,7 +2367,9 @@ function CheckboxLabel({ checked, onChange, label }: { checked: boolean; onChang
 
 function BooleanBadge({ value }: { value: boolean }) {
   return (
-    <Badge className={`text-[9px] px-1.5 py-0 border ${value ? 'bg-success-soft text-success-text border-success/30' : 'bg-surface-sunken text-text-secondary border-border'}`}>
+    <Badge
+      className={`border px-1.5 py-0 text-[9px] ${value ? 'border-success/30 bg-success-soft text-success-text' : 'border-border bg-surface-sunken text-text-secondary'}`}
+    >
       {value ? 'ON' : 'OFF'}
     </Badge>
   );
@@ -1765,13 +2395,13 @@ function ActionButton({
       aria-label={title}
       onClick={onClick}
       disabled={busy}
-      className={`h-8 w-8 inline-flex items-center justify-center rounded-lg border transition-all disabled:opacity-50 ${
+      className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-all disabled:opacity-50 ${
         danger
           ? 'border-red-100 text-red-600 hover:bg-red-50'
-          : 'border-border text-text-secondary hover:text-text hover:bg-surface-sunken'
+          : 'border-border text-text-secondary hover:bg-surface-sunken hover:text-text'
       }`}
     >
-      {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Icon className="w-3.5 h-3.5" />}
+      {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Icon className="h-3.5 w-3.5" />}
     </button>
   );
 }
@@ -1779,7 +2409,9 @@ function ActionButton({
 function EmptyRow({ columns, label }: { columns: number; label: string }) {
   return (
     <tr>
-      <td colSpan={columns} className="py-8 text-center text-xs text-text-secondary">{label}</td>
+      <td colSpan={columns} className="py-8 text-center text-xs text-text-secondary">
+        {label}
+      </td>
     </tr>
   );
 }

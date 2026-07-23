@@ -3,7 +3,21 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Button, Input, Badge, toast } from '@prospix/ui';
-import { Settings as SettingsIcon, Shield, CreditCard, Key, Calendar, Phone, Loader2, CheckCircle2, AlertCircle, RefreshCw, FileText, ExternalLink, Bell } from 'lucide-react';
+import {
+  Settings as SettingsIcon,
+  Shield,
+  CreditCard,
+  Key,
+  Calendar,
+  Phone,
+  Loader2,
+  CheckCircle2,
+  AlertCircle,
+  RefreshCw,
+  FileText,
+  ExternalLink,
+  Bell,
+} from 'lucide-react';
 import { useAuthStore } from '@/store/auth-store';
 import { profileQueries, billingQueries } from '@/lib/queries';
 import { apiFetch } from '@/lib/api-fetch';
@@ -14,14 +28,17 @@ import PrivacyTab from './settings/PrivacyTab';
 import AIContextPage from './contexto/page';
 
 const profileSchema = z.object({
-  name: z.string().trim().min(2, 'Informe o nome completo (mínimo 2 caracteres).').max(120, 'Nome muito longo (máximo 120).'),
-  email: z.string().trim().toLowerCase().email('E-mail inválido. Use o formato exemplo@dominio.com.'),
-  susep: z
+  name: z
     .string()
     .trim()
-    .max(40, 'SUSEP muito longo.')
-    .optional()
-    .or(z.literal('')),
+    .min(2, 'Informe o nome completo (mínimo 2 caracteres).')
+    .max(120, 'Nome muito longo (máximo 120).'),
+  email: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .email('E-mail inválido. Use o formato exemplo@dominio.com.'),
+  susep: z.string().trim().max(40, 'SUSEP muito longo.').optional().or(z.literal('')),
 });
 
 type ProfileErrors = Partial<Record<'name' | 'email' | 'susep', string>>;
@@ -266,9 +283,24 @@ type TenantBillingData = {
   invoices: BillingInvoice[];
 };
 
-type TabKey = 'perfil' | 'integracoes' | 'agenda' | 'credenciais' | 'financeiro' | 'privacidade' | 'contexto';
+type TabKey =
+  | 'perfil'
+  | 'integracoes'
+  | 'agenda'
+  | 'credenciais'
+  | 'financeiro'
+  | 'privacidade'
+  | 'contexto';
 
-const TAB_KEYS: TabKey[] = ['perfil', 'contexto', 'integracoes', 'agenda', 'credenciais', 'financeiro', 'privacidade'];
+const TAB_KEYS: TabKey[] = [
+  'perfil',
+  'contexto',
+  'integracoes',
+  'agenda',
+  'credenciais',
+  'financeiro',
+  'privacidade',
+];
 
 type WhatsAppStatusSyncState = {
   mode: 'starting' | 'live' | 'polling' | 'error';
@@ -320,11 +352,11 @@ const firstTouchReasonLabels: Record<string, string> = {
   GUARDIAN_RELEVANCE_BLOCK: 'Bloqueado por relevancia no Guardian',
 };
 
-const isTabKey = (value: string | null): value is TabKey => Boolean(value && TAB_KEYS.includes(value as TabKey));
+const isTabKey = (value: string | null): value is TabKey =>
+  Boolean(value && TAB_KEYS.includes(value as TabKey));
 
-const firstTouchReasonLabel = (reason: string) => (
-  firstTouchReasonLabels[reason] || reason.replaceAll('_', ' ').toLowerCase()
-);
+const firstTouchReasonLabel = (reason: string) =>
+  firstTouchReasonLabels[reason] || reason.replaceAll('_', ' ').toLowerCase();
 
 export default function Settings() {
   const { user, tenantId } = useAuthStore();
@@ -354,7 +386,9 @@ export default function Settings() {
   ]);
 
   // Integrations states
-  const [whatsappStatus, setWhatsappStatus] = useState<'connected' | 'disconnected' | 'loading'>('loading');
+  const [whatsappStatus, setWhatsappStatus] = useState<'connected' | 'disconnected' | 'loading'>(
+    'loading',
+  );
   const [instanceName, setInstanceName] = useState<string | null>(null);
   const [whatsappTrace, setWhatsappTrace] = useState<WhatsAppGuardianTrace | null>(null);
   const [whatsappStatusSync, setWhatsappStatusSync] = useState<WhatsAppStatusSyncState>({
@@ -382,7 +416,9 @@ export default function Settings() {
   const [isCredentialsSaving, setIsCredentialsSaving] = useState(false);
   const [billingData, setBillingData] = useState<TenantBillingData | null>(null);
   const [isBillingLoading, setIsBillingLoading] = useState(false);
-  const [googleCalendars, setGoogleCalendars] = useState<Array<{id: string; summary: string; primary?: boolean; backgroundColor?: string}>>([]);
+  const [googleCalendars, setGoogleCalendars] = useState<
+    Array<{ id: string; summary: string; primary?: boolean; backgroundColor?: string }>
+  >([]);
   const [selectedCalendarId, setSelectedCalendarId] = useState<string>('primary');
   const [isLoadingCalendars, setIsLoadingCalendars] = useState(false);
 
@@ -406,7 +442,9 @@ export default function Settings() {
   const [isAgendaSaving, setIsAgendaSaving] = useState(false);
 
   const formatBRL = (cents: number) => {
-    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cents / 100);
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
+      cents / 100,
+    );
   };
 
   const formatDate = (value: string) => {
@@ -471,7 +509,10 @@ export default function Settings() {
       return 'O sistema ainda nao confirmou o estado operacional do WhatsApp.';
     }
 
-    if (currentState.operationState === 'BLOCKED' || currentState.operationState === 'REQUIRES_ACTION') {
+    if (
+      currentState.operationState === 'BLOCKED' ||
+      currentState.operationState === 'REQUIRES_ACTION'
+    ) {
       return 'A IA esta pausada para envios automaticos ate a conexao ou o bloqueio operacional ser resolvido.';
     }
 
@@ -507,7 +548,11 @@ export default function Settings() {
     return 'Sincronizando';
   };
 
-  const workerStatusLabel = (status?: string | null, duePending = 0, blockedByConnection = false) => {
+  const workerStatusLabel = (
+    status?: string | null,
+    duePending = 0,
+    blockedByConnection = false,
+  ) => {
     if (duePending > 0 && blockedByConnection) return 'Aguardando reconexao';
     if (duePending > 0) return 'Fila atrasada';
     if (status === 'FAILED') return 'Ultimo envio falhou';
@@ -519,10 +564,16 @@ export default function Settings() {
     return 'Sem fila ativa';
   };
 
-  const workerStatusClass = (status?: string | null, duePending = 0, blockedByConnection = false) => {
+  const workerStatusClass = (
+    status?: string | null,
+    duePending = 0,
+    blockedByConnection = false,
+  ) => {
     if (blockedByConnection) return 'bg-[#FEF3F2] text-[#B42318] border-[#FECDCA]';
-    if (status === 'FAILED' || status === 'BLOCKED') return 'bg-[#FEF3F2] text-[#B42318] border-[#FECDCA]';
-    if (duePending > 0 || status === 'DUE' || status === 'DELAYED') return 'bg-[#FFFAEB] text-[#B54708] border-[#FEDF89]';
+    if (status === 'FAILED' || status === 'BLOCKED')
+      return 'bg-[#FEF3F2] text-[#B42318] border-[#FECDCA]';
+    if (duePending > 0 || status === 'DUE' || status === 'DELAYED')
+      return 'bg-[#FFFAEB] text-[#B54708] border-[#FEDF89]';
     if (status === 'WAITING') return 'bg-[#EFF8FF] text-[#175CD3] border-[#B2DDFF]';
     return 'bg-[#ECFDF3] text-[#027A48] border-[#A7F3D0]';
   };
@@ -545,9 +596,8 @@ export default function Settings() {
     return 'Diagnostico';
   };
 
-  const countLabel = (count: number, singular: string, plural: string) => (
-    `${count} ${count === 1 ? singular : plural}`
-  );
+  const countLabel = (count: number, singular: string, plural: string) =>
+    `${count} ${count === 1 ? singular : plural}`;
 
   const buildWorkerSummary = (
     worker: NonNullable<WhatsAppGuardianTrace['workerSnapshot']>,
@@ -601,9 +651,10 @@ export default function Settings() {
       setSusep(profile?.susep || '');
     } catch (err: unknown) {
       console.error('Error loading profile:', err);
-      const message = err instanceof Error
-        ? err.message || 'Não foi possível carregar os dados do perfil.'
-        : 'Não foi possível carregar os dados do perfil.';
+      const message =
+        err instanceof Error
+          ? err.message || 'Não foi possível carregar os dados do perfil.'
+          : 'Não foi possível carregar os dados do perfil.';
       toast.error('Erro ao carregar perfil', message);
     } finally {
       setIsProfileLoading(false);
@@ -638,9 +689,10 @@ export default function Settings() {
       setSusep(profile?.susep || '');
       toast.success('Perfil salvo', 'As informações cadastrais foram atualizadas.');
     } catch (err: unknown) {
-      const message = err instanceof Error
-        ? err.message || 'Não foi possível salvar o perfil.'
-        : 'Não foi possível salvar o perfil.';
+      const message =
+        err instanceof Error
+          ? err.message || 'Não foi possível salvar o perfil.'
+          : 'Não foi possível salvar o perfil.';
       toast.error('Erro ao salvar perfil', message);
     } finally {
       setIsProfileSaving(false);
@@ -678,7 +730,10 @@ export default function Settings() {
       }
     } catch (err: unknown) {
       console.error('Error loading credentials:', err);
-      toast.error('Erro ao carregar credenciais', 'Não foi possível carregar o estado das credenciais.');
+      toast.error(
+        'Erro ao carregar credenciais',
+        'Não foi possível carregar o estado das credenciais.',
+      );
     } finally {
       setIsCredentialsLoading(false);
     }
@@ -715,9 +770,10 @@ export default function Settings() {
     } catch (err: unknown) {
       console.error('Error loading billing:', err);
       setBillingData(null);
-      const message = err instanceof Error
-        ? err.message || 'Não foi possível carregar as faturas reais.'
-        : 'Não foi possível carregar as faturas reais.';
+      const message =
+        err instanceof Error
+          ? err.message || 'Não foi possível carregar as faturas reais.'
+          : 'Não foi possível carregar as faturas reais.';
       toast.error('Erro ao carregar faturamento', message);
     } finally {
       setIsBillingLoading(false);
@@ -726,7 +782,10 @@ export default function Settings() {
 
   const handleSaveCredentials = async () => {
     if (!canManageCredentials) {
-      toast.error('Permissão insuficiente', 'Somente proprietários podem alterar credenciais de integração.');
+      toast.error(
+        'Permissão insuficiente',
+        'Somente proprietários podem alterar credenciais de integração.',
+      );
       return;
     }
 
@@ -770,7 +829,8 @@ export default function Settings() {
       toast.success('Credenciais salvas', 'As chaves foram criptografadas e vinculadas ao tenant.');
     } catch (err: unknown) {
       console.error('Error saving credentials:', err);
-      const message = err instanceof Error ? err.message : 'Não foi possível salvar as credenciais.';
+      const message =
+        err instanceof Error ? err.message : 'Não foi possível salvar as credenciais.';
       toast.error('Erro ao salvar credenciais', message);
     } finally {
       setIsCredentialsSaving(false);
@@ -843,15 +903,18 @@ export default function Settings() {
     }
   }, []);
 
-  const scheduleWhatsAppStatusRefresh = useCallback((delayMs = WHATSAPP_REALTIME_REFRESH_DELAY_MS) => {
-    if (statusRefreshTimeoutRef.current) {
-      clearTimeout(statusRefreshTimeoutRef.current);
-    }
-    statusRefreshTimeoutRef.current = setTimeout(() => {
-      statusRefreshTimeoutRef.current = null;
-      void checkStatus(true);
-    }, delayMs);
-  }, [checkStatus]);
+  const scheduleWhatsAppStatusRefresh = useCallback(
+    (delayMs = WHATSAPP_REALTIME_REFRESH_DELAY_MS) => {
+      if (statusRefreshTimeoutRef.current) {
+        clearTimeout(statusRefreshTimeoutRef.current);
+      }
+      statusRefreshTimeoutRef.current = setTimeout(() => {
+        statusRefreshTimeoutRef.current = null;
+        void checkStatus(true);
+      }, delayMs);
+    },
+    [checkStatus],
+  );
 
   useEffect(() => {
     const requestedTab = searchParams.get('tab');
@@ -862,7 +925,8 @@ export default function Settings() {
 
   useEffect(() => {
     if (activeTab !== 'integracoes') return;
-    if (typeof window === 'undefined' || window.location.hash !== '#diagnostico-operacional') return;
+    if (typeof window === 'undefined' || window.location.hash !== '#diagnostico-operacional')
+      return;
 
     const timer = window.setTimeout(() => {
       diagnosticPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -876,18 +940,27 @@ export default function Settings() {
       fetchProfile();
       // Fetch notification preferences from API
       apiFetch('/api/notifications/preferences')
-        .then(res => res.json())
-        .then(json => {
+        .then((res) => res.json())
+        .then((json) => {
           const prefs = json?.data ?? json;
           if (Array.isArray(prefs) && prefs.length > 0) {
-            const EVENT_TYPES = ['lead_replied', 'lead_callback', 'meeting_scheduled', 'daily_summary'];
-            setNotifications(prev => prev.map((n, i) => {
-              const pref = prefs.find((p: any) => p.eventType === EVENT_TYPES[i]);
-              return pref ? { ...n, checked: pref.enabled } : n;
-            }));
+            const EVENT_TYPES = [
+              'lead_replied',
+              'lead_callback',
+              'meeting_scheduled',
+              'daily_summary',
+            ];
+            setNotifications((prev) =>
+              prev.map((n, i) => {
+                const pref = prefs.find((p: any) => p.eventType === EVENT_TYPES[i]);
+                return pref ? { ...n, checked: pref.enabled } : n;
+              }),
+            );
           }
         })
-        .catch(() => { /* endpoint may not exist yet, keep defaults */ });
+        .catch(() => {
+          /* endpoint may not exist yet, keep defaults */
+        });
     }
 
     // Handle OAuth redirects
@@ -896,9 +969,15 @@ export default function Settings() {
     if (errorMsg) {
       setTimeout(() => {
         if (errorMsg === 'no_refresh_token') {
-          toast.error('Erro de Permissão', 'O Google não enviou o token de atualização. Por favor, remova o acesso do Prospix na sua conta Google e tente novamente.');
+          toast.error(
+            'Erro de Permissão',
+            'O Google não enviou o token de atualização. Por favor, remova o acesso do Prospix na sua conta Google e tente novamente.',
+          );
         } else if (errorMsg === 'google_token_exchange_failed') {
-          toast.error('Erro de Configuração', 'Falha ao trocar o código. Verifique se o GOOGLE_CLIENT_SECRET está correto na Vercel.');
+          toast.error(
+            'Erro de Configuração',
+            'Falha ao trocar o código. Verifique se o GOOGLE_CLIENT_SECRET está correto na Vercel.',
+          );
         } else {
           toast.error('Erro na Conexão', `Não foi possível conectar a agenda (${errorMsg}).`);
         }
@@ -937,7 +1016,15 @@ export default function Settings() {
         pollingIntervalRef.current = null;
       }
     };
-  }, [activeTab, searchParams, fetchProfile, checkStatus, fetchCredentialState, fetchBilling, fetchAgendaSettings]);
+  }, [
+    activeTab,
+    searchParams,
+    fetchProfile,
+    checkStatus,
+    fetchCredentialState,
+    fetchBilling,
+    fetchAgendaSettings,
+  ]);
 
   useEffect(() => {
     if (activeTab !== 'integracoes' || !tenantId) return;
@@ -953,9 +1040,10 @@ export default function Settings() {
 
     const startPolling = () => {
       stopPolling();
-      const delay = document.visibilityState === 'visible'
-        ? WHATSAPP_STATUS_VISIBLE_POLL_MS
-        : WHATSAPP_STATUS_HIDDEN_POLL_MS;
+      const delay =
+        document.visibilityState === 'visible'
+          ? WHATSAPP_STATUS_VISIBLE_POLL_MS
+          : WHATSAPP_STATUS_HIDDEN_POLL_MS;
       statusPollIntervalRef.current = setInterval(() => {
         scheduleWhatsAppStatusRefresh(0);
       }, delay);
@@ -1027,7 +1115,10 @@ export default function Settings() {
             setWhatsappStatusSync((current) => ({
               ...current,
               mode: 'polling',
-              error: status === 'CHANNEL_ERROR' ? 'Realtime indisponivel; usando atualizacao automatica.' : current.error,
+              error:
+                status === 'CHANNEL_ERROR'
+                  ? 'Realtime indisponivel; usando atualizacao automatica.'
+                  : current.error,
             }));
           }
         });
@@ -1037,7 +1128,8 @@ export default function Settings() {
         setWhatsappStatusSync((current) => ({
           ...current,
           mode: 'polling',
-          error: `Realtime indisponivel; usando atualizacao automatica. ${error instanceof Error ? error.message : ''}`.trim(),
+          error:
+            `Realtime indisponivel; usando atualizacao automatica. ${error instanceof Error ? error.message : ''}`.trim(),
         }));
       });
 
@@ -1091,7 +1183,7 @@ export default function Settings() {
       setQrCountdown(40); // Set 40 seconds timer
       setInstanceName(data.instanceName);
       setIsGeneratingQr(false);
-      
+
       // Backoff incremental 3s → 5s → 10s (cap) para reduzir carga no Evolution
       if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
       const delays = [3000, 3000, 5000, 5000, 10000];
@@ -1108,7 +1200,10 @@ export default function Settings() {
       schedule();
     } catch (err: unknown) {
       console.error('Error generating WhatsApp QR code:', err);
-      const message = err instanceof Error ? err.message : 'Ocorreu um erro ao conectar com o servidor da Evolution API.';
+      const message =
+        err instanceof Error
+          ? err.message
+          : 'Ocorreu um erro ao conectar com o servidor da Evolution API.';
       toast.error('Erro no Gateway', message);
       setIsGeneratingQr(false);
     }
@@ -1133,7 +1228,7 @@ export default function Settings() {
   const toggleNotification = async (index: number) => {
     const EVENT_TYPES = ['lead_replied', 'lead_callback', 'meeting_scheduled', 'daily_summary'];
     setNotifications((prev) =>
-      prev.map((n, i) => (i === index ? { ...n, checked: !n.checked } : n))
+      prev.map((n, i) => (i === index ? { ...n, checked: !n.checked } : n)),
     );
     try {
       const eventType = EVENT_TYPES[index] || `notification_${index}`;
@@ -1170,111 +1265,162 @@ export default function Settings() {
         ref={diagnosticPanelRef}
         className="scroll-mt-28 rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-4"
       >
-        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div>
             <div className="flex items-center gap-2">
-              <Shield className="w-4 h-4 text-[#1B3A6B]" />
+              <Shield className="h-4 w-4 text-[#1B3A6B]" />
               <h4 className="text-[13px] font-bold text-[#0F172A]">Diagnóstico operacional</h4>
             </div>
-            <p className="text-[11px] text-[#64748B] mt-1">
+            <p className="mt-1 text-[11px] text-[#64748B]">
               Estado registrado no banco e eventos consolidados das últimas 24h.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Badge className={`text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 ${
-              status?.status === 'SUSPENDED' || status?.lastDisconnectReasonCode
-                ? 'bg-[#FEF3F2] text-[#B42318] border border-[#FECDCA]'
-                : 'bg-[#ECFDF3] text-[#027A48] border border-[#A7F3D0]'
-            }`}>
+            <Badge
+              className={`px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+                status?.status === 'SUSPENDED' || status?.lastDisconnectReasonCode
+                  ? 'border border-[#FECDCA] bg-[#FEF3F2] text-[#B42318]'
+                  : 'border border-[#A7F3D0] bg-[#ECFDF3] text-[#027A48]'
+              }`}
+            >
               {formatTraceLabel(status?.status)}
             </Badge>
-            <Badge className={`text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 border ${syncClass(whatsappStatusSync.mode)}`}>
+            <Badge
+              className={`border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${syncClass(whatsappStatusSync.mode)}`}
+            >
               {syncLabel(whatsappStatusSync.mode)}
             </Badge>
           </div>
         </div>
 
         {currentState && (
-          <div className={`mt-4 rounded-lg border bg-white p-3 ${impactClass(currentState.impactLevel)}`}>
-            <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+          <div
+            className={`mt-4 rounded-lg border bg-white p-3 ${impactClass(currentState.impactLevel)}`}
+          >
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-[12px] font-bold text-[#0F172A]">{currentState.label}</span>
-                  <Badge className={`text-[9px] uppercase font-bold tracking-wider px-2 py-0.5 border ${impactClass(currentState.impactLevel)}`}>
+                  <Badge
+                    className={`border px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider ${impactClass(currentState.impactLevel)}`}
+                  >
                     {operationLabel(currentState.operationState)}
                   </Badge>
                   <span className="text-[10px] text-[#64748B]">
                     ha {formatDuration(currentState.durationSeconds)}
                   </span>
                 </div>
-                <p className="text-[11px] text-[#334155] mt-1">{currentState.summary}</p>
+                <p className="mt-1 text-[11px] text-[#334155]">{currentState.summary}</p>
               </div>
-              <div className="grid grid-cols-2 gap-2 text-[10px] shrink-0">
-                <span className={`rounded-md border px-2 py-1 font-semibold ${currentState.allowSend ? 'bg-[#ECFDF3] text-[#027A48] border-[#A7F3D0]' : 'bg-[#FEF3F2] text-[#B42318] border-[#FECDCA]'}`}>
+              <div className="grid shrink-0 grid-cols-2 gap-2 text-[10px]">
+                <span
+                  className={`rounded-md border px-2 py-1 font-semibold ${currentState.allowSend ? 'border-[#A7F3D0] bg-[#ECFDF3] text-[#027A48]' : 'border-[#FECDCA] bg-[#FEF3F2] text-[#B42318]'}`}
+                >
                   Respostas: {currentState.allowSend ? 'liberadas' : 'pausadas'}
                 </span>
-                <span className={`rounded-md border px-2 py-1 font-semibold ${currentState.allowNewActive ? 'bg-[#ECFDF3] text-[#027A48] border-[#A7F3D0]' : 'bg-[#FFFAEB] text-[#B54708] border-[#FEDF89]'}`}>
+                <span
+                  className={`rounded-md border px-2 py-1 font-semibold ${currentState.allowNewActive ? 'border-[#A7F3D0] bg-[#ECFDF3] text-[#027A48]' : 'border-[#FEDF89] bg-[#FFFAEB] text-[#B54708]'}`}
+                >
                   Novas conversas: {currentState.allowNewActive ? 'liberadas' : 'em cuidado'}
                 </span>
               </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-3 text-[10px] text-[#64748B]">
+            <div className="mt-3 grid grid-cols-1 gap-2 text-[10px] text-[#64748B] md:grid-cols-3">
               <span>Entrou neste estado: {formatDateTime(currentState.enteredAt)}</span>
               <span>Origem: {formatTraceLabel(status?.stateSource)}</span>
-              <span>Motivo: {formatTraceLabel(status?.stateReasonCode || status?.lastDisconnectReasonCode)}</span>
+              <span>
+                Motivo:{' '}
+                {formatTraceLabel(status?.stateReasonCode || status?.lastDisconnectReasonCode)}
+              </span>
             </div>
             <div className="mt-3 rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] px-3 py-2">
-              <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">O que significa</span>
-              <p className="text-[11px] text-[#334155] mt-1 leading-relaxed">
+              <span className="block text-[9px] font-bold uppercase tracking-wider text-[#64748B]">
+                O que significa
+              </span>
+              <p className="mt-1 text-[11px] leading-relaxed text-[#334155]">
                 {explainAiOperation(currentState, aiActivity)}
               </p>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-2 text-[10px] text-[#64748B]">
-                <span>Responder conversas: {currentState.allowSend ? 'sim, liberado' : 'nao, pausado'}</span>
-                <span>Iniciar novas conversas: {currentState.allowNewActive ? 'sim, liberado' : 'nao ou com restricao'}</span>
-                <span>Proximo passo: {aiActivity?.requiredAction || 'acompanhar a proxima leitura'}</span>
+              <div className="mt-2 grid grid-cols-1 gap-2 text-[10px] text-[#64748B] md:grid-cols-3">
+                <span>
+                  Responder conversas: {currentState.allowSend ? 'sim, liberado' : 'nao, pausado'}
+                </span>
+                <span>
+                  Iniciar novas conversas:{' '}
+                  {currentState.allowNewActive ? 'sim, liberado' : 'nao ou com restricao'}
+                </span>
+                <span>
+                  Proximo passo: {aiActivity?.requiredAction || 'acompanhar a proxima leitura'}
+                </span>
               </div>
             </div>
           </div>
         )}
 
         {aiActivity && (
-          <div className={`mt-3 rounded-lg border bg-white p-3 ${aiActivityClass(aiActivity.severity)}`}>
-            <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+          <div
+            className={`mt-3 rounded-lg border bg-white p-3 ${aiActivityClass(aiActivity.severity)}`}
+          >
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-[12px] font-bold text-[#0F172A]">{aiActivity.label}</span>
-                  <Badge className={`text-[9px] uppercase font-bold tracking-wider px-2 py-0.5 border ${aiActivityClass(aiActivity.severity)}`}>
+                  <Badge
+                    className={`border px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider ${aiActivityClass(aiActivity.severity)}`}
+                  >
                     {aiActivity.isOperatingWindow ? 'horario ativo' : 'fora do horario'}
                   </Badge>
                 </div>
-                <p className="text-[11px] text-[#334155] mt-1">{aiActivity.summary}</p>
-                <p className="text-[10px] text-[#64748B] mt-1">Acao: {aiActivity.requiredAction}</p>
+                <p className="mt-1 text-[11px] text-[#334155]">{aiActivity.summary}</p>
+                <p className="mt-1 text-[10px] text-[#64748B]">Acao: {aiActivity.requiredAction}</p>
               </div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[10px] shrink-0">
-                <span className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 font-semibold text-[#334155]">Leads hoje: {aiActivity.leadsCreatedToday}</span>
-                <span className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 font-semibold text-[#334155]">Elegiveis agora: {aiActivity.contactableBacklog}</span>
-                <span className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 font-semibold text-[#334155]">Fila vencida: {aiActivity.duePending}</span>
-                <span className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 font-semibold text-[#334155]">Sem resposta: {aiActivity.unansweredConversations}</span>
+              <div className="grid shrink-0 grid-cols-2 gap-2 text-[10px] md:grid-cols-4">
+                <span className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 font-semibold text-[#334155]">
+                  Leads hoje: {aiActivity.leadsCreatedToday}
+                </span>
+                <span className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 font-semibold text-[#334155]">
+                  Elegiveis agora: {aiActivity.contactableBacklog}
+                </span>
+                <span className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 font-semibold text-[#334155]">
+                  Fila vencida: {aiActivity.duePending}
+                </span>
+                <span className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 font-semibold text-[#334155]">
+                  Sem resposta: {aiActivity.unansweredConversations}
+                </span>
               </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-3 text-[10px] text-[#64748B]">
-              <span>Mensagens da IA hoje: {aiActivity.outboundToday} ({aiActivity.outboundLast60m} na ultima hora)</span>
+            <div className="mt-3 grid grid-cols-1 gap-2 text-[10px] text-[#64748B] md:grid-cols-3">
+              <span>
+                Mensagens da IA hoje: {aiActivity.outboundToday} ({aiActivity.outboundLast60m} na
+                ultima hora)
+              </span>
               <span>Ultimo envio IA: {formatDateTime(aiActivity.lastOutboundAt)}</span>
               <span>Ultima entrada lead: {formatDateTime(aiActivity.lastInboundAt)}</span>
             </div>
             {aiActivity.firstTouchEligibility && (
               <div className="mt-3 rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] px-3 py-2">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-[10px] text-[#64748B]">
-                  <span>Elegiveis reais: {aiActivity.firstTouchEligibility.eligible} de {aiActivity.firstTouchEligibility.totalEvaluated} avaliados</span>
-                  <span>Principal bloqueio: {aiActivity.firstTouchEligibility.topBlockingReasonLabel || 'sem bloqueio dominante'}</span>
-                  <span>Ocorrencias: {aiActivity.firstTouchEligibility.topBlockingReasonCount}</span>
+                <div className="grid grid-cols-1 gap-2 text-[10px] text-[#64748B] md:grid-cols-3">
+                  <span>
+                    Elegiveis reais: {aiActivity.firstTouchEligibility.eligible} de{' '}
+                    {aiActivity.firstTouchEligibility.totalEvaluated} avaliados
+                  </span>
+                  <span>
+                    Principal bloqueio:{' '}
+                    {aiActivity.firstTouchEligibility.topBlockingReasonLabel ||
+                      'sem bloqueio dominante'}
+                  </span>
+                  <span>
+                    Ocorrencias: {aiActivity.firstTouchEligibility.topBlockingReasonCount}
+                  </span>
                 </div>
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {Object.entries(aiActivity.firstTouchEligibility.byReason)
                     .sort((a, b) => b[1] - a[1])
                     .slice(0, 5)
                     .map(([reason, count]) => (
-                      <span key={reason} className="rounded-md border border-[#CBD5E1] bg-white px-2 py-1 text-[10px] font-semibold text-[#334155]">
+                      <span
+                        key={reason}
+                        className="rounded-md border border-[#CBD5E1] bg-white px-2 py-1 text-[10px] font-semibold text-[#334155]"
+                      >
                         {firstTouchReasonLabel(reason)}: {count}
                       </span>
                     ))}
@@ -1286,73 +1432,102 @@ export default function Settings() {
 
         {workerSnapshot && (
           <div className="mt-3 rounded-lg border border-[#D0D5DD] bg-white p-3">
-            <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-[12px] font-bold text-[#0F172A]">Execucao da IA</span>
-                  <Badge className={`text-[9px] uppercase font-bold tracking-wider px-2 py-0.5 border ${workerStatusClass(workerSnapshot.latestQueue?.status, workerSnapshot.duePending, workerSnapshot.guardianBlockingSend)}`}>
-                    {workerStatusLabel(workerSnapshot.latestQueue?.status, workerSnapshot.duePending, workerSnapshot.guardianBlockingSend)}
+                  <Badge
+                    className={`border px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider ${workerStatusClass(workerSnapshot.latestQueue?.status, workerSnapshot.duePending, workerSnapshot.guardianBlockingSend)}`}
+                  >
+                    {workerStatusLabel(
+                      workerSnapshot.latestQueue?.status,
+                      workerSnapshot.duePending,
+                      workerSnapshot.guardianBlockingSend,
+                    )}
                   </Badge>
                 </div>
-                <p className="text-[11px] text-[#334155] mt-1 leading-relaxed">
+                <p className="mt-1 text-[11px] leading-relaxed text-[#334155]">
                   {buildWorkerSummary(workerSnapshot, aiActivity, currentState)}
                 </p>
               </div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[10px] shrink-0">
+              <div className="grid shrink-0 grid-cols-2 gap-2 text-[10px] md:grid-cols-4">
                 <span className="rounded-md border border-[#E5E7EB] bg-[#F8FAFC] px-2 py-1 font-semibold text-[#334155]">
                   Hoje: {countLabel(workerSnapshot.sentToday, 'envio', 'envios')}
                 </span>
                 <span className="rounded-md border border-[#E5E7EB] bg-[#F8FAFC] px-2 py-1 font-semibold text-[#334155]">
                   Ultima hora: {workerSnapshot.sentLast60m}
                 </span>
-                <span className={`rounded-md border px-2 py-1 font-semibold ${workerSnapshot.duePending > 0 ? 'bg-[#FFFAEB] text-[#B54708] border-[#FEDF89]' : 'bg-[#F8FAFC] text-[#334155] border-[#E5E7EB]'}`}>
+                <span
+                  className={`rounded-md border px-2 py-1 font-semibold ${workerSnapshot.duePending > 0 ? 'border-[#FEDF89] bg-[#FFFAEB] text-[#B54708]' : 'border-[#E5E7EB] bg-[#F8FAFC] text-[#334155]'}`}
+                >
                   Atrasadas: {workerSnapshot.duePending}
                 </span>
-                <span className={`rounded-md border px-2 py-1 font-semibold ${workerSnapshot.blockedOrFailedLast24h > 0 ? 'bg-[#FEF3F2] text-[#B42318] border-[#FECDCA]' : 'bg-[#F8FAFC] text-[#334155] border-[#E5E7EB]'}`}>
+                <span
+                  className={`rounded-md border px-2 py-1 font-semibold ${workerSnapshot.blockedOrFailedLast24h > 0 ? 'border-[#FECDCA] bg-[#FEF3F2] text-[#B42318]' : 'border-[#E5E7EB] bg-[#F8FAFC] text-[#334155]'}`}
+                >
                   Falhas/bloqueios: {workerSnapshot.blockedOrFailedLast24h}
                 </span>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-3">
+            <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-4">
               <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-3">
-                <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Ultimo envio</span>
-                <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">{formatDateTime(workerSnapshot.latestAiMessageAt)}</span>
+                <span className="block text-[9px] font-bold uppercase tracking-wider text-[#64748B]">
+                  Ultimo envio
+                </span>
+                <span className="mt-1 block text-[12px] font-semibold text-[#0F172A]">
+                  {formatDateTime(workerSnapshot.latestAiMessageAt)}
+                </span>
               </div>
               <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-3">
-                <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Fila agora</span>
-                <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">
+                <span className="block text-[9px] font-bold uppercase tracking-wider text-[#64748B]">
+                  Fila agora
+                </span>
+                <span className="mt-1 block text-[12px] font-semibold text-[#0F172A]">
                   {workerSnapshot.activePending} em espera
                 </span>
               </div>
               <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-3">
-                <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Proximo envio</span>
-                <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">{formatDateTime(workerSnapshot.nextScheduledFor)}</span>
+                <span className="block text-[9px] font-bold uppercase tracking-wider text-[#64748B]">
+                  Proximo envio
+                </span>
+                <span className="mt-1 block text-[12px] font-semibold text-[#0F172A]">
+                  {formatDateTime(workerSnapshot.nextScheduledFor)}
+                </span>
               </div>
               <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-3">
-                <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Leads prontos</span>
-                <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">
+                <span className="block text-[9px] font-bold uppercase tracking-wider text-[#64748B]">
+                  Leads prontos
+                </span>
+                <span className="mt-1 block text-[12px] font-semibold text-[#0F172A]">
                   {workerSnapshot.firstTouchEligible} de {workerSnapshot.firstTouchEvaluated}
                 </span>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+            <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
               <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-3">
-                <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Bloqueio atual</span>
-                <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">
+                <span className="block text-[9px] font-bold uppercase tracking-wider text-[#64748B]">
+                  Bloqueio atual
+                </span>
+                <span className="mt-1 block text-[12px] font-semibold text-[#0F172A]">
                   {workerSnapshot.guardianBlockSummary || 'Sem bloqueio de conexao'}
                 </span>
               </div>
               <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-3">
-                <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Estado da conexao</span>
-                <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">
-                  {formatTraceLabel(workerSnapshot.guardianStatus)} / {formatTraceLabel(workerSnapshot.guardianExternalState)}
+                <span className="block text-[9px] font-bold uppercase tracking-wider text-[#64748B]">
+                  Estado da conexao
+                </span>
+                <span className="mt-1 block text-[12px] font-semibold text-[#0F172A]">
+                  {formatTraceLabel(workerSnapshot.guardianStatus)} /{' '}
+                  {formatTraceLabel(workerSnapshot.guardianExternalState)}
                 </span>
               </div>
               <div className="rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] p-3">
-                <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Motivo da conexao</span>
-                <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">
+                <span className="block text-[9px] font-bold uppercase tracking-wider text-[#64748B]">
+                  Motivo da conexao
+                </span>
+                <span className="mt-1 block text-[12px] font-semibold text-[#0F172A]">
                   {formatTraceLabel(workerSnapshot.guardianReasonCode)}
                 </span>
               </div>
@@ -1360,48 +1535,85 @@ export default function Settings() {
 
             {workerSnapshot.latestQueue && (
               <div className="mt-3 rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] px-3 py-2">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-[10px] text-[#64748B]">
-                  <span>Ultima acao da fila: {messageTypeLabel(workerSnapshot.latestQueue.messageType)}</span>
-                  <span>Status: {workerStatusLabel(workerSnapshot.latestQueue.status, workerSnapshot.duePending, workerSnapshot.guardianBlockingSend)}</span>
-                  <span>Horario: {formatDateTime(workerSnapshot.latestQueue.sentAt || workerSnapshot.latestQueue.failedAt || workerSnapshot.latestQueue.scheduledFor || workerSnapshot.latestQueue.createdAt)}</span>
+                <div className="grid grid-cols-1 gap-2 text-[10px] text-[#64748B] md:grid-cols-3">
+                  <span>
+                    Ultima acao da fila: {messageTypeLabel(workerSnapshot.latestQueue.messageType)}
+                  </span>
+                  <span>
+                    Status:{' '}
+                    {workerStatusLabel(
+                      workerSnapshot.latestQueue.status,
+                      workerSnapshot.duePending,
+                      workerSnapshot.guardianBlockingSend,
+                    )}
+                  </span>
+                  <span>
+                    Horario:{' '}
+                    {formatDateTime(
+                      workerSnapshot.latestQueue.sentAt ||
+                        workerSnapshot.latestQueue.failedAt ||
+                        workerSnapshot.latestQueue.scheduledFor ||
+                        workerSnapshot.latestQueue.createdAt,
+                    )}
+                  </span>
                 </div>
-                {(workerSnapshot.latestQueue.failedReason || workerSnapshot.latestQueue.validationReasonCode || workerSnapshot.latestQueue.finalGuardianDecision) && (
-                  <p className="text-[10px] text-[#64748B] mt-2">
-                    Motivo registrado: {formatTraceLabel(workerSnapshot.latestQueue.failedReason || workerSnapshot.latestQueue.validationReasonCode || workerSnapshot.latestQueue.finalGuardianDecision)}
+                {(workerSnapshot.latestQueue.failedReason ||
+                  workerSnapshot.latestQueue.validationReasonCode ||
+                  workerSnapshot.latestQueue.finalGuardianDecision) && (
+                  <p className="mt-2 text-[10px] text-[#64748B]">
+                    Motivo registrado:{' '}
+                    {formatTraceLabel(
+                      workerSnapshot.latestQueue.failedReason ||
+                        workerSnapshot.latestQueue.validationReasonCode ||
+                        workerSnapshot.latestQueue.finalGuardianDecision,
+                    )}
                   </p>
                 )}
               </div>
             )}
 
             {firstDueItem && (
-              <div className={`mt-3 rounded-lg border px-3 py-3 ${
-                firstDueItem.blocksSend
-                  ? 'border-[#FEDF89] bg-[#FFFAEB]'
-                  : 'border-[#BFDBFE] bg-[#EFF6FF]'
-              }`}>
-                <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-2">
+              <div
+                className={`mt-3 rounded-lg border px-3 py-3 ${
+                  firstDueItem.blocksSend
+                    ? 'border-[#FEDF89] bg-[#FFFAEB]'
+                    : 'border-[#BFDBFE] bg-[#EFF6FF]'
+                }`}
+              >
+                <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-[11px] font-bold text-[#0F172A]">Pendencia principal</span>
-                      <Badge className={`text-[9px] uppercase font-bold tracking-wider px-2 py-0.5 border ${
-                        firstDueItem.blocksSend
-                          ? 'bg-[#FEF0C7] text-[#B54708] border-[#FEDF89]'
-                          : 'bg-[#DBEAFE] text-[#1D4ED8] border-[#BFDBFE]'
-                      }`}>
+                      <span className="text-[11px] font-bold text-[#0F172A]">
+                        Pendencia principal
+                      </span>
+                      <Badge
+                        className={`border px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider ${
+                          firstDueItem.blocksSend
+                            ? 'border-[#FEDF89] bg-[#FEF0C7] text-[#B54708]'
+                            : 'border-[#BFDBFE] bg-[#DBEAFE] text-[#1D4ED8]'
+                        }`}
+                      >
                         {blockerKindLabel(firstDueItem.blockerKind)}
                       </Badge>
                       {dueQueueDiagnostics.totalDue > 1 && (
                         <span className="text-[10px] text-[#64748B]">
-                          mais {countLabel(dueQueueDiagnostics.totalDue - 1, 'pendencia vencida', 'pendencias vencidas')}
+                          mais{' '}
+                          {countLabel(
+                            dueQueueDiagnostics.totalDue - 1,
+                            'pendencia vencida',
+                            'pendencias vencidas',
+                          )}
                         </span>
                       )}
                     </div>
-                    <p className="text-[11px] text-[#334155] mt-1 leading-relaxed">{firstDueItem.operatorSummary}</p>
-                    <p className="text-[10px] text-[#475569] mt-1 leading-relaxed">
+                    <p className="mt-1 text-[11px] leading-relaxed text-[#334155]">
+                      {firstDueItem.operatorSummary}
+                    </p>
+                    <p className="mt-1 text-[10px] leading-relaxed text-[#475569]">
                       Acao recomendada: {firstDueItem.recommendedAction}
                     </p>
                   </div>
-                  <div className="grid grid-cols-2 gap-2 text-[10px] shrink-0">
+                  <div className="grid shrink-0 grid-cols-2 gap-2 text-[10px]">
                     <span className="rounded-md border border-white/70 bg-white/70 px-2 py-1 font-semibold text-[#334155]">
                       Tipo: {messageTypeLabel(firstDueItem.messageType)}
                     </span>
@@ -1410,7 +1622,7 @@ export default function Settings() {
                     </span>
                   </div>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-3 text-[10px] text-[#64748B]">
+                <div className="mt-3 grid grid-cols-1 gap-2 text-[10px] text-[#64748B] md:grid-cols-3">
                   <span>Lead: {firstDueItem.leadName || 'sem nome registrado'}</span>
                   <span>Campanha: {firstDueItem.campaignName || 'sem campanha registrada'}</span>
                   <span>Agendada para: {formatDateTime(firstDueItem.scheduledFor)}</span>
@@ -1420,22 +1632,36 @@ export default function Settings() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-4">
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-4">
           <div className="rounded-lg border border-[#E5E7EB] bg-white p-3">
-            <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Estado externo</span>
-            <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">{formatTraceLabel(status?.externalState)}</span>
+            <span className="block text-[9px] font-bold uppercase tracking-wider text-[#64748B]">
+              Estado externo
+            </span>
+            <span className="mt-1 block text-[12px] font-semibold text-[#0F172A]">
+              {formatTraceLabel(status?.externalState)}
+            </span>
           </div>
           <div className="rounded-lg border border-[#E5E7EB] bg-white p-3">
-            <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Motivo</span>
-            <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">{formatTraceLabel(status?.lastDisconnectReasonCode)}</span>
+            <span className="block text-[9px] font-bold uppercase tracking-wider text-[#64748B]">
+              Motivo
+            </span>
+            <span className="mt-1 block text-[12px] font-semibold text-[#0F172A]">
+              {formatTraceLabel(status?.lastDisconnectReasonCode)}
+            </span>
           </div>
           <div className="rounded-lg border border-[#E5E7EB] bg-white p-3">
-            <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Circuit breaker</span>
-            <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">{formatDateTime(status?.circuitOpenUntil)}</span>
+            <span className="block text-[9px] font-bold uppercase tracking-wider text-[#64748B]">
+              Circuit breaker
+            </span>
+            <span className="mt-1 block text-[12px] font-semibold text-[#0F172A]">
+              {formatDateTime(status?.circuitOpenUntil)}
+            </span>
           </div>
           <div className="rounded-lg border border-[#E5E7EB] bg-white p-3">
-            <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Fila ativa</span>
-            <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">
+            <span className="block text-[9px] font-bold uppercase tracking-wider text-[#64748B]">
+              Fila ativa
+            </span>
+            <span className="mt-1 block text-[12px] font-semibold text-[#0F172A]">
               {whatsappTrace.pendingOutbound.activePending} pendentes
             </span>
           </div>
@@ -1443,35 +1669,58 @@ export default function Settings() {
 
         {latestGroup && (
           <div className="mt-3 rounded-lg border border-[#E5E7EB] bg-white p-3">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
               <div>
-                <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Último agrupamento</span>
-                <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">{formatTraceLabel(latestGroup.eventType)}</span>
+                <span className="block text-[9px] font-bold uppercase tracking-wider text-[#64748B]">
+                  Último agrupamento
+                </span>
+                <span className="mt-1 block text-[12px] font-semibold text-[#0F172A]">
+                  {formatTraceLabel(latestGroup.eventType)}
+                </span>
               </div>
               <div>
-                <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Ocorrências</span>
-                <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">{latestGroup.count}</span>
+                <span className="block text-[9px] font-bold uppercase tracking-wider text-[#64748B]">
+                  Ocorrências
+                </span>
+                <span className="mt-1 block text-[12px] font-semibold text-[#0F172A]">
+                  {latestGroup.count}
+                </span>
               </div>
               <div>
-                <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Primeira</span>
-                <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">{formatDateTime(latestGroup.firstSeenAt)}</span>
+                <span className="block text-[9px] font-bold uppercase tracking-wider text-[#64748B]">
+                  Primeira
+                </span>
+                <span className="mt-1 block text-[12px] font-semibold text-[#0F172A]">
+                  {formatDateTime(latestGroup.firstSeenAt)}
+                </span>
               </div>
               <div>
-                <span className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider block">Última</span>
-                <span className="text-[12px] text-[#0F172A] font-semibold mt-1 block">{formatDateTime(latestGroup.lastSeenAt)}</span>
+                <span className="block text-[9px] font-bold uppercase tracking-wider text-[#64748B]">
+                  Última
+                </span>
+                <span className="mt-1 block text-[12px] font-semibold text-[#0F172A]">
+                  {formatDateTime(latestGroup.lastSeenAt)}
+                </span>
               </div>
             </div>
           </div>
         )}
 
-        <div className="mt-3 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-          <div className={`text-[11px] font-semibold ${missingEvidence > 0 ? 'text-[#B42318]' : 'text-[#027A48]'}`}>
+        <div className="mt-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <div
+            className={`text-[11px] font-semibold ${missingEvidence > 0 ? 'text-[#B42318]' : 'text-[#027A48]'}`}
+          >
             {missingEvidence > 0
-              ? countLabel(missingEvidence, 'pendencia sem evidencia Guardian', 'pendencias sem evidencia Guardian')
+              ? countLabel(
+                  missingEvidence,
+                  'pendencia sem evidencia Guardian',
+                  'pendencias sem evidencia Guardian',
+                )
               : 'Nenhuma pendência ativa sem evidência Guardian'}
           </div>
           <div className="text-[10px] text-[#64748B]">
-            Última leitura da tela: {formatDateTime(whatsappStatusSync.lastRefreshAt)} · Última checagem do gateway: {formatDateTime(status?.externalCheckedAt || status?.updatedAt)}
+            Última leitura da tela: {formatDateTime(whatsappStatusSync.lastRefreshAt)} · Última
+            checagem do gateway: {formatDateTime(status?.externalCheckedAt || status?.updatedAt)}
           </div>
         </div>
 
@@ -1483,14 +1732,21 @@ export default function Settings() {
 
         {whatsappTrace.recentEvents.length > 0 && (
           <div className="mt-3 border-t border-[#E5E7EB] pt-3">
-            <div className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider mb-2">Eventos recentes</div>
+            <div className="mb-2 text-[9px] font-bold uppercase tracking-wider text-[#64748B]">
+              Eventos recentes
+            </div>
             <div className="space-y-1.5">
               {whatsappTrace.recentEvents.slice(0, 4).map((event, index) => (
-                <div key={`${event.createdAt}-${index}`} className="flex flex-col md:flex-row md:items-center md:justify-between gap-1 text-[11px]">
-                  <span className="text-[#0F172A] font-medium">
+                <div
+                  key={`${event.createdAt}-${index}`}
+                  className="flex flex-col gap-1 text-[11px] md:flex-row md:items-center md:justify-between"
+                >
+                  <span className="font-medium text-[#0F172A]">
                     {formatTraceLabel(event.eventType)} · {formatTraceLabel(event.reasonCode)}
                   </span>
-                  <span className="text-[#64748B] font-mono">{formatDateTime(event.createdAt)}</span>
+                  <span className="font-mono text-[#64748B]">
+                    {formatDateTime(event.createdAt)}
+                  </span>
                 </div>
               ))}
             </div>
@@ -1499,12 +1755,19 @@ export default function Settings() {
 
         {recentTransitions.length > 0 && (
           <div className="mt-3 border-t border-[#E5E7EB] pt-3">
-            <div className="text-[9px] text-[#64748B] font-bold uppercase tracking-wider mb-2">Mudancas de estado</div>
+            <div className="mb-2 text-[9px] font-bold uppercase tracking-wider text-[#64748B]">
+              Mudancas de estado
+            </div>
             <div className="space-y-1.5">
               {recentTransitions.slice(0, 4).map((transition, index) => (
-                <div key={`${transition.enteredAt}-${index}`} className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-1 text-[11px]">
-                  <span className="text-[#0F172A] font-medium">
-                    {formatTraceLabel(transition.previousStatus)} para {formatTraceLabel(transition.status)} - {operationLabel(transition.operationState)}
+                <div
+                  key={`${transition.enteredAt}-${index}`}
+                  className="flex flex-col gap-1 text-[11px] lg:flex-row lg:items-center lg:justify-between"
+                >
+                  <span className="font-medium text-[#0F172A]">
+                    {formatTraceLabel(transition.previousStatus)} para{' '}
+                    {formatTraceLabel(transition.status)} -{' '}
+                    {operationLabel(transition.operationState)}
                   </span>
                   <span className="text-[#64748B]">
                     {transition.exitedAt
@@ -1521,105 +1784,140 @@ export default function Settings() {
   };
 
   return (
-    <div className="space-y-6 flex flex-col h-full animate-fadeIn">
+    <div className="animate-fadeIn flex h-full flex-col space-y-6">
       {/* Info banner */}
-      <div className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-[rgba(27,58,107,0.04)] to-[rgba(232,152,28,0.06)] border border-[rgba(27,58,107,0.08)] rounded-xl text-[12.5px] text-[#0F172A] shrink-0">
-        <SettingsIcon className="w-4 h-4 text-[#1B3A6B] shrink-0" />
-        <div><strong>Configurações da sua conta e integrações.</strong> Gerencie perfil, credenciais, WhatsApp, Google Calendar e faturamento.</div>
+      <div className="flex shrink-0 items-center gap-3 rounded-xl border border-[rgba(27,58,107,0.08)] bg-gradient-to-r from-[rgba(27,58,107,0.04)] to-[rgba(232,152,28,0.06)] px-4 py-3 text-[12.5px] text-[#0F172A]">
+        <SettingsIcon className="h-4 w-4 shrink-0 text-[#1B3A6B]" />
+        <div>
+          <strong>Configurações da sua conta e integrações.</strong> Gerencie perfil, credenciais,
+          WhatsApp, Google Calendar e faturamento.
+        </div>
       </div>
 
       {/* 2-column layout: sidebar pills + content */}
-      <div className="flex-1 flex flex-col lg:flex-row gap-6 items-start">
+      <div className="flex flex-1 flex-col items-start gap-6 lg:flex-row">
         {/* Left sidebar pills */}
-        <div className="w-full lg:w-48 shrink-0 flex lg:flex-col overflow-x-auto lg:overflow-visible gap-1">
+        <div className="flex w-full shrink-0 gap-1 overflow-x-auto lg:w-48 lg:flex-col lg:overflow-visible">
           {tabConfig.map(({ key, label, icon: Icon }) => (
-              <button
-                key={key}
-                onClick={() => setActiveTab(key)}
-                data-testid={key === 'privacidade' ? 'settings-privacy-tab' : undefined}
-                className={`w-full shrink-0 text-left flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-[13px] font-medium transition-all ${
-                  activeTab === key
-                    ? 'bg-[#1B3A6B] text-white shadow-sm'
-                    : 'text-[#475569] hover:bg-[#F1F3F6]'
-                }`}
-              >
-                <Icon className="w-4 h-4" />
-                {label}
-              </button>
-            ))}
+            <button
+              key={key}
+              onClick={() => setActiveTab(key)}
+              data-testid={key === 'privacidade' ? 'settings-privacy-tab' : undefined}
+              className={`flex w-full shrink-0 items-center gap-2.5 rounded-xl px-3.5 py-2.5 text-left text-[13px] font-medium transition-all ${
+                activeTab === key
+                  ? 'bg-[#1B3A6B] text-white shadow-sm'
+                  : 'text-[#475569] hover:bg-[#F1F3F6]'
+              }`}
+            >
+              <Icon className="h-4 w-4" />
+              {label}
+            </button>
+          ))}
         </div>
 
         {/* Right content */}
-        <div className="flex-1 w-full min-w-0 space-y-5">
-
+        <div className="w-full min-w-0 flex-1 space-y-5">
           {/* ─── TAB: CONTEXTO IA ─── */}
-          {activeTab === 'contexto' && (
-            <AIContextPage />
-          )}
+          {activeTab === 'contexto' && <AIContextPage />}
 
           {/* ─── TAB: PERFIL ─── */}
           {activeTab === 'perfil' && (
             <>
               {/* Informações Cadastrais */}
-              <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
-                <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
-                  <div className="text-[14px] font-semibold text-[#0F172A]">Informações Cadastrais</div>
-                  <div className="text-[11px] text-[#64748B] mt-0.5">Atualize os dados pessoais de exibição do corretor.</div>
+              <div className="overflow-hidden rounded-xl border border-[#E5E7EB] bg-white shadow-sm">
+                <div className="border-b border-[#EEF0F3] px-5 py-3.5">
+                  <div className="text-[14px] font-semibold text-[#0F172A]">
+                    Informações Cadastrais
+                  </div>
+                  <div className="mt-0.5 text-[11px] text-[#64748B]">
+                    Atualize os dados pessoais de exibição do corretor.
+                  </div>
                 </div>
-                <div className="p-5 space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-4 p-5">
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                     <div>
-                      <label htmlFor="profile-name" className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Nome Completo</label>
+                      <label
+                        htmlFor="profile-name"
+                        className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#64748B]"
+                      >
+                        Nome Completo
+                      </label>
                       <Input
                         id="profile-name"
                         value={name}
                         onChange={(e) => {
                           setName(e.target.value);
-                          if (profileErrors.name) setProfileErrors((p) => ({ ...p, name: undefined }));
+                          if (profileErrors.name)
+                            setProfileErrors((p) => ({ ...p, name: undefined }));
                         }}
                         aria-invalid={!!profileErrors.name}
                         aria-describedby={profileErrors.name ? 'profile-name-error' : undefined}
-                        className={`bg-white text-[#0F172A] placeholder-[#64748B] text-[13px] h-10 rounded-lg ${profileErrors.name ? 'border-[#D92D20] focus:border-[#D92D20]' : 'border-[#E5E7EB] focus:border-[#1B3A6B]'}`}
+                        className={`h-10 rounded-lg bg-white text-[13px] text-[#0F172A] placeholder-[#64748B] ${profileErrors.name ? 'border-[#D92D20] focus:border-[#D92D20]' : 'border-[#E5E7EB] focus:border-[#1B3A6B]'}`}
                       />
                       {profileErrors.name && (
-                        <p id="profile-name-error" className="text-[10px] text-[#D92D20] mt-1" role="alert">{profileErrors.name}</p>
+                        <p
+                          id="profile-name-error"
+                          className="mt-1 text-[10px] text-[#D92D20]"
+                          role="alert"
+                        >
+                          {profileErrors.name}
+                        </p>
                       )}
                     </div>
                     <div>
-                      <label htmlFor="profile-email" className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">E-mail de Login</label>
+                      <label
+                        htmlFor="profile-email"
+                        className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#64748B]"
+                      >
+                        E-mail de Login
+                      </label>
                       <Input
                         id="profile-email"
                         type="email"
                         value={email}
                         readOnly
                         disabled
-                        className="bg-[#F8FAFC] text-[#64748B] text-[13px] h-10 rounded-lg border-[#E5E7EB] cursor-not-allowed"
+                        className="h-10 cursor-not-allowed rounded-lg border-[#E5E7EB] bg-[#F8FAFC] text-[13px] text-[#64748B]"
                       />
-                      <p className="text-[10px] text-[#94A3B8] mt-1">Este é o e-mail usado para login e não pode ser alterado por aqui.</p>
+                      <p className="mt-1 text-[10px] text-[#94A3B8]">
+                        Este é o e-mail usado para login e não pode ser alterado por aqui.
+                      </p>
                     </div>
                     <div>
-                      <label htmlFor="profile-susep" className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Registro Profissional</label>
+                      <label
+                        htmlFor="profile-susep"
+                        className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#64748B]"
+                      >
+                        Registro Profissional
+                      </label>
                       <Input
                         id="profile-susep"
                         value={susep}
                         placeholder="SUSEP, OAB, CRM, CRECI… (opcional)"
                         onChange={(e) => {
                           setSusep(e.target.value);
-                          if (profileErrors.susep) setProfileErrors((p) => ({ ...p, susep: undefined }));
+                          if (profileErrors.susep)
+                            setProfileErrors((p) => ({ ...p, susep: undefined }));
                         }}
                         aria-invalid={!!profileErrors.susep}
                         aria-describedby={profileErrors.susep ? 'profile-susep-error' : undefined}
-                        className={`bg-white text-[#0F172A] placeholder-[#64748B] text-[13px] h-10 rounded-lg ${profileErrors.susep ? 'border-[#D92D20] focus:border-[#D92D20]' : 'border-[#E5E7EB] focus:border-[#1B3A6B]'}`}
+                        className={`h-10 rounded-lg bg-white text-[13px] text-[#0F172A] placeholder-[#64748B] ${profileErrors.susep ? 'border-[#D92D20] focus:border-[#D92D20]' : 'border-[#E5E7EB] focus:border-[#1B3A6B]'}`}
                       />
                       {profileErrors.susep && (
-                        <p id="profile-susep-error" className="text-[10px] text-[#D92D20] mt-1" role="alert">{profileErrors.susep}</p>
+                        <p
+                          id="profile-susep-error"
+                          className="mt-1 text-[10px] text-[#D92D20]"
+                          role="alert"
+                        >
+                          {profileErrors.susep}
+                        </p>
                       )}
                     </div>
                   </div>
                   <Button
                     disabled={isProfileLoading || isProfileSaving}
                     onClick={handleSaveProfile}
-                    className="bg-[#1B3A6B] hover:bg-[#15305A] text-white font-semibold text-[13px] px-5 h-10 rounded-xl mt-2 shadow-md shadow-[#1B3A6B]/10 disabled:opacity-60 disabled:cursor-not-allowed"
+                    className="mt-2 h-10 rounded-xl bg-[#1B3A6B] px-5 text-[13px] font-semibold text-white shadow-md shadow-[#1B3A6B]/10 hover:bg-[#15305A] disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {isProfileSaving ? 'Salvando...' : 'Salvar Alterações'}
                   </Button>
@@ -1627,31 +1925,38 @@ export default function Settings() {
               </div>
 
               {/* Notificações */}
-              <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
-                <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
+              <div className="overflow-hidden rounded-xl border border-[#E5E7EB] bg-white shadow-sm">
+                <div className="border-b border-[#EEF0F3] px-5 py-3.5">
                   <div className="flex items-center gap-2">
-                    <Bell className="w-4 h-4 text-[#1B3A6B]" />
+                    <Bell className="h-4 w-4 text-[#1B3A6B]" />
                     <div className="text-[14px] font-semibold text-[#0F172A]">Notificações</div>
                   </div>
-                  <div className="text-[11px] text-[#64748B] mt-0.5">Configure quais alertas você deseja receber.</div>
+                  <div className="mt-0.5 text-[11px] text-[#64748B]">
+                    Configure quais alertas você deseja receber.
+                  </div>
                 </div>
-                <div className="p-5 space-y-1">
+                <div className="space-y-1 p-5">
                   {notifications.map((n, i) => (
-                    <div key={i} className="flex items-center justify-between py-3 border-b border-[#F1F5F9] last:border-0">
+                    <div
+                      key={i}
+                      className="flex items-center justify-between border-b border-[#F1F5F9] py-3 last:border-0"
+                    >
                       <div>
                         <div className="text-[13px] font-medium text-[#0F172A]">{n.label}</div>
                         <div className="text-[11px] text-[#64748B]">{n.desc}</div>
                       </div>
                       <button
                         onClick={() => toggleNotification(i)}
-                        className={`w-10 h-6 rounded-full transition-colors ${
+                        className={`h-6 w-10 rounded-full transition-colors ${
                           n.checked ? 'bg-[#1B3A6B]' : 'bg-[#E5E7EB]'
                         } relative`}
                         aria-label={`Toggle ${n.label}`}
                       >
-                        <span className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${
-                          n.checked ? 'right-1' : 'left-1'
-                        }`} />
+                        <span
+                          className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                            n.checked ? 'right-1' : 'left-1'
+                          }`}
+                        />
                       </button>
                     </div>
                   ))}
@@ -1664,53 +1969,63 @@ export default function Settings() {
           {activeTab === 'integracoes' && (
             <>
               {/* Integration Status Overview */}
-              <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
-                <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
+              <div className="overflow-hidden rounded-xl border border-[#E5E7EB] bg-white shadow-sm">
+                <div className="border-b border-[#EEF0F3] px-5 py-3.5">
                   <div className="text-[14px] font-semibold text-[#0F172A]">Status de Conexão</div>
-                  <div className="text-[11px] text-[#64748B] mt-0.5">Visão geral das integrações ativas e inativas.</div>
+                  <div className="mt-0.5 text-[11px] text-[#64748B]">
+                    Visão geral das integrações ativas e inativas.
+                  </div>
                 </div>
-                <div className="p-5 space-y-4">
+                <div className="space-y-4 p-5">
                   {/* WhatsApp status inline */}
-                  <div className="flex items-center justify-between p-3 rounded-xl border border-[#F1F5F9] hover:bg-[#FAFBFC] transition-colors">
+                  <div className="flex items-center justify-between rounded-xl border border-[#F1F5F9] p-3 transition-colors hover:bg-[#FAFBFC]">
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-[#25D366]/10 flex items-center justify-center">
-                        <Phone className="w-5 h-5 text-[#25D366]" />
+                      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#25D366]/10">
+                        <Phone className="h-5 w-5 text-[#25D366]" />
                       </div>
                       <div>
-                        <div className="text-[13px] font-semibold text-[#0F172A]">WhatsApp Business</div>
-                        <div className="text-[11px] text-[#64748B]">Envio e recebimento de mensagens</div>
+                        <div className="text-[13px] font-semibold text-[#0F172A]">
+                          WhatsApp Business
+                        </div>
+                        <div className="text-[11px] text-[#64748B]">
+                          Envio e recebimento de mensagens
+                        </div>
                       </div>
                     </div>
                     {whatsappStatus === 'loading' ? (
-                      <Loader2 className="w-4 h-4 text-[#1B3A6B] animate-spin" />
+                      <Loader2 className="h-4 w-4 animate-spin text-[#1B3A6B]" />
                     ) : whatsappStatus === 'connected' ? (
-                      <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-[#ECFDF3] text-[#027A48]">
+                      <span className="rounded-full bg-[#ECFDF3] px-2 py-0.5 text-[10.5px] font-semibold text-[#027A48]">
                         ● Conectado
                       </span>
                     ) : (
-                      <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-[#FEF3F2] text-[#D92D20]">
+                      <span className="rounded-full bg-[#FEF3F2] px-2 py-0.5 text-[10.5px] font-semibold text-[#D92D20]">
                         ● Desconectado
                       </span>
                     )}
                   </div>
 
                   {/* Google Calendar status inline */}
-                  <div className="flex items-center justify-between p-3 rounded-xl border border-[#F1F5F9] hover:bg-[#FAFBFC] transition-colors">
+                  <div className="flex items-center justify-between rounded-xl border border-[#F1F5F9] p-3 transition-colors hover:bg-[#FAFBFC]">
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-[#4285F4]/10 flex items-center justify-center">
-                        <Calendar className="w-5 h-5 text-[#4285F4]" />
+                      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#4285F4]/10">
+                        <Calendar className="h-5 w-5 text-[#4285F4]" />
                       </div>
                       <div>
-                        <div className="text-[13px] font-semibold text-[#0F172A]">Google Calendar</div>
-                        <div className="text-[11px] text-[#64748B]">Sincronização de reuniões e agenda</div>
+                        <div className="text-[13px] font-semibold text-[#0F172A]">
+                          Google Calendar
+                        </div>
+                        <div className="text-[11px] text-[#64748B]">
+                          Sincronização de reuniões e agenda
+                        </div>
                       </div>
                     </div>
                     {credentialState.google.calendarConnected ? (
-                      <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-[#ECFDF3] text-[#027A48]">
+                      <span className="rounded-full bg-[#ECFDF3] px-2 py-0.5 text-[10.5px] font-semibold text-[#027A48]">
                         ● Conectado
                       </span>
                     ) : (
-                      <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-[#FEF3F2] text-[#D92D20]">
+                      <span className="rounded-full bg-[#FEF3F2] px-2 py-0.5 text-[10.5px] font-semibold text-[#D92D20]">
                         ● Desconectado
                       </span>
                     )}
@@ -1719,66 +2034,78 @@ export default function Settings() {
               </div>
 
               {/* WhatsApp Integration Detail */}
-              <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
-                <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
+              <div className="overflow-hidden rounded-xl border border-[#E5E7EB] bg-white shadow-sm">
+                <div className="border-b border-[#EEF0F3] px-5 py-3.5">
                   <div className="flex items-center gap-2">
-                    <Phone className="w-4 h-4 text-[#25D366]" />
-                    <div className="text-[14px] font-semibold text-[#0F172A]">WhatsApp (Evolution API)</div>
+                    <Phone className="h-4 w-4 text-[#25D366]" />
+                    <div className="text-[14px] font-semibold text-[#0F172A]">
+                      WhatsApp (Evolution API)
+                    </div>
                   </div>
-                  <div className="text-[11px] text-[#64748B] mt-0.5">Conectividade e status do gateway de envio para disparos e IA.</div>
+                  <div className="mt-0.5 text-[11px] text-[#64748B]">
+                    Conectividade e status do gateway de envio para disparos e IA.
+                  </div>
                 </div>
                 <div className="p-5">
                   {/* 1. Loading State */}
                   {whatsappStatus === 'loading' && (
-                    <div className="flex flex-col items-center justify-center py-12 px-6">
-                      <Loader2 className="w-8 h-8 text-[#1B3A6B] animate-spin" />
-                      <span className="text-[12px] text-[#64748B] mt-3 font-semibold">Verificando conexão da instância...</span>
+                    <div className="flex flex-col items-center justify-center px-6 py-12">
+                      <Loader2 className="h-8 w-8 animate-spin text-[#1B3A6B]" />
+                      <span className="mt-3 text-[12px] font-semibold text-[#64748B]">
+                        Verificando conexão da instância...
+                      </span>
                     </div>
                   )}
 
                   {/* 2. Connected State */}
                   {whatsappStatus === 'connected' && (
                     <div className="space-y-6">
-                      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-[#ECFDF3] border border-[#A7F3D0] rounded-xl p-5">
+                      <div className="flex flex-col items-start justify-between gap-4 rounded-xl border border-[#A7F3D0] bg-[#ECFDF3] p-5 sm:flex-row sm:items-center">
                         <div className="flex items-center gap-4">
-                          <div className="p-3 bg-[#D1FAE5] text-[#027A48] rounded-xl">
-                            <CheckCircle2 className="w-6 h-6 animate-pulse" />
+                          <div className="rounded-xl bg-[#D1FAE5] p-3 text-[#027A48]">
+                            <CheckCircle2 className="h-6 w-6 animate-pulse" />
                           </div>
                           <div>
                             <div className="flex items-center gap-2.5">
-                              <h4 className="text-[14px] font-bold text-[#0F172A]">WhatsApp Ativo</h4>
-                              <Badge className="bg-[#D1FAE5] text-[#027A48] border border-[#A7F3D0] text-[10px] uppercase font-bold tracking-wider px-2 py-0.5">
+                              <h4 className="text-[14px] font-bold text-[#0F172A]">
+                                WhatsApp Ativo
+                              </h4>
+                              <Badge className="border border-[#A7F3D0] bg-[#D1FAE5] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#027A48]">
                                 Sincronizado
                               </Badge>
                             </div>
-                            <p className="text-[12px] text-[#64748B] mt-1 font-mono">
-                              Instância: <span className="text-[#027A48] font-bold">{instanceName}</span>
+                            <p className="mt-1 font-mono text-[12px] text-[#64748B]">
+                              Instância:{' '}
+                              <span className="font-bold text-[#027A48]">{instanceName}</span>
                             </p>
-                            <p className="text-[10px] text-[#64748B] mt-0.5">
-                              O bot do Prospix está monitorando ativamente este número e respondendo leads em tempo real.
+                            <p className="mt-0.5 text-[10px] text-[#64748B]">
+                              O bot do Prospix está monitorando ativamente este número e respondendo
+                              leads em tempo real.
                             </p>
                           </div>
                         </div>
-                        
+
                         {!isConfirmingDisconnect ? (
                           <Button
                             onClick={() => setIsConfirmingDisconnect(true)}
-                            className="bg-[#FEF3F2] hover:bg-[#D92D20] hover:text-white text-[#D92D20] text-[12px] font-semibold px-4 h-9 rounded-xl transition-all duration-300 w-full sm:w-auto border border-[#FECACA]"
+                            className="h-9 w-full rounded-xl border border-[#FECACA] bg-[#FEF3F2] px-4 text-[12px] font-semibold text-[#D92D20] transition-all duration-300 hover:bg-[#D92D20] hover:text-white sm:w-auto"
                           >
                             Desconectar WhatsApp
                           </Button>
                         ) : (
-                          <div className="flex items-center gap-2 shrink-0 bg-white p-3 rounded-xl border border-[#E5E7EB] shadow-sm">
-                            <span className="text-[12px] text-[#D92D20] font-bold">Desconectar?</span>
+                          <div className="flex shrink-0 items-center gap-2 rounded-xl border border-[#E5E7EB] bg-white p-3 shadow-sm">
+                            <span className="text-[12px] font-bold text-[#D92D20]">
+                              Desconectar?
+                            </span>
                             <Button
                               onClick={handleDisconnectWhatsapp}
-                              className="bg-[#D92D20] hover:bg-[#B91C1C] text-white text-[10px] font-bold h-7 px-3 rounded-lg"
+                              className="h-7 rounded-lg bg-[#D92D20] px-3 text-[10px] font-bold text-white hover:bg-[#B91C1C]"
                             >
                               Sim
                             </Button>
                             <Button
                               onClick={() => setIsConfirmingDisconnect(false)}
-                              className="bg-white border border-[#E5E7EB] text-[#64748B] text-[10px] font-bold h-7 px-3 rounded-lg"
+                              className="h-7 rounded-lg border border-[#E5E7EB] bg-white px-3 text-[10px] font-bold text-[#64748B]"
                             >
                               Não
                             </Button>
@@ -1787,24 +2114,32 @@ export default function Settings() {
                       </div>
 
                       {/* Status Details */}
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E5E7EB]">
-                          <span className="text-[10px] text-[#64748B] font-bold uppercase tracking-wider block mb-1">Webhooks</span>
-                          <Badge className="bg-[#EFF6FF] text-[#1B3A6B] border border-[#1B3A6B]/20 text-[9px] font-bold">
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                        <div className="rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-4">
+                          <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[#64748B]">
+                            Webhooks
+                          </span>
+                          <Badge className="border border-[#1B3A6B]/20 bg-[#EFF6FF] text-[9px] font-bold text-[#1B3A6B]">
                             100% Configurado
                           </Badge>
                         </div>
-                        <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E5E7EB]">
-                          <span className="text-[10px] text-[#64748B] font-bold uppercase tracking-wider block mb-1">Taxa de Resposta da IA</span>
-                          <span className="text-[12px] text-[#0F172A] font-semibold font-mono">
-                            {whatsappStatusSync.mode === 'live' ? 'Ao vivo / fallback 3s' : 'Auto / 3s'}
+                        <div className="rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-4">
+                          <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[#64748B]">
+                            Taxa de Resposta da IA
+                          </span>
+                          <span className="font-mono text-[12px] font-semibold text-[#0F172A]">
+                            {whatsappStatusSync.mode === 'live'
+                              ? 'Ao vivo / fallback 3s'
+                              : 'Auto / 3s'}
                           </span>
                         </div>
-                        <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E5E7EB]">
-                          <span className="text-[10px] text-[#64748B] font-bold uppercase tracking-wider block mb-1">Status do Servidor</span>
-                          <div className="flex items-center gap-1.5 mt-1">
-                            <div className="w-1.5 h-1.5 bg-[#039855] rounded-full animate-ping" />
-                            <span className="text-[12px] text-[#027A48] font-bold">Online</span>
+                        <div className="rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-4">
+                          <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[#64748B]">
+                            Status do Servidor
+                          </span>
+                          <div className="mt-1 flex items-center gap-1.5">
+                            <div className="h-1.5 w-1.5 animate-ping rounded-full bg-[#039855]" />
+                            <span className="text-[12px] font-bold text-[#027A48]">Online</span>
                           </div>
                         </div>
                       </div>
@@ -1812,35 +2147,60 @@ export default function Settings() {
                       {renderWhatsAppTracePanel()}
 
                       {/* Anti-ban Info */}
-                      <div className="p-5 rounded-xl border border-[#E5E7EB] bg-white">
-                        <div className="flex items-center gap-2 mb-3">
-                          <Shield className="w-4 h-4 text-[#1B3A6B]" />
-                          <h4 className="text-[13px] font-bold text-[#0F172A]">Proteção Anti-banimento Automática</h4>
+                      <div className="rounded-xl border border-[#E5E7EB] bg-white p-5">
+                        <div className="mb-3 flex items-center gap-2">
+                          <Shield className="h-4 w-4 text-[#1B3A6B]" />
+                          <h4 className="text-[13px] font-bold text-[#0F172A]">
+                            Proteção Anti-banimento Automática
+                          </h4>
                         </div>
-                        <p className="text-[12px] text-[#64748B] mb-4 leading-relaxed">
-                          Diferente de outras ferramentas, o Prospix já possui um motor antiban nativo que roda 100% no backend. Não é necessário configurar intervalos manualmente.
+                        <p className="mb-4 text-[12px] leading-relaxed text-[#64748B]">
+                          Diferente de outras ferramentas, o Prospix já possui um motor antiban
+                          nativo que roda 100% no backend. Não é necessário configurar intervalos
+                          manualmente.
                         </p>
-                        
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+                        <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
                           <div>
-                            <span className="text-[10px] text-[#64748B] font-bold uppercase tracking-wider block mb-1">Limite Diário de Envios</span>
-                            <div className="text-[12px] text-[#0F172A] font-semibold">Configurado por Campanha</div>
-                            <p className="text-[10px] text-[#64748B] mt-1">A IA para automaticamente ao atingir o limite definido nas suas campanhas.</p>
-                          </div>
-                          <div>
-                            <span className="text-[10px] text-[#64748B] font-bold uppercase tracking-wider block mb-1">Intervalo entre Mensagens</span>
-                            <div className="text-[12px] text-[#0F172A] font-semibold">45 a 90 segundos (Aleatório)</div>
-                            <p className="text-[10px] text-[#64748B] mt-1">O motor sorteia um tempo diferente a cada envio para imitar comportamento humano.</p>
-                          </div>
-                          <div>
-                            <span className="text-[10px] text-[#64748B] font-bold uppercase tracking-wider block mb-1">Aquecimento Gradual</span>
-                            <div className="flex items-center gap-1.5 mt-1">
-                              <div className="w-7 h-4 bg-[#039855] rounded-full relative shadow-inner">
-                                <div className="absolute right-0.5 top-0.5 w-3 h-3 bg-white rounded-full shadow" />
-                              </div>
-                              <span className="text-[12px] text-[#039855] font-bold">Sempre Ativo</span>
+                            <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[#64748B]">
+                              Limite Diário de Envios
+                            </span>
+                            <div className="text-[12px] font-semibold text-[#0F172A]">
+                              Configurado por Campanha
                             </div>
-                            <p className="text-[10px] text-[#64748B] mt-1">O fluxo fracionado garante que a sua instância "esquente" naturalmente.</p>
+                            <p className="mt-1 text-[10px] text-[#64748B]">
+                              A IA para automaticamente ao atingir o limite definido nas suas
+                              campanhas.
+                            </p>
+                          </div>
+                          <div>
+                            <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[#64748B]">
+                              Intervalo entre Mensagens
+                            </span>
+                            <div className="text-[12px] font-semibold text-[#0F172A]">
+                              45 a 90 segundos (Aleatório)
+                            </div>
+                            <p className="mt-1 text-[10px] text-[#64748B]">
+                              O motor sorteia um tempo diferente a cada envio para imitar
+                              comportamento humano.
+                            </p>
+                          </div>
+                          <div>
+                            <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[#64748B]">
+                              Aquecimento Gradual
+                            </span>
+                            <div className="mt-1 flex items-center gap-1.5">
+                              <div className="relative h-4 w-7 rounded-full bg-[#039855] shadow-inner">
+                                <div className="absolute right-0.5 top-0.5 h-3 w-3 rounded-full bg-white shadow" />
+                              </div>
+                              <span className="text-[12px] font-bold text-[#039855]">
+                                Sempre Ativo
+                              </span>
+                            </div>
+                            <p className="mt-1 text-[10px] text-[#64748B]">
+                              O fluxo fracionado garante que a sua instância "esquente"
+                              naturalmente.
+                            </p>
                           </div>
                         </div>
                       </div>
@@ -1854,112 +2214,142 @@ export default function Settings() {
 
                       {/* A. If QR Code is visible or is generating */}
                       {isGeneratingQr || qrCode ? (
-                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center bg-[#F8FAFC] border border-[#E5E7EB] p-6 rounded-xl">
+                        <div className="grid grid-cols-1 items-center gap-8 rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-6 lg:grid-cols-12">
                           {/* Left Side: Step by step instructions */}
-                          <div className="lg:col-span-7 space-y-6">
+                          <div className="space-y-6 lg:col-span-7">
                             <div>
-                              <Badge className="bg-[#EFF6FF] text-[#1B3A6B] border border-[#1B3A6B]/20 text-[9px] uppercase font-bold tracking-wider mb-2">
+                              <Badge className="mb-2 border border-[#1B3A6B]/20 bg-[#EFF6FF] text-[9px] font-bold uppercase tracking-wider text-[#1B3A6B]">
                                 Aguardando Leitura
                               </Badge>
-                              <h4 className="text-[15px] font-bold text-[#0F172A]">Como conectar o seu WhatsApp?</h4>
-                              <p className="text-[12px] text-[#64748B] mt-1">
-                                Siga as instruções passo a passo para conectar o robô de IA do Prospix ao seu número.
+                              <h4 className="text-[15px] font-bold text-[#0F172A]">
+                                Como conectar o seu WhatsApp?
+                              </h4>
+                              <p className="mt-1 text-[12px] text-[#64748B]">
+                                Siga as instruções passo a passo para conectar o robô de IA do
+                                Prospix ao seu número.
                               </p>
                             </div>
 
                             <div className="space-y-4">
                               <div className="flex items-start gap-3.5">
-                                <div className="flex items-center justify-center w-6 h-6 rounded-lg bg-[#EFF6FF] text-[#1B3A6B] border border-[#1B3A6B]/20 text-[11px] font-bold shrink-0">
+                                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-[#1B3A6B]/20 bg-[#EFF6FF] text-[11px] font-bold text-[#1B3A6B]">
                                   1
                                 </div>
-                                <p className="text-[12px] text-[#64748B] leading-relaxed mt-0.5">
+                                <p className="mt-0.5 text-[12px] leading-relaxed text-[#64748B]">
                                   Abra o WhatsApp no seu smartphone (Android ou iPhone).
                                 </p>
                               </div>
-                              
+
                               <div className="flex items-start gap-3.5">
-                                <div className="flex items-center justify-center w-6 h-6 rounded-lg bg-[#EFF6FF] text-[#1B3A6B] border border-[#1B3A6B]/20 text-[11px] font-bold shrink-0">
+                                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-[#1B3A6B]/20 bg-[#EFF6FF] text-[11px] font-bold text-[#1B3A6B]">
                                   2
                                 </div>
-                                <p className="text-[12px] text-[#64748B] leading-relaxed mt-0.5">
-                                  Toque no menu <span className="font-semibold text-[#0F172A]">Aparelhos Conectados</span> (ou Configurações &gt; Aparelhos Conectados).
+                                <p className="mt-0.5 text-[12px] leading-relaxed text-[#64748B]">
+                                  Toque no menu{' '}
+                                  <span className="font-semibold text-[#0F172A]">
+                                    Aparelhos Conectados
+                                  </span>{' '}
+                                  (ou Configurações &gt; Aparelhos Conectados).
                                 </p>
                               </div>
 
                               <div className="flex items-start gap-3.5">
-                                <div className="flex items-center justify-center w-6 h-6 rounded-lg bg-[#EFF6FF] text-[#1B3A6B] border border-[#1B3A6B]/20 text-[11px] font-bold shrink-0">
+                                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-[#1B3A6B]/20 bg-[#EFF6FF] text-[11px] font-bold text-[#1B3A6B]">
                                   3
                                 </div>
-                                <p className="text-[12px] text-[#64748B] leading-relaxed mt-0.5">
-                                  Selecione <span className="font-semibold text-[#0F172A]">Conectar um Aparelho</span> e valide com sua biometria ou senha.
+                                <p className="mt-0.5 text-[12px] leading-relaxed text-[#64748B]">
+                                  Selecione{' '}
+                                  <span className="font-semibold text-[#0F172A]">
+                                    Conectar um Aparelho
+                                  </span>{' '}
+                                  e valide com sua biometria ou senha.
                                 </p>
                               </div>
 
                               <div className="flex items-start gap-3.5">
-                                <div className="flex items-center justify-center w-6 h-6 rounded-lg bg-[#EFF6FF] text-[#1B3A6B] border border-[#1B3A6B]/20 text-[11px] font-bold shrink-0">
+                                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-[#1B3A6B]/20 bg-[#EFF6FF] text-[11px] font-bold text-[#1B3A6B]">
                                   4
                                 </div>
-                                <p className="text-[12px] text-[#64748B] leading-relaxed mt-0.5">
-                                  Aponte a câmera do seu celular para o QR Code ao lado para realizar o escaneamento.
+                                <p className="mt-0.5 text-[12px] leading-relaxed text-[#64748B]">
+                                  Aponte a câmera do seu celular para o QR Code ao lado para
+                                  realizar o escaneamento.
                                 </p>
                               </div>
                             </div>
 
                             <div className="flex items-center gap-2 pt-2 text-[10px] text-[#64748B]">
-                              <Loader2 className="w-3.5 h-3.5 text-[#1B3A6B] animate-spin" />
+                              <Loader2 className="h-3.5 w-3.5 animate-spin text-[#1B3A6B]" />
                               <span>Aguardando a confirmação do escaneamento do QR Code...</span>
                             </div>
                           </div>
 
                           {/* Right Side: QR Code frame */}
-                          <div className="lg:col-span-5 flex flex-col items-center justify-center">
-                            <div className="relative p-6 bg-white border border-[#E5E7EB] rounded-xl shadow-xl flex items-center justify-center w-[240px] h-[240px] overflow-hidden">
+                          <div className="flex flex-col items-center justify-center lg:col-span-5">
+                            <div className="relative flex h-[240px] w-[240px] items-center justify-center overflow-hidden rounded-xl border border-[#E5E7EB] bg-white p-6 shadow-xl">
                               {isGeneratingQr ? (
                                 <div className="flex flex-col items-center justify-center text-center">
-                                  <Loader2 className="w-8 h-8 text-[#1B3A6B] animate-spin" />
-                                  <span className="text-[10px] text-[#64748B] mt-2">Criando instância...</span>
+                                  <Loader2 className="h-8 w-8 animate-spin text-[#1B3A6B]" />
+                                  <span className="mt-2 text-[10px] text-[#64748B]">
+                                    Criando instância...
+                                  </span>
                                 </div>
                               ) : qrCode ? (
                                 <img
-                                  src={qrCode.startsWith('data:') ? qrCode : `data:image/png;base64,${qrCode}`}
+                                  src={
+                                    qrCode.startsWith('data:')
+                                      ? qrCode
+                                      : `data:image/png;base64,${qrCode}`
+                                  }
                                   alt="WhatsApp QR Code"
-                                  className="w-full h-full object-contain rounded-lg"
+                                  className="h-full w-full rounded-lg object-contain"
                                 />
                               ) : (
-                                <div className="text-center p-4">
-                                  <AlertCircle className="w-8 h-8 text-[#D92D20] mx-auto" />
-                                  <span className="text-[12px] text-[#64748B] mt-2 block">Erro ao carregar QR Code</span>
+                                <div className="p-4 text-center">
+                                  <AlertCircle className="mx-auto h-8 w-8 text-[#D92D20]" />
+                                  <span className="mt-2 block text-[12px] text-[#64748B]">
+                                    Erro ao carregar QR Code
+                                  </span>
                                 </div>
                               )}
                             </div>
-                            
+
                             {qrCode && (
                               <Button
                                 onClick={handleConnectWhatsapp}
                                 disabled={isGeneratingQr}
-                                className="mt-3.5 text-[10px] font-bold h-7 px-3 rounded-lg border border-[#E5E7EB] bg-white hover:bg-[#F8FAFC] text-[#64748B] disabled:opacity-50"
+                                className="mt-3.5 h-7 rounded-lg border border-[#E5E7EB] bg-white px-3 text-[10px] font-bold text-[#64748B] hover:bg-[#F8FAFC] disabled:opacity-50"
                               >
-                                <RefreshCw className={`w-3 h-3 mr-1.5 ${isGeneratingQr ? 'animate-spin' : ''}`} />
-                                {isGeneratingQr ? 'Gerando...' : qrCountdown > 0 ? `Atualizar automático em ${qrCountdown}s` : 'Atualizar QR Code'}
+                                <RefreshCw
+                                  className={`mr-1.5 h-3 w-3 ${isGeneratingQr ? 'animate-spin' : ''}`}
+                                />
+                                {isGeneratingQr
+                                  ? 'Gerando...'
+                                  : qrCountdown > 0
+                                    ? `Atualizar automático em ${qrCountdown}s`
+                                    : 'Atualizar QR Code'}
                               </Button>
                             )}
                           </div>
                         </div>
                       ) : (
                         // B. Landing View - No QR Code active
-                        <div className="flex flex-col items-center justify-center text-center py-10 px-4 max-w-md mx-auto">
-                          <div className="p-4 bg-[#F8FAFC] border border-[#E5E7EB] rounded-xl text-[#64748B] shadow-sm">
-                            <Phone className="w-8 h-8" />
+                        <div className="mx-auto flex max-w-md flex-col items-center justify-center px-4 py-10 text-center">
+                          <div className="rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-4 text-[#64748B] shadow-sm">
+                            <Phone className="h-8 w-8" />
                           </div>
-                          
-                          <h4 className="text-[16px] font-bold text-[#0F172A] mt-5">Conecte o seu WhatsApp Comercial</h4>
-                          <p className="text-[12px] text-[#64748B] mt-2 leading-relaxed">
-                            Conectando seu dispositivo móvel, o Prospix poderá disparar mensagens de prospecção ativa automaticamente e qualificar todos os seus leads em tempo real através da nossa Inteligência Artificial integrada.
+
+                          <h4 className="mt-5 text-[16px] font-bold text-[#0F172A]">
+                            Conecte o seu WhatsApp Comercial
+                          </h4>
+                          <p className="mt-2 text-[12px] leading-relaxed text-[#64748B]">
+                            Conectando seu dispositivo móvel, o Prospix poderá disparar mensagens de
+                            prospecção ativa automaticamente e qualificar todos os seus leads em
+                            tempo real através da nossa Inteligência Artificial integrada.
                           </p>
-                          
+
                           <Button
                             onClick={handleConnectWhatsapp}
-                            className="bg-[#1B3A6B] hover:bg-[#15305A] text-white font-bold text-[13px] px-6 h-10 rounded-xl mt-6 shadow-lg shadow-[#1B3A6B]/10 w-full sm:w-auto"
+                            className="mt-6 h-10 w-full rounded-xl bg-[#1B3A6B] px-6 text-[13px] font-bold text-white shadow-lg shadow-[#1B3A6B]/10 hover:bg-[#15305A] sm:w-auto"
                           >
                             Conectar WhatsApp
                           </Button>
@@ -1971,41 +2361,54 @@ export default function Settings() {
               </div>
 
               {/* Google Calendar */}
-              <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
-                <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
+              <div className="overflow-hidden rounded-xl border border-[#E5E7EB] bg-white shadow-sm">
+                <div className="border-b border-[#EEF0F3] px-5 py-3.5">
                   <div className="flex items-center gap-2">
-                    <Calendar className="w-4 h-4 text-[#4285F4]" />
-                    <div className="text-[14px] font-semibold text-[#0F172A]">Google Agenda OAuth</div>
+                    <Calendar className="h-4 w-4 text-[#4285F4]" />
+                    <div className="text-[14px] font-semibold text-[#0F172A]">
+                      Google Agenda OAuth
+                    </div>
                   </div>
-                  <div className="text-[11px] text-[#64748B] mt-0.5">Sincronize reuniões e agendamentos com seu calendário pessoal.</div>
+                  <div className="mt-0.5 text-[11px] text-[#64748B]">
+                    Sincronize reuniões e agendamentos com seu calendário pessoal.
+                  </div>
                 </div>
                 <div className="p-5">
                   {credentialState.google.calendarConnected ? (
                     <div className="space-y-4">
-                      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-[#ECFDF3] border border-[#A7F3D0] rounded-xl p-4">
+                      <div className="flex flex-col items-center justify-between gap-4 rounded-xl border border-[#A7F3D0] bg-[#ECFDF3] p-4 sm:flex-row">
                         <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-lg bg-[#059669]/10 flex items-center justify-center">
-                            <CheckCircle2 className="w-5 h-5 text-[#059669]" />
+                          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#059669]/10">
+                            <CheckCircle2 className="h-5 w-5 text-[#059669]" />
                           </div>
                           <div>
                             <div className="flex items-center gap-2">
-                              <h4 className="text-[13px] font-bold text-[#0F172A]">Google Agenda Ativa</h4>
-                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-[#059669] text-white uppercase tracking-wider">
+                              <h4 className="text-[13px] font-bold text-[#0F172A]">
+                                Google Agenda Ativa
+                              </h4>
+                              <span className="rounded-md bg-[#059669] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white">
                                 Sincronizado
                               </span>
                             </div>
-                            <p className="text-[11px] text-[#059669] mt-0.5">A IA do Prospix está autorizada a ler conflitos e agendar reuniões.</p>
+                            <p className="mt-0.5 text-[11px] text-[#059669]">
+                              A IA do Prospix está autorizada a ler conflitos e agendar reuniões.
+                            </p>
                           </div>
                         </div>
-                        <Button onClick={handleDisconnectGoogle} className="bg-[#FEF3F2] hover:bg-[#FEE4E2] text-[#D92D20] text-[12px] font-semibold px-4 h-9 rounded-xl transition-colors border border-[#FEE4E2]">
+                        <Button
+                          onClick={handleDisconnectGoogle}
+                          className="h-9 rounded-xl border border-[#FEE4E2] bg-[#FEF3F2] px-4 text-[12px] font-semibold text-[#D92D20] transition-colors hover:bg-[#FEE4E2]"
+                        >
                           Desconectar Agenda
                         </Button>
                       </div>
 
                       {/* Calendar selector */}
-                      <div className="bg-[#F8FAFC] border border-[#E5E7EB] rounded-xl p-4">
+                      <div className="rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-4">
                         <label className="block space-y-2">
-                          <span className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider">Calendário para sincronização</span>
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-[#64748B]">
+                            Calendário para sincronização
+                          </span>
                           <select
                             value={selectedCalendarId}
                             onChange={async (e) => {
@@ -2017,42 +2420,58 @@ export default function Settings() {
                                   headers: { 'Content-Type': 'application/json' },
                                   body: JSON.stringify({ googleCalendarId: newId }),
                                 });
-                                toast.success('Calendário atualizado', 'A sincronização usará este calendário.');
+                                toast.success(
+                                  'Calendário atualizado',
+                                  'A sincronização usará este calendário.',
+                                );
                               } catch {
-                                toast.error('Erro', 'Não foi possível salvar a preferência de calendário.');
+                                toast.error(
+                                  'Erro',
+                                  'Não foi possível salvar a preferência de calendário.',
+                                );
                               }
                             }}
                             disabled={isLoadingCalendars}
-                            className="w-full bg-white border border-[#E5E7EB] text-[12px] rounded-xl px-3 h-10 text-[#0F172A] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none disabled:opacity-60"
+                            className="h-10 w-full rounded-xl border border-[#E5E7EB] bg-white px-3 text-[12px] text-[#0F172A] outline-none focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] disabled:opacity-60"
                           >
                             {isLoadingCalendars ? (
                               <option>Carregando calendários...</option>
                             ) : googleCalendars.length > 0 ? (
                               googleCalendars.map((cal) => (
                                 <option key={cal.id} value={cal.id}>
-                                  {cal.summary}{cal.primary ? ' (Principal)' : ''}
+                                  {cal.summary}
+                                  {cal.primary ? ' (Principal)' : ''}
                                 </option>
                               ))
                             ) : (
                               <option value="primary">Calendário principal</option>
                             )}
                           </select>
-                          <p className="text-[10px] text-[#94A3B8]">A IA agendará reuniões e verificará conflitos neste calendário.</p>
+                          <p className="text-[10px] text-[#94A3B8]">
+                            A IA agendará reuniões e verificará conflitos neste calendário.
+                          </p>
                         </label>
                       </div>
                     </div>
                   ) : (
-                    <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-[#F8FAFC] border border-[#E5E7EB] rounded-xl p-4">
+                    <div className="flex flex-col items-center justify-between gap-4 rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-4 sm:flex-row">
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-lg bg-[#4285F4]/10 flex items-center justify-center">
-                          <Calendar className="w-5 h-5 text-[#4285F4]" />
+                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#4285F4]/10">
+                          <Calendar className="h-5 w-5 text-[#4285F4]" />
                         </div>
                         <div>
-                          <h4 className="text-[13px] font-bold text-[#0F172A]">Google Calendar API</h4>
-                          <p className="text-[11px] text-[#64748B] mt-0.5">Permite checar conflitos e marcar slots de 30min.</p>
+                          <h4 className="text-[13px] font-bold text-[#0F172A]">
+                            Google Calendar API
+                          </h4>
+                          <p className="mt-0.5 text-[11px] text-[#64748B]">
+                            Permite checar conflitos e marcar slots de 30min.
+                          </p>
                         </div>
                       </div>
-                      <Button onClick={handleGoogleConnect} className="bg-[#1B3A6B] hover:bg-[#15305A] text-white text-[12px] font-semibold px-4 h-9 rounded-xl shadow-lg shadow-[#1B3A6B]/10">
+                      <Button
+                        onClick={handleGoogleConnect}
+                        className="h-9 rounded-xl bg-[#1B3A6B] px-4 text-[12px] font-semibold text-white shadow-lg shadow-[#1B3A6B]/10 hover:bg-[#15305A]"
+                      >
                         Conectar Agenda
                       </Button>
                     </div>
@@ -2066,18 +2485,24 @@ export default function Settings() {
           {activeTab === 'agenda' && (
             <>
               {/* Horários de Atendimento */}
-              <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
-                <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
+              <div className="overflow-hidden rounded-xl border border-[#E5E7EB] bg-white shadow-sm">
+                <div className="border-b border-[#EEF0F3] px-5 py-3.5">
                   <div className="flex items-center gap-2">
-                    <Calendar className="w-4 h-4 text-[#1B3A6B]" />
-                    <div className="text-[14px] font-semibold text-[#0F172A]">Horários de Atendimento</div>
+                    <Calendar className="h-4 w-4 text-[#1B3A6B]" />
+                    <div className="text-[14px] font-semibold text-[#0F172A]">
+                      Horários de Atendimento
+                    </div>
                   </div>
-                  <div className="text-[11px] text-[#64748B] mt-0.5">Defina quando você está disponível para reuniões agendadas pela IA.</div>
+                  <div className="mt-0.5 text-[11px] text-[#64748B]">
+                    Defina quando você está disponível para reuniões agendadas pela IA.
+                  </div>
                 </div>
-                <div className="p-5 space-y-6">
+                <div className="space-y-6 p-5">
                   {/* Dias disponíveis */}
                   <div>
-                    <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-2.5">Dias Disponíveis</label>
+                    <label className="mb-2.5 block text-[11px] font-semibold uppercase tracking-wider text-[#64748B]">
+                      Dias Disponíveis
+                    </label>
                     <div className="flex flex-wrap gap-2">
                       {[
                         { value: 1, label: 'Seg' },
@@ -2087,23 +2512,23 @@ export default function Settings() {
                         { value: 5, label: 'Sex' },
                         { value: 6, label: 'Sáb' },
                         { value: 0, label: 'Dom' },
-                      ].map(day => {
+                      ].map((day) => {
                         const isActive = agendaSettings.availableDays.includes(day.value);
                         return (
                           <button
                             key={day.value}
                             onClick={() => {
-                              setAgendaSettings(prev => ({
+                              setAgendaSettings((prev) => ({
                                 ...prev,
                                 availableDays: isActive
-                                  ? prev.availableDays.filter(d => d !== day.value)
+                                  ? prev.availableDays.filter((d) => d !== day.value)
                                   : [...prev.availableDays, day.value].sort(),
                               }));
                             }}
-                            className={`h-10 w-14 rounded-xl text-[13px] font-semibold border transition-all ${
+                            className={`h-10 w-14 rounded-xl border text-[13px] font-semibold transition-all ${
                               isActive
-                                ? 'bg-[#1B3A6B] text-white border-[#1B3A6B] shadow-sm'
-                                : 'bg-[#F8FAFC] text-[#94A3B8] border-[#E5E7EB] hover:bg-[#F1F3F6] hover:text-[#475569]'
+                                ? 'border-[#1B3A6B] bg-[#1B3A6B] text-white shadow-sm'
+                                : 'border-[#E5E7EB] bg-[#F8FAFC] text-[#94A3B8] hover:bg-[#F1F3F6] hover:text-[#475569]'
                             }`}
                           >
                             {day.label}
@@ -2114,69 +2539,121 @@ export default function Settings() {
                   </div>
 
                   {/* Horário início/fim */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div>
-                      <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Início do expediente</label>
+                      <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#64748B]">
+                        Início do expediente
+                      </label>
                       <select
                         value={agendaSettings.startHour}
-                        onChange={e => setAgendaSettings(prev => ({ ...prev, startHour: e.target.value }))}
-                        className="w-full bg-white border border-[#E5E7EB] text-[13px] rounded-xl px-3 h-10 text-[#0F172A] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none"
+                        onChange={(e) =>
+                          setAgendaSettings((prev) => ({ ...prev, startHour: e.target.value }))
+                        }
+                        className="h-10 w-full rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] text-[#0F172A] outline-none focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B]"
                       >
-                        {['06:00','06:30','07:00','07:30','08:00','08:30','09:00','09:30','10:00'].map(t => (
-                          <option key={t} value={t}>{t}</option>
+                        {[
+                          '06:00',
+                          '06:30',
+                          '07:00',
+                          '07:30',
+                          '08:00',
+                          '08:30',
+                          '09:00',
+                          '09:30',
+                          '10:00',
+                        ].map((t) => (
+                          <option key={t} value={t}>
+                            {t}
+                          </option>
                         ))}
                       </select>
                     </div>
                     <div>
-                      <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Fim do expediente</label>
+                      <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#64748B]">
+                        Fim do expediente
+                      </label>
                       <select
                         value={agendaSettings.endHour}
-                        onChange={e => setAgendaSettings(prev => ({ ...prev, endHour: e.target.value }))}
-                        className="w-full bg-white border border-[#E5E7EB] text-[13px] rounded-xl px-3 h-10 text-[#0F172A] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none"
+                        onChange={(e) =>
+                          setAgendaSettings((prev) => ({ ...prev, endHour: e.target.value }))
+                        }
+                        className="h-10 w-full rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] text-[#0F172A] outline-none focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B]"
                       >
-                        {['15:00','16:00','17:00','17:30','18:00','18:30','19:00','19:30','20:00','21:00'].map(t => (
-                          <option key={t} value={t}>{t}</option>
+                        {[
+                          '15:00',
+                          '16:00',
+                          '17:00',
+                          '17:30',
+                          '18:00',
+                          '18:30',
+                          '19:00',
+                          '19:30',
+                          '20:00',
+                          '21:00',
+                        ].map((t) => (
+                          <option key={t} value={t}>
+                            {t}
+                          </option>
                         ))}
                       </select>
                     </div>
                   </div>
 
                   {/* Almoço */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div>
-                      <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Início do almoço</label>
+                      <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#64748B]">
+                        Início do almoço
+                      </label>
                       <select
                         value={agendaSettings.lunchStart}
-                        onChange={e => setAgendaSettings(prev => ({ ...prev, lunchStart: e.target.value }))}
-                        className="w-full bg-white border border-[#E5E7EB] text-[13px] rounded-xl px-3 h-10 text-[#0F172A] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none"
+                        onChange={(e) =>
+                          setAgendaSettings((prev) => ({ ...prev, lunchStart: e.target.value }))
+                        }
+                        className="h-10 w-full rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] text-[#0F172A] outline-none focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B]"
                       >
-                        {['11:00','11:30','12:00','12:30','13:00'].map(t => (
-                          <option key={t} value={t}>{t}</option>
+                        {['11:00', '11:30', '12:00', '12:30', '13:00'].map((t) => (
+                          <option key={t} value={t}>
+                            {t}
+                          </option>
                         ))}
                       </select>
                     </div>
                     <div>
-                      <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Fim do almoço</label>
+                      <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#64748B]">
+                        Fim do almoço
+                      </label>
                       <select
                         value={agendaSettings.lunchEnd}
-                        onChange={e => setAgendaSettings(prev => ({ ...prev, lunchEnd: e.target.value }))}
-                        className="w-full bg-white border border-[#E5E7EB] text-[13px] rounded-xl px-3 h-10 text-[#0F172A] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none"
+                        onChange={(e) =>
+                          setAgendaSettings((prev) => ({ ...prev, lunchEnd: e.target.value }))
+                        }
+                        className="h-10 w-full rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] text-[#0F172A] outline-none focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B]"
                       >
-                        {['12:30','13:00','13:30','14:00','14:30'].map(t => (
-                          <option key={t} value={t}>{t}</option>
+                        {['12:30', '13:00', '13:30', '14:00', '14:30'].map((t) => (
+                          <option key={t} value={t}>
+                            {t}
+                          </option>
                         ))}
                       </select>
                     </div>
                   </div>
 
                   {/* Duração e Buffer */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div>
-                      <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Duração padrão da reunião</label>
+                      <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#64748B]">
+                        Duração padrão da reunião
+                      </label>
                       <select
                         value={agendaSettings.defaultDuration}
-                        onChange={e => setAgendaSettings(prev => ({ ...prev, defaultDuration: Number(e.target.value) }))}
-                        className="w-full bg-white border border-[#E5E7EB] text-[13px] rounded-xl px-3 h-10 text-[#0F172A] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none"
+                        onChange={(e) =>
+                          setAgendaSettings((prev) => ({
+                            ...prev,
+                            defaultDuration: Number(e.target.value),
+                          }))
+                        }
+                        className="h-10 w-full rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] text-[#0F172A] outline-none focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B]"
                       >
                         <option value={15}>15 minutos</option>
                         <option value={30}>30 minutos</option>
@@ -2186,11 +2663,18 @@ export default function Settings() {
                       </select>
                     </div>
                     <div>
-                      <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Intervalo entre reuniões</label>
+                      <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#64748B]">
+                        Intervalo entre reuniões
+                      </label>
                       <select
                         value={agendaSettings.bufferMinutes}
-                        onChange={e => setAgendaSettings(prev => ({ ...prev, bufferMinutes: Number(e.target.value) }))}
-                        className="w-full bg-white border border-[#E5E7EB] text-[13px] rounded-xl px-3 h-10 text-[#0F172A] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none"
+                        onChange={(e) =>
+                          setAgendaSettings((prev) => ({
+                            ...prev,
+                            bufferMinutes: Number(e.target.value),
+                          }))
+                        }
+                        className="h-10 w-full rounded-xl border border-[#E5E7EB] bg-white px-3 text-[13px] text-[#0F172A] outline-none focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B]"
                       >
                         <option value={0}>Sem intervalo</option>
                         <option value={5}>5 minutos</option>
@@ -2202,13 +2686,30 @@ export default function Settings() {
                   </div>
 
                   {/* Preview */}
-                  <div className="bg-[#F8FAFC] border border-[#E5E7EB] rounded-xl p-4">
-                    <div className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider mb-2">Resumo da sua disponibilidade</div>
-                    <div className="text-[13px] text-[#0F172A] space-y-1">
-                      <p>📅 <strong>{agendaSettings.availableDays.length} dias</strong> por semana ({agendaSettings.availableDays.map(d => ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][d]).join(', ')})</p>
-                      <p>⏰ Horário: <strong>{agendaSettings.startHour}</strong> às <strong>{agendaSettings.endHour}</strong></p>
-                      <p>🍽️ Almoço: <strong>{agendaSettings.lunchStart}</strong> às <strong>{agendaSettings.lunchEnd}</strong></p>
-                      <p>📝 Reuniões de <strong>{agendaSettings.defaultDuration} min</strong> com intervalo de <strong>{agendaSettings.bufferMinutes} min</strong></p>
+                  <div className="rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-4">
+                    <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[#64748B]">
+                      Resumo da sua disponibilidade
+                    </div>
+                    <div className="space-y-1 text-[13px] text-[#0F172A]">
+                      <p>
+                        📅 <strong>{agendaSettings.availableDays.length} dias</strong> por semana (
+                        {agendaSettings.availableDays
+                          .map((d) => ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'][d])
+                          .join(', ')}
+                        )
+                      </p>
+                      <p>
+                        ⏰ Horário: <strong>{agendaSettings.startHour}</strong> às{' '}
+                        <strong>{agendaSettings.endHour}</strong>
+                      </p>
+                      <p>
+                        🍽️ Almoço: <strong>{agendaSettings.lunchStart}</strong> às{' '}
+                        <strong>{agendaSettings.lunchEnd}</strong>
+                      </p>
+                      <p>
+                        📝 Reuniões de <strong>{agendaSettings.defaultDuration} min</strong> com
+                        intervalo de <strong>{agendaSettings.bufferMinutes} min</strong>
+                      </p>
                     </div>
                   </div>
 
@@ -2223,16 +2724,24 @@ export default function Settings() {
                         });
                         if (!res.ok) {
                           const errData = await res.json().catch(() => ({}));
-                          throw new Error(errData?.message || 'Erro ao processar requisição no servidor.');
+                          throw new Error(
+                            errData?.message || 'Erro ao processar requisição no servidor.',
+                          );
                         }
-                        toast.success('Agenda configurada', 'Seus horários de disponibilidade foram salvos.');
+                        toast.success(
+                          'Agenda configurada',
+                          'Seus horários de disponibilidade foram salvos.',
+                        );
                       } catch (err: any) {
-                        toast.error('Erro ao salvar', err?.message || 'Não foi possível salvar as configurações de agenda.');
+                        toast.error(
+                          'Erro ao salvar',
+                          err?.message || 'Não foi possível salvar as configurações de agenda.',
+                        );
                       } finally {
                         setIsAgendaSaving(false);
                       }
                     }}
-                    className="bg-[#1B3A6B] hover:bg-[#15305A] text-white font-semibold text-[13px] px-5 h-10 rounded-xl shadow-md shadow-[#1B3A6B]/10 disabled:opacity-60"
+                    className="h-10 rounded-xl bg-[#1B3A6B] px-5 text-[13px] font-semibold text-white shadow-md shadow-[#1B3A6B]/10 hover:bg-[#15305A] disabled:opacity-60"
                   >
                     {isAgendaSaving ? 'Salvando...' : 'Salvar Configurações'}
                   </Button>
@@ -2243,176 +2752,300 @@ export default function Settings() {
 
           {/* ─── TAB: CREDENCIAIS ─── */}
           {activeTab === 'credenciais' && (
-            <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
-              <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
+            <div className="overflow-hidden rounded-xl border border-[#E5E7EB] bg-white shadow-sm">
+              <div className="border-b border-[#EEF0F3] px-5 py-3.5">
                 <div className="flex items-center gap-2">
-                  <Key className="w-4 h-4 text-[#1B3A6B]" />
-                  <div className="text-[14px] font-semibold text-[#0F172A]">Chaves de API (Bring Your Own Key)</div>
+                  <Key className="h-4 w-4 text-[#1B3A6B]" />
+                  <div className="text-[14px] font-semibold text-[#0F172A]">
+                    Chaves de API (Bring Your Own Key)
+                  </div>
                 </div>
-                <div className="text-[11px] text-[#64748B] mt-0.5">Insira suas chaves proprietárias para IA, enriquecimento e integrações. Os valores são armazenados criptografados.</div>
+                <div className="mt-0.5 text-[11px] text-[#64748B]">
+                  Insira suas chaves proprietárias para IA, enriquecimento e integrações. Os valores
+                  são armazenados criptografados.
+                </div>
               </div>
-              <div className="p-5 space-y-5">
+              <div className="space-y-5 p-5">
                 {/* Status badges */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E5E7EB]">
-                    <span className="text-[10px] text-[#64748B] font-bold uppercase tracking-wider block mb-1">Provedor IA</span>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                  <div className="rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-4">
+                    <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[#64748B]">
+                      Provedor IA
+                    </span>
                     <select
                       value={credentialDraft.aiProvider}
-                      onChange={(e) => setCredentialDraft({ ...credentialDraft, aiProvider: e.target.value as 'GUILDS_SHARED' | 'TENANT_OWN' })}
+                      onChange={(e) =>
+                        setCredentialDraft({
+                          ...credentialDraft,
+                          aiProvider: e.target.value as 'GUILDS_SHARED' | 'TENANT_OWN',
+                        })
+                      }
                       disabled={!canManageCredentials || isCredentialsLoading}
-                      className="w-full bg-white border border-[#E5E7EB] text-[12px] rounded-lg px-3 h-10 text-[#0F172A] focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] outline-none disabled:opacity-60"
+                      className="h-10 w-full rounded-lg border border-[#E5E7EB] bg-white px-3 text-[12px] text-[#0F172A] outline-none focus:border-[#1B3A6B] focus:ring-1 focus:ring-[#1B3A6B] disabled:opacity-60"
                     >
                       <option value="GUILDS_SHARED">Guilds compartilhado</option>
                       <option value="TENANT_OWN">Chaves próprias</option>
                     </select>
                   </div>
-                  <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E5E7EB]">
-                    <span className="text-[10px] text-[#64748B] font-bold uppercase tracking-wider block mb-1">OpenAI</span>
-                    <Badge className={credentialState.keys.openai.configured ? 'bg-[#ECFDF3] text-[#027A48] border border-[#A7F3D0]' : 'bg-white border-[#E5E7EB] text-[#64748B]'}>
+                  <div className="rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-4">
+                    <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[#64748B]">
+                      OpenAI
+                    </span>
+                    <Badge
+                      className={
+                        credentialState.keys.openai.configured
+                          ? 'border border-[#A7F3D0] bg-[#ECFDF3] text-[#027A48]'
+                          : 'border-[#E5E7EB] bg-white text-[#64748B]'
+                      }
+                    >
                       {credentialState.keys.openai.configured ? 'Configurada' : 'Não configurada'}
                     </Badge>
                   </div>
-                  <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E5E7EB]">
-                    <span className="text-[10px] text-[#64748B] font-bold uppercase tracking-wider block mb-1">Google Maps</span>
-                    <Badge className={credentialState.keys.googleMaps.configured ? 'bg-[#ECFDF3] text-[#027A48] border border-[#A7F3D0]' : 'bg-white border-[#E5E7EB] text-[#64748B]'}>
-                      {credentialState.keys.googleMaps.configured ? 'Configurada' : 'Não configurada'}
+                  <div className="rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-4">
+                    <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[#64748B]">
+                      Google Maps
+                    </span>
+                    <Badge
+                      className={
+                        credentialState.keys.googleMaps.configured
+                          ? 'border border-[#A7F3D0] bg-[#ECFDF3] text-[#027A48]'
+                          : 'border-[#E5E7EB] bg-white text-[#64748B]'
+                      }
+                    >
+                      {credentialState.keys.googleMaps.configured
+                        ? 'Configurada'
+                        : 'Não configurada'}
                     </Badge>
                   </div>
-                  <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E5E7EB]">
-                    <span className="text-[10px] text-[#64748B] font-bold uppercase tracking-wider block mb-1">Tavily Search</span>
-                    <Badge className={credentialState.keys.tavily?.configured ? 'bg-[#ECFDF3] text-[#027A48] border border-[#A7F3D0]' : 'bg-white border-[#E5E7EB] text-[#64748B]'}>
+                  <div className="rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-4">
+                    <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[#64748B]">
+                      Tavily Search
+                    </span>
+                    <Badge
+                      className={
+                        credentialState.keys.tavily?.configured
+                          ? 'border border-[#A7F3D0] bg-[#ECFDF3] text-[#027A48]'
+                          : 'border-[#E5E7EB] bg-white text-[#64748B]'
+                      }
+                    >
                       {credentialState.keys.tavily?.configured ? 'Configurada' : 'Não configurada'}
                     </Badge>
                   </div>
-                  <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E5E7EB]">
-                    <span className="text-[10px] text-[#64748B] font-bold uppercase tracking-wider block mb-1">Firecrawl</span>
-                    <Badge className={credentialState.keys.firecrawl?.configured ? 'bg-[#ECFDF3] text-[#027A48] border border-[#A7F3D0]' : 'bg-white border-[#E5E7EB] text-[#64748B]'}>
-                      {credentialState.keys.firecrawl?.configured ? 'Configurada' : 'Não configurada'}
+                  <div className="rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-4">
+                    <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[#64748B]">
+                      Firecrawl
+                    </span>
+                    <Badge
+                      className={
+                        credentialState.keys.firecrawl?.configured
+                          ? 'border border-[#A7F3D0] bg-[#ECFDF3] text-[#027A48]'
+                          : 'border-[#E5E7EB] bg-white text-[#64748B]'
+                      }
+                    >
+                      {credentialState.keys.firecrawl?.configured
+                        ? 'Configurada'
+                        : 'Não configurada'}
                     </Badge>
                   </div>
                 </div>
 
                 {/* API Key inputs */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div>
-                    <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">OpenAI API Key</label>
+                    <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#64748B]">
+                      OpenAI API Key
+                    </label>
                     <div className="relative">
-                      <Key className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#64748B]" />
+                      <Key className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#64748B]" />
                       <Input
                         type="password"
                         value={credentialDraft.openaiApiKey}
                         disabled={!canManageCredentials || isCredentialsLoading}
-                        onChange={(e) => setCredentialDraft({ ...credentialDraft, openaiApiKey: e.target.value })}
-                        placeholder={credentialState.keys.openai.configured ? 'Nova chave para substituir a atual' : 'sk-...'}
-                        className="pl-10 bg-white border-[#E5E7EB] text-[#0F172A] placeholder-[#64748B] text-[12px] focus:border-[#1B3A6B] h-10 font-mono disabled:opacity-70 rounded-lg"
+                        onChange={(e) =>
+                          setCredentialDraft({ ...credentialDraft, openaiApiKey: e.target.value })
+                        }
+                        placeholder={
+                          credentialState.keys.openai.configured
+                            ? 'Nova chave para substituir a atual'
+                            : 'sk-...'
+                        }
+                        className="h-10 rounded-lg border-[#E5E7EB] bg-white pl-10 font-mono text-[12px] text-[#0F172A] placeholder-[#64748B] focus:border-[#1B3A6B] disabled:opacity-70"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Anthropic API Key</label>
+                    <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#64748B]">
+                      Anthropic API Key
+                    </label>
                     <div className="relative">
-                      <Key className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#64748B]" />
+                      <Key className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#64748B]" />
                       <Input
                         type="password"
                         value={credentialDraft.anthropicApiKey}
                         disabled={!canManageCredentials || isCredentialsLoading}
-                        onChange={(e) => setCredentialDraft({ ...credentialDraft, anthropicApiKey: e.target.value })}
-                        placeholder={credentialState.keys.anthropic.configured ? 'Nova chave para substituir a atual' : 'sk-ant-...'}
-                        className="pl-10 bg-white border-[#E5E7EB] text-[#0F172A] placeholder-[#64748B] text-[12px] focus:border-[#1B3A6B] h-10 font-mono disabled:opacity-70 rounded-lg"
+                        onChange={(e) =>
+                          setCredentialDraft({
+                            ...credentialDraft,
+                            anthropicApiKey: e.target.value,
+                          })
+                        }
+                        placeholder={
+                          credentialState.keys.anthropic.configured
+                            ? 'Nova chave para substituir a atual'
+                            : 'sk-ant-...'
+                        }
+                        className="h-10 rounded-lg border-[#E5E7EB] bg-white pl-10 font-mono text-[12px] text-[#0F172A] placeholder-[#64748B] focus:border-[#1B3A6B] disabled:opacity-70"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Google AI / Gemini API Key</label>
+                    <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#64748B]">
+                      Google AI / Gemini API Key
+                    </label>
                     <div className="relative">
-                      <Key className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#64748B]" />
+                      <Key className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#64748B]" />
                       <Input
                         type="password"
                         value={credentialDraft.googleAiApiKey}
                         disabled={!canManageCredentials || isCredentialsLoading}
-                        onChange={(e) => setCredentialDraft({ ...credentialDraft, googleAiApiKey: e.target.value })}
-                        placeholder={credentialState.keys.googleAi.configured ? 'Nova chave para substituir a atual' : 'AIza...'}
-                        className="pl-10 bg-white border-[#E5E7EB] text-[#0F172A] placeholder-[#64748B] text-[12px] focus:border-[#1B3A6B] h-10 font-mono disabled:opacity-70 rounded-lg"
+                        onChange={(e) =>
+                          setCredentialDraft({ ...credentialDraft, googleAiApiKey: e.target.value })
+                        }
+                        placeholder={
+                          credentialState.keys.googleAi.configured
+                            ? 'Nova chave para substituir a atual'
+                            : 'AIza...'
+                        }
+                        className="h-10 rounded-lg border-[#E5E7EB] bg-white pl-10 font-mono text-[12px] text-[#0F172A] placeholder-[#64748B] focus:border-[#1B3A6B] disabled:opacity-70"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Google Maps API Key</label>
+                    <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#64748B]">
+                      Google Maps API Key
+                    </label>
                     <div className="relative">
-                      <Key className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#64748B]" />
+                      <Key className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#64748B]" />
                       <Input
                         type="password"
                         value={credentialDraft.googleMapsApiKey}
                         disabled={!canManageCredentials || isCredentialsLoading}
-                        onChange={(e) => setCredentialDraft({ ...credentialDraft, googleMapsApiKey: e.target.value })}
-                        placeholder={credentialState.keys.googleMaps.configured ? 'Nova chave para substituir a atual' : 'AIza...'}
-                        className="pl-10 bg-white border-[#E5E7EB] text-[#0F172A] placeholder-[#64748B] text-[12px] focus:border-[#1B3A6B] h-10 font-mono disabled:opacity-70 rounded-lg"
+                        onChange={(e) =>
+                          setCredentialDraft({
+                            ...credentialDraft,
+                            googleMapsApiKey: e.target.value,
+                          })
+                        }
+                        placeholder={
+                          credentialState.keys.googleMaps.configured
+                            ? 'Nova chave para substituir a atual'
+                            : 'AIza...'
+                        }
+                        className="h-10 rounded-lg border-[#E5E7EB] bg-white pl-10 font-mono text-[12px] text-[#0F172A] placeholder-[#64748B] focus:border-[#1B3A6B] disabled:opacity-70"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Evolution API Key</label>
+                    <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#64748B]">
+                      Evolution API Key
+                    </label>
                     <div className="relative">
-                      <Key className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#64748B]" />
+                      <Key className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#64748B]" />
                       <Input
                         type="password"
                         value={credentialDraft.evolutionApiKey}
                         disabled={!canManageCredentials || isCredentialsLoading}
-                        onChange={(e) => setCredentialDraft({ ...credentialDraft, evolutionApiKey: e.target.value })}
-                        placeholder={credentialState.keys.evolution.configured ? 'Nova chave para substituir a atual' : 'Token da Evolution API'}
-                        className="pl-10 bg-white border-[#E5E7EB] text-[#0F172A] placeholder-[#64748B] text-[12px] focus:border-[#1B3A6B] h-10 font-mono disabled:opacity-70 rounded-lg"
+                        onChange={(e) =>
+                          setCredentialDraft({
+                            ...credentialDraft,
+                            evolutionApiKey: e.target.value,
+                          })
+                        }
+                        placeholder={
+                          credentialState.keys.evolution.configured
+                            ? 'Nova chave para substituir a atual'
+                            : 'Token da Evolution API'
+                        }
+                        className="h-10 rounded-lg border-[#E5E7EB] bg-white pl-10 font-mono text-[12px] text-[#0F172A] placeholder-[#64748B] focus:border-[#1B3A6B] disabled:opacity-70"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Tavily API Key</label>
+                    <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#64748B]">
+                      Tavily API Key
+                    </label>
                     <div className="relative">
-                      <Key className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#64748B]" />
+                      <Key className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#64748B]" />
                       <Input
                         type="password"
                         value={credentialDraft.tavilyApiKey}
                         disabled={!canManageCredentials || isCredentialsLoading}
-                        onChange={(e) => setCredentialDraft({ ...credentialDraft, tavilyApiKey: e.target.value })}
-                        placeholder={credentialState.keys.tavily?.configured ? 'Nova chave para substituir a atual' : 'tvly-...'}
-                        className="pl-10 bg-white border-[#E5E7EB] text-[#0F172A] placeholder-[#64748B] text-[12px] focus:border-[#1B3A6B] h-10 font-mono disabled:opacity-70 rounded-lg"
+                        onChange={(e) =>
+                          setCredentialDraft({ ...credentialDraft, tavilyApiKey: e.target.value })
+                        }
+                        placeholder={
+                          credentialState.keys.tavily?.configured
+                            ? 'Nova chave para substituir a atual'
+                            : 'tvly-...'
+                        }
+                        className="h-10 rounded-lg border-[#E5E7EB] bg-white pl-10 font-mono text-[12px] text-[#0F172A] placeholder-[#64748B] focus:border-[#1B3A6B] disabled:opacity-70"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Firecrawl API Key</label>
+                    <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#64748B]">
+                      Firecrawl API Key
+                    </label>
                     <div className="relative">
-                      <Key className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#64748B]" />
+                      <Key className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#64748B]" />
                       <Input
                         type="password"
                         value={credentialDraft.firecrawlApiKey}
                         disabled={!canManageCredentials || isCredentialsLoading}
-                        onChange={(e) => setCredentialDraft({ ...credentialDraft, firecrawlApiKey: e.target.value })}
-                        placeholder={credentialState.keys.firecrawl?.configured ? 'Nova chave para substituir a atual' : 'fc-...'}
-                        className="pl-10 bg-white border-[#E5E7EB] text-[#0F172A] placeholder-[#64748B] text-[12px] focus:border-[#1B3A6B] h-10 font-mono disabled:opacity-70 rounded-lg"
+                        onChange={(e) =>
+                          setCredentialDraft({
+                            ...credentialDraft,
+                            firecrawlApiKey: e.target.value,
+                          })
+                        }
+                        placeholder={
+                          credentialState.keys.firecrawl?.configured
+                            ? 'Nova chave para substituir a atual'
+                            : 'fc-...'
+                        }
+                        className="h-10 rounded-lg border-[#E5E7EB] bg-white pl-10 font-mono text-[12px] text-[#0F172A] placeholder-[#64748B] focus:border-[#1B3A6B] disabled:opacity-70"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block mb-1.5">Evolution Base URL</label>
+                    <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-[#64748B]">
+                      Evolution Base URL
+                    </label>
                     <Input
                       value={credentialDraft.evolutionBaseUrl}
                       disabled={!canManageCredentials || isCredentialsLoading}
-                      onChange={(e) => setCredentialDraft({ ...credentialDraft, evolutionBaseUrl: e.target.value })}
-                      placeholder={credentialState.whatsapp.baseUrlConfigured ? 'Nova URL para substituir a atual' : 'https://evo.seudominio.com.br'}
-                      className="bg-white border-[#E5E7EB] text-[#0F172A] placeholder-[#64748B] text-[12px] focus:border-[#1B3A6B] h-10 disabled:opacity-70 rounded-lg"
+                      onChange={(e) =>
+                        setCredentialDraft({ ...credentialDraft, evolutionBaseUrl: e.target.value })
+                      }
+                      placeholder={
+                        credentialState.whatsapp.baseUrlConfigured
+                          ? 'Nova URL para substituir a atual'
+                          : 'https://evo.seudominio.com.br'
+                      }
+                      className="h-10 rounded-lg border-[#E5E7EB] bg-white text-[12px] text-[#0F172A] placeholder-[#64748B] focus:border-[#1B3A6B] disabled:opacity-70"
                     />
                   </div>
                 </div>
 
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-4 border-t border-[#EEF0F3]">
-                  <p className="text-[10px] text-[#64748B] leading-relaxed">
+                <div className="flex flex-col justify-between gap-3 border-t border-[#EEF0F3] pt-4 sm:flex-row sm:items-center">
+                  <p className="text-[10px] leading-relaxed text-[#64748B]">
                     {canManageCredentials
                       ? 'Após salvar, os campos ficam vazios por segurança; a tela mostra apenas o estado configurado.'
                       : 'Sua função não permite alterar credenciais do tenant.'}
@@ -2420,7 +3053,7 @@ export default function Settings() {
                   <Button
                     disabled={!canManageCredentials || isCredentialsSaving || isCredentialsLoading}
                     onClick={handleSaveCredentials}
-                    className="bg-[#1B3A6B] hover:bg-[#15305A] text-white text-[12px] font-semibold px-5 h-10 rounded-xl disabled:opacity-60 disabled:cursor-not-allowed"
+                    className="h-10 rounded-xl bg-[#1B3A6B] px-5 text-[12px] font-semibold text-white hover:bg-[#15305A] disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {isCredentialsSaving ? 'Salvando...' : 'Salvar Credenciais'}
                   </Button>
@@ -2431,147 +3064,224 @@ export default function Settings() {
 
           {/* ─── TAB: FINANCEIRO ─── */}
           {activeTab === 'financeiro' && (
-            <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
-              <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
+            <div className="overflow-hidden rounded-xl border border-[#E5E7EB] bg-white shadow-sm">
+              <div className="border-b border-[#EEF0F3] px-5 py-3.5">
                 <div className="flex items-center gap-2">
-                  <CreditCard className="w-4 h-4 text-[#1B3A6B]" />
-                  <div className="text-[14px] font-semibold text-[#0F172A]">Assinatura Ativa (Asaas)</div>
+                  <CreditCard className="h-4 w-4 text-[#1B3A6B]" />
+                  <div className="text-[14px] font-semibold text-[#0F172A]">
+                    Assinatura Ativa (Asaas)
+                  </div>
                 </div>
-                <div className="text-[11px] text-[#64748B] mt-0.5">Acompanhe assinatura, faturas e consumo operacional do tenant.</div>
+                <div className="mt-0.5 text-[11px] text-[#64748B]">
+                  Acompanhe assinatura, faturas e consumo operacional do tenant.
+                </div>
               </div>
-              <div className="p-5 space-y-6">
+              <div className="space-y-6 p-5">
                 {isBillingLoading ? (
-                  <div className="flex items-center gap-2 text-[12px] text-[#64748B] py-8">
-                    <Loader2 className="w-4 h-4 animate-spin text-[#1B3A6B]" />
+                  <div className="flex items-center gap-2 py-8 text-[12px] text-[#64748B]">
+                    <Loader2 className="h-4 w-4 animate-spin text-[#1B3A6B]" />
                     <span>Carregando faturamento real...</span>
                   </div>
                 ) : !billingData ? (
-                  <div className="rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-6 flex flex-col sm:flex-row sm:items-center gap-4">
-                    <div className="p-3 bg-white border border-[#E5E7EB] rounded-xl text-[#64748B] w-fit">
-                      <AlertCircle className="w-5 h-5" />
+                  <div className="flex flex-col gap-4 rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-6 sm:flex-row sm:items-center">
+                    <div className="w-fit rounded-xl border border-[#E5E7EB] bg-white p-3 text-[#64748B]">
+                      <AlertCircle className="h-5 w-5" />
                     </div>
                     <div>
-                      <h4 className="text-[14px] font-bold text-[#0F172A]">Faturamento não encontrado</h4>
-                      <p className="text-[12px] text-[#64748B] mt-1 leading-relaxed">
-                        Nenhuma fatura foi localizada para este tenant. Assim que o Asaas gerar cobranças, elas aparecerão aqui.
+                      <h4 className="text-[14px] font-bold text-[#0F172A]">
+                        Faturamento não encontrado
+                      </h4>
+                      <p className="mt-1 text-[12px] leading-relaxed text-[#64748B]">
+                        Nenhuma fatura foi localizada para este tenant. Assim que o Asaas gerar
+                        cobranças, elas aparecerão aqui.
                       </p>
                     </div>
                   </div>
                 ) : (
-                <>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E5E7EB]">
-                    <span className="text-[10px] text-[#64748B] font-semibold uppercase tracking-wider block">Plano Atual</span>
-                    <h4 className="text-[14px] font-bold text-[#0F172A] mt-1">{billingData.tenant.planName}</h4>
-                    <p className="text-[12px] text-[#64748B] mt-0.5">{formatBRL(billingData.tenant.mrrCents)} / mês</p>
-                  </div>
+                  <>
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <div className="rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-4">
+                        <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#64748B]">
+                          Plano Atual
+                        </span>
+                        <h4 className="mt-1 text-[14px] font-bold text-[#0F172A]">
+                          {billingData.tenant.planName}
+                        </h4>
+                        <p className="mt-0.5 text-[12px] text-[#64748B]">
+                          {formatBRL(billingData.tenant.mrrCents)} / mês
+                        </p>
+                      </div>
 
-                  <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E5E7EB] space-y-2">
-                    <div className="flex justify-between text-[12px]">
-                      <span className="text-[#64748B] font-semibold uppercase tracking-wider text-[10px]">Uso de IA no mês</span>
-                      <span className="text-[#64748B] font-mono font-medium">
-                        {(billingData.usage.llmTokensInput + billingData.usage.llmTokensOutput).toLocaleString('pt-BR')} tokens
+                      <div className="space-y-2 rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-4">
+                        <div className="flex justify-between text-[12px]">
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-[#64748B]">
+                            Uso de IA no mês
+                          </span>
+                          <span className="font-mono font-medium text-[#64748B]">
+                            {(
+                              billingData.usage.llmTokensInput + billingData.usage.llmTokensOutput
+                            ).toLocaleString('pt-BR')}{' '}
+                            tokens
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 gap-2 pt-1 sm:grid-cols-3">
+                          <div>
+                            <p className="text-[9px] font-bold uppercase text-[#64748B]">IA</p>
+                            <p className="font-mono text-[12px] text-[#0F172A]">
+                              {formatBRL(billingData.usage.llmCostCents)}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-[9px] font-bold uppercase text-[#64748B]">
+                              WhatsApp
+                            </p>
+                            <p className="font-mono text-[12px] text-[#0F172A]">
+                              {formatBRL(billingData.usage.whatsappCostCents)}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-[9px] font-bold uppercase text-[#64748B]">Maps</p>
+                            <p className="font-mono text-[12px] text-[#0F172A]">
+                              {formatBRL(billingData.usage.googleMapsCostCents)}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {billingData.currentInvoice && (
+                      <div className="flex flex-col justify-between gap-4 rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-4 sm:flex-row sm:items-center">
+                        <div>
+                          <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#64748B]">
+                            Fatura atual
+                          </span>
+                          <p className="mt-1 text-[14px] font-bold text-[#0F172A]">
+                            {formatBRL(billingData.currentInvoice.totalCents)}
+                          </p>
+                          <p className="mt-0.5 text-[12px] text-[#64748B]">
+                            Vencimento em {formatDate(billingData.currentInvoice.dueAt)}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge
+                            className={
+                              billingData.currentInvoice.status === 'PAID'
+                                ? 'border border-[#A7F3D0] bg-[#ECFDF3] text-[#027A48]'
+                                : billingData.currentInvoice.status === 'OVERDUE'
+                                  ? 'border border-[#FECACA] bg-[#FEF3F2] text-[#D92D20]'
+                                  : 'border border-[#FDE68A] bg-[#FFFBEB] text-[#B45309]'
+                            }
+                          >
+                            {billingData.currentInvoice.status === 'PAID'
+                              ? 'Pago'
+                              : billingData.currentInvoice.status === 'OVERDUE'
+                                ? 'Em atraso'
+                                : 'Pendente'}
+                          </Badge>
+                          {billingData.currentInvoice.invoiceUrl && (
+                            <Button
+                              onClick={() =>
+                                window.open(
+                                  billingData.currentInvoice!.invoiceUrl!,
+                                  '_blank',
+                                  'noopener,noreferrer',
+                                )
+                              }
+                              className="flex h-8 items-center gap-1.5 rounded-lg bg-[#1B3A6B] px-3 text-[10px] font-bold text-white hover:bg-[#15305A]"
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                              Abrir fatura
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="space-y-3">
+                      <span className="block text-[11px] font-semibold uppercase tracking-wider text-[#64748B]">
+                        Histórico de Cobrança (Faturas Asaas)
                       </span>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
-                      <div>
-                        <p className="text-[9px] text-[#64748B] uppercase font-bold">IA</p>
-                        <p className="text-[12px] text-[#0F172A] font-mono">{formatBRL(billingData.usage.llmCostCents)}</p>
-                      </div>
-                      <div>
-                        <p className="text-[9px] text-[#64748B] uppercase font-bold">WhatsApp</p>
-                        <p className="text-[12px] text-[#0F172A] font-mono">{formatBRL(billingData.usage.whatsappCostCents)}</p>
-                      </div>
-                      <div>
-                        <p className="text-[9px] text-[#64748B] uppercase font-bold">Maps</p>
-                        <p className="text-[12px] text-[#0F172A] font-mono">{formatBRL(billingData.usage.googleMapsCostCents)}</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {billingData.currentInvoice && (
-                  <div className="rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div>
-                      <span className="text-[10px] text-[#64748B] font-semibold uppercase tracking-wider block">Fatura atual</span>
-                      <p className="text-[14px] font-bold text-[#0F172A] mt-1">{formatBRL(billingData.currentInvoice.totalCents)}</p>
-                      <p className="text-[12px] text-[#64748B] mt-0.5">
-                        Vencimento em {formatDate(billingData.currentInvoice.dueAt)}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Badge className={billingData.currentInvoice.status === 'PAID' ? 'bg-[#ECFDF3] text-[#027A48] border border-[#A7F3D0]' : billingData.currentInvoice.status === 'OVERDUE' ? 'bg-[#FEF3F2] text-[#D92D20] border border-[#FECACA]' : 'bg-[#FFFBEB] text-[#B45309] border border-[#FDE68A]'}>
-                        {billingData.currentInvoice.status === 'PAID' ? 'Pago' : billingData.currentInvoice.status === 'OVERDUE' ? 'Em atraso' : 'Pendente'}
-                      </Badge>
-                      {billingData.currentInvoice.invoiceUrl && (
-                        <Button
-                          onClick={() => window.open(billingData.currentInvoice!.invoiceUrl!, '_blank', 'noopener,noreferrer')}
-                          className="bg-[#1B3A6B] hover:bg-[#15305A] text-white text-[10px] font-bold h-8 px-3 rounded-lg flex items-center gap-1.5"
-                        >
-                          <ExternalLink className="w-3 h-3" />
-                          Abrir fatura
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                <div className="space-y-3">
-                  <span className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider block">Histórico de Cobrança (Faturas Asaas)</span>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-[12px]">
-                      <thead>
-                        <tr className="border-b border-[#E5E7EB] text-[10px] text-[#64748B] uppercase font-bold tracking-wider text-left">
-                          <th className="py-2.5">Data de Vencimento</th>
-                          <th className="py-2.5">Valor</th>
-                          <th className="py-2.5">Status</th>
-                          <th className="py-2.5 text-right">Ação</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[#F1F5F9]">
-                        {billingData.invoices.map((inv) => (
-                          <tr key={inv.id}>
-                            <td className="py-3 font-medium text-[#64748B]">{formatDate(inv.dueAt)}</td>
-                            <td className="py-3 font-mono font-medium text-[#0F172A]">{formatBRL(inv.totalCents)}</td>
-                            <td className="py-3">
-                              <Badge className={inv.status === 'PAID' ? 'bg-[#ECFDF3] text-[#027A48] border border-[#A7F3D0]' : inv.status === 'OVERDUE' ? 'bg-[#FEF3F2] text-[#D92D20] border border-[#FECACA]' : 'bg-[#FFFBEB] text-[#B45309] border border-[#FDE68A]'}>
-                                {inv.status === 'PAID' ? 'Pago' : inv.status === 'OVERDUE' ? 'Em atraso' : inv.status === 'WAIVED' ? 'Isenta' : inv.status === 'REFUNDED' ? 'Estornada' : 'Pendente'}
-                              </Badge>
-                            </td>
-                            <td className="py-3 text-right">
-                              {inv.invoiceUrl && (
-                                <Button
-                                  onClick={() => window.open(inv.invoiceUrl!, '_blank', 'noopener,noreferrer')}
-                                  className="bg-[#F8FAFC] hover:bg-[#E5E7EB] text-[#0F172A] border border-[#E5E7EB] text-[10px] font-bold h-7 px-2.5 rounded-lg flex items-center gap-1.5 ml-auto"
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-[12px]">
+                          <thead>
+                            <tr className="border-b border-[#E5E7EB] text-left text-[10px] font-bold uppercase tracking-wider text-[#64748B]">
+                              <th className="py-2.5">Data de Vencimento</th>
+                              <th className="py-2.5">Valor</th>
+                              <th className="py-2.5">Status</th>
+                              <th className="py-2.5 text-right">Ação</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[#F1F5F9]">
+                            {billingData.invoices.map((inv) => (
+                              <tr key={inv.id}>
+                                <td className="py-3 font-medium text-[#64748B]">
+                                  {formatDate(inv.dueAt)}
+                                </td>
+                                <td className="py-3 font-mono font-medium text-[#0F172A]">
+                                  {formatBRL(inv.totalCents)}
+                                </td>
+                                <td className="py-3">
+                                  <Badge
+                                    className={
+                                      inv.status === 'PAID'
+                                        ? 'border border-[#A7F3D0] bg-[#ECFDF3] text-[#027A48]'
+                                        : inv.status === 'OVERDUE'
+                                          ? 'border border-[#FECACA] bg-[#FEF3F2] text-[#D92D20]'
+                                          : 'border border-[#FDE68A] bg-[#FFFBEB] text-[#B45309]'
+                                    }
+                                  >
+                                    {inv.status === 'PAID'
+                                      ? 'Pago'
+                                      : inv.status === 'OVERDUE'
+                                        ? 'Em atraso'
+                                        : inv.status === 'WAIVED'
+                                          ? 'Isenta'
+                                          : inv.status === 'REFUNDED'
+                                            ? 'Estornada'
+                                            : 'Pendente'}
+                                  </Badge>
+                                </td>
+                                <td className="py-3 text-right">
+                                  {inv.invoiceUrl && (
+                                    <Button
+                                      onClick={() =>
+                                        window.open(
+                                          inv.invoiceUrl!,
+                                          '_blank',
+                                          'noopener,noreferrer',
+                                        )
+                                      }
+                                      className="ml-auto flex h-7 items-center gap-1.5 rounded-lg border border-[#E5E7EB] bg-[#F8FAFC] px-2.5 text-[10px] font-bold text-[#0F172A] hover:bg-[#E5E7EB]"
+                                    >
+                                      <ExternalLink className="h-3 w-3" />
+                                      <span>Abrir</span>
+                                    </Button>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                            {billingData.invoices.length === 0 && (
+                              <tr>
+                                <td
+                                  colSpan={4}
+                                  className="py-8 text-center text-[12px] text-[#64748B]"
                                 >
-                                  <ExternalLink className="w-3 h-3" />
-                                  <span>Abrir</span>
-                                </Button>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                        {billingData.invoices.length === 0 && (
-                          <tr>
-                            <td colSpan={4} className="py-8 text-center text-[12px] text-[#64748B]">
-                              Nenhuma fatura real encontrada para este tenant.
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-                </>
+                                  Nenhuma fatura real encontrada para este tenant.
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </>
                 )}
               </div>
             </div>
           )}
 
           {/* ─── TAB: PRIVACIDADE ─── */}
-          {activeTab === 'privacidade' && (
-            <PrivacyTab />
-          )}
+          {activeTab === 'privacidade' && <PrivacyTab />}
         </div>
       </div>
     </div>
