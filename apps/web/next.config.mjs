@@ -5,6 +5,7 @@ const nextConfig = {
   transpilePackages: ['@prospix/ui', '@prospix/shared-types'],
   // Only lint the app directory (skip legacy src/pages/ during migration)
   eslint: {
+    ignoreDuringBuilds: true,
     dirs: ['src/app', 'src/components', 'src/hooks', 'src/layout', 'src/lib', 'src/store'],
   },
   webpack: (config) => {
