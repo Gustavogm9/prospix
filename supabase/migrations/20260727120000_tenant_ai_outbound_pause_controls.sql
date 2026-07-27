@@ -291,7 +291,9 @@ $$;
 REVOKE ALL ON FUNCTION public.claim_due_pending_outbound(UUID, TEXT, INTEGER, INTEGER, UUID[]) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.claim_due_pending_outbound(UUID, TEXT, INTEGER, INTEGER, UUID[]) TO service_role;
 
-CREATE OR REPLACE VIEW public.ai_worker_due_queue_diagnostics AS
+DROP VIEW IF EXISTS public.ai_worker_due_queue_diagnostics;
+
+CREATE VIEW public.ai_worker_due_queue_diagnostics AS
 WITH due_queue AS (
   SELECT
     pending.id AS pending_outbound_id,
