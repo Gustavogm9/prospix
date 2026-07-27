@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { v4 as uuid } from "https://esm.sh/uuid@9.0.1";
 import { GuardianRunner } from "../_shared/guardians/runner.ts";
 import type { EffectiveGuardianConfig, GuardianRunResult } from "../_shared/guardians/types.ts";
+import { loadTenantAiOutboundGate } from "../_shared/tenant-ai-outbound-control.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL") as string;
 const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") as string;
@@ -244,6 +245,14 @@ serve(async (req) => {
     let processed = 0;
 
     for (const conv of conversations) {
+      const tenantOutboundGate = await loadTenantAiOutboundGate(supabase, conv.tenant_id);
+      if (!tenantOutboundGate.allow) {
+        console.log(
+          `Skipping ${conv.id}: tenant AI outbound paused (${tenantOutboundGate.reasonCode}).`,
+        );
+        continue;
+      }
+
       // Fetch the last message to ensure it was from the AI
       const { data: lastMsg } = await supabase
         .from("messages")

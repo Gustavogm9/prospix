@@ -25,6 +25,10 @@ import {
   shouldMoveColdToRecovery,
   shouldPromoteRecoveryToNormal,
 } from '../_shared/whatsapp-guardian-state.ts';
+import {
+  loadTenantAiOutboundGate,
+  tenantAiOutboundPausedRetryIso,
+} from '../_shared/tenant-ai-outbound-control.ts';
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -280,6 +284,60 @@ async function releasePendingClaim(
   } catch (err) {
     console.warn('  [Queue Claim] Excecao ao liberar claim:', redactText(err));
   }
+}
+
+async function delayPendingForTenantAiOutboundPause(params: {
+  tenantId: string;
+  pendingOutboundId: string;
+  conversationId: string | null;
+  leadId?: string | null;
+  reasonCode: string;
+  pauseReason?: string | null;
+}): Promise<void> {
+  const nowIso = new Date().toISOString();
+  const nextScheduled = tenantAiOutboundPausedRetryIso(5);
+
+  await supabase
+    .from('pending_outbound')
+    .update({
+      scheduled_for: nextScheduled,
+      failed_reason: params.reasonCode,
+      validation_status: 'DELAYED',
+      validation_reason_code: params.reasonCode,
+      final_guardian_checked_at: nowIso,
+      final_guardian_decision: 'DELAY',
+      processing_owner: null,
+      processing_started_at: null,
+      processing_expires_at: null,
+    })
+    .eq('tenant_id', params.tenantId)
+    .eq('id', params.pendingOutboundId);
+
+  if (params.leadId) {
+    await supabase.from('lead_events').insert({
+      tenant_id: params.tenantId,
+      lead_id: params.leadId,
+      event_type: 'tenant_ai_outbound_paused_send_blocked',
+      payload: {
+        pending_outbound_id: params.pendingOutboundId,
+        conversation_id: params.conversationId,
+        reason_code: params.reasonCode,
+        pause_reason: params.pauseReason || null,
+        rescheduled_for: nextScheduled,
+        source: 'send-messages',
+      },
+      created_at: nowIso,
+    });
+  }
+
+  console.log(
+    '  [Tenant AI Pause] Pending ' +
+      params.pendingOutboundId +
+      ' adiado ate ' +
+      nextScheduled +
+      '. Motivo: ' +
+      params.reasonCode,
+  );
 }
 
 async function acquireConversationLock(params: {
@@ -1801,6 +1859,17 @@ async function processFirstTouch(
   const maxToQueue = Math.max(0, Math.floor(options.maxToQueue ?? Number.POSITIVE_INFINITY));
   if (maxToQueue === 0) return { queued, failed };
 
+  const outboundGate = await loadTenantAiOutboundGate(supabase, tenantId);
+  if (!outboundGate.allow) {
+    console.log(
+      '  [Tenant AI Pause] Primeiro contato bloqueado para tenant ' +
+        tenantId +
+        '. Motivo: ' +
+        outboundGate.reasonCode,
+    );
+    return { queued, failed };
+  }
+
   const brtHour = getBrtHour();
   const brtDate = getBrtDateStr();
 
@@ -2603,6 +2672,18 @@ async function runGuardianWorkerForTenant(
       }
 
       // 2. Coletar estatísticas dinâmicas
+      const tenantOutboundGate = await loadTenantAiOutboundGate(supabase, tenantId);
+      if (!tenantOutboundGate.allow) {
+        console.log(
+          '  [Tenant AI Pause] Envios bloqueados para tenant ' +
+            tenantId +
+            '. Motivo: ' +
+            tenantOutboundGate.reasonCode,
+        );
+        await sleep(5000);
+        continue;
+      }
+
       const oneMinuteAgo = new Date(Date.now() - 60 * 1000).toISOString();
       const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
       const startOfDay = new Date(new Date().setHours(0, 0, 0, 0)).toISOString();
@@ -3259,6 +3340,21 @@ async function runGuardianWorkerForTenant(
           }
 
           // 9. Enviar via Evolution API
+          const finalTenantOutboundGate = await loadTenantAiOutboundGate(supabase, tenantId);
+          if (!finalTenantOutboundGate.allow) {
+            await delayPendingForTenantAiOutboundPause({
+              tenantId,
+              pendingOutboundId: item.id,
+              conversationId: item.conversation_id || null,
+              leadId,
+              reasonCode:
+                finalTenantOutboundGate.reasonCode || 'TENANT_AI_OUTBOUND_PAUSED_FINAL_GATE',
+              pauseReason: finalTenantOutboundGate.pauseReason,
+            });
+            await sleep(500);
+            continue;
+          }
+
           if (!evoConfig) {
             await supabase
               .from('pending_outbound')

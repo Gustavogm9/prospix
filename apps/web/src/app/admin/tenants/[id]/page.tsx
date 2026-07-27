@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badge, Tabs, TabsList, TabsTrigger, TabsContent, toast } from '@prospix/ui';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badge, Tabs, TabsList, TabsTrigger, TabsContent, toast, Modal, Textarea } from '@prospix/ui';
 import {
   ArrowLeft, Building, Users, Settings as SettingsIcon, Ban, Play, AlertOctagon,
   CheckCircle2, AlertCircle, Loader2, RefreshCw, MessageSquare, Calendar,
@@ -40,6 +40,18 @@ interface CredentialState {
 interface IntegrationHealth {
   status: 'excellent' | 'good' | 'fair' | 'critical';
   missing: string[];
+}
+
+interface AiOutboundControl {
+  tenantId: string;
+  paused: boolean;
+  pausedAt: string | null;
+  pausedBy: string | null;
+  pauseReason: string | null;
+  resumedAt: string | null;
+  resumedBy: string | null;
+  resumeReason: string | null;
+  updatedAt: string | null;
 }
 
 interface TenantDetail {
@@ -99,28 +111,46 @@ function formatBRL(cents: number): string {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cents / 100);
 }
 
+function formatDateTime(value: string | null): string {
+  if (!value) return 'Sem registro';
+  return new Date(value).toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 export default function TenantDetail() {
   const params = useParams();
   const id = params!.id as string;
   const router = useRouter();
   const [tenant, setTenant] = useState<TenantDetail | null>(null);
   const [insights, setInsights] = useState<InsightsPayload | null>(null);
+  const [aiOutboundControl, setAiOutboundControl] = useState<AiOutboundControl | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [actionBusy, setActionBusy] = useState<'suspend' | 'resume' | 'churn' | null>(null);
+  const [actionBusy, setActionBusy] = useState<'suspend' | 'resume' | 'churn' | 'aiPause' | 'aiResume' | null>(null);
   const [activeTab, setActiveTab] = useState<'visao-geral' | 'integracoes' | 'usuarios' | 'convites' | 'faturamento'>('visao-geral');
   const [invitations, setInvitations] = useState<TenantInvitation[]>([]);
   const [invitationsLoading, setInvitationsLoading] = useState(false);
   const [invitationBusy, setInvitationBusy] = useState<string | null>(null);
+  const [aiPauseModal, setAiPauseModal] = useState<{ isOpen: boolean; paused: boolean }>({
+    isOpen: false,
+    paused: true,
+  });
+  const [aiPauseReason, setAiPauseReason] = useState('');
 
   const fetchAll = async () => {
     if (!id) return;
     setIsLoading(true);
     setLoadError(null);
     try {
-      const [tenantResult, insightsRes] = await Promise.all([
+      const [tenantResult, insightsRes, aiPauseRes] = await Promise.all([
         adminTenantsQueries.getById(id),
         adminNextApi.get(`/api/admin/tenants/${id}/insights`),
+        adminNextApi.get(`/api/admin/tenants/${id}/ai-outbound-pause`),
       ]);
       if (tenantResult.error) throw new Error(tenantResult.error.message);
       // Map snake_case Supabase fields to camelCase expected by UI
@@ -153,6 +183,7 @@ export default function TenantDetail() {
         setTenant(null);
       }
       setInsights(insightsData);
+      setAiOutboundControl(aiPauseRes.data?.data ?? null);
     } catch (err: unknown) {
       const message = err instanceof Error
         ? err.message
@@ -292,6 +323,51 @@ export default function TenantDetail() {
     }
   };
 
+  const openAiPauseModal = (paused: boolean) => {
+    setAiPauseReason('');
+    setAiPauseModal({ isOpen: true, paused });
+  };
+
+  const closeAiPauseModal = () => {
+    if (actionBusy === 'aiPause' || actionBusy === 'aiResume') return;
+    setAiPauseModal({ isOpen: false, paused: true });
+    setAiPauseReason('');
+  };
+
+  const handleConfirmAiPause = async () => {
+    if (!tenant) return;
+    const reason = aiPauseReason.trim();
+    if (aiPauseModal.paused && reason.length < 8) {
+      toast.error('Motivo obrigatorio', 'Informe um motivo claro para pausar a IA desta conta.');
+      return;
+    }
+
+    const busyState = aiPauseModal.paused ? 'aiPause' : 'aiResume';
+    setActionBusy(busyState);
+    try {
+      await adminNextApi.post(`/api/admin/tenants/${tenant.id}/ai-outbound-pause`, {
+        paused: aiPauseModal.paused,
+        reason,
+      });
+      toast.success(
+        aiPauseModal.paused ? 'IA pausada' : 'IA retomada',
+        aiPauseModal.paused
+          ? 'Novas mensagens automaticas desta conta foram bloqueadas.'
+          : 'A conta voltou a permitir mensagens automaticas da IA.',
+      );
+      setAiPauseModal({ isOpen: false, paused: true });
+      setAiPauseReason('');
+      await fetchAll();
+    } catch (err: unknown) {
+      const message = err instanceof AxiosError
+        ? err.response?.data?.message || 'Falha ao atualizar controle da IA.'
+        : 'Falha ao atualizar controle da IA.';
+      toast.error('Erro', message);
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
   const monthlyCostTrend = useMemo(() => {
     if (!insights) return { current: 0, previous: 0, delta: 0, deltaPercent: 0 };
     const sorted = [...insights.usage3m];
@@ -372,6 +448,17 @@ export default function TenantDetail() {
           >
             <RefreshCw className="w-3.5 h-3.5" aria-hidden /> Atualizar
           </Button>
+          {aiOutboundControl?.paused ? (
+            <Button onClick={() => openAiPauseModal(false)} disabled={actionBusy !== null} className="bg-success-text hover:opacity-90 text-white text-xs px-3 h-9 rounded-lg flex items-center gap-1.5">
+              {actionBusy === 'aiResume' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+              Retomar IA
+            </Button>
+          ) : (
+            <Button onClick={() => openAiPauseModal(true)} disabled={actionBusy !== null} className="bg-white hover:bg-amber-50 text-amber-700 border border-amber-300 text-xs px-3 h-9 rounded-lg flex items-center gap-1.5">
+              {actionBusy === 'aiPause' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Ban className="w-3.5 h-3.5" />}
+              Pausar IA
+            </Button>
+          )}
           {tenant.status === 'SUSPENDED' ? (
             <Button onClick={handleResume} disabled={actionBusy !== null} className="bg-success-text hover:opacity-90 text-white text-xs px-3 h-9 rounded-lg flex items-center gap-1.5">
               {actionBusy === 'resume' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
@@ -412,6 +499,56 @@ export default function TenantDetail() {
         <KpiCard label="Conv. ativas" value={String(insights?.counts.conversationsActive ?? '—')} icon={MessageSquare} sub={`/ ${insights?.counts.conversationsTotal ?? 0} total`} />
         <KpiCard label="LGPD pendentes" value={String(insights?.counts.lgpdPending ?? 0)} icon={ShieldAlert} tone={(insights?.counts.lgpdPending ?? 0) > 0 ? 'warn' : 'good'} />
       </div>
+
+      <Card className={`border shadow-sm ${aiOutboundControl?.paused ? 'bg-amber-50 border-amber-300' : 'bg-white border-border'}`}>
+        <CardContent className="py-4">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="space-y-2 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-bold text-text flex items-center gap-2">
+                  <MessageSquare className="w-4 h-4 text-primary" aria-hidden />
+                  Controle de envio da IA
+                </span>
+                <Badge className={`text-[10px] px-2 py-0.5 border ${aiOutboundControl?.paused ? 'bg-amber-100 text-amber-900 border-amber-300' : 'bg-success-soft text-success-text border-success/30'}`}>
+                  {aiOutboundControl?.paused ? 'IA pausada' : 'IA ativa'}
+                </Badge>
+              </div>
+              <p className="text-xs text-text-secondary max-w-3xl">
+                {aiOutboundControl?.paused
+                  ? 'Esta conta nao envia abordagens, respostas automaticas, follow-ups ou pedidos de indicacao. As mensagens recebidas continuam salvas para acompanhamento humano.'
+                  : 'Esta conta pode enviar abordagens, respostas automaticas, follow-ups e pedidos de indicacao conforme campanhas, roteiros, agenda e guardioes ativos.'}
+              </p>
+              <div className="text-[11px] text-text-secondary flex flex-wrap gap-x-4 gap-y-1">
+                <span>Ultima alteracao: {formatDateTime(aiOutboundControl?.updatedAt ?? null)}</span>
+                {aiOutboundControl?.paused && (
+                  <span>Motivo: {aiOutboundControl.pauseReason || 'Sem motivo registrado'}</span>
+                )}
+                {!aiOutboundControl?.paused && aiOutboundControl?.resumedAt && (
+                  <span>Retomada em: {formatDateTime(aiOutboundControl.resumedAt)}</span>
+                )}
+              </div>
+            </div>
+            <Button
+              onClick={() => openAiPauseModal(!(aiOutboundControl?.paused))}
+              disabled={actionBusy !== null}
+              className={`text-xs px-3 h-9 rounded-lg flex items-center gap-1.5 shrink-0 ${
+                aiOutboundControl?.paused
+                  ? 'bg-success-text hover:opacity-90 text-white'
+                  : 'bg-white hover:bg-amber-50 text-amber-700 border border-amber-300'
+              }`}
+            >
+              {actionBusy === 'aiPause' || actionBusy === 'aiResume' ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : aiOutboundControl?.paused ? (
+                <Play className="w-3.5 h-3.5" />
+              ) : (
+                <Ban className="w-3.5 h-3.5" />
+              )}
+              {aiOutboundControl?.paused ? 'Retomar IA' : 'Pausar IA'}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)}>
         <TabsList>
@@ -701,6 +838,61 @@ export default function TenantDetail() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <Modal
+        isOpen={aiPauseModal.isOpen}
+        onClose={closeAiPauseModal}
+        title={aiPauseModal.paused ? 'Pausar envio da IA' : 'Retomar envio da IA'}
+        size="md"
+        footer={
+          <>
+            <Button
+              onClick={closeAiPauseModal}
+              disabled={actionBusy === 'aiPause' || actionBusy === 'aiResume'}
+              className="bg-white hover:bg-surface-sunken text-text border border-border text-xs px-3 h-9 rounded-lg"
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleConfirmAiPause}
+              disabled={actionBusy === 'aiPause' || actionBusy === 'aiResume'}
+              className={`text-white text-xs px-3 h-9 rounded-lg flex items-center gap-1.5 ${
+                aiPauseModal.paused ? 'bg-amber-600 hover:bg-amber-700' : 'bg-success-text hover:opacity-90'
+              }`}
+            >
+              {actionBusy === 'aiPause' || actionBusy === 'aiResume' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+              {aiPauseModal.paused ? 'Confirmar pausa' : 'Confirmar retomada'}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-text">
+            {aiPauseModal.paused
+              ? 'Ao confirmar, esta conta para de enviar qualquer mensagem automatica da IA. Mensagens recebidas continuam sendo registradas.'
+              : 'Ao confirmar, esta conta volta a permitir envios automaticos da IA conforme campanhas, roteiros, agenda e guardioes ativos.'}
+          </p>
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-text">
+              {aiPauseModal.paused ? 'Motivo da pausa' : 'Motivo da retomada'}
+            </label>
+            <Textarea
+              value={aiPauseReason}
+              onChange={(event) => setAiPauseReason(event.target.value)}
+              placeholder={
+                aiPauseModal.paused
+                  ? 'Ex.: solicitacao do cliente, revisao operacional, risco de reputacao do numero...'
+                  : 'Ex.: revisao concluida, cliente autorizado, operacao liberada...'
+              }
+              className="min-h-[100px] resize-none text-sm"
+              disabled={actionBusy === 'aiPause' || actionBusy === 'aiResume'}
+            />
+            {aiPauseModal.paused && (
+              <p className="text-[11px] text-text-secondary">Obrigatorio para auditoria e rastreabilidade.</p>
+            )}
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

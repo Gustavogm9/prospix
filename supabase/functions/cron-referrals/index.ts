@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildCandidatePayload } from "../_shared/guardians/candidate.ts";
 import { GuardianRunner } from "../_shared/guardians/runner.ts";
 import type { EffectiveGuardianConfig, GuardianRunResult } from "../_shared/guardians/types.ts";
+import { loadTenantAiOutboundGate } from "../_shared/tenant-ai-outbound-control.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -329,6 +330,15 @@ serve(async (req: Request) => {
     for (const lead of leads) {
       const meta = lead.metadata || {};
       if (meta.referral_loop_triggered) continue;
+
+      const tenantOutboundGate = await loadTenantAiOutboundGate(supabase, lead.tenant_id);
+      if (!tenantOutboundGate.allow) {
+        blocked++;
+        console.log(
+          `Skipping referral request for lead ${lead.id}: tenant AI outbound paused (${tenantOutboundGate.reasonCode}).`,
+        );
+        continue;
+      }
 
       const { data: conversations, error: convError } = await supabase
         .from("conversations")

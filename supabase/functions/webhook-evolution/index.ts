@@ -18,6 +18,7 @@ import {
   recordGuardianStateTransition,
   shouldMoveColdToRecovery,
 } from '../_shared/whatsapp-guardian-state.ts';
+import { loadTenantAiOutboundGate } from '../_shared/tenant-ai-outbound-control.ts';
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -1712,9 +1713,45 @@ async function processMessageUpsert(payload: any, ledgerId: string | null): Prom
       );
     }
 
-    console.log('  🤖 AI handling active, processing...');
-
     // ── Step 1: Classify intent ──────────────────────────────
+    const tenantOutboundGate = await loadTenantAiOutboundGate(supabase, tenantId);
+    if (!tenantOutboundGate.allow) {
+      console.log(
+        '  [Tenant AI Pause] Inbound salvo sem resposta automatica. Tenant: ' +
+          tenantId +
+          ' Motivo: ' +
+          tenantOutboundGate.reasonCode,
+      );
+
+      await supabase.from('lead_events').insert({
+        tenant_id: tenantId,
+        lead_id: lead.id,
+        event_type: 'tenant_ai_outbound_paused_inbound_saved',
+        payload: {
+          conversation_id: conversation.id,
+          message_id: inboundMsgId,
+          reason_code: tenantOutboundGate.reasonCode,
+          pause_reason: tenantOutboundGate.pauseReason || null,
+          source: 'webhook-evolution',
+        },
+        created_at: now,
+      });
+
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          message_id: inboundMsgId,
+          ai_outbound_paused: true,
+          reason_code: tenantOutboundGate.reasonCode,
+        }),
+        {
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+    }
+
+    console.log('  [AI] AI handling active, processing...');
+
     const inboundGuardianRun = await GuardianRunner.observe({
       supabase,
       tenantId,
