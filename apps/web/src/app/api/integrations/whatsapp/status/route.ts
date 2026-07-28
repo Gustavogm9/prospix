@@ -538,6 +538,17 @@ export async function GET(request: NextRequest) {
     const guardianTrace = await loadWhatsAppGuardianTrace(tenantId);
     const aiActivityMonitor = await loadAiActivityMonitor(supabaseAdmin, { tenantIds: [tenantId] });
     guardianTrace.aiActivity = aiActivityMonitor.tenants[0] || null;
+    const { data: aiOutboundControl, error: aiOutboundControlError } = await (supabaseAdmin as any)
+      .from('tenant_ai_outbound_controls')
+      .select('paused')
+      .eq('tenant_id', tenantId)
+      .maybeSingle();
+
+    if (aiOutboundControlError) {
+      console.warn('Tenant AI outbound pause status unavailable:', aiOutboundControlError.message);
+    }
+
+    const tenantAiPaused = aiOutboundControl?.paused === true;
 
     const { data: secretRecord } = await supabaseAdmin
       .from('tenant_secrets')
@@ -550,6 +561,7 @@ export async function GET(request: NextRequest) {
         status: 'disconnected',
         configured: false,
         instanceName: null,
+        tenantAiPaused,
         guardianTrace,
       });
     }
@@ -579,6 +591,7 @@ export async function GET(request: NextRequest) {
             reason: 'other',
             configured: true,
             instanceName,
+            tenantAiPaused,
             guardianTrace,
           });
         }
@@ -589,6 +602,7 @@ export async function GET(request: NextRequest) {
         configured: true,
         instanceName,
         error: 'CONNECTION_STATE_UNAVAILABLE',
+        tenantAiPaused,
         guardianTrace,
       });
     }
@@ -604,6 +618,7 @@ export async function GET(request: NextRequest) {
         configured: true,
         instanceName,
         reason: 'instance_not_found',
+        tenantAiPaused,
         guardianTrace,
       });
     }
@@ -632,6 +647,7 @@ export async function GET(request: NextRequest) {
       reason: isConnected ? null : reason,
       configured: true,
       instanceName,
+      tenantAiPaused,
       guardianTrace,
     });
   } catch (err) {

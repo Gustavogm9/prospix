@@ -29,7 +29,6 @@ import {
   Star,
   HelpCircle,
   Smartphone,
-  AlertTriangle,
 } from 'lucide-react';
 import { Avatar, Dropdown, DropdownItem } from '@prospix/ui';
 import { apiFetch } from '../lib/api-fetch';
@@ -83,13 +82,6 @@ function dotPingClass(tone: OperationalTone): string {
   if (tone === 'amber') return 'bg-[#fbbf24]';
   if (tone === 'red') return 'bg-[#fb7185]';
   return 'bg-[#94A3B8]';
-}
-
-function bannerClass(tone: OperationalTone): string {
-  if (tone === 'red') return 'bg-[#FEF3F2] border-[#FEE4E2] text-[#B42318]';
-  if (tone === 'amber') return 'bg-[#FFFAEB] border-[#FEDF89] text-[#B54708]';
-  if (tone === 'blue') return 'bg-[#EFF8FF] border-[#B2DDFF] text-[#175CD3]';
-  return 'bg-[#F8FAFC] border-[#E2E8F0] text-[#475569]';
 }
 
 export default function AppShell({ children }: AppShellProps) {
@@ -553,28 +545,6 @@ export default function AppShell({ children }: AppShellProps) {
             </Dropdown>
           </div>
         </header>
-
-        {operationalView.showBanner && (
-          <div className={`${bannerClass(operationalView.bannerTone)} border-b px-5 py-2.5 flex items-center justify-between z-20 sticky top-[60px]`}>
-            <div className="flex items-center gap-2.5">
-              <AlertTriangle className="w-4 h-4 shrink-0" />
-              <div className="leading-tight">
-                <p className="text-[12px] font-medium">
-                  <strong className="font-bold">{operationalView.bannerTitle}:</strong> {operationalView.bannerBody}
-                </p>
-                {operationalView.bannerDetail && (
-                  <p className="text-[10.5px] opacity-85 mt-0.5">{operationalView.bannerDetail}</p>
-                )}
-              </div>
-            </div>
-            <Link
-              href={operationalView.actionHref}
-              className="text-[11px] font-bold uppercase tracking-wider hover:underline shrink-0 ml-4"
-            >
-              {operationalView.actionLabel} -&gt;
-            </Link>
-          </div>
-        )}
 
         {/* Page Content */}
         <main className="flex-1 p-5 md:p-6 pb-[calc(1.25rem+env(safe-area-inset-bottom))] overflow-y-auto max-w-[1400px] w-full mx-auto">

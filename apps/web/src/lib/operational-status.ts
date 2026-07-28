@@ -78,6 +78,7 @@ export type OperationalStatusResponse = {
   reason?: string | null;
   configured?: boolean;
   instanceName?: string | null;
+  tenantAiPaused?: boolean;
   guardianTrace?: OperationalGuardianTrace | null;
 };
 
@@ -208,6 +209,7 @@ export function buildOperationalStatusView(
   const requiredAction = aiActivity?.requiredAction || 'Acompanhar o proximo ciclo de envio.';
   const eligibilityDetail = firstTouchEligibilityDetail(aiActivity);
   const executionDetail = workerExecutionDetail(trace);
+  const tenantAiPaused = response?.tenantAiPaused === true;
 
   if (error) {
     return {
@@ -240,7 +242,7 @@ export function buildOperationalStatusView(
       connectionStatus,
       indicatorLabel: 'WhatsApp desconectado',
       indicatorTone: 'red',
-      showBanner: true,
+      showBanner: false,
       bannerTone: 'red',
       bannerTitle: 'WhatsApp desconectado',
       bannerBody: removed
@@ -290,12 +292,37 @@ export function buildOperationalStatusView(
   const operationState = String(currentState?.operationState || 'ACTIVE').toUpperCase();
   const activityState = aiActivity?.state || 'OK';
 
+  if (tenantAiPaused) {
+    return {
+      connectionStatus,
+      indicatorLabel: 'WhatsApp conectado',
+      indicatorTone: 'green',
+      showBanner: false,
+      bannerTone: 'green',
+      bannerTitle: 'WhatsApp conectado',
+      bannerBody: 'O WhatsApp esta conectado.',
+      bannerDetail: '',
+      actionHref: SETTINGS_INTEGRATIONS_HREF,
+      actionLabel: 'Ver conexoes',
+      conversationTitle: 'IA pausada pelo admin',
+      conversationBody: 'A conexao do WhatsApp esta ativa, mas os envios automaticos desta conta foram pausados por um administrador.',
+      conversationBadgeLabel: 'IA pausada',
+      conversationTone: 'neutral',
+      currentStateLabel,
+      currentStateSummary,
+      durationLabel,
+      requiredAction: 'Retomar a IA no painel admin quando os envios automaticos puderem voltar.',
+      canSend: false,
+      canStartNewConversations: false,
+    };
+  }
+
   if (operationState === 'REQUIRES_ACTION' || operationState === 'BLOCKED' || activityState === 'BLOCKED') {
     return {
       connectionStatus,
       indicatorLabel: 'IA pausada',
       indicatorTone: 'red',
-      showBanner: true,
+      showBanner: false,
       bannerTone: 'red',
       bannerTitle: 'IA pausada',
       bannerBody: currentStateSummary,
@@ -320,7 +347,7 @@ export function buildOperationalStatusView(
       connectionStatus,
       indicatorLabel: 'IA com atraso',
       indicatorTone: 'amber',
-      showBanner: true,
+      showBanner: false,
       bannerTone: 'amber',
       bannerTitle: 'IA com atraso operacional',
       bannerBody: aiActivity?.summary || 'Existe fila ou conversa aguardando acao fora da tolerancia.',
@@ -348,7 +375,7 @@ export function buildOperationalStatusView(
       connectionStatus,
       indicatorLabel: isRecovery ? 'Retomada segura' : 'IA em cuidado',
       indicatorTone: tone === 'green' ? 'blue' : tone,
-      showBanner: true,
+      showBanner: false,
       bannerTone: tone === 'green' ? 'blue' : tone,
       bannerTitle: isRecovery ? 'Retomada segura' : 'IA em cuidado',
       bannerBody: aiActivity?.summary || currentStateSummary,
