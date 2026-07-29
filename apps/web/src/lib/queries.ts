@@ -15,7 +15,7 @@ import type { Database } from './database.types';
 
 type Tables = Database['public']['Tables'];
 type Enums = Database['public']['Enums'];
-type DashboardPeriod = 'week' | 'month' | '90d';
+type DashboardPeriod = 'week' | 'month' | '90d' | 'all';
 
 export type Lead = Tables['leads']['Row'];
 export type LeadInsert = Tables['leads']['Insert'];
@@ -184,7 +184,7 @@ function startOfMonthDate(date = new Date()): string {
 }
 
 function dashboardPeriodStart(period?: DashboardPeriod): string | undefined {
-  if (!period) return undefined;
+  if (!period || period === 'all') return undefined;
   const d = new Date();
   if (period === 'week') d.setDate(d.getDate() - 7);
   if (period === 'month') d.setDate(1);
@@ -279,29 +279,39 @@ export const leadsQueries = {
   count: async (tenantId: string, filters: Omit<LeadFilters, 'limit' | 'cursor' | 'offset'> = {}) => {
     const { status: _status, profession, campaign_id, fit_score_gte, search } = filters;
 
-    let query = supabase
-      .from('leads')
-      .select('status')
-      .eq('tenant_id', tenantId)
-      .is('deleted_at', null);
-
-    if (profession) query = query.eq('profession', profession);
-    if (campaign_id) query = query.eq('campaign_id', campaign_id);
-    if (fit_score_gte !== undefined) query = query.gte('fit_score', fit_score_gte);
-    if (search) query = query.or(`name.ilike.%${search}%,whatsapp.ilike.%${search}%,email.ilike.%${search}%`);
-
-    const { data, error } = await query;
-    if (error) {
-      console.error('Failed to count leads by status', error);
-      return { total: 0 };
-    }
-
+    const pageSize = 1000;
     const counts: Record<string, number> & { total: number } = { total: 0 };
-    (data || []).forEach((row) => {
-      const status = String(row.status || 'UNKNOWN');
-      counts[status] = (counts[status] || 0) + 1;
-      counts.total += 1;
-    });
+    let from = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      let query = supabase
+        .from('leads')
+        .select('status')
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null)
+        .range(from, from + pageSize - 1);
+
+      if (profession) query = query.eq('profession', profession);
+      if (campaign_id) query = query.eq('campaign_id', campaign_id);
+      if (fit_score_gte !== undefined) query = query.gte('fit_score', fit_score_gte);
+      if (search) query = query.or(`name.ilike.%${search}%,whatsapp.ilike.%${search}%,email.ilike.%${search}%`);
+
+      const { data, error } = await query;
+      if (error) {
+        console.error('Failed to count leads by status', error);
+        return { total: 0 };
+      }
+
+      (data || []).forEach((row) => {
+        const status = String(row.status || 'UNKNOWN');
+        counts[status] = (counts[status] || 0) + 1;
+        counts.total += 1;
+      });
+
+      hasMore = Boolean(data && data.length === pageSize);
+      from += pageSize;
+    }
 
     return counts;
   },
@@ -2270,6 +2280,15 @@ export interface DashboardAiUsageData {
     used_percent: number;
     remaining_cents: number;
   };
+  operational?: {
+    leads_created_count: number;
+    outbound_messages_count: number;
+    inbound_messages_count: number;
+    queue_sent_count: number;
+    queue_failed_count: number;
+    ledger_leads_captured_count: number;
+    ledger_whatsapp_messages_sent: number;
+  };
 }
 
 export interface DashboardWeeklyCapturesData {
@@ -2389,21 +2408,33 @@ export const dashboardQueries = {
   funnel: async (tenantId: string, period?: DashboardPeriod) => {
     const dateFilter = dashboardPeriodStart(period);
 
-    let query = supabase
-      .from('leads')
-      .select('status, whatsapp_valid')
-      .eq('tenant_id', tenantId)
-      .is('deleted_at', null);
+    const leadRows: Array<{ status: string | null; whatsapp_valid: boolean | null }> = [];
+    const pageSize = 1000;
+    let from = 0;
+    let hasMore = true;
 
-    if (dateFilter) query = query.gte('created_at', dateFilter);
+    while (hasMore) {
+      let query = supabase
+        .from('leads')
+        .select('status, whatsapp_valid')
+        .eq('tenant_id', tenantId)
+        .is('deleted_at', null)
+        .range(from, from + pageSize - 1);
 
-    const { data: leadRows, error } = await query;
-    if (error) return { data: null, error: mapError(error) };
+      if (dateFilter) query = query.gte('created_at', dateFilter);
+
+      const { data, error } = await query;
+      if (error) return { data: null, error: mapError(error) };
+
+      leadRows.push(...((data || []) as Array<{ status: string | null; whatsapp_valid: boolean | null }>));
+      hasMore = Boolean(data && data.length === pageSize);
+      from += pageSize;
+    }
 
     const counts: Record<string, number> = {};
     let totalLeads = 0;
     let fallbackWhatsappValidCount = 0;
-    (leadRows || []).forEach((row) => {
+    leadRows.forEach((row) => {
       const status = row.status as string;
       counts[status] = (counts[status] || 0) + 1;
       totalLeads++;
@@ -2475,6 +2506,38 @@ export const dashboardQueries = {
 
   /** AI / WhatsApp / Maps usage costs for the current month */
   aiUsage: async (tenantId: string): Promise<{ data: DashboardAiUsageData; error: null } | { data: null; error: QueryError }> => {
+    const periodMonth = startOfMonthDate();
+    const periodStartIso = `${periodMonth}T00:00:00.000Z`;
+
+    const [
+      usageRes,
+      tenantRes,
+      leadsCreatedRes,
+      outboundMessagesRes,
+      inboundMessagesRes,
+      queueSentRes,
+      queueFailedRes,
+    ] = await Promise.all([
+      supabase.from('tenant_usage').select('*').eq('tenant_id', tenantId).eq('period_month', periodMonth).maybeSingle(),
+      supabase.from('tenants').select('plan').eq('id', tenantId).single(),
+      supabase.from('leads').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).is('deleted_at', null).gte('created_at', periodStartIso),
+      supabase.from('messages').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).eq('direction', 'OUTBOUND').gte('created_at', periodStartIso),
+      supabase.from('messages').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).eq('direction', 'INBOUND').gte('created_at', periodStartIso),
+      supabase.from('pending_outbound').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).gte('sent_at', periodStartIso),
+      supabase.from('pending_outbound').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).gte('failed_at', periodStartIso),
+    ]);
+
+    const usage = usageRes.data;
+    const operational = {
+      leads_created_count: leadsCreatedRes.count ?? 0,
+      outbound_messages_count: outboundMessagesRes.count ?? 0,
+      inbound_messages_count: inboundMessagesRes.count ?? 0,
+      queue_sent_count: queueSentRes.count ?? 0,
+      queue_failed_count: queueFailedRes.count ?? 0,
+      ledger_leads_captured_count: usage ? Number(usage.leads_captured_count) : 0,
+      ledger_whatsapp_messages_sent: usage ? Number(usage.whatsapp_messages_sent) : 0,
+    };
+
     // Try RPC
     const { data: rpcData, error: rpcErr } = await supabase.rpc('dashboard_ai_usage', { p_tenant_id: tenantId });
     if (!rpcErr && rpcData) {
@@ -2493,6 +2556,7 @@ export const dashboardQueries = {
               used_percent: Number(r.used_percent) || 0,
               remaining_cents: Number(r.remaining_cents) || 0,
             },
+            operational,
           },
           error: null,
         };
@@ -2500,14 +2564,6 @@ export const dashboardQueries = {
     }
 
     // Fallback
-    const periodMonth = startOfMonthDate();
-
-    const [usageRes, tenantRes] = await Promise.all([
-      supabase.from('tenant_usage').select('*').eq('tenant_id', tenantId).eq('period_month', periodMonth).maybeSingle(),
-      supabase.from('tenants').select('plan').eq('id', tenantId).single(),
-    ]);
-
-    const usage = usageRes.data;
     const llmCost = usage ? Number(usage.llm_cost_cents) : 0;
     const whatsappCost = usage ? Number(usage.whatsapp_cost_cents) : 0;
     const mapsCost = usage ? Number(usage.google_maps_cost_cents) : 0;
@@ -2533,6 +2589,7 @@ export const dashboardQueries = {
           used_percent: Number(usedPercent.toFixed(1)),
           remaining_cents: Math.max(0, maxLimitCents - totalCost),
         },
+        operational,
       },
       error: null,
     };

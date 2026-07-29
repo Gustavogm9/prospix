@@ -2,7 +2,31 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { toast } from '@prospix/ui';
-import { Download, RefreshCw, ChevronRight, ChevronLeft, Info, Search, X, Plus } from 'lucide-react';
+import {
+  Archive,
+  BadgeCheck,
+  Ban,
+  CalendarCheck,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Database,
+  Download,
+  Info,
+  MessageCircle,
+  PhoneOff,
+  Plus,
+  RefreshCw,
+  Search,
+  Send,
+  ShieldAlert,
+  Sparkles,
+  Trophy,
+  UserCheck,
+  X,
+  XCircle,
+  type LucideIcon,
+} from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { leadsQueries, campaignsQueries } from '@/lib/queries';
 import { useAuthStore } from '@/store/auth-store';
@@ -38,41 +62,37 @@ const PROFESSION_LABELS: Record<string, string> = {
   ARCHITECT: 'Arquiteto(a)', ACCOUNTANT: 'Contador(a)', OTHER: 'Outro',
 };
 
-const STATUS_CONFIG: Record<string, { label: string; emoji: string; color: string; bg: string; border: string }> = {
-  CAPTURED:           { label: 'Capturados',    emoji: '📥', color: 'text-[#475569]', bg: 'bg-[#F1F5F9]', border: 'border-[#CBD5E1]' },
-  ENRICHED:           { label: 'Enriquecidos',  emoji: '🔍', color: 'text-[#1B3A6B]', bg: 'bg-[#EFF6FF]', border: 'border-[#93C5FD]' },
-  CONTACTED:          { label: 'Contatados',    emoji: '💬', color: 'text-[#B8740E]', bg: 'bg-[#FFF8F0]', border: 'border-[#FDE68A]' },
-  IN_CONVERSATION:    { label: 'Em conversa',   emoji: '🗣️', color: 'text-[#7C3AED]', bg: 'bg-[#F5F3FF]', border: 'border-[#C4B5FD]' },
-  CONVERSING:         { label: 'Em conversa',   emoji: '🗣️', color: 'text-[#7C3AED]', bg: 'bg-[#F5F3FF]', border: 'border-[#C4B5FD]' },
-  MEETING_SCHEDULED:  { label: 'Reunião',       emoji: '📅', color: 'text-[#0891B2]', bg: 'bg-[#ECFEFF]', border: 'border-[#67E8F9]' },
-  WON:                { label: 'Ganhos',        emoji: '✅', color: 'text-[#027A48]', bg: 'bg-[#ECFDF3]', border: 'border-[#A7F3D0]' },
-  CLOSED_WON:         { label: 'Ganhos',        emoji: '✅', color: 'text-[#027A48]', bg: 'bg-[#ECFDF3]', border: 'border-[#A7F3D0]' },
-  LOST:               { label: 'Perdidos',      emoji: '❌', color: 'text-[#D92D20]', bg: 'bg-[#FEF3F2]', border: 'border-[#FECACA]' },
-  CLOSED_LOST:        { label: 'Perdidos',      emoji: '❌', color: 'text-[#D92D20]', bg: 'bg-[#FEF3F2]', border: 'border-[#FECACA]' },
+type StatusDisplayConfig = {
+  label: string;
+  Icon: LucideIcon;
+  color: string;
+  bg: string;
+  border: string;
+  selectable?: boolean;
 };
 
-const STATUS_CARD_CONFIG: Record<string, { label: string; emoji: string; color: string; bg: string; border: string }> = {
-  ...STATUS_CONFIG,
-  CAPTURED:           { label: 'Capturados',        emoji: '+', color: 'text-[#475569]', bg: 'bg-[#F1F5F9]', border: 'border-[#CBD5E1]' },
-  ENRICHED:           { label: 'Enriquecidos',      emoji: '*', color: 'text-[#1B3A6B]', bg: 'bg-[#EFF6FF]', border: 'border-[#93C5FD]' },
-  CONTACTED:          { label: 'Contatados',        emoji: '>', color: 'text-[#B8740E]', bg: 'bg-[#FFF8F0]', border: 'border-[#FDE68A]' },
-  CONVERSING:         { label: 'Em conversa',       emoji: '~', color: 'text-[#7C3AED]', bg: 'bg-[#F5F3FF]', border: 'border-[#C4B5FD]' },
-  NO_RESPONSE:        { label: 'Sem resposta',      emoji: '-', color: 'text-[#475569]', bg: 'bg-[#F8FAFC]', border: 'border-[#CBD5E1]' },
-  QUALIFIED:          { label: 'Qualificados',      emoji: 'Q', color: 'text-[#4338CA]', bg: 'bg-[#EEF2FF]', border: 'border-[#C7D2FE]' },
-  MEETING_SCHEDULED:  { label: 'Reuniao',           emoji: '@', color: 'text-[#0891B2]', bg: 'bg-[#ECFEFF]', border: 'border-[#67E8F9]' },
-  CLOSED_WON:         { label: 'Ganhos',            emoji: '$', color: 'text-[#027A48]', bg: 'bg-[#ECFDF3]', border: 'border-[#A7F3D0]' },
-  CLOSED_LOST:        { label: 'Perdidos',          emoji: 'x', color: 'text-[#D92D20]', bg: 'bg-[#FEF3F2]', border: 'border-[#FECACA]' },
-  NOT_INTERESTED:     { label: 'Sem interesse',     emoji: 'x', color: 'text-[#D92D20]', bg: 'bg-[#FEF3F2]', border: 'border-[#FECACA]' },
-  LOST_BEFORE_MEETING:{ label: 'Perdidos',          emoji: 'x', color: 'text-[#D92D20]', bg: 'bg-[#FEF3F2]', border: 'border-[#FECACA]' },
-  ESCALATED_HUMAN:    { label: 'Com humano',        emoji: 'H', color: 'text-[#7C3AED]', bg: 'bg-[#F5F3FF]', border: 'border-[#C4B5FD]' },
-  OPTED_OUT:          { label: 'Opt-out',           emoji: '!', color: 'text-[#D92D20]', bg: 'bg-[#FEF3F2]', border: 'border-[#FECACA]' },
-  INVALID_NUMBER:     { label: 'Numero invalido',   emoji: '!', color: 'text-[#B45309]', bg: 'bg-[#FFF7ED]', border: 'border-[#FDBA74]' },
-  COMMERCIAL_LEAD_SKIPPED: { label: 'Fora da regra', emoji: '/', color: 'text-[#475569]', bg: 'bg-[#F8FAFC]', border: 'border-[#CBD5E1]' },
-  ARCHIVED:           { label: 'Arquivados',        emoji: '#', color: 'text-[#475569]', bg: 'bg-[#F1F5F9]', border: 'border-[#CBD5E1]' },
+const STATUS_DISPLAY_CONFIG: Record<string, StatusDisplayConfig> = {
+  TOTAL:              { label: 'Total captado',          Icon: Database,      color: 'text-[#1B3A6B]', bg: 'bg-[#EFF6FF]', border: 'border-[#93C5FD]', selectable: false },
+  ENRICHED:           { label: 'Prontos para contato',   Icon: Sparkles,      color: 'text-[#1B3A6B]', bg: 'bg-[#EFF6FF]', border: 'border-[#93C5FD]' },
+  CONTACTED:          { label: 'Contatados',             Icon: Send,          color: 'text-[#B8740E]', bg: 'bg-[#FFF8F0]', border: 'border-[#FDE68A]' },
+  CONVERSING:         { label: 'Em conversa',            Icon: MessageCircle, color: 'text-[#7C3AED]', bg: 'bg-[#F5F3FF]', border: 'border-[#C4B5FD]' },
+  NO_RESPONSE:        { label: 'Sem resposta',           Icon: Clock,         color: 'text-[#475569]', bg: 'bg-[#F8FAFC]', border: 'border-[#CBD5E1]' },
+  QUALIFIED:          { label: 'Qualificados',           Icon: BadgeCheck,    color: 'text-[#4338CA]', bg: 'bg-[#EEF2FF]', border: 'border-[#C7D2FE]' },
+  MEETING_SCHEDULED:  { label: 'Reuniao marcada',        Icon: CalendarCheck, color: 'text-[#0891B2]', bg: 'bg-[#ECFEFF]', border: 'border-[#67E8F9]' },
+  CLOSED_WON:         { label: 'Ganhos',                 Icon: Trophy,        color: 'text-[#027A48]', bg: 'bg-[#ECFDF3]', border: 'border-[#A7F3D0]' },
+  CLOSED_LOST:        { label: 'Perdidos',               Icon: XCircle,       color: 'text-[#D92D20]', bg: 'bg-[#FEF3F2]', border: 'border-[#FECACA]' },
+  NOT_INTERESTED:     { label: 'Sem interesse',          Icon: Ban,           color: 'text-[#D92D20]', bg: 'bg-[#FEF3F2]', border: 'border-[#FECACA]' },
+  LOST_BEFORE_MEETING:{ label: 'Perdidos antes reuniao', Icon: XCircle,       color: 'text-[#D92D20]', bg: 'bg-[#FEF3F2]', border: 'border-[#FECACA]' },
+  ESCALATED_HUMAN:    { label: 'Com humano',             Icon: UserCheck,     color: 'text-[#7C3AED]', bg: 'bg-[#F5F3FF]', border: 'border-[#C4B5FD]' },
+  OPTED_OUT:          { label: 'Opt-out',                Icon: Ban,           color: 'text-[#D92D20]', bg: 'bg-[#FEF3F2]', border: 'border-[#FECACA]' },
+  INVALID_NUMBER:     { label: 'Numero invalido',        Icon: PhoneOff,      color: 'text-[#B45309]', bg: 'bg-[#FFF7ED]', border: 'border-[#FDBA74]' },
+  COMMERCIAL_LEAD_SKIPPED: { label: 'Fora da regra',     Icon: ShieldAlert,   color: 'text-[#475569]', bg: 'bg-[#F8FAFC]', border: 'border-[#CBD5E1]' },
+  ARCHIVED:           { label: 'Arquivados',             Icon: Archive,       color: 'text-[#475569]', bg: 'bg-[#F1F5F9]', border: 'border-[#CBD5E1]' },
+  CAPTURED:           { label: 'Aguardando enriquec.',   Icon: Clock,         color: 'text-[#475569]', bg: 'bg-[#F1F5F9]', border: 'border-[#CBD5E1]' },
 };
 
-const STATUS_ORDER = [
-  'CAPTURED',
+const STATUS_DISPLAY_ORDER = [
+  'TOTAL',
   'ENRICHED',
   'CONTACTED',
   'CONVERSING',
@@ -88,6 +108,7 @@ const STATUS_ORDER = [
   'INVALID_NUMBER',
   'COMMERCIAL_LEAD_SKIPPED',
   'ARCHIVED',
+  'CAPTURED',
 ];
 
 const LEADS_REFRESH_TABLES = ['leads', 'lead_events', 'conversations', 'messages'];
@@ -112,20 +133,26 @@ const formatStatusLabel = (status: string) =>
     .join(' ');
 
 const getStatusCardConfig = (status: string) =>
-  STATUS_CARD_CONFIG[status] || {
+  STATUS_DISPLAY_CONFIG[status] || {
     label: formatStatusLabel(status),
-    emoji: '?',
+    Icon: Info,
     color: 'text-[#475569]',
     bg: 'bg-[#F8FAFC]',
     border: 'border-[#CBD5E1]',
   };
 
 const getStatusEntries = (counts: StatusCounts | null) => {
-  const countKeys = Object.keys(counts || {}).filter((key) => key !== 'total');
-  const ordered = STATUS_ORDER.filter((key) => STATUS_CARD_CONFIG[key]);
+  const countKeys = Object.keys(counts || {}).filter((key) => key !== 'total' && Number(counts?.[key] || 0) > 0);
+  const ordered = STATUS_DISPLAY_ORDER.filter((key) => key === 'TOTAL' || countKeys.includes(key));
   const unknown = countKeys.filter((key) => !ordered.includes(key)).sort();
   return [...ordered, ...unknown].map((key) => [key, getStatusCardConfig(key)] as const);
 };
+
+const getSelectableStatusEntries = (counts: StatusCounts | null) =>
+  getStatusEntries(counts).filter(([key, config]) => key !== 'TOTAL' && config.selectable !== false);
+
+const getStatusCount = (key: string, counts: StatusCounts | null) =>
+  key === 'TOTAL' ? counts?.total ?? 0 : counts?.[key] ?? 0;
 
 // ── Mapper ─────────────────────────────────────────────────────────────────
 const mapBackendLead = (lead: any): Lead => {
@@ -344,17 +371,21 @@ export default function Leads() {
       {/* ── Status Cards ────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
         {getStatusEntries(statusCounts).map(([key, config]) => {
-          const count = statusCounts ? (statusCounts as any)[key] ?? 0 : '—';
+          const count = statusCounts ? getStatusCount(key, statusCounts) : '—';
+          const Icon = config.Icon;
+          const isTotalCard = key === 'TOTAL';
           const isActive = statusFilter === key;
           return (
             <button
               key={key}
-              onClick={() => setStatusFilter(isActive ? '' : key)}
+              onClick={() => setStatusFilter(isTotalCard || isActive ? '' : key)}
               className={`bg-white border rounded-xl p-3 cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-md shadow-sm text-left ${
                 isActive ? 'border-[#1B3A6B] ring-2 ring-[#1B3A6B]/20 shadow-md' : 'border-[#E5E7EB] hover:border-[#1B3A6B]'
               }`}
             >
-              <div className="text-[16px] mb-1">{config.emoji}</div>
+              <div className={`w-7 h-7 rounded-lg ${config.bg} ${config.color} border ${config.border} flex items-center justify-center mb-2`}>
+                <Icon className="w-4 h-4" />
+              </div>
               <div className="text-[22px] font-bold text-[#0F172A] font-mono leading-none">{count}</div>
               <div className="text-[11px] font-semibold text-[#475569] mt-1 truncate">{config.label}</div>
             </button>
@@ -381,8 +412,8 @@ export default function Leads() {
           className="h-8 px-2.5 rounded-md text-[12px] font-medium text-[#475569] border border-[#E5E7EB] bg-white hover:bg-[#F1F3F6] outline-none focus:border-[#1B3A6B] min-w-[130px]"
         >
           <option value="">Todos status</option>
-          {getStatusEntries(statusCounts).map(([key, config]) => (
-            <option key={key} value={key}>{config.emoji} {config.label}</option>
+          {getSelectableStatusEntries(statusCounts).map(([key, config]) => (
+            <option key={key} value={key}>{config.label}</option>
           ))}
         </select>
 

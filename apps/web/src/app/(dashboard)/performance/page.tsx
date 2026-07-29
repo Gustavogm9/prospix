@@ -42,7 +42,7 @@ interface TimeBucketData {
 const PERFORMANCE_REFRESH_TABLES = ['leads', 'conversations', 'messages', 'meetings', 'scripts', 'tenant_usage'];
 
 export default function Performance() {
-  const [period, setPeriod] = useState<'week' | 'month' | '90d'>('month');
+  const [period, setPeriod] = useState<'all' | 'week' | 'month' | '90d'>('all');
   const [perfData, setPerfData] = useState<PerformanceData | null>(null);
   const [funnelData, setFunnelData] = useState<FunnelData | null>(null);
   const [scriptPerfData, setScriptPerfData] = useState<ScriptPerformanceData[] | null>(null);
@@ -114,7 +114,7 @@ export default function Performance() {
       up: true 
     },
     { 
-      label: 'Total de leads', 
+      label: period === 'all' ? 'Total de leads' : 'Leads no periodo', 
       value: `${funnelData?.total_leads ?? 0}`, 
       unit: '', 
       delta: `${funnelData?.stages?.CLOSED_WON ?? 0} fechados`, 
@@ -166,6 +166,7 @@ export default function Performance() {
 
       {/* Toolbar */}
       <div className="bg-white border border-[#E5E7EB] rounded-lg p-2.5 flex items-center gap-2 flex-wrap shadow-sm">
+        <button onClick={() => setPeriod('all')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${period === 'all' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Todo historico</button>
         <button onClick={() => setPeriod('week')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${period === 'week' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Esta semana</button>
         <button onClick={() => setPeriod('month')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${period === 'month' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Este mês</button>
         <button onClick={() => setPeriod('90d')} className={`h-8 px-3 rounded-md text-[12px] font-medium ${period === '90d' ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Últimos 90 dias</button>

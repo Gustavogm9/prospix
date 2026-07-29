@@ -19,6 +19,15 @@ interface AIUsageData {
     used_percent: number;
     remaining_cents: number;
   };
+  operational?: {
+    leads_created_count: number;
+    outbound_messages_count: number;
+    inbound_messages_count: number;
+    queue_sent_count: number;
+    queue_failed_count: number;
+    ledger_leads_captured_count: number;
+    ledger_whatsapp_messages_sent: number;
+  };
 }
 
 const AI_USAGE_REFRESH_TABLES = ['tenant_usage', 'messages', 'lead_events', 'pending_outbound'];
@@ -61,6 +70,12 @@ export default function AIConsumption() {
   });
 
   const fmt = (cents: number) => `R$ ${(cents / 100).toFixed(2)}`;
+  const operational = data?.operational;
+  const hasOperationalMismatch = Boolean(
+    operational &&
+      (operational.leads_created_count !== operational.ledger_leads_captured_count ||
+        operational.outbound_messages_count !== operational.ledger_whatsapp_messages_sent),
+  );
 
   const costs = [
     { label: 'IA (LLM)', value: data?.llm_cost_cents ?? 0, color: '#1B3A6B' },
@@ -123,6 +138,42 @@ export default function AIConsumption() {
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Operational activity */}
+      <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
+        <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
+          <div className="text-[14px] font-semibold text-[#0F172A]">Atividade real do mes</div>
+          <div className="text-[11px] text-[#64748B] mt-0.5">Leituras diretas de leads, mensagens e fila no periodo atual.</div>
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 p-5">
+          <div className="border border-[#E5E7EB] rounded-lg p-3">
+            <div className="text-[10px] uppercase tracking-wide text-[#64748B] font-semibold">Leads criados</div>
+            <div className="text-[22px] font-bold text-[#0F172A] font-mono mt-1">{operational?.leads_created_count ?? 0}</div>
+            <div className="text-[10.5px] text-[#64748B] mt-1">Consumo registrou {operational?.ledger_leads_captured_count ?? 0}</div>
+          </div>
+          <div className="border border-[#E5E7EB] rounded-lg p-3">
+            <div className="text-[10px] uppercase tracking-wide text-[#64748B] font-semibold">Mensagens enviadas</div>
+            <div className="text-[22px] font-bold text-[#0F172A] font-mono mt-1">{operational?.outbound_messages_count ?? 0}</div>
+            <div className="text-[10.5px] text-[#64748B] mt-1">Consumo registrou {operational?.ledger_whatsapp_messages_sent ?? 0}</div>
+          </div>
+          <div className="border border-[#E5E7EB] rounded-lg p-3">
+            <div className="text-[10px] uppercase tracking-wide text-[#64748B] font-semibold">Respostas recebidas</div>
+            <div className="text-[22px] font-bold text-[#0F172A] font-mono mt-1">{operational?.inbound_messages_count ?? 0}</div>
+            <div className="text-[10.5px] text-[#64748B] mt-1">Mensagens inbound no mes</div>
+          </div>
+          <div className="border border-[#E5E7EB] rounded-lg p-3">
+            <div className="text-[10px] uppercase tracking-wide text-[#64748B] font-semibold">Fila processada</div>
+            <div className="text-[22px] font-bold text-[#0F172A] font-mono mt-1">{operational?.queue_sent_count ?? 0}/{operational?.queue_failed_count ?? 0}</div>
+            <div className="text-[10.5px] text-[#64748B] mt-1">Enviadas / falhas</div>
+          </div>
+        </div>
+        {hasOperationalMismatch && (
+          <div className="mx-5 mb-5 flex items-start gap-2 px-3 py-2 bg-[#FFF7ED] border border-[#FDBA74] rounded-lg text-[11.5px] text-[#9A3412]">
+            <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            <div>Ha diferenca entre atividade real e consumo registrado. Os custos acima continuam seguindo o registro financeiro; esta secao mostra a operacao observada no banco.</div>
+          </div>
+        )}
       </div>
 
       {/* Distribution chart */}
