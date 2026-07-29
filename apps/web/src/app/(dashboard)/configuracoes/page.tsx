@@ -222,6 +222,18 @@ type WhatsAppGuardianTrace = {
   } | null;
 };
 
+type WahaCandidateStatus = {
+  configured: boolean;
+  active: boolean;
+  status: 'connected' | 'disconnected' | 'pending_qr';
+  reason: string | null;
+  instanceName: string | null;
+  external: {
+    sessionStatus: string | null;
+    reachoutTimelock: unknown;
+  } | null;
+} | null;
+
 const emptyCredentialState: CredentialState = {
   aiProvider: 'GUILDS_SHARED',
   keys: {
@@ -389,7 +401,9 @@ export default function Settings() {
   const [whatsappStatus, setWhatsappStatus] = useState<'connected' | 'disconnected' | 'loading'>(
     'loading',
   );
+  const [whatsappProvider, setWhatsappProvider] = useState<'EVOLUTION' | 'WAHA' | null>(null);
   const [instanceName, setInstanceName] = useState<string | null>(null);
+  const [wahaCandidate, setWahaCandidate] = useState<WahaCandidateStatus>(null);
   const [whatsappTrace, setWhatsappTrace] = useState<WhatsAppGuardianTrace | null>(null);
   const [whatsappStatusSync, setWhatsappStatusSync] = useState<WhatsAppStatusSyncState>({
     mode: 'starting',
@@ -397,8 +411,10 @@ export default function Settings() {
     error: null,
   });
   const [qrCode, setQrCode] = useState<string | null>(null);
+  const [qrProvider, setQrProvider] = useState<'EVOLUTION' | 'WAHA' | null>(null);
   const [qrCountdown, setQrCountdown] = useState<number>(0);
   const [isGeneratingQr, setIsGeneratingQr] = useState(false);
+  const [isPromotingWaha, setIsPromotingWaha] = useState(false);
   const [isConfirmingDisconnect, setIsConfirmingDisconnect] = useState(false);
   const [credentialState, setCredentialState] = useState<CredentialState>(emptyCredentialState);
   const [credentialDraft, setCredentialDraft] = useState({
@@ -427,6 +443,7 @@ export default function Settings() {
   const statusRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const statusRealtimeChannelRef = useRef<RealtimeChannel | null>(null);
   const diagnosticPanelRef = useRef<HTMLDivElement | null>(null);
+  const qrProviderRef = useRef<'EVOLUTION' | 'WAHA' | null>(null);
   const canManageCredentials = user?.role !== 'ASSISTANT';
 
   // Agenda settings state
@@ -546,6 +563,20 @@ export default function Settings() {
     if (mode === 'polling') return 'Atualizacao automatica';
     if (mode === 'error') return 'Atualizacao instavel';
     return 'Sincronizando';
+  };
+
+  const providerLabel = (provider: string | null) => {
+    if (provider === 'WAHA') return 'WAHA';
+    if (provider === 'EVOLUTION') return 'Evolution';
+    return 'Nao definido';
+  };
+
+  const wahaCandidateLabel = (candidate: WahaCandidateStatus) => {
+    if (!candidate) return 'Nao configurado';
+    if (candidate.active) return 'Canal principal';
+    if (candidate.status === 'connected') return 'Conectado, pronto para ativar';
+    if (candidate.status === 'pending_qr') return 'Aguardando leitura do QR Code';
+    return 'Nao conectado';
   };
 
   const workerStatusLabel = (
@@ -872,13 +903,30 @@ export default function Settings() {
       const res = await apiFetch('/api/integrations/whatsapp/status');
       const data = await res.json();
       setWhatsappTrace(data.guardianTrace ?? null);
-      if (data.status === 'connected') {
-        setWhatsappStatus('connected');
-        setInstanceName(data.instanceName);
+      setWhatsappProvider(data.provider ?? null);
+      setWahaCandidate(data.wahaCandidate ?? null);
+      const activeQrProvider = qrProviderRef.current;
+      const wahaCandidateConnected = data.wahaCandidate?.status === 'connected';
+      if (activeQrProvider === 'WAHA' && wahaCandidateConnected) {
         setQrCode(null);
+        setQrProvider(null);
+        qrProviderRef.current = null;
         if (pollingIntervalRef.current) {
           clearInterval(pollingIntervalRef.current);
           pollingIntervalRef.current = null;
+        }
+      }
+      if (data.status === 'connected') {
+        setWhatsappStatus('connected');
+        setInstanceName(data.instanceName);
+        if (activeQrProvider !== 'WAHA') {
+          setQrCode(null);
+          setQrProvider(null);
+          qrProviderRef.current = null;
+          if (pollingIntervalRef.current) {
+            clearInterval(pollingIntervalRef.current);
+            pollingIntervalRef.current = null;
+          }
         }
       } else {
         setWhatsappStatus('disconnected');
@@ -1163,7 +1211,7 @@ export default function Settings() {
       setQrCountdown((prev) => {
         if (prev <= 1) {
           clearInterval(t);
-          handleConnectWhatsapp(); // Auto-refresh QR code
+          handleConnectWhatsapp(qrProviderRef.current); // Auto-refresh QR code for the same provider.
           return 0;
         }
         return prev - 1;
@@ -1172,16 +1220,32 @@ export default function Settings() {
     return () => clearInterval(t);
   }, [qrCountdown, qrCode]);
 
-  const handleConnectWhatsapp = async () => {
+  const handleConnectWhatsapp = async (provider: 'EVOLUTION' | 'WAHA' | null = null) => {
     setIsGeneratingQr(true);
     setQrCode(null);
+    setQrProvider(provider);
+    qrProviderRef.current = provider;
     try {
-      const res = await apiFetch('/api/integrations/whatsapp/connect', { method: 'POST' });
+      const res = await apiFetch('/api/integrations/whatsapp/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: provider ? JSON.stringify({ provider }) : undefined,
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.message || 'Erro ao conectar');
       setQrCode(data.qrcode);
       setQrCountdown(40); // Set 40 seconds timer
       setInstanceName(data.instanceName);
+      if (data.provider === 'WAHA') {
+        setWahaCandidate((current) => ({
+          configured: true,
+          active: false,
+          status: 'pending_qr',
+          reason: 'qr_required',
+          instanceName: data.instanceName,
+          external: current?.external ?? { sessionStatus: 'SCAN_QR_CODE', reachoutTimelock: null },
+        }));
+      }
       setIsGeneratingQr(false);
 
       // Backoff incremental 3s → 5s → 10s (cap) para reduzir carga no Evolution
@@ -1206,6 +1270,31 @@ export default function Settings() {
           : 'Ocorreu um erro ao conectar com o provedor de WhatsApp.';
       toast.error('Erro no Gateway', message);
       setIsGeneratingQr(false);
+      setQrProvider(null);
+      qrProviderRef.current = null;
+    }
+  };
+
+  const handlePromoteWaha = async () => {
+    setIsPromotingWaha(true);
+    try {
+      const res = await apiFetch('/api/integrations/whatsapp/provider', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: 'WAHA', action: 'promote' }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.message || 'Nao foi possivel ativar WAHA.');
+      toast.success('WAHA ativado', 'O WAHA conectado agora e o canal principal do WhatsApp.');
+      await checkStatus(true);
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : 'Leia o QR Code do WAHA antes de ativar como principal.';
+      toast.error('WAHA ainda nao esta pronto', message);
+    } finally {
+      setIsPromotingWaha(false);
     }
   };
 
@@ -2077,6 +2166,9 @@ export default function Settings() {
                             <p className="mt-1 font-mono text-[12px] text-[#64748B]">
                               Canal:{' '}
                               <span className="font-bold text-[#027A48]">{instanceName}</span>
+                              <span className="ml-2 rounded-full border border-[#A7F3D0] bg-white px-2 py-0.5 text-[10px] font-bold uppercase text-[#027A48]">
+                                {providerLabel(whatsappProvider)}
+                              </span>
                             </p>
                             <p className="mt-0.5 text-[10px] text-[#64748B]">
                               O bot do Prospix está monitorando ativamente este número e respondendo
@@ -2112,6 +2204,55 @@ export default function Settings() {
                           </div>
                         )}
                       </div>
+
+                      {whatsappProvider === 'EVOLUTION' && (
+                        <div className="rounded-xl border border-[#B2DDFF] bg-[#EFF8FF] p-5">
+                          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <h4 className="text-[13px] font-bold text-[#0F172A]">
+                                  Canal WAHA
+                                </h4>
+                                <Badge className="border border-[#B2DDFF] bg-white px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-[#175CD3]">
+                                  {wahaCandidateLabel(wahaCandidate)}
+                                </Badge>
+                              </div>
+                              <p className="mt-1 text-[12px] leading-relaxed text-[#334155]">
+                                A Evolution continua como canal principal. O WAHA pode ser pareado
+                                por QR Code sem interromper os envios atuais.
+                              </p>
+                              {wahaCandidate?.instanceName && (
+                                <p className="mt-2 font-mono text-[11px] text-[#64748B]">
+                                  Instancia WAHA:{' '}
+                                  <span className="font-bold text-[#175CD3]">
+                                    {wahaCandidate.instanceName}
+                                  </span>
+                                </p>
+                              )}
+                            </div>
+                            <div className="flex flex-col gap-2 sm:flex-row">
+                              <Button
+                                onClick={() => handleConnectWhatsapp('WAHA')}
+                                disabled={isGeneratingQr}
+                                className="h-9 rounded-xl border border-[#B2DDFF] bg-white px-4 text-[12px] font-bold text-[#175CD3] hover:bg-[#D1E9FF]"
+                              >
+                                {isGeneratingQr && qrProvider === 'WAHA'
+                                  ? 'Gerando QR...'
+                                  : 'Conectar WAHA por QR'}
+                              </Button>
+                              {wahaCandidate?.status === 'connected' && !wahaCandidate.active && (
+                                <Button
+                                  onClick={handlePromoteWaha}
+                                  disabled={isPromotingWaha}
+                                  className="h-9 rounded-xl bg-[#1B3A6B] px-4 text-[12px] font-bold text-white hover:bg-[#15305A]"
+                                >
+                                  {isPromotingWaha ? 'Ativando...' : 'Ativar WAHA como principal'}
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
 
                       {/* Status Details */}
                       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -2315,7 +2456,7 @@ export default function Settings() {
 
                             {qrCode && (
                               <Button
-                                onClick={handleConnectWhatsapp}
+                                onClick={() => handleConnectWhatsapp()}
                                 disabled={isGeneratingQr}
                                 className="mt-3.5 h-7 rounded-lg border border-[#E5E7EB] bg-white px-3 text-[10px] font-bold text-[#64748B] hover:bg-[#F8FAFC] disabled:opacity-50"
                               >
@@ -2348,7 +2489,7 @@ export default function Settings() {
                           </p>
 
                           <Button
-                            onClick={handleConnectWhatsapp}
+                            onClick={() => handleConnectWhatsapp()}
                             className="mt-6 h-10 w-full rounded-xl bg-[#1B3A6B] px-6 text-[13px] font-bold text-white shadow-lg shadow-[#1B3A6B]/10 hover:bg-[#15305A] sm:w-auto"
                           >
                             Conectar WhatsApp

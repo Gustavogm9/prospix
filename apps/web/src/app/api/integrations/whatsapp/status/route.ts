@@ -4,6 +4,7 @@ import { loadAiActivityMonitor, type TenantAiActivity } from '../../../_lib/ai-a
 import {
   fetchWahaSession,
   loadTenantWhatsAppChannel,
+  loadTenantWahaChannel,
   mapWahaStatusToAppStatus,
 } from '../../../_lib/whatsapp-provider';
 
@@ -135,6 +136,18 @@ type WhatsAppGuardianTrace = {
     } | null;
   } | null;
   aiActivity: TenantAiActivity | null;
+};
+
+type WahaCandidateStatus = {
+  configured: boolean;
+  active: boolean;
+  status: 'connected' | 'disconnected' | 'pending_qr';
+  reason: string | null;
+  instanceName: string | null;
+  external: {
+    sessionStatus: string | null;
+    reachoutTimelock: unknown;
+  } | null;
 };
 
 function stateLabel(status: string | null | undefined): string {
@@ -533,6 +546,56 @@ async function loadWhatsAppGuardianTrace(tenantId: string): Promise<WhatsAppGuar
   };
 }
 
+async function loadWahaCandidateStatus(tenantId: string): Promise<WahaCandidateStatus | null> {
+  const channel = await loadTenantWahaChannel(supabaseAdmin, tenantId);
+  if (!channel) return null;
+
+  if (!channel.apiKey) {
+    return {
+      configured: true,
+      active: channel.active,
+      status: 'disconnected',
+      reason: 'missing_api_key',
+      instanceName: channel.instanceName,
+      external: null,
+    };
+  }
+
+  const session = await fetchWahaSession(channel);
+  if (!session.ok) {
+    return {
+      configured: true,
+      active: channel.active,
+      status: 'disconnected',
+      reason: `waha_http_${session.httpStatus || 'unknown'}`,
+      instanceName: channel.instanceName,
+      external: {
+        sessionStatus: session.status,
+        reachoutTimelock: null,
+      },
+    };
+  }
+
+  const mapped = mapWahaStatusToAppStatus(session.status);
+  const reachoutTimelock =
+    session.payload?.me?.reachoutTimelock ||
+    session.payload?.data?.reachoutTimelock ||
+    session.payload?.payload?.data?.reachoutTimelock ||
+    null;
+
+  return {
+    configured: true,
+    active: channel.active,
+    status: mapped.status,
+    reason: mapped.reason,
+    instanceName: channel.instanceName,
+    external: {
+      sessionStatus: session.status,
+      reachoutTimelock,
+    },
+  };
+}
+
 export async function GET(request: NextRequest) {
   const auth = await authenticateRequest(request);
   if ('error' in auth) return auth.error;
@@ -541,6 +604,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const guardianTrace = await loadWhatsAppGuardianTrace(tenantId);
+    const wahaCandidate = await loadWahaCandidateStatus(tenantId);
     const aiActivityMonitor = await loadAiActivityMonitor(supabaseAdmin, { tenantIds: [tenantId] });
     guardianTrace.aiActivity = aiActivityMonitor.tenants[0] || null;
     const { data: aiOutboundControl, error: aiOutboundControlError } = await (supabaseAdmin as any)
@@ -566,6 +630,7 @@ export async function GET(request: NextRequest) {
           instanceName: activeChannel.instanceName,
           tenantAiPaused,
           guardianTrace,
+          wahaCandidate,
         });
       }
 
@@ -579,6 +644,7 @@ export async function GET(request: NextRequest) {
           instanceName: activeChannel.instanceName,
           tenantAiPaused,
           guardianTrace,
+          wahaCandidate,
         });
       }
 
@@ -597,6 +663,7 @@ export async function GET(request: NextRequest) {
         instanceName: activeChannel.instanceName,
         tenantAiPaused,
         guardianTrace,
+        wahaCandidate,
         external: {
           sessionStatus: session.status,
           reachoutTimelock,
@@ -618,6 +685,7 @@ export async function GET(request: NextRequest) {
         instanceName: null,
         tenantAiPaused,
         guardianTrace,
+        wahaCandidate,
       });
     }
 
@@ -649,6 +717,7 @@ export async function GET(request: NextRequest) {
             instanceName,
             tenantAiPaused,
             guardianTrace,
+            wahaCandidate,
           });
         }
       } catch (_e) {}
@@ -661,6 +730,7 @@ export async function GET(request: NextRequest) {
         error: 'CONNECTION_STATE_UNAVAILABLE',
         tenantAiPaused,
         guardianTrace,
+        wahaCandidate,
       });
     }
 
@@ -678,6 +748,7 @@ export async function GET(request: NextRequest) {
         reason: 'instance_not_found',
         tenantAiPaused,
         guardianTrace,
+        wahaCandidate,
       });
     }
 
@@ -708,6 +779,7 @@ export async function GET(request: NextRequest) {
       instanceName,
       tenantAiPaused,
       guardianTrace,
+      wahaCandidate,
     });
   } catch (err) {
     console.error('Error getting WhatsApp connection status:', err);

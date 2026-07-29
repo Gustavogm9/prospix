@@ -10,6 +10,7 @@ export type AppWhatsAppChannel = {
   instanceName: string;
   apiKey: string;
   webhookSecret: string | null;
+  active: boolean;
   source: 'whatsapp_channels' | 'tenant_secrets';
   sendEnabled: boolean;
   receiveEnabled: boolean;
@@ -63,6 +64,7 @@ export async function loadTenantWhatsAppChannel(
       instanceName: channel.instance_name,
       apiKey: apiKeyForProvider(provider, channel.api_key_encrypted),
       webhookSecret: channel.webhook_secret || null,
+      active: true,
       source: 'whatsapp_channels',
       sendEnabled: channel.send_enabled !== false,
       receiveEnabled: channel.receive_enabled !== false,
@@ -85,9 +87,42 @@ export async function loadTenantWhatsAppChannel(
     instanceName: legacy.evolution_instance_name,
     apiKey: apiKeyForProvider('EVOLUTION', legacy.evolution_api_key_encrypted),
     webhookSecret: null,
+    active: true,
     source: 'tenant_secrets',
     sendEnabled: true,
     receiveEnabled: true,
+  };
+}
+
+export async function loadTenantWahaChannel(
+  supabaseAdmin: SupabaseAdminLike,
+  tenantId: string,
+): Promise<AppWhatsAppChannel | null> {
+  const { data: channel, error } = await supabaseAdmin
+    .from('whatsapp_channels')
+    .select('id, provider, label, base_url, instance_name, api_key_encrypted, webhook_secret, active, send_enabled, receive_enabled')
+    .eq('owner_type', 'TENANT')
+    .eq('tenant_id', tenantId)
+    .eq('provider', 'WAHA')
+    .order('active', { ascending: false })
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error || !channel?.instance_name) return null;
+
+  return {
+    id: channel.id ?? null,
+    provider: 'WAHA',
+    label: channel.label ?? null,
+    baseUrl: normalizeBaseUrl(channel.base_url || DEFAULT_WAHA_BASE_URL),
+    instanceName: channel.instance_name,
+    apiKey: apiKeyForProvider('WAHA', channel.api_key_encrypted),
+    webhookSecret: channel.webhook_secret || null,
+    active: channel.active === true,
+    source: 'whatsapp_channels',
+    sendEnabled: channel.send_enabled !== false,
+    receiveEnabled: channel.receive_enabled !== false,
   };
 }
 

@@ -5,8 +5,19 @@ import {
   createOrUpdateWahaSession,
   getWahaQrCode,
   loadTenantWhatsAppChannel,
+  loadTenantWahaChannel,
 } from '../../../_lib/whatsapp-provider';
 import crypto from 'crypto';
+
+const DEFAULT_WAHA_BASE_URL = 'https://waha-waha.qr4jgl.easypanel.host';
+
+async function readRequestBody(request: NextRequest): Promise<Record<string, unknown>> {
+  try {
+    return await request.json();
+  } catch (_err) {
+    return {};
+  }
+}
 
 export async function POST(request: NextRequest) {
   const auth = await authenticateRequest(request);
@@ -15,6 +26,9 @@ export async function POST(request: NextRequest) {
   const { tenantId } = auth;
 
   try {
+    const body = await readRequestBody(request);
+    const requestedProvider = String(body.provider || '').toUpperCase();
+
     // Get tenant info for slug
     const { data: tenant, error: tenantErr } = await supabaseAdmin
       .from('tenants')
@@ -25,6 +39,102 @@ export async function POST(request: NextRequest) {
     if (tenantErr) throw tenantErr;
     if (!tenant) {
       return NextResponse.json({ error: 'NotFound', message: 'Tenant not found' }, { status: 404 });
+    }
+
+    if (requestedProvider === 'WAHA') {
+      const cleanSlug = tenant.slug.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const defaultInstanceName = `tenant_${cleanSlug}_waha`;
+      let wahaChannel = await loadTenantWahaChannel(supabaseAdmin, tenantId);
+
+      if (!wahaChannel) {
+        const apiKey = process.env.WAHA_API_KEY || '';
+        if (!apiKey) {
+          return NextResponse.json(
+            {
+              error: 'CONFIGURATION_ERROR',
+              message: 'WAHA ainda nao esta configurado para este tenant.',
+            },
+            { status: 500 }
+          );
+        }
+
+        const { data: createdChannel, error: createChannelError } = await supabaseAdmin
+          .from('whatsapp_channels')
+          .insert({
+            owner_type: 'TENANT',
+            tenant_id: tenantId,
+            provider: 'WAHA',
+            label: `WAHA - ${tenant.name}`,
+            base_url: process.env.WAHA_BASE_URL || DEFAULT_WAHA_BASE_URL,
+            instance_name: defaultInstanceName,
+            api_key_encrypted: apiKey,
+            webhook_secret: crypto.randomBytes(32).toString('hex'),
+            active: false,
+            send_enabled: false,
+            receive_enabled: false,
+            connection_status: 'UNKNOWN',
+            metadata: {
+              role: 'candidate',
+              created_by: 'tenant_waha_connect',
+            },
+          })
+          .select('id')
+          .maybeSingle();
+
+        if (createChannelError || !createdChannel?.id) throw createChannelError;
+        wahaChannel = await loadTenantWahaChannel(supabaseAdmin, tenantId);
+      }
+
+      if (!wahaChannel?.apiKey) {
+        return NextResponse.json(
+          {
+            error: 'CONFIGURATION_ERROR',
+            message: 'Chave WAHA ausente no canal candidato.',
+          },
+          { status: 500 }
+        );
+      }
+
+      const webhookUrl = buildWahaWebhookUrl();
+      if (!webhookUrl) {
+        return NextResponse.json(
+          {
+            error: 'CONFIGURATION_ERROR',
+            message: 'Webhook WAHA nao configurado.',
+          },
+          { status: 500 }
+        );
+      }
+
+      await createOrUpdateWahaSession(wahaChannel, webhookUrl);
+      const qrcode = await getWahaQrCode(wahaChannel);
+
+      const nowIso = new Date().toISOString();
+      await supabaseAdmin
+        .from('whatsapp_channels')
+        .update({
+          active: false,
+          send_enabled: false,
+          receive_enabled: false,
+          connection_status: 'PENDING_QR',
+          external_state: 'SCAN_QR_CODE',
+          last_qr_requested_at: nowIso,
+          last_checked_at: nowIso,
+          last_error: null,
+          metadata: {
+            role: 'candidate',
+            last_qr_requested_by: 'tenant_waha_connect',
+            last_qr_requested_at: nowIso,
+          },
+        })
+        .eq('id', wahaChannel.id);
+
+      return NextResponse.json({
+        provider: 'WAHA',
+        mode: 'candidate',
+        instanceName: wahaChannel.instanceName,
+        qrcode,
+      });
     }
 
     const activeChannel = await loadTenantWhatsAppChannel(supabaseAdmin, tenantId);
