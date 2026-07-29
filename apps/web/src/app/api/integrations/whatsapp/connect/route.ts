@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticateRequest, supabaseAdmin } from '../../../_lib/supabase-admin';
+import {
+  buildWahaWebhookUrl,
+  createOrUpdateWahaSession,
+  getWahaQrCode,
+  loadTenantWhatsAppChannel,
+} from '../../../_lib/whatsapp-provider';
 import crypto from 'crypto';
 
 export async function POST(request: NextRequest) {
@@ -19,6 +25,69 @@ export async function POST(request: NextRequest) {
     if (tenantErr) throw tenantErr;
     if (!tenant) {
       return NextResponse.json({ error: 'NotFound', message: 'Tenant not found' }, { status: 404 });
+    }
+
+    const activeChannel = await loadTenantWhatsAppChannel(supabaseAdmin, tenantId);
+    if (activeChannel?.provider === 'WAHA') {
+      if (!activeChannel.apiKey) {
+        return NextResponse.json(
+          {
+            error: 'EXTERNAL_SERVICE_ERROR',
+            message: 'WAHA API key is not configured for this WhatsApp channel',
+          },
+          { status: 500 }
+        );
+      }
+
+      const webhookUrl = buildWahaWebhookUrl();
+      if (!webhookUrl) {
+        return NextResponse.json(
+          {
+            error: 'CONFIGURATION_ERROR',
+            message: 'WAHA webhook URL is not configured',
+          },
+          { status: 500 }
+        );
+      }
+
+      await createOrUpdateWahaSession(activeChannel, webhookUrl);
+      const qrcode = await getWahaQrCode(activeChannel);
+
+      const nowIso = new Date().toISOString();
+      await supabaseAdmin
+        .from('whatsapp_channels')
+        .update({
+          connection_status: 'PENDING_QR',
+          external_state: 'SCAN_QR_CODE',
+          last_qr_requested_at: nowIso,
+          last_checked_at: nowIso,
+          last_error: null,
+        })
+        .eq('id', activeChannel.id);
+
+      const quarantineMinutesRaw = Number(process.env.WA_POST_RECONNECT_QUARANTINE_MINUTES || 60);
+      const quarantineMinutes = Number.isFinite(quarantineMinutesRaw) && quarantineMinutesRaw >= 0 ? quarantineMinutesRaw : 60;
+      await supabaseAdmin
+        .from('whatsapp_guardian_status')
+        .upsert(
+          {
+            tenant_id: tenantId,
+            status: 'COLD',
+            external_state: 'qr_requested',
+            external_checked_at: nowIso,
+            last_disconnect_reason_code: null,
+            quarantined_until: new Date(Date.now() + quarantineMinutes * 60 * 1000).toISOString(),
+            circuit_open_until: null,
+            updated_at: nowIso,
+          },
+          { onConflict: 'tenant_id' }
+        );
+
+      return NextResponse.json({
+        provider: 'WAHA',
+        instanceName: activeChannel.instanceName,
+        qrcode,
+      });
     }
 
     let { data: secretRecord } = await supabaseAdmin

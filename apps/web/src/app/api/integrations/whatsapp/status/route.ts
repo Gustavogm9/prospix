@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticateRequest, supabaseAdmin } from '../../../_lib/supabase-admin';
 import { loadAiActivityMonitor, type TenantAiActivity } from '../../../_lib/ai-activity-monitor';
+import {
+  fetchWahaSession,
+  loadTenantWhatsAppChannel,
+  mapWahaStatusToAppStatus,
+} from '../../../_lib/whatsapp-provider';
 
 type WhatsAppGuardianTrace = {
   status: {
@@ -550,6 +555,55 @@ export async function GET(request: NextRequest) {
 
     const tenantAiPaused = aiOutboundControl?.paused === true;
 
+    const activeChannel = await loadTenantWhatsAppChannel(supabaseAdmin, tenantId);
+    if (activeChannel?.provider === 'WAHA') {
+      if (!activeChannel.apiKey) {
+        return NextResponse.json({
+          status: 'disconnected',
+          reason: 'missing_api_key',
+          configured: true,
+          provider: 'WAHA',
+          instanceName: activeChannel.instanceName,
+          tenantAiPaused,
+          guardianTrace,
+        });
+      }
+
+      const session = await fetchWahaSession(activeChannel);
+      if (!session.ok) {
+        return NextResponse.json({
+          status: 'disconnected',
+          reason: `waha_http_${session.httpStatus || 'unknown'}`,
+          configured: true,
+          provider: 'WAHA',
+          instanceName: activeChannel.instanceName,
+          tenantAiPaused,
+          guardianTrace,
+        });
+      }
+
+      const mapped = mapWahaStatusToAppStatus(session.status);
+      const reachoutTimelock =
+        session.payload?.me?.reachoutTimelock ||
+        session.payload?.data?.reachoutTimelock ||
+        session.payload?.payload?.data?.reachoutTimelock ||
+        null;
+
+      return NextResponse.json({
+        status: mapped.status,
+        reason: mapped.reason,
+        configured: true,
+        provider: 'WAHA',
+        instanceName: activeChannel.instanceName,
+        tenantAiPaused,
+        guardianTrace,
+        external: {
+          sessionStatus: session.status,
+          reachoutTimelock,
+        },
+      });
+    }
+
     const { data: secretRecord } = await supabaseAdmin
       .from('tenant_secrets')
       .select('*')
@@ -560,6 +614,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({
         status: 'disconnected',
         configured: false,
+        provider: null,
         instanceName: null,
         tenantAiPaused,
         guardianTrace,
@@ -590,6 +645,7 @@ export async function GET(request: NextRequest) {
             status: state === 'open' ? 'connected' : 'disconnected',
             reason: 'other',
             configured: true,
+            provider: 'EVOLUTION',
             instanceName,
             tenantAiPaused,
             guardianTrace,
@@ -600,6 +656,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({
         status: 'disconnected',
         configured: true,
+        provider: 'EVOLUTION',
         instanceName,
         error: 'CONNECTION_STATE_UNAVAILABLE',
         tenantAiPaused,
@@ -616,6 +673,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({
         status: 'disconnected',
         configured: true,
+        provider: 'EVOLUTION',
         instanceName,
         reason: 'instance_not_found',
         tenantAiPaused,
@@ -646,6 +704,7 @@ export async function GET(request: NextRequest) {
       status: isConnected ? 'connected' : 'disconnected',
       reason: isConnected ? null : reason,
       configured: true,
+      provider: 'EVOLUTION',
       instanceName,
       tenantAiPaused,
       guardianTrace,

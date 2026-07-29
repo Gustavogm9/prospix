@@ -77,6 +77,7 @@ export type OperationalStatusResponse = {
   status?: string | null;
   reason?: string | null;
   configured?: boolean;
+  provider?: 'EVOLUTION' | 'WAHA' | string | null;
   instanceName?: string | null;
   tenantAiPaused?: boolean;
   guardianTrace?: OperationalGuardianTrace | null;
@@ -191,6 +192,7 @@ function toneFromSeverity(severity?: string | null): OperationalTone {
 
 function normalizeStatus(value?: string | null): 'connected' | 'disconnected' | 'unknown' {
   if (value === 'connected') return 'connected';
+  if (value === 'pending_qr') return 'disconnected';
   if (value === 'disconnected') return 'disconnected';
   return 'unknown';
 }

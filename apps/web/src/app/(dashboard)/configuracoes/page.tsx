@@ -1203,7 +1203,7 @@ export default function Settings() {
       const message =
         err instanceof Error
           ? err.message
-          : 'Ocorreu um erro ao conectar com o servidor da Evolution API.';
+          : 'Ocorreu um erro ao conectar com o provedor de WhatsApp.';
       toast.error('Erro no Gateway', message);
       setIsGeneratingQr(false);
     }
@@ -2039,7 +2039,7 @@ export default function Settings() {
                   <div className="flex items-center gap-2">
                     <Phone className="h-4 w-4 text-[#25D366]" />
                     <div className="text-[14px] font-semibold text-[#0F172A]">
-                      WhatsApp (Evolution API)
+                      WhatsApp
                     </div>
                   </div>
                   <div className="mt-0.5 text-[11px] text-[#64748B]">
@@ -2075,7 +2075,7 @@ export default function Settings() {
                               </Badge>
                             </div>
                             <p className="mt-1 font-mono text-[12px] text-[#64748B]">
-                              Instância:{' '}
+                              Canal:{' '}
                               <span className="font-bold text-[#027A48]">{instanceName}</span>
                             </p>
                             <p className="mt-0.5 text-[10px] text-[#64748B]">

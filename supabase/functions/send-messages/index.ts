@@ -29,6 +29,12 @@ import {
   loadTenantAiOutboundGate,
   tenantAiOutboundPausedRetryIso,
 } from '../_shared/tenant-ai-outbound-control.ts';
+import {
+  fetchWhatsAppConnectionStatus as fetchProviderConnectionStatus,
+  loadTenantWhatsAppChannel,
+  sendWhatsAppMessage,
+  type WhatsAppChannel,
+} from '../_shared/whatsapp-provider.ts';
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -435,41 +441,13 @@ function getBrtDateStr(): string {
 }
 
 // ── Evolution API Config ────────────────────────────────────────────────────
-interface EvoConfig {
+type GuardMode = 'OFF' | 'OBSERVE' | 'WARN' | 'BLOCK';
+
+type EvoConfig = {
   baseUrl: string;
   instanceName: string;
   apiKey: string;
-}
-
-async function loadEvoConfig(tenantId: string): Promise<EvoConfig | null> {
-  try {
-    const { data, error } = await supabase
-      .from('tenant_secrets')
-      .select('evolution_base_url, evolution_instance_name, evolution_api_key_encrypted')
-      .eq('tenant_id', tenantId)
-      .single();
-
-    if (error || !data?.evolution_instance_name) return null;
-
-    return {
-      baseUrl: data.evolution_base_url || 'https://evolution-evolution-api.qr4jgl.easypanel.host',
-      instanceName: data.evolution_instance_name,
-      apiKey: data.evolution_api_key_encrypted || Deno.env.get('EVOLUTION_GUILDS_API_KEY') || '',
-    };
-  } catch (_e) {
-    return null;
-  }
-}
-
-type GuardMode = 'OFF' | 'OBSERVE' | 'WARN' | 'BLOCK';
-
-interface ExternalConnectionStatus {
-  ok: boolean;
-  state: string | null;
-  reasonCode: string;
-  critical: boolean;
-  rawError: Record<string, unknown>;
-}
+};
 
 interface ConnectionGuardDecision {
   allowSend: boolean;
@@ -557,6 +535,19 @@ function redactPayload(value: unknown): Record<string, unknown> {
   }
 }
 
+function isProviderColumnSchemaError(err: unknown): boolean {
+  const code = String((err as any)?.code || '');
+  const message = redactText((err as any)?.message || err).toLowerCase();
+  return (
+    code === '42703' ||
+    code === 'PGRST204' ||
+    (message.includes('column') &&
+      (message.includes('whatsapp_provider') ||
+        message.includes('whatsapp_channel_id') ||
+        message.includes('provider_message_id')))
+  );
+}
+
 const CRITICAL_DISCONNECT_REASON_CODES = new Set([
   'WA_DEVICE_REMOVED',
   'WA_STREAM_ERRORED',
@@ -604,118 +595,6 @@ async function shortHash(value: string): Promise<string> {
     .join('');
 }
 
-function extractState(payload: any): string | null {
-  return (
-    payload?.instance?.state ||
-    payload?.state ||
-    payload?.connectionState?.state ||
-    payload?.connectionStatus ||
-    payload?.status ||
-    null
-  );
-}
-
-function extractDisconnectionPayload(instance: any): unknown {
-  return (
-    instance?.disconnectionObject ||
-    instance?.instance?.disconnectionObject ||
-    instance?.error ||
-    instance?.response ||
-    null
-  );
-}
-
-function classifyExternalConnection(
-  state: string | null,
-  raw: unknown,
-): { reasonCode: string; critical: boolean } {
-  const rawText = redactText(raw).toLowerCase();
-  const normalized = String(state || '').toLowerCase();
-
-  if (rawText.includes('device_removed'))
-    return { reasonCode: 'WA_DEVICE_REMOVED', critical: true };
-  if (rawText.includes('stream errored') || rawText.includes('stream:error'))
-    return { reasonCode: 'WA_STREAM_ERRORED', critical: true };
-  if (rawText.includes('conflict')) return { reasonCode: 'WA_SESSION_CONFLICT', critical: true };
-  if (rawText.includes('401') || rawText.includes('unauthorized'))
-    return { reasonCode: 'WA_UNAUTHORIZED', critical: true };
-  if (normalized && normalized !== 'open')
-    return { reasonCode: 'WA_EXTERNAL_NOT_OPEN', critical: false };
-  if (!normalized) return { reasonCode: 'WA_CONNECTION_STATE_UNAVAILABLE', critical: false };
-  return { reasonCode: 'WA_CONNECTION_HEALTHY', critical: false };
-}
-
-async function fetchExternalConnectionStatus(
-  evoConfig: EvoConfig,
-): Promise<ExternalConnectionStatus> {
-  let state: string | null = null;
-  let rawError: unknown = {};
-
-  try {
-    const stateResp = await fetch(
-      `${evoConfig.baseUrl}/instance/connectionState/${evoConfig.instanceName}`,
-      {
-        headers: { apikey: evoConfig.apiKey },
-        signal: AbortSignal.timeout(4000),
-      },
-    );
-    const stateText = await stateResp.text();
-    let statePayload: any = null;
-    try {
-      statePayload = JSON.parse(stateText);
-    } catch (_err) {}
-    state = extractState(statePayload);
-    if (!stateResp.ok) rawError = statePayload || stateText;
-  } catch (err: any) {
-    rawError = { error: err.message };
-  }
-
-  if (state === 'open') {
-    return { ok: true, state, reasonCode: 'WA_CONNECTION_HEALTHY', critical: false, rawError: {} };
-  }
-
-  try {
-    const instancesResp = await fetch(`${evoConfig.baseUrl}/instance/fetchInstances`, {
-      headers: { apikey: evoConfig.apiKey },
-      signal: AbortSignal.timeout(5000),
-    });
-    const instancesText = await instancesResp.text();
-    let instancesPayload: any = null;
-    try {
-      instancesPayload = JSON.parse(instancesText);
-    } catch (_err) {}
-    const records = Array.isArray(instancesPayload) ? instancesPayload : [];
-    const record = records.find((item: any) => {
-      const instance = item?.instance || item;
-      return (
-        instance?.instanceName === evoConfig.instanceName ||
-        instance?.name === evoConfig.instanceName ||
-        item?.instanceName === evoConfig.instanceName ||
-        item?.name === evoConfig.instanceName
-      );
-    });
-    const instance = record?.instance || record;
-    state = extractState(instance) || state;
-    rawError =
-      extractDisconnectionPayload(record) ||
-      rawError ||
-      instance ||
-      instancesPayload ||
-      instancesText;
-  } catch (err: any) {
-    rawError = rawError || { error: err.message };
-  }
-
-  const classification = classifyExternalConnection(state, rawError);
-  return {
-    ok: state === 'open',
-    state,
-    reasonCode: classification.reasonCode,
-    critical: classification.critical,
-    rawError: redactPayload(rawError),
-  };
-}
-
 async function countDuePending(tenantId: string): Promise<number> {
   const { count } = await supabase
     .from('pending_outbound')
@@ -760,6 +639,7 @@ async function countCriticalConnectionEvents(
     'SEND_CRITICAL_UNAUTHORIZED',
     'SEND_CRITICAL_CONNECTION_CLOSED',
     'SEND_EVOLUTION_INTERNAL_ERROR',
+    'SEND_PROVIDER_INTERNAL_ERROR',
     'SEND_CRITICAL_INSTANCE_NOT_FOUND',
   ];
 
@@ -953,6 +833,8 @@ function enqueueAdminMonitoringDue(source: string): void {
 async function recordConnectionEvent(params: {
   tenantId: string;
   instanceName: string;
+  provider?: string | null;
+  whatsappChannelId?: string | null;
   eventType: string;
   externalState: string | null;
   reasonCode: string;
@@ -967,6 +849,9 @@ async function recordConnectionEvent(params: {
       .insert({
         tenant_id: params.tenantId,
         instance_hash: await shortHash(params.instanceName),
+        provider: params.provider || null,
+        whatsapp_channel_id: params.whatsappChannelId || null,
+        instance_name: params.instanceName,
         event_type: params.eventType,
         external_state: params.externalState,
         reason_code: params.reasonCode,
@@ -1171,7 +1056,7 @@ async function updateGuardianConnectionState(
 
 async function runConnectionHealthGuard(
   tenantId: string,
-  evoConfig: EvoConfig | null,
+  whatsappChannel: WhatsAppChannel | null,
   guardianStatus: any,
   guardianConfig: any,
 ): Promise<ConnectionGuardDecision> {
@@ -1191,28 +1076,30 @@ async function runConnectionHealthGuard(
     };
   }
 
-  if (!evoConfig || !evoConfig.apiKey) {
+  if (!whatsappChannel || !whatsappChannel.apiKey) {
     const pendingDueCount = await countDuePending(tenantId);
     await recordConnectionEvent({
       tenantId,
-      instanceName: evoConfig?.instanceName || 'missing',
+      instanceName: whatsappChannel?.instanceName || 'missing',
+      provider: whatsappChannel?.provider || null,
+      whatsappChannelId: whatsappChannel?.id || null,
       eventType: 'PRE_SEND_HEALTH_CHECK',
       externalState: null,
-      reasonCode: 'WA_CONFIG_MISSING',
-      rawError: { error: 'Evolution config missing' },
+      reasonCode: 'WA_PROVIDER_CONFIG_MISSING',
+      rawError: { error: 'WhatsApp provider config missing' },
       localStatusBefore: guardianStatus?.status,
       localStatusAfter: 'PAUSED',
       pendingDueCount,
     });
 
     if (isBlockingMode(mode)) {
-      await updateGuardianConnectionState(tenantId, 'PAUSED', null, 'WA_CONFIG_MISSING');
+      await updateGuardianConnectionState(tenantId, 'PAUSED', null, 'WA_PROVIDER_CONFIG_MISSING');
     }
 
     return {
       allowSend: !isBlockingMode(mode),
       allowNewActive: false,
-      reasonCode: 'WA_CONFIG_MISSING',
+      reasonCode: 'WA_PROVIDER_CONFIG_MISSING',
       externalState: null,
       isQuarantined,
       quarantinedUntil: quarantineUntil,
@@ -1220,7 +1107,9 @@ async function runConnectionHealthGuard(
     };
   }
 
-  const external = await fetchExternalConnectionStatus(evoConfig);
+  const external = await fetchProviderConnectionStatus(whatsappChannel, {
+    timeoutMs: clampTimeoutMs(getNumberEnv('WA_PROVIDER_STATUS_TIMEOUT_MS', 5000), 5000, 1000, 60000),
+  });
   const pendingDueCount = await countDuePending(tenantId);
 
   if (external.ok) {
@@ -1292,7 +1181,9 @@ async function runConnectionHealthGuard(
     if (previousStatus === 'COLD' && healthyStatus === 'RECOVERY') {
       await recordConnectionEvent({
         tenantId,
-        instanceName: evoConfig.instanceName,
+        instanceName: whatsappChannel.instanceName,
+        provider: whatsappChannel.provider,
+        whatsappChannelId: whatsappChannel.id,
         eventType: 'STATE_TRANSITION',
         externalState: external.state,
         reasonCode: 'WA_RECOVERY_STARTED',
@@ -1311,7 +1202,9 @@ async function runConnectionHealthGuard(
     if (previousStatus === 'RECOVERY' && healthyStatus === 'NORMAL') {
       await recordConnectionEvent({
         tenantId,
-        instanceName: evoConfig.instanceName,
+        instanceName: whatsappChannel.instanceName,
+        provider: whatsappChannel.provider,
+        whatsappChannelId: whatsappChannel.id,
         eventType: 'STATE_TRANSITION',
         externalState: external.state,
         reasonCode: 'WA_RECOVERY_PROMOTED_TO_NORMAL',
@@ -1329,8 +1222,8 @@ async function runConnectionHealthGuard(
     }
     return {
       allowSend: true,
-      allowNewActive: !isQuarantined,
-      reasonCode: 'WA_CONNECTION_HEALTHY',
+      allowNewActive: !isQuarantined && external.reasonCode !== 'WA_REACHOUT_TIMELOCK_ACTIVE',
+      reasonCode: external.reasonCode || 'WA_CONNECTION_HEALTHY',
       externalState: external.state,
       isQuarantined,
       quarantinedUntil: quarantineUntil,
@@ -1341,11 +1234,13 @@ async function runConnectionHealthGuard(
   const nextStatus = external.critical ? 'SUSPENDED' : 'PAUSED';
   const connectionEventId = await recordConnectionEvent({
     tenantId,
-    instanceName: evoConfig.instanceName,
+    instanceName: whatsappChannel.instanceName,
+    provider: whatsappChannel.provider,
+    whatsappChannelId: whatsappChannel.id,
     eventType: 'PRE_SEND_HEALTH_CHECK',
     externalState: external.state,
-    reasonCode: external.reasonCode,
-    rawError: external.rawError,
+    reasonCode: external.reasonCode || 'WA_PROVIDER_STATUS_UNHEALTHY',
+    rawError: redactPayload(external.rawError),
     localStatusBefore: guardianStatus?.status,
     localStatusAfter: isBlockingMode(mode) ? nextStatus : guardianStatus?.status,
     pendingDueCount,
@@ -1355,18 +1250,25 @@ async function runConnectionHealthGuard(
     const circuitMinutes = external.critical
       ? getNumberEnv('WA_CRITICAL_CIRCUIT_OPEN_MINUTES', 60)
       : getNumberEnv('WA_TRANSIENT_CIRCUIT_OPEN_MINUTES', 15);
-    await updateGuardianConnectionState(tenantId, nextStatus, external.state, external.reasonCode, {
-      locked_at: null,
-      circuit_open_until: new Date(Date.now() + circuitMinutes * 60 * 1000).toISOString(),
-    });
+    await updateGuardianConnectionState(
+      tenantId,
+      nextStatus,
+      external.state,
+      external.reasonCode || 'WA_PROVIDER_STATUS_UNHEALTHY',
+      {
+        locked_at: null,
+        circuit_open_until: new Date(Date.now() + circuitMinutes * 60 * 1000).toISOString(),
+      },
+    );
 
     if (external.critical) {
       const operationalAlertId = await createCriticalConnectionAlert(
         tenantId,
-        external.reasonCode,
-        `Envio bloqueado: conexao Evolution/WhatsApp em estado ${external.state || 'desconhecido'}.`,
+        external.reasonCode || 'WA_PROVIDER_STATUS_UNHEALTHY',
+        `Envio bloqueado: conexao ${whatsappChannel.provider}/WhatsApp em estado ${external.state || 'desconhecido'}.`,
         {
-          reason_code: external.reasonCode,
+          provider: whatsappChannel.provider,
+          reason_code: external.reasonCode || 'WA_PROVIDER_STATUS_UNHEALTHY',
           external_state: external.state,
           pending_due_count: pendingDueCount,
         },
@@ -1375,7 +1277,7 @@ async function runConnectionHealthGuard(
         await dispatchAdminDisconnectAlert({
           supabase,
           tenantId,
-          reasonCode: external.reasonCode,
+          reasonCode: external.reasonCode || 'WA_PROVIDER_STATUS_UNHEALTHY',
           externalState: external.state,
           connectionEventId,
           operationalAlertId,
@@ -1391,7 +1293,7 @@ async function runConnectionHealthGuard(
   return {
     allowSend: !isBlockingMode(mode),
     allowNewActive: false,
-    reasonCode: external.reasonCode,
+    reasonCode: external.reasonCode || 'WA_PROVIDER_STATUS_UNHEALTHY',
     externalState: external.state,
     isQuarantined,
     quarantinedUntil: quarantineUntil,
@@ -1441,7 +1343,7 @@ function classifySendFailure(error: string): SendFailureClassification {
     return {
       critical: true,
       status: 'PAUSED',
-      reasonCode: 'SEND_EVOLUTION_INTERNAL_ERROR',
+      reasonCode: 'SEND_PROVIDER_INTERNAL_ERROR',
       shouldBackoff: false,
     };
   if (errText.includes('instance does not exist') || errText.includes('not found'))
@@ -1453,6 +1355,7 @@ function classifySendFailure(error: string): SendFailureClassification {
     };
   if (
     errText.includes('evolution_send_timeout') ||
+    errText.includes('waha send timeout') ||
     errText.includes('timeout') ||
     errText.includes('timed out') ||
     errText.includes('abort')
@@ -2629,10 +2532,10 @@ async function runGuardianWorkerForTenant(
         guardianStatus = newStatus;
       }
 
-      const evoConfig = await loadEvoConfig(tenantId);
+      const whatsappChannel = await loadTenantWhatsAppChannel(supabase, tenantId);
       const healthDecision = await runConnectionHealthGuard(
         tenantId,
-        evoConfig,
+        whatsappChannel,
         guardianStatus,
         guardianConfig,
       );
@@ -2811,30 +2714,41 @@ async function runGuardianWorkerForTenant(
       processedConversationIds.add(item.conversation_id);
 
       try {
-        if (healthDecision.isQuarantined && item.message_type === 'OUTBOUND_START') {
+        const shouldDelayNewContactByConnection =
+          item.message_type === 'OUTBOUND_START' &&
+          (healthDecision.isQuarantined ||
+            healthDecision.reasonCode === 'WA_REACHOUT_TIMELOCK_ACTIVE');
+
+        if (shouldDelayNewContactByConnection) {
           const newScheduled =
             healthDecision.quarantinedUntil || new Date(Date.now() + 10 * 60 * 1000).toISOString();
+          const delayReason =
+            healthDecision.reasonCode === 'WA_REACHOUT_TIMELOCK_ACTIVE'
+              ? 'WA_REACHOUT_TIMELOCK_ACTIVE'
+              : 'WA_NEW_NUMBER_QUARANTINE';
           await supabase
             .from('pending_outbound')
             .update({
               scheduled_for: newScheduled,
-              failed_reason: 'WA_NEW_NUMBER_QUARANTINE',
+              failed_reason: delayReason,
             })
             .eq('id', item.id);
 
           await recordConnectionEvent({
             tenantId,
-            instanceName: evoConfig?.instanceName || 'missing',
+            instanceName: whatsappChannel?.instanceName || 'missing',
+            provider: whatsappChannel?.provider || null,
+            whatsappChannelId: whatsappChannel?.id || null,
             eventType: 'QUEUE_QUARANTINE_DELAY',
             externalState: healthDecision.externalState,
-            reasonCode: 'WA_NEW_NUMBER_QUARANTINE',
+            reasonCode: delayReason,
             localStatusBefore: numberState,
             localStatusAfter: numberState,
             pendingDueCount: await countDuePending(tenantId),
           });
 
           console.log(
-            '  [WhatsApp Guard] OUTBOUND_START adiado por quarentena ate ' + newScheduled,
+            '  [WhatsApp Guard] OUTBOUND_START adiado por estado do provedor ate ' + newScheduled,
           );
           await sleep(2000);
           continue;
@@ -3339,7 +3253,7 @@ async function runGuardianWorkerForTenant(
             }
           }
 
-          // 9. Enviar via Evolution API
+          // 9. Enviar via provedor WhatsApp ativo (Evolution legado ou WAHA)
           const finalTenantOutboundGate = await loadTenantAiOutboundGate(supabase, tenantId);
           if (!finalTenantOutboundGate.allow) {
             await delayPendingForTenantAiOutboundPause({
@@ -3355,12 +3269,12 @@ async function runGuardianWorkerForTenant(
             continue;
           }
 
-          if (!evoConfig) {
+          if (!whatsappChannel) {
             await supabase
               .from('pending_outbound')
               .update({
                 failed_at: new Date().toISOString(),
-                failed_reason: 'Evolution API Key não configurada',
+                failed_reason: 'Provedor WhatsApp nao configurado',
                 attempts: (item.attempts || 0) + 1,
               })
               .eq('id', item.id);
@@ -3368,23 +3282,45 @@ async function runGuardianWorkerForTenant(
             continue;
           }
 
-          const sendResult = await sendWhatsApp(
-            evoConfig,
+          const sendResult = await sendWhatsAppMessage(
+            whatsappChannel,
             phone,
             item.content,
             item.media_url,
             item.media_type,
+            {
+              timeoutMs: clampTimeoutMs(
+                getNumberEnv('WA_PROVIDER_SEND_TIMEOUT_MS', 12000),
+                12000,
+                1000,
+                60000,
+              ),
+            },
           );
           const sendTime = new Date().toISOString();
 
           if (sendResult.ok) {
-            await supabase
+            const pendingSentPayload = {
+              sent_at: sendTime,
+              attempts: (item.attempts || 0) + 1,
+              whatsapp_provider: sendResult.provider,
+              whatsapp_channel_id: sendResult.channelId,
+            };
+            const { error: pendingSentError } = await supabase
               .from('pending_outbound')
-              .update({
-                sent_at: sendTime,
-                attempts: (item.attempts || 0) + 1,
-              })
+              .update(pendingSentPayload)
               .eq('id', item.id);
+
+            if (pendingSentError) {
+              if (!isProviderColumnSchemaError(pendingSentError)) throw pendingSentError;
+              await supabase
+                .from('pending_outbound')
+                .update({
+                  sent_at: sendTime,
+                  attempts: (item.attempts || 0) + 1,
+                })
+                .eq('id', item.id);
+            }
 
             const messageId = uuid();
 
@@ -3403,7 +3339,7 @@ async function runGuardianWorkerForTenant(
               }
             } catch (_) {}
 
-            await supabase.from('messages').insert({
+            const outboundMessagePayload = {
               id: messageId,
               tenant_id: tenantId,
               conversation_id: item.conversation_id,
@@ -3414,11 +3350,38 @@ async function runGuardianWorkerForTenant(
               media_type: item.media_type,
               delivery_status: 'SENT',
               whatsapp_message_id: sendResult.whatsappMsgId || null,
+              whatsapp_provider: sendResult.provider,
+              whatsapp_channel_id: sendResult.channelId,
+              provider_message_id: sendResult.whatsappMsgId || null,
               script_id: conversation.script_id || null,
               script_node_id: conversation.current_node_id || null,
               script_variation_id: scriptVariationId || null,
               created_at: sendTime,
-            });
+            };
+
+            const { error: outboundMessageError } = await supabase
+              .from('messages')
+              .insert(outboundMessagePayload);
+
+            if (outboundMessageError) {
+              if (!isProviderColumnSchemaError(outboundMessageError)) throw outboundMessageError;
+              await supabase.from('messages').insert({
+                id: messageId,
+                tenant_id: tenantId,
+                conversation_id: item.conversation_id,
+                direction: 'OUTBOUND',
+                sender: 'AI',
+                content: item.content,
+                media_url: item.media_url,
+                media_type: item.media_type,
+                delivery_status: 'SENT',
+                whatsapp_message_id: sendResult.whatsappMsgId || null,
+                script_id: conversation.script_id || null,
+                script_node_id: conversation.current_node_id || null,
+                script_variation_id: scriptVariationId || null,
+                created_at: sendTime,
+              });
+            }
 
             await supabase
               .from('conversations')
@@ -3567,7 +3530,9 @@ async function runGuardianWorkerForTenant(
 
               const connectionEventId = await recordConnectionEvent({
                 tenantId,
-                instanceName: evoConfig.instanceName,
+                instanceName: whatsappChannel.instanceName,
+                provider: whatsappChannel.provider,
+                whatsappChannelId: whatsappChannel.id,
                 eventType: 'SEND_FAILURE_GUARD',
                 externalState: healthDecision.externalState,
                 reasonCode: failure.reasonCode,
@@ -3580,8 +3545,9 @@ async function runGuardianWorkerForTenant(
               const operationalAlertId = await createCriticalConnectionAlert(
                 tenantId,
                 failure.reasonCode,
-                'Envio interrompido por falha critica da conexao WhatsApp/Evolution.',
+                'Envio interrompido por falha critica da conexao WhatsApp.',
                 {
+                  provider: whatsappChannel.provider,
                   reason_code: failure.reasonCode,
                   conversation_id: item.conversation_id,
                   pending_outbound_id: item.id,
@@ -3655,7 +3621,9 @@ async function runGuardianWorkerForTenant(
 
               await recordConnectionEvent({
                 tenantId,
-                instanceName: evoConfig.instanceName,
+                instanceName: whatsappChannel.instanceName,
+                provider: whatsappChannel.provider,
+                whatsappChannelId: whatsappChannel.id,
                 eventType: 'SEND_TRANSIENT_GUARD',
                 externalState: healthDecision.externalState,
                 reasonCode: failure.reasonCode,

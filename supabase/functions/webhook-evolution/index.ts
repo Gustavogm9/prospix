@@ -124,6 +124,19 @@ function redactPayload(value: unknown): Record<string, unknown> {
   }
 }
 
+function isProviderColumnSchemaError(err: unknown): boolean {
+  const code = String((err as any)?.code || '');
+  const message = redactText((err as any)?.message || err).toLowerCase();
+  return (
+    code === '42703' ||
+    code === 'PGRST204' ||
+    (message.includes('column') &&
+      (message.includes('whatsapp_provider') ||
+        message.includes('whatsapp_channel_id') ||
+        message.includes('provider_message_id')))
+  );
+}
+
 const CRITICAL_DISCONNECT_REASON_CODES = new Set([
   'WA_DEVICE_REMOVED',
   'WA_STREAM_ERRORED',
@@ -236,6 +249,10 @@ function classifyConnectionState(
     return { status: 'SUSPENDED', reasonCode: 'WA_SESSION_CONFLICT', critical: true };
   if (rawText.includes('401') || rawText.includes('unauthorized'))
     return { status: 'SUSPENDED', reasonCode: 'WA_UNAUTHORIZED', critical: true };
+  if (rawText.includes('wa_waha_failed') || rawText.includes('"waha_status":"failed"'))
+    return { status: 'SUSPENDED', reasonCode: 'WA_WAHA_FAILED', critical: true };
+  if (rawText.includes('wa_waha_stopped') || rawText.includes('"waha_status":"stopped"'))
+    return { status: 'SUSPENDED', reasonCode: 'WA_WAHA_STOPPED', critical: true };
   if (normalizedState === 'open')
     return { status: 'COLD', reasonCode: 'WA_CONNECTION_OPEN', critical: false };
   if (normalizedState === 'connecting')
@@ -271,6 +288,8 @@ function mapAdminChannelStatus(
 async function recordConnectionEvent(params: {
   tenantId: string;
   instanceName: string;
+  provider?: string | null;
+  whatsappChannelId?: string | null;
   eventType: string;
   externalState: string | null;
   reasonCode: string;
@@ -284,6 +303,9 @@ async function recordConnectionEvent(params: {
       .insert({
         tenant_id: params.tenantId,
         instance_hash: await shortHash(params.instanceName),
+        provider: params.provider || null,
+        whatsapp_channel_id: params.whatsappChannelId || null,
+        instance_name: params.instanceName,
         event_type: params.eventType,
         external_state: params.externalState,
         reason_code: params.reasonCode,
@@ -547,6 +569,53 @@ async function handleAdminChannelConnectionUpdate(params: {
   }
 }
 
+type ResolvedWhatsAppInstance = {
+  tenantId: string;
+  provider: 'EVOLUTION' | 'WAHA';
+  whatsappChannelId: string | null;
+  source: 'tenant_secrets' | 'whatsapp_channels';
+};
+
+async function resolveTenantByWhatsAppInstance(
+  instanceName: string,
+): Promise<ResolvedWhatsAppInstance | null> {
+  if (!instanceName) return null;
+
+  const { data: tenantSecret } = await supabase
+    .from('tenant_secrets')
+    .select('tenant_id')
+    .eq('evolution_instance_name', instanceName)
+    .maybeSingle();
+
+  if (tenantSecret?.tenant_id) {
+    return {
+      tenantId: tenantSecret.tenant_id,
+      provider: 'EVOLUTION',
+      whatsappChannelId: null,
+      source: 'tenant_secrets',
+    };
+  }
+
+  const { data: channel, error: channelError } = await supabase
+    .from('whatsapp_channels')
+    .select('id, tenant_id, provider')
+    .eq('owner_type', 'TENANT')
+    .eq('instance_name', instanceName)
+    .eq('active', true)
+    .maybeSingle();
+
+  if (!channelError && channel?.tenant_id) {
+    return {
+      tenantId: channel.tenant_id,
+      provider: String(channel.provider || '').toUpperCase() === 'WAHA' ? 'WAHA' : 'EVOLUTION',
+      whatsappChannelId: channel.id || null,
+      source: 'whatsapp_channels',
+    };
+  }
+
+  return null;
+}
+
 async function handleConnectionUpdate(payload: any): Promise<Response> {
   const event = payload?.event || 'CONNECTION_UPDATE';
   const instanceName = extractConnectionInstanceName(payload);
@@ -561,13 +630,9 @@ async function handleConnectionUpdate(payload: any): Promise<Response> {
   const raw = extractConnectionRaw(payload);
   const classification = classifyConnectionState(event, state, raw);
 
-  const { data: tenantSecret } = await supabase
-    .from('tenant_secrets')
-    .select('tenant_id')
-    .eq('evolution_instance_name', instanceName)
-    .maybeSingle();
+  const resolvedInstance = await resolveTenantByWhatsAppInstance(instanceName);
 
-  if (!tenantSecret?.tenant_id) {
+  if (!resolvedInstance?.tenantId) {
     const adminChannelResponse = await handleAdminChannelConnectionUpdate({
       instanceName,
       event,
@@ -583,7 +648,7 @@ async function handleConnectionUpdate(payload: any): Promise<Response> {
     });
   }
 
-  const tenantId = tenantSecret.tenant_id;
+  const tenantId = resolvedInstance.tenantId;
   const { data: previousStatus } = await supabase
     .from('whatsapp_guardian_status')
     .select(
@@ -641,6 +706,8 @@ async function handleConnectionUpdate(payload: any): Promise<Response> {
   const connectionEventId = await recordConnectionEvent({
     tenantId,
     instanceName,
+    provider: resolvedInstance.provider,
+    whatsappChannelId: resolvedInstance.whatsappChannelId,
     eventType: normalizeEventName(event),
     externalState: state,
     reasonCode: eventReasonCode,
@@ -658,6 +725,8 @@ async function handleConnectionUpdate(payload: any): Promise<Response> {
       classification.reasonCode,
       state,
       {
+        provider: resolvedInstance.provider,
+        whatsapp_channel_id: resolvedInstance.whatsappChannelId,
         reason_code: classification.reasonCode,
         external_state: state,
         raw_error_redacted: redactPayload(raw),
@@ -1384,13 +1453,9 @@ async function processMessageUpsert(payload: any, ledgerId: string | null): Prom
 
     // ── Identify the instance → tenant ───────────────────────
     const instanceName = payload.instance || payload.instanceName || '';
-    const { data: tenantSecret } = await supabase
-      .from('tenant_secrets')
-      .select('tenant_id')
-      .eq('evolution_instance_name', instanceName)
-      .single();
+    const resolvedInstance = await resolveTenantByWhatsAppInstance(instanceName);
 
-    if (!tenantSecret?.tenant_id) {
+    if (!resolvedInstance?.tenantId) {
       console.log(`  ❌ No tenant found for instance: ${instanceName}`);
       return new Response(JSON.stringify({ ok: false, error: 'Unknown instance' }), {
         status: 404,
@@ -1398,7 +1463,7 @@ async function processMessageUpsert(payload: any, ledgerId: string | null): Prom
       });
     }
 
-    const tenantId = tenantSecret.tenant_id;
+    const tenantId = resolvedInstance.tenantId;
     await updateWebhookProcessingLedger(ledgerId, { tenant_id: tenantId });
     console.log(`  🏢 Tenant: ${tenantId}`);
 
@@ -1530,6 +1595,7 @@ async function processMessageUpsert(payload: any, ledgerId: string | null): Prom
 
       // If not found, it's a manual message from Giovane's phone!
       const outMsgId = uuid();
+      let outboundSavedViaLegacySchema = false;
       const { error: outboundInsertError } = await supabase.from('messages').insert({
         id: outMsgId,
         tenant_id: tenantId,
@@ -1539,12 +1605,33 @@ async function processMessageUpsert(payload: any, ledgerId: string | null): Prom
         content: messageContent,
         delivery_status: 'DELIVERED',
         whatsapp_message_id: whatsappMessageId,
+        whatsapp_provider: resolvedInstance.provider,
+        whatsapp_channel_id: resolvedInstance.whatsappChannelId,
+        provider_message_id: whatsappMessageId || null,
         script_id: conversation.script_id || null,
         script_node_id: conversation.current_node_id || null,
         script_variation_id: scriptVariationId || null,
       });
       if (outboundInsertError) {
-        if (outboundInsertError.code === '23505' && whatsappMessageId) {
+        if (isProviderColumnSchemaError(outboundInsertError)) {
+          const { error: legacyOutboundInsertError } = await supabase.from('messages').insert({
+            id: outMsgId,
+            tenant_id: tenantId,
+            conversation_id: conversation.id,
+            direction: 'OUTBOUND',
+            sender: 'USER',
+            content: messageContent,
+            delivery_status: 'DELIVERED',
+            whatsapp_message_id: whatsappMessageId,
+            script_id: conversation.script_id || null,
+            script_node_id: conversation.current_node_id || null,
+            script_variation_id: scriptVariationId || null,
+          });
+          if (!legacyOutboundInsertError) {
+            outboundSavedViaLegacySchema = true;
+          }
+        }
+        if (!outboundSavedViaLegacySchema && outboundInsertError.code === '23505' && whatsappMessageId) {
           const { data: existingOutboundMsg } = await supabase
             .from('messages')
             .select('id')
@@ -1568,7 +1655,9 @@ async function processMessageUpsert(payload: any, ledgerId: string | null): Prom
             );
           }
         }
-        throw new Error('Failed to insert outbound message: ' + outboundInsertError.message);
+        if (!outboundSavedViaLegacySchema) {
+          throw new Error('Failed to insert outbound message: ' + outboundInsertError.message);
+        }
       }
       await updateWebhookProcessingLedger(ledgerId, { message_id: outMsgId });
 
@@ -1629,12 +1718,34 @@ async function processMessageUpsert(payload: any, ledgerId: string | null): Prom
       content: messageContent,
       delivery_status: 'DELIVERED',
       whatsapp_message_id: whatsappMessageId,
+      whatsapp_provider: resolvedInstance.provider,
+      whatsapp_channel_id: resolvedInstance.whatsappChannelId,
+      provider_message_id: whatsappMessageId || null,
       script_id: conversation.script_id || null,
       script_node_id: conversation.current_node_id || null,
       script_variation_id: scriptVariationId || null,
     });
     if (inboundInsertError) {
-      if (inboundInsertError.code === '23505' && whatsappMessageId) {
+      if (isProviderColumnSchemaError(inboundInsertError)) {
+        const { error: legacyInboundInsertError } = await supabase.from('messages').insert({
+          id: inboundMsgId,
+          tenant_id: tenantId,
+          conversation_id: conversation.id,
+          direction: 'INBOUND',
+          sender: 'LEAD',
+          content: messageContent,
+          delivery_status: 'DELIVERED',
+          whatsapp_message_id: whatsappMessageId,
+          script_id: conversation.script_id || null,
+          script_node_id: conversation.current_node_id || null,
+          script_variation_id: scriptVariationId || null,
+        });
+        if (!legacyInboundInsertError) {
+          await updateWebhookProcessingLedger(ledgerId, { message_id: inboundMsgId });
+        } else {
+          throw new Error('Failed to insert inbound message: ' + legacyInboundInsertError.message);
+        }
+      } else if (inboundInsertError.code === '23505' && whatsappMessageId) {
         const { data: existingInboundMsg } = await supabase
           .from('messages')
           .select('id')
