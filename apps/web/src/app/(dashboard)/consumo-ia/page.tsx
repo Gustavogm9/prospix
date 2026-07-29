@@ -28,9 +28,25 @@ interface AIUsageData {
     ledger_leads_captured_count: number;
     ledger_whatsapp_messages_sent: number;
   };
+  provider_costs?: {
+    period_month: string;
+    available: boolean;
+    has_imported_rows: boolean;
+    imported_total_cost_cents: number;
+    imported_llm_cost_cents: number;
+    imported_whatsapp_cost_cents: number;
+    imported_maps_cost_cents: number;
+    imported_tavily_cost_cents: number;
+    imported_firecrawl_cost_cents: number;
+    imported_other_cost_cents: number;
+    currency: string;
+    sources: string[];
+    last_imported_at: string | null;
+    error_message: string | null;
+  };
 }
 
-const AI_USAGE_REFRESH_TABLES = ['tenant_usage', 'messages', 'lead_events', 'pending_outbound'];
+const AI_USAGE_REFRESH_TABLES = ['tenant_usage', 'provider_cost_ledger', 'messages', 'lead_events', 'pending_outbound'];
 
 export default function AIConsumption() {
   const tenantId = useAuthStore(state => state.tenantId);
@@ -71,55 +87,100 @@ export default function AIConsumption() {
 
   const fmt = (cents: number) => `R$ ${(cents / 100).toFixed(2)}`;
   const operational = data?.operational;
+  const hasLoadedUsage = data !== null;
+  const providerCosts = data?.provider_costs;
+  const hasImportedProviderCosts = Boolean(providerCosts?.has_imported_rows);
+  const importedTotalCostCents = providerCosts?.imported_total_cost_cents ?? 0;
+  const internalTotalCostCents = data?.total_costs_cents ?? 0;
+  const displayedTotalCostCents = hasImportedProviderCosts ? importedTotalCostCents : internalTotalCostCents;
+  const usedPercent =
+    data?.limit?.max_limit_cents && data.limit.max_limit_cents > 0
+      ? (displayedTotalCostCents / data.limit.max_limit_cents) * 100
+      : 0;
+  const remainingCents = Math.max(0, (data?.limit?.max_limit_cents ?? 0) - displayedTotalCostCents);
+  const costBasisLabel = hasImportedProviderCosts ? 'Custo real importado' : 'Registro interno - billing real pendente';
   const hasOperationalMismatch = Boolean(
     operational &&
       (operational.leads_created_count !== operational.ledger_leads_captured_count ||
         operational.outbound_messages_count !== operational.ledger_whatsapp_messages_sent),
   );
 
-  const costs = [
+  const internalCosts = [
     { label: 'IA (LLM)', value: data?.llm_cost_cents ?? 0, color: '#1B3A6B' },
     { label: 'WhatsApp', value: data?.whatsapp_cost_cents ?? 0, color: '#25D366' },
     { label: 'Google Maps', value: data?.maps_cost_cents ?? 0, color: '#4285F4' },
     { label: 'Tavily (Busca)', value: data?.tavily_cost_cents ?? 0, color: '#8B5CF6' },
     { label: 'Firecrawl (Scraping)', value: data?.firecrawl_cost_cents ?? 0, color: '#F97316' },
   ];
+  const importedCosts = [
+    { label: 'IA (LLM)', value: providerCosts?.imported_llm_cost_cents ?? 0, color: '#1B3A6B' },
+    { label: 'WhatsApp', value: providerCosts?.imported_whatsapp_cost_cents ?? 0, color: '#25D366' },
+    { label: 'Google Maps', value: providerCosts?.imported_maps_cost_cents ?? 0, color: '#4285F4' },
+    { label: 'Tavily (Busca)', value: providerCosts?.imported_tavily_cost_cents ?? 0, color: '#8B5CF6' },
+    { label: 'Firecrawl (Scraping)', value: providerCosts?.imported_firecrawl_cost_cents ?? 0, color: '#F97316' },
+    { label: 'Outros', value: providerCosts?.imported_other_cost_cents ?? 0, color: '#64748B' },
+  ];
+  const costs = hasImportedProviderCosts ? importedCosts : internalCosts;
 
   return (
     <div className="space-y-5 animate-fadeIn">
       <div className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-[rgba(27,58,107,0.04)] to-[rgba(232,152,28,0.06)] border border-[rgba(27,58,107,0.08)] rounded-xl text-[12.5px] text-[#0F172A]">
         <Cpu className="w-4 h-4 text-[#1B3A6B] shrink-0" />
-        <div><strong>Consumo de IA</strong> mostra quanto sua máquina está gastando com serviços e ferramentas neste mês.</div>
+        <div><strong>Consumo de IA</strong> separa custo real importado dos provedores e registro operacional interno do Prospix.</div>
       </div>
+
+      {hasLoadedUsage && !hasImportedProviderCosts && (
+        <div className="flex items-start gap-2 px-4 py-3 bg-[#FFF7ED] border border-[#FDBA74] rounded-xl text-[12px] text-[#9A3412]">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <div>
+            <strong>Billing real ainda nao importado.</strong> O valor do painel Google Cloud nao esta refletido nesta tela enquanto nao houver linhas em
+            <span className="font-mono"> provider_cost_ledger</span>. Abaixo, os custos exibidos sao registros internos do Prospix para auditoria operacional.
+          </div>
+        </div>
+      )}
 
       {/* Usage meter */}
       <div className="bg-white border border-[#E5E7EB] rounded-xl p-5 shadow-sm">
         <div className="flex items-center justify-between mb-3">
           <div>
-          <div className="text-[14px] font-semibold text-[#0F172A]">Consumo do mês</div>
+          <div className="text-[14px] font-semibold text-[#0F172A]">Custo do mes</div>
             <div className="text-[11px] text-[#64748B] mt-0.5">
-              {new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })} · plano inclui {fmt(data?.limit?.max_limit_cents ?? 0)}
+              {new Date().toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })} · {costBasisLabel} · plano inclui {fmt(data?.limit?.max_limit_cents ?? 0)}
             </div>
+            {hasImportedProviderCosts && (
+              <div className="text-[10.5px] text-[#64748B] mt-1">
+                Fonte: {providerCosts?.sources?.join(', ') || 'billing importado'}
+                {providerCosts?.last_imported_at ? ` · atualizado em ${new Date(providerCosts.last_imported_at).toLocaleString('pt-BR')}` : ''}
+              </div>
+            )}
           </div>
           <div className="text-right">
-            <div className="text-[22px] font-bold text-[#0F172A] font-mono">{fmt(data?.total_costs_cents ?? 0)}</div>
+            <div className="text-[22px] font-bold text-[#0F172A] font-mono">{fmt(displayedTotalCostCents)}</div>
             <div className="text-[11px] text-[#64748B]">de {fmt(data?.limit?.max_limit_cents ?? 0)}</div>
+            {hasLoadedUsage && !hasImportedProviderCosts && (
+              <div className="text-[10.5px] text-[#9A3412] mt-1">nao e billing Google</div>
+            )}
           </div>
         </div>
         <div className="h-3 bg-[#F1F3F6] rounded-full overflow-hidden">
           <div
             className="h-full bg-gradient-to-r from-[#1B3A6B] to-[#E8981C] rounded-full transition-all"
-            style={{ width: `${Math.min(data?.limit?.used_percent ?? 0, 100)}%` }}
+            style={{ width: `${Math.min(usedPercent, 100)}%` }}
           />
         </div>
         <div className="flex justify-between mt-1.5 text-[10.5px] text-[#64748B] font-mono">
-          <span>{(data?.limit?.used_percent ?? 0).toFixed(1)}% usado</span>
-          <span>Restante: {fmt(data?.limit?.remaining_cents ?? 0)}</span>
+          <span>{usedPercent.toFixed(1)}% usado</span>
+          <span>Restante: {fmt(remainingCents)}</span>
         </div>
-        {(data?.limit?.used_percent ?? 0) > 80 && (
+        {usedPercent > 80 && (
           <div className="mt-2 flex items-center gap-2 px-3 py-2 bg-[#FEF3F2] border border-[rgba(217,45,32,0.2)] rounded-lg text-[11.5px] text-[#D92D20]">
             <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
             Atenção: você já usou mais de 80% do seu limite mensal.
+          </div>
+        )}
+        {hasLoadedUsage && !hasImportedProviderCosts && internalTotalCostCents > 0 && (
+          <div className="mt-2 text-[11px] text-[#64748B]">
+            Registro interno observado neste mes: <span className="font-mono font-semibold text-[#0F172A]">{fmt(internalTotalCostCents)}</span>.
           </div>
         )}
       </div>
@@ -134,7 +195,7 @@ export default function AIConsumption() {
             </div>
             <div className="text-[22px] font-bold text-[#0F172A] font-mono">{fmt(c.value)}</div>
             <div className="text-[11px] text-[#64748B] mt-1">
-              {data?.total_costs_cents ? ((c.value / data.total_costs_cents) * 100).toFixed(0) : 0}% do total
+              {displayedTotalCostCents ? ((c.value / displayedTotalCostCents) * 100).toFixed(0) : 0}% do total
             </div>
           </div>
         ))}
@@ -180,12 +241,14 @@ export default function AIConsumption() {
       <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden">
         <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
           <div className="text-[14px] font-semibold text-[#0F172A]">Distribuição de custos</div>
-          <div className="text-[11px] text-[#64748B] mt-0.5">Proporção de gastos por categoria neste mês</div>
+          <div className="text-[11px] text-[#64748B] mt-0.5">
+            {hasImportedProviderCosts ? 'Proporção do billing real importado neste mes.' : 'Proporção do registro interno neste mes; nao substitui o painel Google Cloud.'}
+          </div>
         </div>
         <div className="p-5">
           <div className="space-y-3">
             {costs.map((c, i) => {
-              const total = data?.total_costs_cents || 1;
+              const total = displayedTotalCostCents || 1;
               const pct = (c.value / total) * 100;
               return (
                 <div key={i}>
@@ -209,7 +272,7 @@ export default function AIConsumption() {
 
       <div className="flex items-center gap-2 px-4 py-3 bg-[rgba(27,58,107,0.04)] rounded-lg text-[12px] text-[#475569]">
         <Info className="w-4 h-4 text-[#1B3A6B] shrink-0" />
-        <div>Os custos são atualizados em tempo real conforme a IA trabalha. Ultrapassar o limite pausa a máquina até o próximo ciclo.</div>
+        <div>Custos reais dependem de importacao do provedor. Contadores internos continuam em tempo real para mostrar atividade operacional.</div>
       </div>
     </div>
   );

@@ -26,8 +26,8 @@ export default function Dashboard() {
         const [usageRes, tenantsRes] = await Promise.all([
           supabaseAdmin
             .from('tenant_usage')
-            .select('tenant_id, llm_cost_cents, whatsapp_cost_cents, maps_cost_cents, total_costs_cents')
-            .order('created_at', { ascending: false }),
+            .select('tenant_id, llm_cost_cents, whatsapp_cost_cents, google_maps_cost_cents, tavily_cost_cents, firecrawl_cost_cents')
+            .order('updated_at', { ascending: false }),
           supabaseAdmin
             .from('tenants')
             .select('id, mrr_cents')
@@ -53,8 +53,13 @@ export default function Dashboard() {
         report.forEach((rec: any) => {
           costLLMCents += rec.llm_cost_cents || 0;
           costWhatsAppCents += rec.whatsapp_cost_cents || 0;
-          costMapsCents += rec.maps_cost_cents || 0;
-          totalCostsCents += rec.total_costs_cents || 0;
+          costMapsCents += rec.google_maps_cost_cents || 0;
+          totalCostsCents +=
+            (rec.llm_cost_cents || 0) +
+            (rec.whatsapp_cost_cents || 0) +
+            (rec.google_maps_cost_cents || 0) +
+            (rec.tavily_cost_cents || 0) +
+            (rec.firecrawl_cost_cents || 0);
         });
 
         const netProfitCents = mrrTotalCents - totalCostsCents;

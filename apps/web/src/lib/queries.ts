@@ -2289,6 +2289,24 @@ export interface DashboardAiUsageData {
     ledger_leads_captured_count: number;
     ledger_whatsapp_messages_sent: number;
   };
+  provider_costs?: DashboardProviderCostSummary;
+}
+
+export interface DashboardProviderCostSummary {
+  period_month: string;
+  available: boolean;
+  has_imported_rows: boolean;
+  imported_total_cost_cents: number;
+  imported_llm_cost_cents: number;
+  imported_whatsapp_cost_cents: number;
+  imported_maps_cost_cents: number;
+  imported_tavily_cost_cents: number;
+  imported_firecrawl_cost_cents: number;
+  imported_other_cost_cents: number;
+  currency: string;
+  sources: string[];
+  last_imported_at: string | null;
+  error_message: string | null;
 }
 
 export interface DashboardWeeklyCapturesData {
@@ -2311,6 +2329,90 @@ export interface DashboardHotLead {
   createdAt: string;
   contactedAt: string | null;
   firstResponseAt: string | null;
+}
+
+type ProviderCostLedgerRow = {
+  provider: string | null;
+  service: string | null;
+  cost_cents: number | string | null;
+  currency: string | null;
+  source: string | null;
+  attribution_status: string | null;
+  updated_at: string | null;
+  created_at: string | null;
+};
+
+function emptyProviderCostSummary(periodMonth: string, errorMessage: string | null = null): DashboardProviderCostSummary {
+  return {
+    period_month: periodMonth,
+    available: !errorMessage,
+    has_imported_rows: false,
+    imported_total_cost_cents: 0,
+    imported_llm_cost_cents: 0,
+    imported_whatsapp_cost_cents: 0,
+    imported_maps_cost_cents: 0,
+    imported_tavily_cost_cents: 0,
+    imported_firecrawl_cost_cents: 0,
+    imported_other_cost_cents: 0,
+    currency: 'BRL',
+    sources: [],
+    last_imported_at: null,
+    error_message: errorMessage,
+  };
+}
+
+function isImportedProviderCost(row: ProviderCostLedgerRow): boolean {
+  const source = String(row.source || '').toUpperCase();
+  const attribution = String(row.attribution_status || '').toUpperCase();
+  return attribution === 'TENANT_ATTRIBUTED' && source !== 'ESTIMATE' && source !== 'SYSTEM';
+}
+
+function providerCostBucket(row: ProviderCostLedgerRow): 'llm' | 'whatsapp' | 'maps' | 'tavily' | 'firecrawl' | 'other' {
+  const marker = `${row.provider || ''} ${row.service || ''}`.toUpperCase();
+  if (marker.includes('OPENAI') || marker.includes('LLM') || marker.includes('GPT')) return 'llm';
+  if (marker.includes('WHATSAPP') || marker.includes('EVOLUTION') || marker.includes('WAHA')) return 'whatsapp';
+  if (marker.includes('GOOGLE') || marker.includes('MAPS') || marker.includes('PLACES')) return 'maps';
+  if (marker.includes('TAVILY')) return 'tavily';
+  if (marker.includes('FIRECRAWL')) return 'firecrawl';
+  return 'other';
+}
+
+function summarizeProviderCosts(
+  periodMonth: string,
+  rows: ProviderCostLedgerRow[] | null | undefined,
+  errorMessage: string | null = null,
+): DashboardProviderCostSummary {
+  if (errorMessage) return emptyProviderCostSummary(periodMonth, errorMessage);
+
+  const summary = emptyProviderCostSummary(periodMonth);
+  const importedRows = (rows || []).filter(isImportedProviderCost);
+  summary.has_imported_rows = importedRows.length > 0;
+
+  const sources = new Set<string>();
+  let lastImportedAt: string | null = null;
+
+  importedRows.forEach((row) => {
+    const cost = Math.max(0, Number(row.cost_cents) || 0);
+    const bucket = providerCostBucket(row);
+    summary.imported_total_cost_cents += cost;
+    if (bucket === 'llm') summary.imported_llm_cost_cents += cost;
+    else if (bucket === 'whatsapp') summary.imported_whatsapp_cost_cents += cost;
+    else if (bucket === 'maps') summary.imported_maps_cost_cents += cost;
+    else if (bucket === 'tavily') summary.imported_tavily_cost_cents += cost;
+    else if (bucket === 'firecrawl') summary.imported_firecrawl_cost_cents += cost;
+    else summary.imported_other_cost_cents += cost;
+
+    if (row.currency) summary.currency = row.currency;
+    if (row.source) sources.add(row.source);
+    const rowTimestamp = row.updated_at || row.created_at;
+    if (rowTimestamp && (!lastImportedAt || rowTimestamp > lastImportedAt)) {
+      lastImportedAt = rowTimestamp;
+    }
+  });
+
+  summary.sources = Array.from(sources).sort();
+  summary.last_imported_at = lastImportedAt;
+  return summary;
 }
 
 export const dashboardQueries = {
@@ -2512,6 +2614,7 @@ export const dashboardQueries = {
     const [
       usageRes,
       tenantRes,
+      providerCostRes,
       leadsCreatedRes,
       outboundMessagesRes,
       inboundMessagesRes,
@@ -2520,6 +2623,11 @@ export const dashboardQueries = {
     ] = await Promise.all([
       supabase.from('tenant_usage').select('*').eq('tenant_id', tenantId).eq('period_month', periodMonth).maybeSingle(),
       supabase.from('tenants').select('plan').eq('id', tenantId).single(),
+      (supabase as any)
+        .from('provider_cost_ledger')
+        .select('provider, service, cost_cents, currency, source, attribution_status, updated_at, created_at')
+        .eq('tenant_id', tenantId)
+        .eq('period_month', periodMonth),
       supabase.from('leads').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).is('deleted_at', null).gte('created_at', periodStartIso),
       supabase.from('messages').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).eq('direction', 'OUTBOUND').gte('created_at', periodStartIso),
       supabase.from('messages').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).eq('direction', 'INBOUND').gte('created_at', periodStartIso),
@@ -2537,6 +2645,11 @@ export const dashboardQueries = {
       ledger_leads_captured_count: usage ? Number(usage.leads_captured_count) : 0,
       ledger_whatsapp_messages_sent: usage ? Number(usage.whatsapp_messages_sent) : 0,
     };
+    const providerCosts = summarizeProviderCosts(
+      periodMonth,
+      providerCostRes.data as ProviderCostLedgerRow[] | null | undefined,
+      providerCostRes.error?.message || null,
+    );
 
     // Try RPC
     const { data: rpcData, error: rpcErr } = await supabase.rpc('dashboard_ai_usage', { p_tenant_id: tenantId });
@@ -2557,6 +2670,7 @@ export const dashboardQueries = {
               remaining_cents: Number(r.remaining_cents) || 0,
             },
             operational,
+            provider_costs: providerCosts,
           },
           error: null,
         };
@@ -2590,6 +2704,7 @@ export const dashboardQueries = {
           remaining_cents: Math.max(0, maxLimitCents - totalCost),
         },
         operational,
+        provider_costs: providerCosts,
       },
       error: null,
     };
