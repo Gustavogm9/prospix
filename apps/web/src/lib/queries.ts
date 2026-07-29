@@ -15,6 +15,7 @@ import type { Database } from './database.types';
 
 type Tables = Database['public']['Tables'];
 type Enums = Database['public']['Enums'];
+type DashboardPeriod = 'week' | 'month' | '90d';
 
 export type Lead = Tables['leads']['Row'];
 export type LeadInsert = Tables['leads']['Insert'];
@@ -176,6 +177,31 @@ function startOfMonth(date = new Date()): string {
   return d.toISOString();
 }
 
+function startOfMonthDate(date = new Date()): string {
+  const d = new Date(date);
+  d.setUTCDate(1);
+  return d.toISOString().slice(0, 10);
+}
+
+function dashboardPeriodStart(period?: DashboardPeriod): string | undefined {
+  if (!period) return undefined;
+  const d = new Date();
+  if (period === 'week') d.setDate(d.getDate() - 7);
+  if (period === 'month') d.setDate(1);
+  if (period === '90d') d.setDate(d.getDate() - 90);
+  d.setHours(0, 0, 0, 0);
+  return d.toISOString();
+}
+
+function getSaoPauloHour(date: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Sao_Paulo',
+    hour: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date(date));
+  return Number(parts.find((part) => part.type === 'hour')?.value ?? 0);
+}
+
 function todayRange(): { start: string; end: string } {
   const start = new Date();
   start.setHours(0, 0, 0, 0);
@@ -253,43 +279,31 @@ export const leadsQueries = {
   count: async (tenantId: string, filters: Omit<LeadFilters, 'limit' | 'cursor' | 'offset'> = {}) => {
     const { status: _status, profession, campaign_id, fit_score_gte, search } = filters;
 
-    const buildQuery = (statusFilter?: string) => {
-      let q = supabase
-        .from('leads')
-        .select('id', { count: 'exact', head: true })
-        .eq('tenant_id', tenantId)
-        .is('deleted_at', null);
+    let query = supabase
+      .from('leads')
+      .select('status')
+      .eq('tenant_id', tenantId)
+      .is('deleted_at', null);
 
-      const backendStatus = mapLeadStatusToBackend(statusFilter);
-      if (backendStatus) q = q.eq('status', backendStatus);
-      if (profession) q = q.eq('profession', profession);
-      if (campaign_id) q = q.eq('campaign_id', campaign_id);
-      if (fit_score_gte !== undefined) q = q.gte('fit_score', fit_score_gte);
-      if (search) q = q.or(`name.ilike.%${search}%,whatsapp.ilike.%${search}%,email.ilike.%${search}%`);
-      return q;
-    };
+    if (profession) query = query.eq('profession', profession);
+    if (campaign_id) query = query.eq('campaign_id', campaign_id);
+    if (fit_score_gte !== undefined) query = query.gte('fit_score', fit_score_gte);
+    if (search) query = query.or(`name.ilike.%${search}%,whatsapp.ilike.%${search}%,email.ilike.%${search}%`);
 
-    const [total, captured, enriched, contacted, conversing, meetingScheduled, closedWon, closedLost] = await Promise.all([
-      buildQuery(),
-      buildQuery('CAPTURED'),
-      buildQuery('ENRICHED'),
-      buildQuery('CONTACTED'),
-      buildQuery('IN_CONVERSATION'),
-      buildQuery('MEETING_SCHEDULED'),
-      buildQuery('WON'),
-      buildQuery('LOST'),
-    ]);
+    const { data, error } = await query;
+    if (error) {
+      console.error('Failed to count leads by status', error);
+      return { total: 0 };
+    }
 
-    return {
-      total: total.count ?? 0,
-      CAPTURED: captured.count ?? 0,
-      ENRICHED: enriched.count ?? 0,
-      CONTACTED: contacted.count ?? 0,
-      IN_CONVERSATION: conversing.count ?? 0,
-      MEETING_SCHEDULED: meetingScheduled.count ?? 0,
-      WON: closedWon.count ?? 0,
-      LOST: closedLost.count ?? 0,
-    };
+    const counts: Record<string, number> & { total: number } = { total: 0 };
+    (data || []).forEach((row) => {
+      const status = String(row.status || 'UNKNOWN');
+      counts[status] = (counts[status] || 0) + 1;
+      counts.total += 1;
+    });
+
+    return counts;
   },
 
   /** Export all leads matching filters (for CSV) - fetches in batches */
@@ -2372,54 +2386,15 @@ export const dashboardQueries = {
   },
 
   /** CRM funnel counts and conversion rates */
-  funnel: async (tenantId: string, period?: 'week' | 'month' | '90d') => {
-    // Try RPC
-    const { data: rpcData, error: rpcErr } = await supabase.rpc('dashboard_funnel', { p_tenant_id: tenantId });
-    
-    // Also fetch whatsapp_valid count
-    let wvQuery = supabase
+  funnel: async (tenantId: string, period?: DashboardPeriod) => {
+    const dateFilter = dashboardPeriodStart(period);
+
+    let query = supabase
       .from('leads')
-      .select('*', { count: 'exact', head: true })
+      .select('status, whatsapp_valid')
       .eq('tenant_id', tenantId)
-      .eq('whatsapp_valid', true)
       .is('deleted_at', null);
 
-    let dateFilter: string | undefined;
-    if (period === 'week') { const d = new Date(); d.setDate(d.getDate() - 7); d.setHours(0, 0, 0, 0); dateFilter = d.toISOString(); }
-    else if (period === 'month') { const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); dateFilter = d.toISOString(); }
-    else if (period === '90d') { const d = new Date(); d.setDate(d.getDate() - 90); d.setHours(0, 0, 0, 0); dateFilter = d.toISOString(); }
-
-    if (dateFilter) {
-      wvQuery = wvQuery.gte('created_at', dateFilter);
-    }
-    const { count: whatsappValidCount } = await wvQuery;
-
-    if (!rpcErr && rpcData && Array.isArray(rpcData) && rpcData.length > 0) {
-      const stages: Record<string, number> = {};
-      let totalLeads = 0;
-      for (const row of rpcData) {
-        stages[row.status] = Number(row.cnt);
-        totalLeads += Number(row.cnt);
-      }
-      const winRate = totalLeads > 0 ? ((stages['CLOSED_WON'] || 0) / totalLeads) * 100 : 0;
-      const qualifiedRate = totalLeads > 0 ? (((stages['QUALIFIED'] || 0) + (stages['MEETING_SCHEDULED'] || 0) + (stages['CLOSED_WON'] || 0)) / totalLeads) * 100 : 0;
-
-      return {
-        data: {
-          stages,
-          total_leads: totalLeads,
-          whatsapp_valid_count: whatsappValidCount || 0,
-          metrics: {
-            win_rate_percent: Number(winRate.toFixed(1)),
-            qualified_rate_percent: Number(qualifiedRate.toFixed(1)),
-          },
-        } as DashboardFunnelData,
-        error: null,
-      };
-    }
-
-    // Fallback
-    let query = supabase.from('leads').select('status, whatsapp_valid').eq('tenant_id', tenantId);
     if (dateFilter) query = query.gte('created_at', dateFilter);
 
     const { data: leadRows, error } = await query;
@@ -2437,8 +2412,18 @@ export const dashboardQueries = {
       }
     });
 
-    const winRate = totalLeads > 0 ? ((counts['CLOSED_WON'] || 0) / totalLeads) * 100 : 0;
-    const qualifiedRate = totalLeads > 0 ? (((counts['QUALIFIED'] || 0) + (counts['MEETING_SCHEDULED'] || 0) + (counts['CLOSED_WON'] || 0)) / totalLeads) * 100 : 0;
+    const excludedFromCommercialFunnel =
+      (counts['INVALID_NUMBER'] || 0) +
+      (counts['COMMERCIAL_LEAD_SKIPPED'] || 0) +
+      (counts['ARCHIVED'] || 0) +
+      (counts['OPTED_OUT'] || 0);
+    const commercialBase = Math.max(0, totalLeads - excludedFromCommercialFunnel);
+    const qualifiedCount =
+      (counts['QUALIFIED'] || 0) +
+      (counts['MEETING_SCHEDULED'] || 0) +
+      (counts['CLOSED_WON'] || 0);
+    const winRate = commercialBase > 0 ? ((counts['CLOSED_WON'] || 0) / commercialBase) * 100 : 0;
+    const qualifiedRate = commercialBase > 0 ? (qualifiedCount / commercialBase) * 100 : 0;
 
     return {
       data: {
@@ -2455,29 +2440,8 @@ export const dashboardQueries = {
   },
 
   /** Revenue and commission performance */
-  performance: async (tenantId: string, period?: 'week' | 'month' | '90d') => {
-    // Try RPC
-    const { data: rpcData, error: rpcErr } = await supabase.rpc('dashboard_performance', { p_tenant_id: tenantId });
-    if (!rpcErr && rpcData) {
-      const r = Array.isArray(rpcData) ? rpcData[0] : rpcData;
-      if (r) {
-        return {
-          data: {
-            total_policy_cents: Number(r.total_policy_cents) || 0,
-            total_commission_cents: Number(r.total_commission_cents) || 0,
-            sales_count: Number(r.sales_count) || 0,
-            goals: { configured: false, target_cents: null, progress_percent: null, goal_reached: false },
-          } as DashboardPerformanceData,
-          error: null,
-        };
-      }
-    }
-
-    // Fallback
-    let dateFilter: string | undefined;
-    if (period === 'week') { const d = new Date(); d.setDate(d.getDate() - 7); d.setHours(0, 0, 0, 0); dateFilter = d.toISOString(); }
-    else if (period === 'month') { const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); dateFilter = d.toISOString(); }
-    else if (period === '90d') { const d = new Date(); d.setDate(d.getDate() - 90); d.setHours(0, 0, 0, 0); dateFilter = d.toISOString(); }
+  performance: async (tenantId: string, period?: DashboardPeriod) => {
+    const dateFilter = dashboardPeriodStart(period);
 
     let query = supabase.from('meetings')
       .select('policy_value_cents, commission_cents, id')
@@ -2536,7 +2500,7 @@ export const dashboardQueries = {
     }
 
     // Fallback
-    const periodMonth = startOfMonth();
+    const periodMonth = startOfMonthDate();
 
     const [usageRes, tenantRes] = await Promise.all([
       supabase.from('tenant_usage').select('*').eq('tenant_id', tenantId).eq('period_month', periodMonth).maybeSingle(),
@@ -2705,7 +2669,9 @@ export const dashboardQueries = {
     };
   },
 
-  performanceByScript: async (tenantId: string) => {
+  performanceByScript: async (tenantId: string, period?: DashboardPeriod) => {
+    const dateFilter = dashboardPeriodStart(period);
+
     const { data: scripts, error: scriptsErr } = await supabase
       .from('scripts')
       .select('id, name')
@@ -2713,22 +2679,27 @@ export const dashboardQueries = {
 
     if (scriptsErr) return { data: [], error: mapError(scriptsErr) };
 
-    const { data: conversations, error: convErr } = await supabase
+    let conversationQuery = supabase
       .from('conversations')
-      .select('script_id, message_count')
+      .select('id, script_id, started_at, last_inbound_at, last_outbound_at')
       .eq('tenant_id', tenantId);
 
+    if (dateFilter) conversationQuery = conversationQuery.gte('started_at', dateFilter);
+
+    const { data: conversations, error: convErr } = await conversationQuery;
     if (convErr) return { data: [], error: mapError(convErr) };
 
     const stats = (scripts || []).map(script => {
       const scriptConvs = (conversations || []).filter(c => c.script_id === script.id);
       const total = scriptConvs.length;
-      const responded = scriptConvs.filter(c => (c.message_count || 0) > 1).length;
+      const outboundStarted = scriptConvs.filter(c => Boolean(c.last_outbound_at)).length;
+      const responded = scriptConvs.filter(c => Boolean(c.last_inbound_at)).length;
       const rate = total > 0 ? (responded / total) * 100 : 0;
       return {
         id: script.id,
         name: script.name,
         total,
+        outboundStarted,
         responded,
         rate: Number(rate.toFixed(1))
       };
@@ -2739,39 +2710,66 @@ export const dashboardQueries = {
     return { data: stats, error: null };
   },
 
-  bestTimeOfDay: async (tenantId: string) => {
-    const { data: messages, error } = await supabase
-      .from('messages')
-      .select('created_at')
-      .eq('tenant_id', tenantId)
-      .eq('direction', 'INBOUND');
+  bestTimeOfDay: async (tenantId: string, period?: DashboardPeriod) => {
+    const dateFilter = dashboardPeriodStart(period);
 
+    let query = supabase
+      .from('messages')
+      .select('conversation_id, created_at, direction')
+      .eq('tenant_id', tenantId)
+      .in('direction', ['INBOUND', 'OUTBOUND'])
+      .order('created_at', { ascending: true });
+
+    if (dateFilter) query = query.gte('created_at', dateFilter);
+
+    const { data: messages, error } = await query;
     if (error) return { data: [], error: mapError(error) };
 
-    let morning = 0; // 9-12
-    let afternoon = 0; // 14-17
-    let earlyMorning = 0; // 7-9
-    let lateAfternoon = 0; // 17-20
-    let total = 0;
+    const firstOutboundByConversation = new Map<string, string>();
+    const inboundAfterOutbound = new Set<string>();
 
-    (messages || []).forEach(m => {
-      const hour = new Date(m.created_at).getHours();
-      total++;
-      if (hour >= 9 && hour < 12) morning++;
-      else if (hour >= 14 && hour < 17) afternoon++;
-      else if (hour >= 7 && hour < 9) earlyMorning++;
-      else if (hour >= 17 && hour < 20) lateAfternoon++;
+    (messages || []).forEach((message) => {
+      if (message.direction !== 'OUTBOUND') return;
+      if (!firstOutboundByConversation.has(message.conversation_id)) {
+        firstOutboundByConversation.set(message.conversation_id, message.created_at);
+      }
     });
 
-    const getRate = (count: number) => total > 0 ? Math.round((count / total) * 100) : 0;
+    (messages || []).forEach((message) => {
+      if (message.direction !== 'INBOUND') return;
+      const firstOutboundAt = firstOutboundByConversation.get(message.conversation_id);
+      if (firstOutboundAt && new Date(message.created_at).getTime() >= new Date(firstOutboundAt).getTime()) {
+        inboundAfterOutbound.add(message.conversation_id);
+      }
+    });
+
+    const buckets = [
+      { label: 'Manha 9-12h', period: 'morning', started: 0, responded: 0, min: 9, max: 12 },
+      { label: 'Tarde 14-17h', period: 'afternoon', started: 0, responded: 0, min: 14, max: 17 },
+      { label: 'Inicio manha 7-8h', period: 'earlyMorning', started: 0, responded: 0, min: 7, max: 9 },
+      { label: 'Fim tarde 17-20h', period: 'lateAfternoon', started: 0, responded: 0, min: 17, max: 20 },
+    ];
+
+    firstOutboundByConversation.forEach((createdAt, conversationId) => {
+      const hour = getSaoPauloHour(createdAt);
+      const bucket = buckets.find((item) => hour >= item.min && hour < item.max);
+      if (!bucket) return;
+      bucket.started += 1;
+      if (inboundAfterOutbound.has(conversationId)) {
+        bucket.responded += 1;
+      }
+    });
 
     return {
-      data: [
-        { label: 'Manhã 9-12h', rate: getRate(morning), period: 'morning' },
-        { label: 'Tarde 14-17h', rate: getRate(afternoon), period: 'afternoon' },
-        { label: 'Início Manhã 7-8h', rate: getRate(earlyMorning), period: 'earlyMorning' },
-        { label: 'Fim Tarde 17-20h', rate: getRate(lateAfternoon), period: 'lateAfternoon' }
-      ].sort((a, b) => b.rate - a.rate),
+      data: buckets
+        .map(({ label, period: bucketPeriod, started, responded }) => ({
+          label,
+          period: bucketPeriod,
+          started,
+          responded,
+          rate: started > 0 ? Number(((responded / started) * 100).toFixed(0)) : 0,
+        }))
+        .sort((a, b) => b.rate - a.rate),
       error: null
     };
   },

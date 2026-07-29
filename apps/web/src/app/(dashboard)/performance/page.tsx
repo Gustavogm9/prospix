@@ -1,10 +1,11 @@
 'use client';
 
 import { Info, ArrowUp, Download, Loader2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { dashboardQueries } from '@/lib/queries';
 import { useAuthStore } from '@/store/auth-store';
 import { toast } from '@prospix/ui';
+import { useTenantRealtimeRefresh } from '@/hooks/useTenantRealtimeRefresh';
 
 interface PerformanceData {
   total_policy_cents: number;
@@ -21,40 +22,68 @@ interface FunnelData {
   };
 }
 
+interface ScriptPerformanceData {
+  id: string;
+  name: string;
+  total: number;
+  outboundStarted: number;
+  responded: number;
+  rate: number;
+}
+
+interface TimeBucketData {
+  label: string;
+  rate: number;
+  period: string;
+  started?: number;
+  responded?: number;
+}
+
+const PERFORMANCE_REFRESH_TABLES = ['leads', 'conversations', 'messages', 'meetings', 'scripts', 'tenant_usage'];
+
 export default function Performance() {
   const [period, setPeriod] = useState<'week' | 'month' | '90d'>('month');
   const [perfData, setPerfData] = useState<PerformanceData | null>(null);
   const [funnelData, setFunnelData] = useState<FunnelData | null>(null);
-  const [scriptPerfData, setScriptPerfData] = useState<any[] | null>(null);
-  const [timeData, setTimeData] = useState<any[] | null>(null);
+  const [scriptPerfData, setScriptPerfData] = useState<ScriptPerformanceData[] | null>(null);
+  const [timeData, setTimeData] = useState<TimeBucketData[] | null>(null);
   const [loading, setLoading] = useState(true);
 
   const tenantId = useAuthStore(state => state.tenantId);
 
-  useEffect(() => {
-    const fetchAll = async () => {
+  const fetchAll = useCallback(async (silent = false) => {
       if (!tenantId) return;
-      setLoading(true);
+      if (!silent) setLoading(true);
       try {
         const [perfRes, funnelRes, scriptRes, timeRes] = await Promise.all([
           dashboardQueries.performance(tenantId, period),
           dashboardQueries.funnel(tenantId, period),
-          dashboardQueries.performanceByScript(tenantId),
-          dashboardQueries.bestTimeOfDay(tenantId),
+          dashboardQueries.performanceByScript(tenantId, period),
+          dashboardQueries.bestTimeOfDay(tenantId, period),
         ]);
         setPerfData(perfRes.data ?? null);
         setFunnelData(funnelRes.data ?? null);
-        setScriptPerfData(scriptRes.data ?? null);
-        setTimeData(timeRes.data ?? null);
+        setScriptPerfData((scriptRes.data ?? []) as ScriptPerformanceData[]);
+        setTimeData((timeRes.data ?? []) as TimeBucketData[]);
       } catch (err) {
         console.error('Failed to fetch performance data', err);
+        if (silent) return;
         toast.error('Erro ao carregar', 'Não foi possível carregar métricas de performance.');
       } finally {
-        setLoading(false);
+        if (!silent) setLoading(false);
       }
-    };
-    fetchAll();
   }, [period, tenantId]);
+
+  useEffect(() => {
+    void fetchAll();
+  }, [fetchAll]);
+
+  useTenantRealtimeRefresh({
+    tenantId,
+    tables: PERFORMANCE_REFRESH_TABLES,
+    onRefresh: () => fetchAll(true),
+    intervalMs: 15000,
+  });
 
   const fmt = (cents: number) => {
     const val = cents / 100;
@@ -102,7 +131,22 @@ export default function Performance() {
     { name: 'Perdidos', value: funnelData.stages.CLOSED_LOST || 0, color: '#D92D20' },
   ] : [];
 
-  const maxFunnelValue = Math.max(...funnelStages.map(s => s.value), 1);
+  const canonicalFunnelStages = funnelData?.stages ? [
+    { name: 'Capturados', value: funnelData.stages.CAPTURED || 0, color: '#1B3A6B' },
+    { name: 'Enriquecidos', value: funnelData.stages.ENRICHED || 0, color: '#2563eb' },
+    { name: 'Contatados', value: funnelData.stages.CONTACTED || 0, color: '#3b82f6' },
+    { name: 'Em conversa', value: funnelData.stages.CONVERSING || 0, color: '#7C3AED' },
+    { name: 'Qualificados', value: funnelData.stages.QUALIFIED || 0, color: '#6366f1' },
+    { name: 'Reuniao', value: funnelData.stages.MEETING_SCHEDULED || 0, color: '#06b6d4' },
+    { name: 'Ganhos', value: funnelData.stages.CLOSED_WON || 0, color: '#039855' },
+    { name: 'Perdidos', value: (funnelData.stages.CLOSED_LOST || 0) + (funnelData.stages.NOT_INTERESTED || 0) + (funnelData.stages.LOST_BEFORE_MEETING || 0), color: '#D92D20' },
+    { name: 'Invalidos', value: funnelData.stages.INVALID_NUMBER || 0, color: '#B45309' },
+    { name: 'Fora da regra', value: funnelData.stages.COMMERCIAL_LEAD_SKIPPED || 0, color: '#64748B' },
+    { name: 'Arquivados', value: funnelData.stages.ARCHIVED || 0, color: '#475569' },
+  ] : funnelStages;
+
+  const maxFunnelValue = Math.max(...canonicalFunnelStages.map(s => s.value), 1);
+  const bestTimeBucket = timeData?.[0];
 
   if (loading) {
     return (
@@ -190,6 +234,9 @@ export default function Performance() {
                   <div className="h-2 bg-[#F1F3F6] rounded-full overflow-hidden">
                     <div className="h-full rounded-full transition-all" style={{ width: `${s.rate}%`, background: color }} />
                   </div>
+                  <div className="mt-1 text-[10.5px] text-[#64748B]">
+                    {s.responded} respostas em {s.total} conversas iniciadas
+                  </div>
                 </div>
               );
             })}
@@ -212,14 +259,15 @@ export default function Performance() {
                   <div className="text-[10px] uppercase font-bold text-[#64748B] mb-1 leading-tight">{t.label.split(' ')[0]}<br/>{t.label.split(' ')[1]}</div>
                   <div className={`text-[18px] font-bold ${textColors[i] || 'text-[#475569]'}`}>{t.rate}%</div>
                   <div className="text-[10px] text-[#64748B] mt-0.5">resposta</div>
+                  <div className="text-[9.5px] text-[#64748B] mt-1">{t.responded ?? 0}/{t.started ?? 0}</div>
                 </div>
               );
             })}
           </div>
-          {timeData && timeData.length > 0 && timeData[0].rate > 0 ? (
+          {bestTimeBucket && bestTimeBucket.rate > 0 ? (
             <div className="mt-4 text-[11px] bg-[#FEF9C3] text-[#854D0E] p-3 rounded-lg flex items-start gap-2 leading-relaxed">
               <span className="shrink-0 text-[14px]">💡</span>
-              <span><strong>Recomendação:</strong> aumente os envios na faixa das <strong>{timeData[0].label.split(' ')[1]}</strong> que tem a melhor conversão do dia.</span>
+              <span><strong>Recomendação:</strong> aumente os envios na faixa das <strong>{bestTimeBucket.label.split(' ')[1]}</strong> que tem a melhor conversão do dia.</span>
             </div>
           ) : null}
         </div>
@@ -232,7 +280,7 @@ export default function Performance() {
           <div className="text-[11px] text-[#64748B] mt-0.5">Distribuição real de leads por estágio</div>
         </div>
         <div className="p-5 space-y-3">
-          {funnelStages.map((s, i) => (
+          {canonicalFunnelStages.map((s, i) => (
             <div key={i}>
               <div className="flex justify-between text-[12.5px] mb-1.5">
                 <span className="font-semibold text-[#0F172A]">{s.name}</span>
@@ -243,7 +291,7 @@ export default function Performance() {
               </div>
             </div>
           ))}
-          {funnelStages.length === 0 && (
+          {canonicalFunnelStages.length === 0 && (
             <div className="text-center text-[12px] text-[#64748B] py-6">Nenhum dado de funil disponível</div>
           )}
         </div>

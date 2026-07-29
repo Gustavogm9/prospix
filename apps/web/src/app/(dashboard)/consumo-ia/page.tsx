@@ -1,10 +1,11 @@
 'use client';
 
 import { AlertTriangle, Cpu, Info } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { dashboardQueries } from '@/lib/queries';
 import { useAuthStore } from '@/store/auth-store';
 import { toast } from '@prospix/ui';
+import { useTenantRealtimeRefresh } from '@/hooks/useTenantRealtimeRefresh';
 
 interface AIUsageData {
   llm_cost_cents: number;
@@ -19,6 +20,8 @@ interface AIUsageData {
     remaining_cents: number;
   };
 }
+
+const AI_USAGE_REFRESH_TABLES = ['tenant_usage', 'messages', 'lead_events', 'pending_outbound'];
 
 export default function AIConsumption() {
   const tenantId = useAuthStore(state => state.tenantId);
@@ -41,6 +44,21 @@ export default function AIConsumption() {
         });
       });
   }, [tenantId]);
+
+  const refreshUsage = useCallback(async () => {
+    if (!tenantId) return;
+    const result = await dashboardQueries.aiUsage(tenantId);
+    if (!result.error) {
+      setData(result.data);
+    }
+  }, [tenantId]);
+
+  useTenantRealtimeRefresh({
+    tenantId,
+    tables: AI_USAGE_REFRESH_TABLES,
+    onRefresh: refreshUsage,
+    intervalMs: 15000,
+  });
 
   const fmt = (cents: number) => `R$ ${(cents / 100).toFixed(2)}`;
 
