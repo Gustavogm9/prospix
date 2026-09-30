@@ -3,8 +3,19 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Input, toast } from '@prospix/ui';
-import { supabase } from '@/lib/supabase';
+import type { Session } from '@supabase/supabase-js';
+import { supabase, supabaseAdmin } from '@/lib/supabase';
+import { resolveLoginTarget } from '@/lib/login-routing';
+import { useAdminAuthStore } from '@/store/admin-auth-store';
 import { useAuthStore, type UserSession } from '@/store/auth-store';
+
+type LoginUser = {
+  id: string;
+  tenant_id: string | null;
+  name: string;
+  email: string;
+  role: 'OWNER' | 'ASSISTANT' | 'ADMIN' | 'GUILDS_ADMIN';
+};
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -12,6 +23,7 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const setSession = useAuthStore((state) => state.setSession);
+  const setAdminSession = useAdminAuthStore((state) => state.setAdminSession);
   const router = useRouter();
   const navTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -28,6 +40,46 @@ export default function Login() {
   const [confirmPw, setConfirmPw] = useState('');
   const [showNewPw, setShowNewPw] = useState(false);
   const [isChanging, setIsChanging] = useState(false);
+  const [pendingUser, setPendingUser] = useState<LoginUser | null>(null);
+
+  const activateLoginSurface = async (user: LoginUser, session: Session) => {
+    const target = resolveLoginTarget(user);
+
+    if (target.surface === 'admin') {
+      const { error: adminSessionError } = await supabaseAdmin.auth.setSession({
+        access_token: session.access_token,
+        refresh_token: session.refresh_token,
+      });
+
+      if (adminSessionError) {
+        throw new Error('Não foi possível iniciar a sessão administrativa.');
+      }
+
+      setAdminSession({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: 'GUILDS_ADMIN',
+      });
+
+      // Keep the privileged token only in the admin client/sessionStorage.
+      await supabase.auth.signOut({ scope: 'local' });
+      return target;
+    }
+
+    if (!user.tenant_id || user.role === 'GUILDS_ADMIN') {
+      throw new Error('Usuário sem corretora vinculada. Contate o suporte.');
+    }
+
+    setSession({
+      id: user.id,
+      tenant_id: user.tenant_id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+    } satisfies UserSession);
+    return target;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,17 +116,22 @@ export default function Login() {
         throw new Error('Não foi possível carregar os dados do usuário.');
       }
 
-      setSession(userData as UserSession);
+      const loginUser = userData as LoginUser;
 
       const mustChange = data.user.user_metadata?.must_change_password === true;
 
       if (mustChange) {
+        setPendingUser(loginUser);
         setCurrentPw(password);
         setMustChangePassword(true);
         toast.info('Troca de Senha Obrigatória', 'Por segurança, escolha uma nova senha para continuar.');
       } else {
+        if (!data.session) {
+          throw new Error('Sessão de acesso não encontrada. Tente entrar novamente.');
+        }
+        const target = await activateLoginSurface(loginUser, data.session);
         toast.success('Acesso Autorizado!', `Olá, ${userData.name}! Bem-vindo(a) de volta.`);
-        navTimerRef.current = setTimeout(() => router.push('/inicio'), 1000);
+        navTimerRef.current = setTimeout(() => router.push(target.path), 1000);
       }
     } catch (error: any) {
       const msg = error.message || '';
@@ -124,8 +181,20 @@ export default function Login() {
         throw new Error(updateError.message);
       }
 
+      if (!pendingUser) {
+        throw new Error('Dados do usuário não encontrados. Entre novamente.');
+      }
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!sessionData.session) {
+        throw new Error('Sessão expirada. Entre novamente com a nova senha.');
+      }
+
+      const target = await activateLoginSurface(pendingUser, sessionData.session);
+      setPendingUser(null);
+
       toast.success('Senha Atualizada!', 'Sua nova senha foi salva. Bem-vindo(a) ao Prospix!');
-      navTimerRef.current = setTimeout(() => router.push('/inicio'), 1000);
+      navTimerRef.current = setTimeout(() => router.push(target.path), 1000);
     } catch (error: any) {
       toast.error('Erro ao trocar senha', error.message || 'Não foi possível atualizar a senha.');
     } finally {

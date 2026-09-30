@@ -19,11 +19,14 @@ import {
   shouldMoveColdToRecovery,
 } from '../_shared/whatsapp-guardian-state.ts';
 import { loadTenantAiOutboundGate } from '../_shared/tenant-ai-outbound-control.ts';
+import { isEvolutionWebhookAuthorized } from '../_shared/webhook-auth.ts';
+import { resolveEvolutionWebhookEvent } from '../_shared/webhook-event.ts';
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY')!;
+const EVOLUTION_WEBHOOK_SECRET = Deno.env.get('EVOLUTION_WEBHOOK_SECRET') || '';
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
@@ -1338,7 +1341,40 @@ serve(async (req: Request) => {
       headers: {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Prospix-Webhook-Secret',
+      },
+    });
+  }
+
+  if (req.method !== 'POST') {
+    return new Response(JSON.stringify({ ok: false, error: 'method_not_allowed' }), {
+      status: 405,
+      headers: {
+        'Content-Type': 'application/json',
+        Allow: 'POST, OPTIONS',
+      },
+    });
+  }
+
+  const requestUrl = new URL(req.url);
+  const authorized = isEvolutionWebhookAuthorized(
+    {
+      authorization: req.headers.get('Authorization'),
+      webhookHeader: req.headers.get('X-Prospix-Webhook-Secret'),
+      webhookQuery: requestUrl.searchParams.get('webhook_secret'),
+    },
+    {
+      serviceRoleKey: SUPABASE_KEY,
+      webhookSecret: EVOLUTION_WEBHOOK_SECRET,
+    },
+  );
+
+  if (!authorized) {
+    return new Response(JSON.stringify({ ok: false, error: 'unauthorized' }), {
+      status: 401,
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-store',
       },
     });
   }
@@ -1407,6 +1443,8 @@ async function handleMessageUpsert(payload: any): Promise<Response> {
 
 async function processMessageUpsert(payload: any, ledgerId: string | null): Promise<Response> {
   try {
+    const event = resolveEvolutionWebhookEvent(payload);
+
     // ── Extract message data from webhook payload ────────────
     const messageData = payload.data;
     if (!messageData) {

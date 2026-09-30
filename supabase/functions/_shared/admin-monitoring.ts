@@ -3,6 +3,7 @@ import {
   buildAdminDisconnectAlertMessage,
   buildAdminRecoveryStructuralAlertMessage,
 } from './admin-message-formatters.ts';
+import { buildEvolutionHeaders } from './evolution-auth.ts';
 
 type SupabaseLike = any;
 
@@ -293,11 +294,16 @@ export async function sendAdminMonitoringWhatsApp(
   }
 
   try {
-    const response = await fetch(`${channel.baseUrl}/message/sendText/${channel.instanceName}`, {
+    const endpoint = `${channel.baseUrl}/message/sendText/${channel.instanceName}`;
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        apikey: channel.apiKey,
+        ...buildEvolutionHeaders(channel.apiKey, {
+          basicAuthB64: Deno.env.get('EVOLUTION_BASIC_AUTH_B64'),
+          requestUrl: endpoint,
+          allowedHost: Deno.env.get('EVOLUTION_BASIC_AUTH_HOST'),
+        }),
       },
       body: JSON.stringify({
         number,

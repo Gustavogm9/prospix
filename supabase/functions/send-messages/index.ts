@@ -3763,9 +3763,11 @@ serve(async (req: Request) => {
 
     // Ler payload para saber se processamos um tenant específico ou todos os tenants ativos
     let targetTenantId: string | null = null;
+    let skipAdminMonitoring = false;
     try {
       const body = await req.json();
       if (body?.tenant_id) targetTenantId = body.tenant_id;
+      skipAdminMonitoring = body?.skip_admin_monitoring === true;
     } catch (_) {}
 
     let tenantIds: string[] = [];
@@ -3787,7 +3789,9 @@ serve(async (req: Request) => {
     }
 
     if (tenantIds.length === 0) {
-      enqueueAdminMonitoringDue('send-messages:no-active-tenants');
+      if (!skipAdminMonitoring) {
+        enqueueAdminMonitoringDue('send-messages:no-active-tenants');
+      }
       return new Response(
         JSON.stringify({
           ok: true,
@@ -3815,7 +3819,9 @@ serve(async (req: Request) => {
       admin_monitoring: 'queued',
     };
 
-    enqueueAdminMonitoringDue('send-messages:cron');
+    if (!skipAdminMonitoring) {
+      enqueueAdminMonitoringDue('send-messages:cron');
+    }
 
     console.log('\n🏁 Worker finalizado: ' + JSON.stringify(summary));
 

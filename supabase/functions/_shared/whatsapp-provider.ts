@@ -1,3 +1,5 @@
+import { buildEvolutionHeaders } from './evolution-auth.ts';
+
 type SupabaseLike = any;
 
 export type WhatsAppProvider = 'EVOLUTION' | 'WAHA';
@@ -64,6 +66,14 @@ function apiKeyForProvider(provider: WhatsAppProvider, rowKey?: string | null): 
     return env('WAHA_API_KEY') || '';
   }
   return env('EVOLUTION_GUILDS_API_KEY') || env('EVOLUTION_API_KEY') || '';
+}
+
+function evolutionHeaders(apiKey: string, requestUrl: string): Record<string, string> {
+  return buildEvolutionHeaders(apiKey, {
+    basicAuthB64: env('EVOLUTION_BASIC_AUTH_B64'),
+    requestUrl,
+    allowedHost: env('EVOLUTION_BASIC_AUTH_HOST'),
+  });
 }
 
 function clampTimeoutMs(value: number | undefined, fallback = 15000): number {
@@ -286,13 +296,13 @@ async function fetchEvolutionConnectionStatus(
     };
   }
 
-  const headers = { apikey: channel.apiKey };
   const encodedInstance = encodeURIComponent(channel.instanceName);
+  const connectionUrl = `${channel.baseUrl}/instance/connectionState/${encodedInstance}`;
 
   try {
     const connectionResponse = await fetchWithTimeout(
-      `${channel.baseUrl}/instance/connectionState/${encodedInstance}`,
-      { headers },
+      connectionUrl,
+      { headers: evolutionHeaders(channel.apiKey, connectionUrl) },
       options.timeoutMs,
     );
     const connectionPayload = await parseJsonSafe(connectionResponse);
@@ -324,9 +334,10 @@ async function fetchEvolutionConnectionStatus(
       };
     }
 
+    const fetchInstancesUrl = `${channel.baseUrl}/instance/fetchInstances?instanceName=${encodedInstance}`;
     const fetchInstancesResponse = await fetchWithTimeout(
-      `${channel.baseUrl}/instance/fetchInstances?instanceName=${encodedInstance}`,
-      { headers },
+      fetchInstancesUrl,
+      { headers: evolutionHeaders(channel.apiKey, fetchInstancesUrl) },
       options.timeoutMs,
     );
     const fetchInstancesPayload = await parseJsonSafe(fetchInstancesResponse);
@@ -604,7 +615,7 @@ export async function sendWhatsAppMessage(
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          apikey: channel.apiKey,
+          ...evolutionHeaders(channel.apiKey, endpoint),
         },
         body: JSON.stringify(payload),
       },
