@@ -7,6 +7,7 @@ DECLARE
   v_target_campaign UUID := 'e11fce13-79a9-41f9-afc0-e341a5ad7759'::UUID;
   v_qa_lead UUID := '1848688e-55e6-4093-a0a5-0e967452a398'::UUID;
   v_table TEXT;
+  v_claimed INTEGER;
 BEGIN
   IF EXISTS (
     SELECT 1
@@ -113,6 +114,29 @@ BEGIN
       AND execution_stage = 'POST_GENERATION'
   ) THEN
     RAISE EXCEPTION 'G09_STAGE_MISMATCH';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM public.pending_outbound pending
+    JOIN public.conversations conversation ON conversation.id = pending.conversation_id
+    WHERE pending.tenant_id = v_target_tenant
+      AND conversation.lead_id = v_qa_lead
+      AND pending.sent_at IS NULL
+      AND pending.failed_at IS NULL
+      AND pending.scheduled_for <= statement_timestamp()
+  ) THEN
+    SELECT count(*) INTO v_claimed
+    FROM public.claim_due_pending_outbound(
+      v_target_tenant,
+      'qa-regression-test',
+      1,
+      30,
+      ARRAY[]::UUID[]
+    );
+    IF v_claimed <> 1 THEN
+      RAISE EXCEPTION 'QA_ALLOWLISTED_PENDING_NOT_CLAIMABLE_WHILE_PAUSED';
+    END IF;
   END IF;
 END;
 $$;
