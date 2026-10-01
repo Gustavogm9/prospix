@@ -85,3 +85,14 @@ Deno.test("disqualified responses never continue the interrogation", () => {
 
   assertEquals(response, "Entendi seu cenário.");
 });
+
+Deno.test("qualified responses keep at most one next-step question", () => {
+  const response = enforceQualificationResponse({
+    text:
+      "Seu cenário faz sentido. Quer ver as opções? Prefere hoje ou amanhã?",
+    evaluation: { status: "QUALIFIED", score: 100, missingFields: [] },
+  });
+
+  assertEquals((response.match(/\?/g) || []).length, 1);
+  assertEquals(response, "Seu cenário faz sentido. Quer ver as opções?");
+});

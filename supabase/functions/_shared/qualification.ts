@@ -309,6 +309,22 @@ function declarativeResponseText(text: string): string {
     .trim();
 }
 
+function responseWithAtMostOneQuestion(text: string): string {
+  let questionKept = false;
+  return String(text || "")
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((part) => part.trim())
+    .filter((part) => {
+      if (!part) return false;
+      if (!part.includes("?")) return true;
+      if (questionKept) return false;
+      questionKept = true;
+      return true;
+    })
+    .join(" ")
+    .trim();
+}
+
 export function enforceQualificationResponse(params: {
   text: string;
   evaluation: QualificationEvaluation;
@@ -326,6 +342,10 @@ export function enforceQualificationResponse(params: {
     const statement = declarativeResponseText(params.text);
     return statement ||
       "Entendi. Obrigado por compartilhar seu cenário; neste momento, faz mais sentido não avançarmos. Se a situação mudar, fico à disposição.";
+  }
+
+  if (params.evaluation.status === "QUALIFIED") {
+    return responseWithAtMostOneQuestion(params.text) || params.text;
   }
 
   return params.text;
