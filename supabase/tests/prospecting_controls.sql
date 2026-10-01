@@ -6,6 +6,7 @@ DECLARE
   v_target_tenant UUID := '6de57a0c-f8f5-4990-b9c3-87a83d95e75d'::UUID;
   v_target_campaign UUID := 'e11fce13-79a9-41f9-afc0-e341a5ad7759'::UUID;
   v_qa_lead UUID := '1848688e-55e6-4093-a0a5-0e967452a398'::UUID;
+  v_table TEXT;
 BEGIN
   IF EXISTS (
     SELECT 1
@@ -33,10 +34,23 @@ BEGIN
     RAISE EXCEPTION 'PROSPECTING_PRIVILEGE_REGRESSION';
   END IF;
 
-  IF has_table_privilege('authenticated', 'public.provider_cost_imports', 'INSERT')
-    OR has_table_privilege('authenticated', 'public.provider_usage_events', 'INSERT') THEN
-    RAISE EXCEPTION 'PROVIDER_LEDGER_WRITE_EXPOSED';
-  END IF;
+  FOREACH v_table IN ARRAY ARRAY[
+    'prospecting_runs', 'provider_usage_events', 'provider_cost_imports',
+    'qualification_sessions', 'qualification_answers', 'campaign_qa_allowlist'
+  ] LOOP
+    IF has_table_privilege('anon', format('public.%I', v_table), 'SELECT')
+      OR has_table_privilege('anon', format('public.%I', v_table), 'INSERT')
+      OR has_table_privilege('anon', format('public.%I', v_table), 'UPDATE')
+      OR has_table_privilege('anon', format('public.%I', v_table), 'DELETE') THEN
+      RAISE EXCEPTION 'PROSPECTING_TABLE_EXPOSED_TO_ANON: %', v_table;
+    END IF;
+
+    IF has_table_privilege('authenticated', format('public.%I', v_table), 'INSERT')
+      OR has_table_privilege('authenticated', format('public.%I', v_table), 'UPDATE')
+      OR has_table_privilege('authenticated', format('public.%I', v_table), 'DELETE') THEN
+      RAISE EXCEPTION 'PROSPECTING_TABLE_WRITE_EXPOSED: %', v_table;
+    END IF;
+  END LOOP;
 
   IF NOT EXISTS (
     SELECT 1
