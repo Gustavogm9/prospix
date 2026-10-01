@@ -30,6 +30,7 @@ import {
   tenantAiOutboundPausedRetryIso,
 } from '../_shared/tenant-ai-outbound-control.ts';
 import { canBypassTenantOutboundPause } from '../_shared/qa-homologation.ts';
+import { isAuthorizedWorkerRequest } from '../_shared/worker-auth.ts';
 import {
   fetchWhatsAppConnectionStatus as fetchProviderConnectionStatus,
   loadTenantWhatsAppChannel,
@@ -3974,10 +3975,12 @@ async function runGuardianWorkerForTenant(
 }
 
 serve(async (req: Request) => {
-  const authorization = req.headers.get('Authorization') || '';
   const cronSecret = Deno.env.get('CRON_SECRET') || '';
-  const authorized = authorization === `Bearer ${SUPABASE_KEY}` ||
-    (Boolean(cronSecret) && authorization === `Bearer ${cronSecret}`);
+  const authorized = isAuthorizedWorkerRequest(req, {
+    serviceRoleKey: SUPABASE_KEY,
+    supabaseUrl: SUPABASE_URL,
+    cronSecret,
+  });
   if (!authorized) {
     return new Response(JSON.stringify({ ok: false, error: 'UNAUTHORIZED' }), {
       status: 401,

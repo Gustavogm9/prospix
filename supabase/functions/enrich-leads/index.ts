@@ -12,6 +12,7 @@ import {
 } from "../_shared/whatsapp-provider.ts";
 import { isAllowedPublicHttpUrl } from "../_shared/public-url.ts";
 import { campaignEnrichmentPolicy } from "../_shared/enrichment-policy.ts";
+import { isAuthorizedWorkerRequest } from "../_shared/worker-auth.ts";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -824,11 +825,12 @@ function calcFitScore(lead: any, campaign: any, icp: any, activeSources: Set<str
 
 // ── Main Handler ────────────────────────────────────────────────────────────
 serve(async (req: Request) => {
-  const authorization = req.headers.get("authorization") || "";
   const cronSecret = Deno.env.get("CRON_SECRET") || "";
-  const authorized = authorization === `Bearer ${SUPABASE_KEY}` || (Boolean(cronSecret) && (
-    authorization === `Bearer ${cronSecret}` || req.headers.get("x-cron-secret") === cronSecret
-  ));
+  const authorized = isAuthorizedWorkerRequest(req, {
+    serviceRoleKey: SUPABASE_KEY,
+    supabaseUrl: SUPABASE_URL,
+    cronSecret,
+  });
   if (!authorized) {
     return new Response(JSON.stringify({ ok: false, error: "UNAUTHORIZED" }), {
       status: 401,

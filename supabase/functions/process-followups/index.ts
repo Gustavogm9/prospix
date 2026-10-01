@@ -4,6 +4,7 @@ import { v4 as uuid } from "https://esm.sh/uuid@9.0.1";
 import { GuardianRunner } from "../_shared/guardians/runner.ts";
 import type { EffectiveGuardianConfig, GuardianRunResult } from "../_shared/guardians/types.ts";
 import { loadTenantAiOutboundGate } from "../_shared/tenant-ai-outbound-control.ts";
+import { isAuthorizedWorkerRequest } from "../_shared/worker-auth.ts";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL") as string;
 const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") as string;
@@ -211,10 +212,12 @@ async function buildFollowupGuardianDecision(params: {
 
 serve(async (req) => {
   try {
-    const authHeader = req.headers.get('Authorization');
     const cronSecret = Deno.env.get("CRON_SECRET") || "";
-    const authorized = authHeader === `Bearer ${supabaseKey}` ||
-      (Boolean(cronSecret) && authHeader === `Bearer ${cronSecret}`);
+    const authorized = isAuthorizedWorkerRequest(req, {
+      serviceRoleKey: supabaseKey,
+      supabaseUrl,
+      cronSecret,
+    });
     if (!authorized) {
       return new Response('Unauthorized', { status: 401 });
     }

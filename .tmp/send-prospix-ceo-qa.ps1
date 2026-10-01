@@ -14,7 +14,7 @@ $qaRun = 'QA_EVOLUTION_GUILDS_20260930_QUALIFICATION_V2'
 $idempotencyKey = 'qa-evolution-guilds-20260930-qualification-v2'
 $sshTarget = 'root@2.28.205.33'
 $sshKey = 'C:\Users\User\.ssh\hetzner_guilds_2026'
-$minimumSendMessagesVersion = 52
+$minimumSendMessagesVersion = 54
 
 function Write-Stage([string]$message) {
   Write-Host "[Prospix QA] $message"
@@ -99,7 +99,10 @@ try {
   }
 
   $apiKeys = Invoke-ManagementRequest -method 'GET' -path '/api-keys?reveal=true'
-  $serviceRoleEntry = $apiKeys | Where-Object { $_.name -eq 'service_role' } | Select-Object -First 1
+  $serviceRoleEntry = $apiKeys | Where-Object { $_.type -eq 'secret' } | Select-Object -First 1
+  if (-not $serviceRoleEntry) {
+    $serviceRoleEntry = $apiKeys | Where-Object { $_.name -eq 'service_role' } | Select-Object -First 1
+  }
   $serviceRoleKey = if ($serviceRoleEntry.api_key) { $serviceRoleEntry.api_key } else { $serviceRoleEntry.apiKey }
   if (-not $serviceRoleKey) { throw 'A chave service_role nao foi localizada pelo Management API.' }
 

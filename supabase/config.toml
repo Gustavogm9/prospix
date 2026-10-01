@@ -382,6 +382,18 @@ inspector_port = 8083
 # The Deno major version to use.
 deno_version = 2
 
+[functions.discover-leads]
+verify_jwt = true
+
+[functions.enrich-leads]
+verify_jwt = true
+
+[functions.send-messages]
+verify_jwt = true
+
+[functions.process-followups]
+verify_jwt = true
+
 [functions.webhook-evolution]
 verify_jwt = false
 

@@ -5,6 +5,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { isAuthorizedWorkerRequest } from "../_shared/worker-auth.ts";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -1628,15 +1629,6 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-function isAuthorizedWorker(req: Request): boolean {
-  const authorization = req.headers.get("authorization") || "";
-  if (authorization === `Bearer ${SUPABASE_KEY}`) return true;
-  const cronSecret = Deno.env.get("CRON_SECRET") || "";
-  return Boolean(cronSecret) && (
-    authorization === `Bearer ${cronSecret}` || req.headers.get("x-cron-secret") === cronSecret
-  );
-}
-
 function campaignDiscoveryConfig(campaign: CampaignConfigRow, limit: number): DiscoverRequest["config"] {
   const fallbackTerms = campaign.filters?.search_terms?.[campaign.profession || ""];
   return {
@@ -1754,7 +1746,11 @@ async function executeDiscoveryRun(params: {
 
 serve(async (req: Request) => {
   if (req.method !== "POST") return jsonResponse({ ok: false, error: "METHOD_NOT_ALLOWED" }, 405);
-  if (!isAuthorizedWorker(req)) return jsonResponse({ ok: false, error: "UNAUTHORIZED" }, 401);
+  if (!isAuthorizedWorkerRequest(req, {
+    serviceRoleKey: SUPABASE_KEY,
+    supabaseUrl: SUPABASE_URL,
+    cronSecret: Deno.env.get("CRON_SECRET") || "",
+  })) return jsonResponse({ ok: false, error: "UNAUTHORIZED" }, 401);
 
   try {
     const body = await req.json() as Record<string, any>;
