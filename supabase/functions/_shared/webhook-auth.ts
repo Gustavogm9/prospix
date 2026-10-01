@@ -13,8 +13,8 @@ function constantTimeEqual(
   left: string | null | undefined,
   right: string | null | undefined,
 ): boolean {
-  const a = String(left || '');
-  const b = String(right || '');
+  const a = String(left || "");
+  const b = String(right || "");
   if (!a || !b || a.length !== b.length) return false;
 
   let diff = 0;
@@ -25,15 +25,20 @@ function constantTimeEqual(
 }
 
 function bearerToken(value: string | null | undefined): string {
-  const match = String(value || '').match(/^Bearer\s+(.+)$/i);
-  return match?.[1]?.trim() || '';
+  const match = String(value || "").match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() || "";
 }
 
 export function isEvolutionWebhookAuthorized(
   credentials: EvolutionWebhookCredentials,
   secrets: EvolutionWebhookSecrets,
 ): boolean {
-  if (constantTimeEqual(bearerToken(credentials.authorization), secrets.serviceRoleKey)) {
+  if (
+    isServiceRoleWebhookAuthorized(
+      credentials.authorization,
+      secrets.serviceRoleKey,
+    )
+  ) {
     return true;
   }
 
@@ -41,4 +46,11 @@ export function isEvolutionWebhookAuthorized(
     constantTimeEqual(credentials.webhookHeader, secrets.webhookSecret) ||
     constantTimeEqual(credentials.webhookQuery, secrets.webhookSecret)
   );
+}
+
+export function isServiceRoleWebhookAuthorized(
+  authorization: string | null | undefined,
+  serviceRoleKey: string | null | undefined,
+): boolean {
+  return constantTimeEqual(bearerToken(authorization), serviceRoleKey);
 }
