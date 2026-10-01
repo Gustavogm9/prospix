@@ -58,7 +58,7 @@ BEGIN
     FROM public.campaigns
     WHERE id = v_target_campaign
       AND tenant_id = v_target_tenant
-      AND status::TEXT = 'PAUSED'
+      AND status::TEXT IN ('PAUSED', 'ACTIVE')
       AND homologation_mode = true
       AND discovery_auto_enabled = false
       AND capture_sources = ARRAY['GOOGLE_MAPS']::TEXT[]
@@ -102,10 +102,11 @@ BEGIN
     JOIN public.conversations conversation ON conversation.id = pending.conversation_id
     JOIN public.leads lead ON lead.id = conversation.lead_id
     WHERE lead.campaign_id = v_target_campaign
+      AND lead.id <> v_qa_lead
       AND pending.sent_at IS NULL
       AND pending.failed_at IS NULL
   ) THEN
-    RAISE EXCEPTION 'TARGET_CAMPAIGN_HAS_OPEN_PENDING_MESSAGES';
+    RAISE EXCEPTION 'TARGET_CAMPAIGN_HAS_NON_QA_OPEN_PENDING_MESSAGES';
   END IF;
 
   IF NOT EXISTS (
