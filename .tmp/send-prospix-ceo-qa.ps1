@@ -147,9 +147,19 @@ BEGIN
     SELECT 1 FROM public.campaigns
     WHERE id = '__CAMPAIGN__'::uuid
       AND tenant_id = '__TENANT__'::uuid
-      AND status = 'PAUSED'
+      AND (
+        status = 'PAUSED'
+        OR (
+          status = 'ACTIVE'
+          AND EXISTS (
+            SELECT 1
+            FROM public.pending_outbound
+            WHERE idempotency_key = '__IDEMPOTENCY__'
+          )
+        )
+      )
   ) THEN
-    RAISE EXCEPTION 'QA_CAMPAIGN_NOT_PAUSED';
+    RAISE EXCEPTION 'QA_CAMPAIGN_NOT_IN_SAFE_RETRY_STATE';
   END IF;
 
   IF NOT EXISTS (
