@@ -32,10 +32,12 @@ import {
 import {
   buildQualificationExtractionPrompt,
   buildQualificationResponseInstruction,
+  enforceQualificationResponse,
   evaluateQualification,
   mergeQualificationFacts,
   nextQualificationQuestion,
   parseQualificationExtraction,
+  restrictQualificationAnswersToExpectedCriterion,
   type QualificationConfig,
   type QualificationEvaluation,
   type QualificationValue,
@@ -2853,10 +2855,15 @@ async function processMessageUpsert(
         );
         qualificationTokensIn = extraction.tokensIn;
         qualificationTokensOut = extraction.tokensOut;
+        const answersForTurn = restrictQualificationAnswersToExpectedCriterion({
+          message: messageContent,
+          expectedCriterionKey,
+          answers: parseQualificationExtraction(extraction.content),
+        });
         const merged = mergeQualificationFacts({
           config: qualificationConfig,
           currentFacts,
-          answers: parseQualificationExtraction(extraction.content),
+          answers: answersForTurn,
         });
         acceptedAnswers = merged.acceptedAnswers;
         qualificationEvaluation = evaluateQualification(
@@ -3303,6 +3310,14 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
           }
         }
       }
+    }
+
+    if (qualificationEnabled && qualificationConfig?.criteria?.length) {
+      responseText = enforceQualificationResponse({
+        text: responseText,
+        evaluation: qualificationEvaluation,
+        nextQuestion: qualificationNextQuestion,
+      });
     }
 
     console.log("  AI response generated and sent to Guardian validation.");
