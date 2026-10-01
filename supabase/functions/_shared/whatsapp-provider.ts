@@ -1,4 +1,5 @@
 import { buildEvolutionHeaders } from './evolution-auth.ts';
+import { calculateHumanTypingDelayMs } from './human-message.ts';
 
 type SupabaseLike = any;
 
@@ -38,15 +39,29 @@ export type SendWhatsAppResult = {
   error?: string | null;
 };
 
+export type WhatsAppNumberCheckResult = {
+  exists: boolean | null;
+  provider: WhatsAppProvider;
+  channelId: string | null;
+  error?: string | null;
+};
+
 type FetchOptions = {
   timeoutMs?: number;
+};
+
+type SendMessageOptions = FetchOptions & {
+  typingDelayMs?: number;
 };
 
 const DEFAULT_EVOLUTION_BASE_URL = 'https://evolution-evolution-api.qr4jgl.easypanel.host';
 const DEFAULT_WAHA_BASE_URL = 'https://waha-waha.qr4jgl.easypanel.host';
 
 function env(name: string): string | null {
-  const value = Deno.env.get(name);
+  const deno = (globalThis as typeof globalThis & {
+    Deno?: { env?: { get?: (key: string) => string | undefined } };
+  }).Deno;
+  const value = deno?.env?.get?.(name);
   return value && value.trim() ? value.trim() : null;
 }
 
@@ -231,6 +246,7 @@ function hasReachoutTimelock(payload: unknown): boolean {
 export async function loadTenantWhatsAppChannel(
   supabase: SupabaseLike,
   tenantId: string,
+  options: { allowLegacyFallback?: boolean } = {},
 ): Promise<WhatsAppChannel | null> {
   const { data: channel, error: channelError } = await supabase
     .from('whatsapp_channels')
@@ -260,6 +276,8 @@ export async function loadTenantWhatsAppChannel(
       externalState: channel.external_state ?? null,
     };
   }
+
+  if (options.allowLegacyFallback === false) return null;
 
   const { data: legacy, error: legacyError } = await supabase
     .from('tenant_secrets')
@@ -514,13 +532,90 @@ export async function fetchWhatsAppConnectionStatus(
   return await fetchEvolutionConnectionStatus(channel, options);
 }
 
+function parseNumberExists(payload: unknown): boolean | null {
+  const item = Array.isArray(payload) ? payload[0] : payload;
+  const candidates = [
+    getPath(item, ['exists']),
+    getPath(item, ['numberExists']),
+    getPath(item, ['data', 'exists']),
+    getPath(item, ['data', 'numberExists']),
+    getPath(item, ['result', 'exists']),
+  ];
+  for (const value of candidates) {
+    if (typeof value === 'boolean') return value;
+  }
+  const jid = getPath(item, ['jid']) ?? getPath(item, ['id']) ?? getPath(item, ['data', 'jid']);
+  if (typeof jid === 'string' && /@(s\.whatsapp\.net|c\.us)$/.test(jid)) return true;
+  return null;
+}
+
+export async function checkWhatsAppNumber(
+  channel: WhatsAppChannel,
+  phone: string,
+  options: FetchOptions = {},
+): Promise<WhatsAppNumberCheckResult> {
+  if (!channel.apiKey) {
+    return {
+      exists: null,
+      provider: channel.provider,
+      channelId: channel.id,
+      error: 'WhatsApp provider API key is missing',
+    };
+  }
+
+  const normalizedPhone = normalizePhone(phone);
+  try {
+    if (channel.provider === 'WAHA') {
+      const endpoint = new URL(`${channel.baseUrl}/api/contacts/check-exists`);
+      endpoint.searchParams.set('phone', normalizedPhone);
+      endpoint.searchParams.set('session', channel.instanceName);
+      const response = await fetchWithTimeout(endpoint.toString(), {
+        headers: { 'X-Api-Key': channel.apiKey },
+      }, options.timeoutMs);
+      const payload = await parseJsonSafe(response);
+      return {
+        exists: response.ok ? parseNumberExists(payload) : null,
+        provider: 'WAHA',
+        channelId: channel.id,
+        error: response.ok ? null : `WAHA ${response.status}: ${redactText(payload)}`,
+      };
+    }
+
+    const endpoint = `${channel.baseUrl}/chat/whatsappNumbers/${encodeURIComponent(channel.instanceName)}`;
+    const response = await fetchWithTimeout(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...evolutionHeaders(channel.apiKey, endpoint),
+      },
+      body: JSON.stringify({ numbers: [normalizedPhone] }),
+    }, options.timeoutMs);
+    const payload = await parseJsonSafe(response);
+    return {
+      exists: response.ok ? parseNumberExists(payload) : null,
+      provider: 'EVOLUTION',
+      channelId: channel.id,
+      error: response.ok ? null : `Evolution ${response.status}: ${redactText(payload)}`,
+    };
+  } catch (err) {
+    return {
+      exists: null,
+      provider: channel.provider,
+      channelId: channel.id,
+      error: err instanceof DOMException && err.name === 'AbortError'
+        ? `${channel.provider} number check timeout`
+        : redactText(err),
+    };
+  }
+}
+
 export async function sendWhatsAppMessage(
   channel: WhatsAppChannel,
   phone: string,
   text: string,
   mediaUrl?: string | null,
   mediaType?: string | null,
-  options: FetchOptions = {},
+  options: SendMessageOptions = {},
 ): Promise<SendWhatsAppResult> {
   if (!channel.sendEnabled) {
     return {
@@ -596,16 +691,19 @@ export async function sendWhatsAppMessage(
   const endpoint = mediaUrl
     ? `${channel.baseUrl}/message/sendMedia/${encodedInstance}`
     : `${channel.baseUrl}/message/sendText/${encodedInstance}`;
+  const typingDelayMs = options.typingDelayMs ?? calculateHumanTypingDelayMs(text);
   const payload = mediaUrl
     ? {
       number: normalizePhone(phone),
       mediatype: mediaType || 'document',
       media: mediaUrl,
       caption: text,
+      delay: typingDelayMs,
     }
     : {
       number: normalizePhone(phone),
       text,
+      delay: typingDelayMs,
     };
 
   try {

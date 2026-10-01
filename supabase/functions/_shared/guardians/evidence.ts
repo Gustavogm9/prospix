@@ -63,6 +63,8 @@ export function getVariable(guardian: EffectiveGuardian, key: string): GuardianV
   return guardian.variables.find((variable) => variable.variable_key === key) || null;
 }
 
+export function variableValue(guardian: EffectiveGuardian, key: string, fallback: boolean): boolean;
+export function variableValue<T>(guardian: EffectiveGuardian, key: string, fallback: T): T;
 export function variableValue<T>(guardian: EffectiveGuardian, key: string, fallback: T): T {
   const variable = getVariable(guardian, key);
   return (variable ? variable.value : fallback) as T;

@@ -11,6 +11,7 @@ import { validateInboundIdempotency } from "./validators/inbound-idempotency.ts"
 import { validateLeadRelevance } from "./validators/lead-relevance.ts";
 import { validatePhoneEntity } from "./validators/phone-entity.ts";
 import { validatePromptInjection } from "./validators/prompt-injection.ts";
+import { validateQualification } from "./validators/qualification.ts";
 import {
   validateIdentityPersonalization,
   validateInternalLeak,
@@ -29,6 +30,7 @@ export const ACTIVE_GUARDIAN_KEYS = new Set([
   "G03_PHONE_ENTITY",
   "G04_IDENTITY_PERSONALIZATION",
   "G05_CONVERSATION_STATE",
+  "G09_QUALIFICATION",
   "G12_STRUCTURED_OUTPUT",
   "G13_PLACEHOLDER_LEAK",
   "G14_INTERNAL_LEAK",
@@ -55,6 +57,7 @@ const validators: Record<string, GuardianValidator> = {
   G03_PHONE_ENTITY: validatePhoneEntity,
   G04_IDENTITY_PERSONALIZATION: validateIdentityPersonalization,
   G05_CONVERSATION_STATE: validateConversationState,
+  G09_QUALIFICATION: validateQualification,
   G12_STRUCTURED_OUTPUT: validateStructuredOutput,
   G13_PLACEHOLDER_LEAK: validatePlaceholderLeak,
   G14_INTERNAL_LEAK: validateInternalLeak,

@@ -6,15 +6,15 @@ $projectApi = "https://api.supabase.com/v1/projects/$projectRef"
 $functionUrl = "https://$projectRef.supabase.co/functions/v1/send-messages"
 $tenantId = '6de57a0c-f8f5-4990-b9c3-87a83d95e75d'
 $campaignId = 'e11fce13-79a9-41f9-afc0-e341a5ad7759'
-$scriptId = '83ecb6fd-9727-461c-b12c-7a45a25810a7'
+$scriptId = $null
 $channelId = '24d3a1e4-7f70-4ea3-a66e-8bc7a8952e30'
 $conversationId = 'c30fc22e-acde-4f24-b0bf-6a36e23ea5b1'
-$pendingId = '856e984d-bd40-4a78-9053-4bd17ed9229a'
-$qaRun = 'QA_EVOLUTION_GUILDS_20260930'
-$idempotencyKey = 'qa-evolution-guilds-20260930-initial-v1'
+$pendingId = [guid]::NewGuid().ToString()
+$qaRun = 'QA_EVOLUTION_GUILDS_20260930_QUALIFICATION_V2'
+$idempotencyKey = 'qa-evolution-guilds-20260930-qualification-v2'
 $sshTarget = 'root@2.28.205.33'
 $sshKey = 'C:\Users\User\.ssh\hetzner_guilds_2026'
-$expectedSendMessagesVersion = 51
+$minimumSendMessagesVersion = 52
 
 function Write-Stage([string]$message) {
   Write-Host "[Prospix QA] $message"
@@ -66,7 +66,11 @@ function Invoke-ManagementRequest(
     return Invoke-RestMethod @parameters
   } catch {
     $status = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { 0 }
-    throw "A chamada de gestao do Supabase falhou (HTTP $status)."
+    $detail = if ($_.ErrorDetails.Message) { $_.ErrorDetails.Message } else { $_.Exception.Message }
+    $detail = "$detail" -replace '\+?55\D*\d{2}\D*9\D*\d{4}\D*\d{4}', '[PHONE_REDACTED]'
+    $detail = $detail -replace 'sbp_[A-Za-z0-9_\-]+', '[TOKEN_REDACTED]'
+    if ($detail.Length -gt 900) { $detail = $detail.Substring(0, 900) }
+    throw "A chamada de gestao do Supabase falhou (HTTP $status): $detail"
   }
 }
 
@@ -103,9 +107,22 @@ try {
   $sendFunction = $functions | Where-Object {
     $_.slug -eq 'send-messages' -or $_.name -eq 'send-messages'
   } | Select-Object -First 1
-  if (-not $sendFunction -or [int]$sendFunction.version -ne $expectedSendMessagesVersion -or $sendFunction.status -ne 'ACTIVE') {
-    throw 'A versao isolada de send-messages nao esta ativa; nenhum dado foi criado.'
+  if (-not $sendFunction -or [int]$sendFunction.version -lt $minimumSendMessagesVersion -or $sendFunction.status -ne 'ACTIVE') {
+    throw 'A versao com o gate de homologacao de send-messages nao esta ativa; nenhum dado foi criado.'
   }
+
+  $scriptRows = Invoke-ManagementSql @"
+SELECT id::text AS id
+FROM public.scripts
+WHERE tenant_id = '$tenantId'::uuid
+  AND name = 'Médicos · Proteção de renda · v1'
+  AND status = 'ACTIVE'
+  AND archived_at IS NULL
+ORDER BY created_at DESC
+LIMIT 1;
+"@
+  $scriptId = @($scriptRows)[0].id
+  if (-not $scriptId) { throw 'O roteiro estruturado de qualificacao nao foi localizado.' }
 
   Write-Stage 'criando canal, estado operacional e registros QA em uma transacao'
   $sqlTemplate = @'
@@ -159,11 +176,11 @@ BEGIN
     RAISE EXCEPTION 'QA_INSTANCE_CHANNEL_OWNER_CONFLICT';
   END IF;
 
-  IF EXISTS (
+  IF NOT EXISTS (
     SELECT 1 FROM public.tenant_ai_outbound_controls
     WHERE tenant_id = '__TENANT__'::uuid AND paused = true
   ) THEN
-    RAISE EXCEPTION 'QA_TENANT_AI_OUTBOUND_PAUSED';
+    RAISE EXCEPTION 'QA_TENANT_AI_OUTBOUND_MUST_REMAIN_PAUSED';
   END IF;
 
   IF EXISTS (
@@ -183,14 +200,6 @@ BEGIN
     RAISE EXCEPTION 'QA_OTHER_PENDING_OUTBOUND_EXISTS';
   END IF;
 
-  UPDATE public.whatsapp_channels
-  SET active = false,
-      send_enabled = false,
-      receive_enabled = false,
-      updated_at = v_now
-  WHERE tenant_id = '__TENANT__'::uuid
-    AND id <> '__CHANNEL__'::uuid;
-
   INSERT INTO public.whatsapp_channels (
     id, owner_type, tenant_id, provider, label, base_url, instance_name,
     api_key_encrypted, webhook_secret, send_enabled, receive_enabled, active,
@@ -209,8 +218,8 @@ BEGIN
     label = EXCLUDED.label,
     base_url = EXCLUDED.base_url,
     instance_name = EXCLUDED.instance_name,
-    api_key_encrypted = NULL,
-    webhook_secret = NULL,
+    api_key_encrypted = COALESCE(whatsapp_channels.api_key_encrypted, EXCLUDED.api_key_encrypted),
+    webhook_secret = COALESCE(whatsapp_channels.webhook_secret, EXCLUDED.webhook_secret),
     send_enabled = true,
     receive_enabled = true,
     active = true,
@@ -239,7 +248,7 @@ BEGIN
     status = 'NORMAL',
     external_state = 'open',
     external_checked_at = v_now,
-    connected_at = COALESCE(public.whatsapp_guardian_status.connected_at, v_now),
+    connected_at = COALESCE(whatsapp_guardian_status.connected_at, v_now),
     last_disconnect_reason_code = NULL,
     quarantined_until = NULL,
     circuit_open_until = NULL,
@@ -278,7 +287,8 @@ BEGIN
   WHERE tenant_id = '__TENANT__'::uuid AND whatsapp = '__PHONE__'
   LIMIT 1;
 
-  IF v_existing_lead_id IS NOT NULL AND v_existing_marker <> '__QA_RUN__' THEN
+  IF v_existing_lead_id IS NOT NULL
+    AND v_existing_marker NOT LIKE 'QA_EVOLUTION_GUILDS_%' THEN
     RAISE EXCEPTION 'QA_DESTINATION_ALREADY_BELONGS_TO_NON_QA_LEAD';
   END IF;
 
@@ -292,10 +302,14 @@ BEGIN
   ) VALUES (
     '__TENANT__'::uuid, '__CAMPAIGN__'::uuid, 'MANUAL',
     'qa-evolution-guilds-20260930', jsonb_build_object('qa', true),
-    'Gustavo QA', 'DOCTOR', '__PHONE__', true, 'ENRICHED', 'QA',
-    jsonb_build_object('qa_run', '__QA_RUN__', 'authorized', true),
+    'Gustavo', NULL, '__PHONE__', true, 'ENRICHED', 'QA',
+    jsonb_build_object(
+      'qa_run', '__QA_RUN__', 'authorized', true,
+      'job_title', 'CEO', 'company_name', 'Guilds',
+      'enrichment_source', 'user_authorized_qa'
+    ),
     ARRAY['QA', 'EVOLUTION', 'CEO_TEST']::text[],
-    100, 100, 'ELIGIBLE', 'VALID', 1, 'PERSON', 1, true, 1,
+    10, 1, 'ELIGIBLE', 'VALID', 1, 'PERSON', 1, true, 1,
     jsonb_build_object('qa_authorized', true), v_now, v_now
   )
   ON CONFLICT (tenant_id, whatsapp) DO UPDATE SET
@@ -307,7 +321,7 @@ BEGIN
     whatsapp_valid = true,
     status = 'ENRICHED',
     pipeline_stage = 'QA',
-    metadata = COALESCE(public.leads.metadata, '{}'::jsonb) || EXCLUDED.metadata,
+    metadata = COALESCE(leads.metadata, '{}'::jsonb) || EXCLUDED.metadata,
     tags = EXCLUDED.tags,
     fit_score = EXCLUDED.fit_score,
     relevance_score = EXCLUDED.relevance_score,
@@ -323,6 +337,17 @@ BEGIN
     updated_at = v_now
   RETURNING id INTO v_lead_id;
 
+  INSERT INTO public.campaign_qa_allowlist (
+    campaign_id, lead_id, reason, expires_at
+  ) VALUES (
+    '__CAMPAIGN__'::uuid, v_lead_id,
+    'Homologacao de qualificacao autorizada pelo CEO em 30/09/2026',
+    v_now + interval '14 days'
+  )
+  ON CONFLICT (campaign_id, lead_id) DO UPDATE
+  SET reason = EXCLUDED.reason,
+      expires_at = EXCLUDED.expires_at;
+
   INSERT INTO public.conversations (
     id, tenant_id, lead_id, status, ai_handling, script_id,
     message_count, started_at, last_message_at
@@ -335,6 +360,14 @@ BEGIN
     status = 'ACTIVE',
     ai_handling = true,
     script_id = EXCLUDED.script_id;
+
+  UPDATE public.campaigns
+  SET status = 'ACTIVE',
+      homologation_mode = true,
+      discovery_auto_enabled = false,
+      updated_at = v_now
+  WHERE id = '__CAMPAIGN__'::uuid
+    AND tenant_id = '__TENANT__'::uuid;
 
   INSERT INTO public.pending_outbound (
     id, tenant_id, conversation_id, content, scheduled_for,
@@ -381,6 +414,8 @@ $qa$;
   $verifySql = @"
 SELECT jsonb_build_object(
   'campaign_status', (SELECT status::text FROM public.campaigns WHERE id = '$campaignId'::uuid),
+  'tenant_outbound_paused', (SELECT paused FROM public.tenant_ai_outbound_controls WHERE tenant_id = '$tenantId'::uuid),
+  'qa_allowlisted', EXISTS (SELECT 1 FROM public.campaign_qa_allowlist WHERE campaign_id = '$campaignId'::uuid AND expires_at > statement_timestamp()),
   'channel', (SELECT jsonb_build_object('id', id, 'provider', provider, 'active', active, 'send_enabled', send_enabled, 'receive_enabled', receive_enabled, 'connection_status', connection_status, 'external_state', external_state) FROM public.whatsapp_channels WHERE id = '$channelId'::uuid),
   'guardian', (SELECT jsonb_build_object('status', status, 'external_state', external_state, 'locked', locked_at IS NOT NULL, 'quarantined', quarantined_until IS NOT NULL, 'circuit_open', circuit_open_until IS NOT NULL) FROM public.whatsapp_guardian_status WHERE tenant_id = '$tenantId'::uuid),
   'pending', (SELECT jsonb_build_object('id', id, 'sent', sent_at IS NOT NULL, 'failed', failed_at IS NOT NULL, 'failed_reason', failed_reason, 'attempts', attempts, 'provider', whatsapp_provider, 'channel_id', whatsapp_channel_id, 'scheduled_for', scheduled_for) FROM public.pending_outbound WHERE idempotency_key = '$idempotencyKey'),
@@ -404,7 +439,12 @@ SELECT jsonb_build_object(
   if ([int]$verification.outbound_messages -ne 1 -or [int]$verification.provider_receipts -ne 1) {
     throw 'A confirmacao do banco nao encontrou exatamente uma mensagem com recibo do provedor.'
   }
-  if ($verification.campaign_status -ne 'PAUSED' -or [int]$verification.other_open_pending -ne 0) {
+  if (
+    $verification.campaign_status -ne 'ACTIVE' -or
+    -not $verification.tenant_outbound_paused -or
+    -not $verification.qa_allowlisted -or
+    [int]$verification.other_open_pending -ne 0
+  ) {
     throw 'A verificacao de isolamento da campanha ou da fila falhou.'
   }
 

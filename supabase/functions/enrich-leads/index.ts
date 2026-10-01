@@ -5,11 +5,17 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  checkWhatsAppNumber,
+  loadTenantWhatsAppChannel,
+  type WhatsAppChannel,
+} from "../_shared/whatsapp-provider.ts";
+import { isAllowedPublicHttpUrl } from "../_shared/public-url.ts";
+import { campaignEnrichmentPolicy } from "../_shared/enrichment-policy.ts";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const EVO_KEY_FALLBACK = "429683C4C977415CAAFCCE10F7D57E11";
 const DEFAULT_BATCH_SIZE = 50;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -75,48 +81,151 @@ function similarityScore(a: string, b: string): number {
   return overlap / Math.max(tokA.size, tokB.size);
 }
 
-// ── Evolution API: WhatsApp Validation ──────────────────────────────────────
-interface EvoConfig {
-  baseUrl: string;
-  instanceName: string;
-  apiKey: string;
-}
+type EnrichmentUsageContext = {
+  tenantId: string;
+  campaignId: string;
+  leadId: string;
+};
 
-async function loadEvoConfig(tenantId: string): Promise<EvoConfig | null> {
-  try {
-    const { data, error } = await supabase
-      .from("tenant_secrets")
-      .select("evolution_base_url, evolution_instance_name, evolution_api_key_encrypted")
-      .eq("tenant_id", tenantId)
-      .single();
+type EnrichmentUsageGate = { should_stop?: boolean; stop_reason?: string | null };
 
-    if (error || !data?.evolution_instance_name) return null;
+class EnrichmentControlError extends Error {}
 
-    return {
-      baseUrl: data.evolution_base_url || "https://evolution-evolution-api.qr4jgl.easypanel.host",
-      instanceName: data.evolution_instance_name,
-      apiKey: data.evolution_api_key_encrypted || EVO_KEY_FALLBACK,
-    };
-  } catch (_e) {
-    return null;
+function configuredProviderCostMicros(name: string, required: boolean): number {
+  const parsed = Number(Deno.env.get(name) || "0");
+  const value = Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0;
+  if (required && value <= 0) {
+    throw new EnrichmentControlError(`${name}_NOT_CONFIGURED`);
   }
+  return value;
 }
 
-async function checkWhatsApp(phone: string, evoConfig: EvoConfig | null): Promise<boolean | null> {
-  if (!evoConfig || !phone) return null;
+async function recordEnrichmentProviderUsage(params: {
+  context: EnrichmentUsageContext;
+  provider: string;
+  service: string;
+  operation: string;
+  status: "ATTEMPTED" | "SUCCEEDED" | "FAILED";
+  estimatedCostMicros?: number;
+  idempotencyKey: string;
+  externalRequestId?: string | null;
+  metadata?: Record<string, unknown>;
+}): Promise<EnrichmentUsageGate> {
+  const { data, error } = await supabase.rpc("record_provider_usage_event", {
+    p_tenant_id: params.context.tenantId,
+    p_campaign_id: params.context.campaignId,
+    p_lead_id: params.context.leadId,
+    p_prospecting_run_id: null,
+    p_provider: params.provider,
+    p_service: params.service,
+    p_operation: params.operation,
+    p_source_type: "ENRICHMENT",
+    p_status: params.status,
+    p_quantity: 1,
+    p_unit: "request",
+    p_estimated_cost_micros: Math.max(0, Math.floor(params.estimatedCostMicros || 0)),
+    p_external_request_id: params.externalRequestId || null,
+    p_idempotency_key: params.idempotencyKey,
+    p_metadata: params.metadata || {},
+  });
+  if (error) {
+    throw new EnrichmentControlError(`ENRICHMENT_USAGE_LEDGER_UNAVAILABLE:${error.code || "RPC"}`);
+  }
+  return (data || {}) as EnrichmentUsageGate;
+}
+
+async function executeRecordedEnrichmentCall<T>(params: {
+  context: EnrichmentUsageContext;
+  provider: string;
+  service: string;
+  operation: string;
+  estimatedCostMicros?: number;
+  metadata?: Record<string, unknown>;
+  call: () => Promise<T>;
+  succeeded: (result: T) => boolean;
+  externalRequestId?: (result: T) => string | null;
+  resultMetadata?: (result: T) => Record<string, unknown>;
+}): Promise<T> {
+  const idempotencyKey = `enrich:${params.context.leadId}:${params.operation}:${crypto.randomUUID()}`;
+  await recordEnrichmentProviderUsage({
+    context: params.context,
+    provider: params.provider,
+    service: params.service,
+    operation: params.operation,
+    status: "ATTEMPTED",
+    estimatedCostMicros: params.estimatedCostMicros,
+    idempotencyKey,
+    metadata: params.metadata,
+  });
+
+  let result: T;
   try {
-    const url = `${evoConfig.baseUrl}/chat/whatsappNumbers/${evoConfig.instanceName}`;
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: evoConfig.apiKey },
-      body: JSON.stringify({ numbers: [phone] }),
+    result = await params.call();
+  } catch {
+    const gate = await recordEnrichmentProviderUsage({
+      context: params.context,
+      provider: params.provider,
+      service: params.service,
+      operation: params.operation,
+      status: "FAILED",
+      estimatedCostMicros: params.estimatedCostMicros,
+      idempotencyKey,
+      metadata: { ...(params.metadata || {}), network_error: true },
     });
-    if (!resp.ok) return null;
-    const data = await resp.json();
-    const result = Array.isArray(data) ? data[0] : data;
-    return result?.exists === true;
-  } catch (_err) {
-    return null;
+    if (gate.should_stop) {
+      throw new EnrichmentControlError(gate.stop_reason || "ENRICHMENT_BUDGET_STOPPED");
+    }
+    throw new Error("ENRICHMENT_PROVIDER_NETWORK_ERROR");
+  }
+
+  const gate = await recordEnrichmentProviderUsage({
+    context: params.context,
+    provider: params.provider,
+    service: params.service,
+    operation: params.operation,
+    status: params.succeeded(result) ? "SUCCEEDED" : "FAILED",
+    estimatedCostMicros: params.estimatedCostMicros,
+    idempotencyKey,
+    externalRequestId: params.externalRequestId?.(result) || null,
+    metadata: { ...(params.metadata || {}), ...(params.resultMetadata?.(result) || {}) },
+  });
+  if (gate.should_stop) {
+    throw new EnrichmentControlError(gate.stop_reason || "ENRICHMENT_BUDGET_STOPPED");
+  }
+  return result;
+}
+
+async function fetchEnrichmentProvider(params: {
+  context: EnrichmentUsageContext;
+  url: string;
+  fetchOptions?: RequestInit;
+  timeoutMs?: number;
+  provider: string;
+  service: string;
+  operation: string;
+  estimatedCostMicros?: number;
+  metadata?: Record<string, unknown>;
+}): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), params.timeoutMs || 15000);
+  try {
+    return await executeRecordedEnrichmentCall({
+      context: params.context,
+      provider: params.provider,
+      service: params.service,
+      operation: params.operation,
+      estimatedCostMicros: params.estimatedCostMicros,
+      metadata: params.metadata,
+      call: () => fetch(params.url, {
+        ...(params.fetchOptions || {}),
+        signal: controller.signal,
+      }),
+      succeeded: (response) => response.ok,
+      externalRequestId: (response) => response.headers.get("x-request-id"),
+      resultMetadata: (response) => ({ http_status: response.status }),
+    });
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -261,7 +370,12 @@ function parseCnpjaRecord(rec: any): CnpjInfo {
   };
 }
 
-async function searchCnpjaWithQuery(query: string, uf: string | undefined, cnpjaKey: string): Promise<CnpjInfo[]> {
+async function searchCnpjaWithQuery(
+  query: string,
+  uf: string | undefined,
+  cnpjaKey: string,
+  context: EnrichmentUsageContext,
+): Promise<CnpjInfo[]> {
   if (!query || query.length < 3) return [];
   try {
     const params = new URLSearchParams({
@@ -271,30 +385,41 @@ async function searchCnpjaWithQuery(query: string, uf: string | undefined, cnpja
     });
     if (uf) params.set("address.state.in", uf);
 
-    const resp = await fetch(`https://api.cnpja.com/office?${params}`, {
-      headers: { Authorization: cnpjaKey },
+    const resp = await fetchEnrichmentProvider({
+      context,
+      url: `https://api.cnpja.com/office?${params}`,
+      fetchOptions: { headers: { Authorization: cnpjaKey } },
+      provider: "CNPJA",
+      service: "OFFICE_API",
+      operation: "NAME_SEARCH",
+      estimatedCostMicros: configuredProviderCostMicros("CNPJA_SEARCH_COST_MICROS", true),
     });
     if (!resp.ok) return [];
     const d = await resp.json();
     return (d.records || []).map(parseCnpjaRecord);
   } catch (_e) {
+    if (_e instanceof EnrichmentControlError) throw _e;
     return [];
   }
 }
 
-async function searchCnpjaByName(companyName: string, uf?: string): Promise<CnpjInfo | null> {
+async function searchCnpjaByName(
+  companyName: string,
+  uf: string | undefined,
+  context: EnrichmentUsageContext,
+): Promise<CnpjInfo | null> {
   const cnpjaKey = Deno.env.get("CNPJA_API_KEY");
   if (!cnpjaKey) return null;
 
   // Strategy 1: Full normalized name
   const fullName = normalizeCompanyName(companyName);
-  let results = await searchCnpjaWithQuery(fullName, uf, cnpjaKey);
+  let results = await searchCnpjaWithQuery(fullName, uf, cnpjaKey, context);
 
   // Strategy 2: Core tokens only (removes generic words)
   if (results.length === 0) {
     const tokens = extractSearchTokens(companyName);
     if (tokens !== fullName && tokens.length >= 3) {
-      results = await searchCnpjaWithQuery(tokens, uf, cnpjaKey);
+      results = await searchCnpjaWithQuery(tokens, uf, cnpjaKey, context);
     }
   }
 
@@ -304,7 +429,7 @@ async function searchCnpjaByName(companyName: string, uf?: string): Promise<Cnpj
     if (words.length >= 2) {
       const twoWords = words.slice(0, 2).join(" ");
       if (twoWords !== fullName) {
-        results = await searchCnpjaWithQuery(twoWords, uf, cnpjaKey);
+        results = await searchCnpjaWithQuery(twoWords, uf, cnpjaKey, context);
       }
     }
   }
@@ -327,21 +452,28 @@ async function searchCnpjaByName(companyName: string, uf?: string): Promise<Cnpj
 
   // Reject if similarity is too low (avoid false positives)
   if (bestScore < 0.3) {
-    console.warn(`  ⚠️ CNPJá: best match for "${companyName}" had score ${bestScore.toFixed(2)} — rejected`);
+    console.warn(`  CNPJá: correspondência rejeitada por similaridade ${bestScore.toFixed(2)}`);
     return null;
   }
 
-  console.log(`  🔍 CNPJá match: "${companyName}" → "${bestMatch?.razao_social}" (score: ${bestScore.toFixed(2)})`);
+  console.log(`  CNPJá: correspondência aceita com similaridade ${bestScore.toFixed(2)}`);
   return bestMatch;
 }
 
 // ── 5. CNPJá Open API (lookup by exact CNPJ — FREE, 5/min) ─────────────────
-async function lookupCnpjaOpen(cnpj: string): Promise<CnpjInfo | null> {
+async function lookupCnpjaOpen(cnpj: string, context: EnrichmentUsageContext): Promise<CnpjInfo | null> {
   const clean = cleanCnpj(cnpj);
   if (clean.length !== 14) return null;
 
   try {
-    const resp = await fetch(`https://open.cnpja.com/office/${clean}`);
+    const resp = await fetchEnrichmentProvider({
+      context,
+      url: `https://open.cnpja.com/office/${clean}`,
+      provider: "CNPJA",
+      service: "OPEN_OFFICE_API",
+      operation: "CNPJ_LOOKUP",
+      estimatedCostMicros: 0,
+    });
     if (!resp.ok) return null;
 
     const d = await resp.json();
@@ -361,17 +493,25 @@ async function lookupCnpjaOpen(cnpj: string): Promise<CnpjInfo | null> {
       })),
     };
   } catch (_e) {
+    if (_e instanceof EnrichmentControlError) throw _e;
     return null;
   }
 }
 
 // ── 6. BrasilAPI (lookup by exact CNPJ — FREE) ─────────────────────────────
-async function lookupBrasilApi(cnpj: string): Promise<CnpjInfo | null> {
+async function lookupBrasilApi(cnpj: string, context: EnrichmentUsageContext): Promise<CnpjInfo | null> {
   const clean = cleanCnpj(cnpj);
   if (clean.length !== 14) return null;
 
   try {
-    const resp = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${clean}`);
+    const resp = await fetchEnrichmentProvider({
+      context,
+      url: `https://brasilapi.com.br/api/cnpj/v1/${clean}`,
+      provider: "OTHER",
+      service: "BRASILAPI_CNPJ",
+      operation: "CNPJ_LOOKUP",
+      estimatedCostMicros: 0,
+    });
     if (!resp.ok) return null;
 
     const d = await resp.json();
@@ -391,18 +531,26 @@ async function lookupBrasilApi(cnpj: string): Promise<CnpjInfo | null> {
       })),
     };
   } catch (_e) {
+    if (_e instanceof EnrichmentControlError) throw _e;
     return null;
   }
 }
 
 // ── 7. ReceitaWS fallback (lookup by exact CNPJ — FREE 3/min) ───────────────
-async function lookupReceitaWs(cnpj: string): Promise<CnpjInfo | null> {
+async function lookupReceitaWs(cnpj: string, context: EnrichmentUsageContext): Promise<CnpjInfo | null> {
   const clean = cleanCnpj(cnpj);
   if (clean.length !== 14) return null;
 
   try {
     await sleep(1500); // Rate limit
-    const resp = await fetch(`https://receitaws.com.br/v1/cnpj/${clean}`);
+    const resp = await fetchEnrichmentProvider({
+      context,
+      url: `https://receitaws.com.br/v1/cnpj/${clean}`,
+      provider: "OTHER",
+      service: "RECEITAWS_CNPJ",
+      operation: "CNPJ_LOOKUP",
+      estimatedCostMicros: 0,
+    });
     if (!resp.ok) return null;
 
     const d = await resp.json();
@@ -430,6 +578,7 @@ async function lookupReceitaWs(cnpj: string): Promise<CnpjInfo | null> {
       })),
     };
   } catch (_e) {
+    if (_e instanceof EnrichmentControlError) throw _e;
     return null;
   }
 }
@@ -439,8 +588,11 @@ async function enrichCnpj(
   leadName: string,
   existingCnpj: string | null,
   city?: string,
-  uf?: string
+  uf?: string,
+  context?: EnrichmentUsageContext,
+  allowExternal = false,
 ): Promise<{ info: CnpjInfo | null; source: string }> {
+  if (!context) throw new EnrichmentControlError("ENRICHMENT_CONTEXT_REQUIRED");
   // 1. If we have a CNPJ, try cache → open APIs
   if (existingCnpj) {
     const clean = cleanCnpj(existingCnpj);
@@ -449,25 +601,27 @@ async function enrichCnpj(
       const cached = await checkCnpjCache(clean);
       if (cached) return { info: cached, source: "cache" };
 
-      // Try CNPJá open (free)
-      const cnpja = await lookupCnpjaOpen(clean);
-      if (cnpja) {
-        await saveToCnpjCache(cnpja, "cnpja_open", leadName, city);
-        return { info: cnpja, source: "cnpja_open" };
-      }
+      if (allowExternal) {
+        // Try CNPJá open (free)
+        const cnpja = await lookupCnpjaOpen(clean, context);
+        if (cnpja) {
+          await saveToCnpjCache(cnpja, "cnpja_open", leadName, city);
+          return { info: cnpja, source: "cnpja_open" };
+        }
 
-      // Try BrasilAPI (free)
-      const brasil = await lookupBrasilApi(clean);
-      if (brasil) {
-        await saveToCnpjCache(brasil, "brasilapi", leadName, city);
-        return { info: brasil, source: "brasilapi" };
-      }
+        // Try BrasilAPI (free)
+        const brasil = await lookupBrasilApi(clean, context);
+        if (brasil) {
+          await saveToCnpjCache(brasil, "brasilapi", leadName, city);
+          return { info: brasil, source: "brasilapi" };
+        }
 
-      // Try ReceitaWS (free, slow)
-      const receita = await lookupReceitaWs(clean);
-      if (receita) {
-        await saveToCnpjCache(receita, "receitaws", leadName, city);
-        return { info: receita, source: "receitaws" };
+        // Try ReceitaWS (free, slow)
+        const receita = await lookupReceitaWs(clean, context);
+        if (receita) {
+          await saveToCnpjCache(receita, "receitaws", leadName, city);
+          return { info: receita, source: "receitaws" };
+        }
       }
     }
   }
@@ -476,9 +630,10 @@ async function enrichCnpj(
   // 2a. Check name search cache first (FREE)
   const cachedByName = await searchCnpjCacheByName(leadName, city);
   if (cachedByName) return { info: cachedByName, source: "cache_name" };
+  if (!allowExternal) return { info: null, source: "external_disabled" };
 
   // 2b. CNPJá commercial search by name (costs 1 credit per 10 results)
-  const cnpjaResult = await searchCnpjaByName(leadName, uf);
+  const cnpjaResult = await searchCnpjaByName(leadName, uf, context);
   if (cnpjaResult) {
     await saveToCnpjCache(cnpjaResult, "cnpja_commercial", leadName, city);
     return { info: cnpjaResult, source: "cnpja_commercial" };
@@ -488,19 +643,6 @@ async function enrichCnpj(
 }
 
 // ── Website Crawling Helpers ────────────────────────────────────────────────
-async function fetchWithTimeout(url: string, timeoutMs = 5000): Promise<Response> {
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, { signal: controller.signal });
-    clearTimeout(id);
-    return response;
-  } catch (err) {
-    clearTimeout(id);
-    throw err;
-  }
-}
-
 interface CrawlResult {
   html: string;
   isHttps: boolean;
@@ -509,16 +651,46 @@ interface CrawlResult {
   error?: string;
 }
 
-async function crawlWebsite(urlStr: string | null | undefined): Promise<CrawlResult | null> {
+async function crawlWebsite(
+  urlStr: string | null | undefined,
+  context: EnrichmentUsageContext,
+): Promise<CrawlResult | null> {
   if (!urlStr) return null;
   let url = urlStr.trim();
   if (!/^https?:\/\//i.test(url)) {
     url = `http://${url}`;
   }
+  if (!isAllowedPublicHttpUrl(url)) {
+    return {
+      html: "",
+      isHttps: false,
+      sslValid: false,
+      headers: {},
+      error: "WEBSITE_URL_NOT_PUBLIC",
+    };
+  }
 
   try {
     const isHttps = url.toLowerCase().startsWith("https://");
-    const resp = await fetchWithTimeout(url, 4000);
+    const resp = await fetchEnrichmentProvider({
+      context,
+      url,
+      timeoutMs: 4000,
+      fetchOptions: { redirect: "manual" },
+      provider: "OTHER",
+      service: "PUBLIC_WEBSITE",
+      operation: "WEBSITE_CRAWL",
+      estimatedCostMicros: 0,
+    });
+    if (resp.status >= 300 && resp.status < 400) {
+      return {
+        html: "",
+        isHttps,
+        sslValid: false,
+        headers: {},
+        error: "WEBSITE_REDIRECT_NOT_FOLLOWED",
+      };
+    }
     const html = await resp.text();
     const headers: Record<string, string> = {};
     resp.headers.forEach((v, k) => {
@@ -532,12 +704,13 @@ async function crawlWebsite(urlStr: string | null | undefined): Promise<CrawlRes
       headers,
     };
   } catch (err: any) {
+    if (err instanceof EnrichmentControlError) throw err;
     return {
       html: "",
       isHttps: url.toLowerCase().startsWith("https://"),
       sslValid: false,
       headers: {},
-      error: err.message,
+      error: "WEBSITE_FETCH_FAILED",
     };
   }
 }
@@ -651,13 +824,25 @@ function calcFitScore(lead: any, campaign: any, icp: any, activeSources: Set<str
 
 // ── Main Handler ────────────────────────────────────────────────────────────
 serve(async (req: Request) => {
+  const authorization = req.headers.get("authorization") || "";
+  const cronSecret = Deno.env.get("CRON_SECRET") || "";
+  const authorized = authorization === `Bearer ${SUPABASE_KEY}` || (Boolean(cronSecret) && (
+    authorization === `Bearer ${cronSecret}` || req.headers.get("x-cron-secret") === cronSecret
+  ));
+  if (!authorized) {
+    return new Response(JSON.stringify({ ok: false, error: "UNAUTHORIZED" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    });
+  }
   try {
     let batchSize = DEFAULT_BATCH_SIZE;
     let tenantId: string | null = null;
 
     try {
       const body = await req.json();
-      batchSize = body.batch_size || DEFAULT_BATCH_SIZE;
+      const requestedBatchSize = Number(body.batch_size || DEFAULT_BATCH_SIZE);
+      batchSize = Math.min(100, Math.max(1, Number.isFinite(requestedBatchSize) ? Math.floor(requestedBatchSize) : DEFAULT_BATCH_SIZE));
       tenantId = body.tenant_id || null;
     } catch (_e) { /* defaults */ }
 
@@ -688,11 +873,23 @@ serve(async (req: Request) => {
     for (const tid of tenantIds) {
       console.log(`\n━━━ Tenant: ${tid} ━━━`);
 
+      const { data: campaigns, error: campaignsError } = await supabase
+        .from("campaigns")
+        .select("*, icps:icp_id(*)")
+        .eq("tenant_id", tid)
+        .eq("status", "ACTIVE");
+      if (campaignsError || !campaigns?.length) {
+        results.push({ tenant_id: tid, enriched: 0, archived: 0, failed: 0, cnpj_found: 0, skipped: "NO_ACTIVE_CAMPAIGN" });
+        continue;
+      }
+      const campaignMap = Object.fromEntries(campaigns.map((c: any) => [c.id, c]));
+
       const { data: leads } = await supabase
         .from("leads")
         .select("*")
         .eq("tenant_id", tid)
         .eq("status", "CAPTURED")
+        .in("campaign_id", campaigns.map((campaign: any) => campaign.id))
         .order("created_at", { ascending: true })
         .limit(batchSize);
 
@@ -703,14 +900,16 @@ serve(async (req: Request) => {
 
       console.log(`  📋 ${leads.length} leads to enrich`);
 
-      const { data: campaigns } = await supabase
-        .from("campaigns")
-        .select("*, icps:icp_id(*)")
-        .eq("tenant_id", tid);
-      const campaignMap = Object.fromEntries((campaigns || []).map((c: any) => [c.id, c]));
-
       const { data: tenant } = await supabase.from("tenants").select("*").eq("id", tid).single();
-      const evoConfig = await loadEvoConfig(tid);
+      if (!tenant || tenant.status !== "ACTIVE") {
+        results.push({ tenant_id: tid, enriched: 0, archived: 0, failed: 0, cnpj_found: 0, skipped: "TENANT_INACTIVE" });
+        continue;
+      }
+      // Validation must use the active channel registry. Falling back to the
+      // legacy tenant secret could silently validate against the retired VPS.
+      const whatsappChannel = await loadTenantWhatsAppChannel(supabase, tid, {
+        allowLegacyFallback: false,
+      });
 
       // Fetch active premium lead sources configuration
       const { data: activeSourcesData } = await supabase
@@ -718,12 +917,29 @@ serve(async (req: Request) => {
         .select("source_type")
         .eq("tenant_id", tid)
         .eq("status", "ACTIVE");
-      const activeSources = new Set((activeSourcesData || []).map((s: any) => s.source_type));
+      const tenantActiveSources = new Set((activeSourcesData || []).map((s: any) => s.source_type));
 
       let enriched = 0, archived = 0, failed = 0, cnpjFound = 0;
+      let stoppedReason: string | null = null;
 
-      for (const lead of leads) {
+      // Automated enrichment is campaign-scoped. Unassigned leads and leads
+      // from paused campaigns remain CAPTURED until an operator assigns or
+      // resumes the campaign.
+      const campaignLeads = leads.filter((lead: any) => Boolean(
+        lead.campaign_id && campaignMap[lead.campaign_id]
+      ));
+      for (const lead of campaignLeads) {
         try {
+          const usageContext: EnrichmentUsageContext = {
+            tenantId: tid,
+            campaignId: lead.campaign_id,
+            leadId: lead.id,
+          };
+          const campaign = campaignMap[lead.campaign_id];
+          const { deepEnrichmentEnabled, activeSources } = campaignEnrichmentPolicy(
+            campaign.filters,
+            tenantActiveSources,
+          );
           const metadata: Record<string, any> = { ...(lead.metadata || {}) };
           let whatsappValid: boolean | null = lead.whatsapp_valid;
           let yearsOfPractice: number = lead.years_of_practice || 0;
@@ -733,7 +949,19 @@ serve(async (req: Request) => {
           const events: any[] = []; // Collect all events for batch insert
 
           // ── Step A: Validate WhatsApp ──────────────────────────
-          const wppResult = await checkWhatsApp(lead.whatsapp, evoConfig);
+          const numberCheck = whatsappChannel && lead.whatsapp
+            ? await executeRecordedEnrichmentCall({
+              context: usageContext,
+              provider: whatsappChannel.provider,
+              service: "WHATSAPP_NUMBER_CHECK",
+              operation: "PRIMARY_NUMBER",
+              estimatedCostMicros: configuredProviderCostMicros("WHATSAPP_NUMBER_CHECK_COST_MICROS", false),
+              metadata: { channel_id: whatsappChannel.id },
+              call: () => checkWhatsAppNumber(whatsappChannel, lead.whatsapp),
+              succeeded: (result) => result.exists !== null,
+            })
+            : null;
+          const wppResult = numberCheck?.exists ?? null;
           if (wppResult !== null) whatsappValid = wppResult;
 
           events.push({
@@ -741,12 +969,11 @@ serve(async (req: Request) => {
             lead_id: lead.id,
             event_type: "whatsapp_check",
             payload: {
-              phone: lead.whatsapp || null,
               result: wppResult === true ? "valid" : wppResult === false ? "invalid" : "not_checked",
               reason: !lead.whatsapp
                 ? "Sem número de telefone cadastrado"
-                : !evoConfig
-                ? "Evolution API não configurada para este tenant"
+                : !whatsappChannel
+                ? "Canal WhatsApp ativo não configurado para este tenant"
                 : wppResult === true
                 ? "Número verificado como WhatsApp ativo"
                 : wppResult === false
@@ -765,7 +992,9 @@ serve(async (req: Request) => {
             leadName,
             existingCnpj,
             city,
-            uf
+            uf,
+            usageContext,
+            deepEnrichmentEnabled,
           );
 
           if (cnpjInfo) {
@@ -811,7 +1040,7 @@ serve(async (req: Request) => {
               created_at: now(),
             });
 
-            console.log(`  ✅ ${leadName} → CNPJ: ${cnpjInfo.cnpj} (${cnpjSource}) | ${cnpjInfo.qsa?.length || 0} sócios`);
+            console.log(`  CNPJ enriquecido para lead ${lead.id} via ${cnpjSource}`);
           } else {
             events.push({
               tenant_id: tid,
@@ -824,6 +1053,8 @@ serve(async (req: Request) => {
                 had_existing_cnpj: !!existingCnpj,
                 reason: !leadName
                   ? "Lead sem nome — impossível buscar CNPJ"
+                  : cnpjSource === "external_disabled"
+                  ? "Enriquecimento externo de CNPJ desativado para esta campanha; somente o cache foi consultado"
                   : existingCnpj
                   ? `CNPJ ${existingCnpj} informado mas não encontrado em nenhuma base`
                   : `Nenhuma empresa encontrada com o nome "${leadName}"${city ? ` em ${city}` : ""}${uf ? `/${uf}` : ""}`,
@@ -848,20 +1079,28 @@ serve(async (req: Request) => {
                   .trim();
 
                 if (companyNameClean.length >= 3) {
-                  console.log(`  📸 Instagram: buscando perfil para "${companyNameClean}"...`);
+                  console.log(`  Instagram: enriquecendo lead ${lead.id}`);
 
                   // Chamar Apify Instagram Profile Scraper (sync, fast run)
-                  const apifyResp = await fetch(
-                    `https://api.apify.com/v2/acts/apify~instagram-profile-scraper/run-sync-get-dataset-items?token=${APIFY_TOKEN}`,
-                    {
+                  const apifyResp = await fetchEnrichmentProvider({
+                    context: usageContext,
+                    url: "https://api.apify.com/v2/acts/apify~instagram-profile-scraper/run-sync-get-dataset-items",
+                    fetchOptions: {
                       method: "POST",
-                      headers: { "Content-Type": "application/json" },
+                      headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${APIFY_TOKEN}`,
+                      },
                       body: JSON.stringify({
                         usernames: [companyNameClean],
                         resultsLimit: 1,
                       }),
-                    }
-                  );
+                    },
+                    provider: "APIFY",
+                    service: "INSTAGRAM_PROFILE_SCRAPER",
+                    operation: "PROFILE_LOOKUP",
+                    estimatedCostMicros: configuredProviderCostMicros("APIFY_INSTAGRAM_COST_MICROS", true),
+                  });
 
                   if (apifyResp.ok) {
                     const apifyData = await apifyResp.json();
@@ -879,7 +1118,7 @@ serve(async (req: Request) => {
                         profile_url: `https://www.instagram.com/${profile.username}`,
                         data_source: "apify",
                       };
-                      console.log(`  ✅ Instagram: @${profile.username} (${profile.followersCount || 0} seguidores)`);
+                      console.log(`  Instagram enriquecido para lead ${lead.id}`);
                     } else {
                       metadata.instagram = {
                         available: false,
@@ -915,10 +1154,11 @@ serve(async (req: Request) => {
                   created_at: now(),
                 });
               } catch (igErr: any) {
-                console.warn(`  ⚠️ Instagram Scraper erro: ${igErr.message?.slice(0, 80)}`);
+                if (igErr instanceof EnrichmentControlError) throw igErr;
+                console.warn(`  Instagram Scraper falhou para lead ${lead.id}`);
                 metadata.instagram = {
                   available: false,
-                  reason: `Erro na busca: ${igErr.message?.slice(0, 100)}`,
+                  reason: "INSTAGRAM_PROVIDER_FAILED",
                 };
               }
             } else {
@@ -938,18 +1178,26 @@ serve(async (req: Request) => {
                 const partnerName = adminPartner?.nome || cnpjInfo.qsa?.[0]?.nome;
 
                 if (partnerName) {
-                  console.log(`  👤 QSA Cell Finder: buscando celular de "${partnerName}"...`);
+                  console.log(`  QSA Cell Finder: enriquecendo lead ${lead.id}`);
 
                   // Tentar buscar telefone via InfoSimples — consulta por nome
-                  const infoResp = await fetch("https://api.infosimples.com/api/v2/consultas/telefone/nome", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      nome: partnerName,
-                      uf: cnpjInfo.uf || undefined,
-                      municipio: cnpjInfo.municipio || undefined,
-                      token: INFOSIMPLES_TOKEN,
-                    }),
+                  const infoResp = await fetchEnrichmentProvider({
+                    context: usageContext,
+                    url: "https://api.infosimples.com/api/v2/consultas/telefone/nome",
+                    fetchOptions: {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        nome: partnerName,
+                        uf: cnpjInfo.uf || undefined,
+                        municipio: cnpjInfo.municipio || undefined,
+                        token: INFOSIMPLES_TOKEN,
+                      }),
+                    },
+                    provider: "INFOSIMPLES",
+                    service: "PHONE_BY_NAME",
+                    operation: "PARTNER_PHONE_LOOKUP",
+                    estimatedCostMicros: configuredProviderCostMicros("INFOSIMPLES_PHONE_COST_MICROS", true),
                   });
 
                   if (infoResp.ok) {
@@ -976,7 +1224,19 @@ serve(async (req: Request) => {
                       if (uniquePhones.length > 0) {
                         // Validar o primeiro celular encontrado via WhatsApp
                         const primaryPhone = `55${uniquePhones[0]}`;
-                        const wppCheck = await checkWhatsApp(primaryPhone, evoConfig);
+                        const partnerNumberCheck = whatsappChannel
+                          ? await executeRecordedEnrichmentCall({
+                            context: usageContext,
+                            provider: whatsappChannel.provider,
+                            service: "WHATSAPP_NUMBER_CHECK",
+                            operation: "PARTNER_NUMBER",
+                            estimatedCostMicros: configuredProviderCostMicros("WHATSAPP_NUMBER_CHECK_COST_MICROS", false),
+                            metadata: { channel_id: whatsappChannel.id },
+                            call: () => checkWhatsAppNumber(whatsappChannel, primaryPhone),
+                            succeeded: (result) => result.exists !== null,
+                          })
+                          : null;
+                        const wppCheck = partnerNumberCheck?.exists ?? null;
 
                         metadata.socio_contact = {
                           partner_name: partnerName,
@@ -989,11 +1249,11 @@ serve(async (req: Request) => {
 
                         // Se o WhatsApp do sócio for válido, atualizar o whatsapp do lead
                         if (wppCheck === true && !whatsappValid) {
-                          console.log(`  ✅ QSA Cell: WhatsApp do sócio ${partnerName} validado: ${uniquePhones[0]}`);
+                          console.log(`  QSA Cell: WhatsApp alternativo validado para lead ${lead.id}`);
                           // Nota: não sobrescrevemos o whatsapp original, guardamos em metadata
                         }
 
-                        console.log(`  ✅ QSA Cell: ${uniquePhones.length} celular(es) encontrado(s) para ${partnerName}`);
+                        console.log(`  QSA Cell: ${uniquePhones.length} telefone(s) encontrado(s) para lead ${lead.id}`);
                       } else {
                         metadata.socio_contact = {
                           partner_name: partnerName,
@@ -1042,10 +1302,11 @@ serve(async (req: Request) => {
                   created_at: now(),
                 });
               } catch (socioErr: any) {
-                console.warn(`  ⚠️ QSA Cell Finder erro: ${socioErr.message?.slice(0, 80)}`);
+                if (socioErr instanceof EnrichmentControlError) throw socioErr;
+                console.warn(`  QSA Cell Finder falhou para lead ${lead.id}`);
                 metadata.socio_contact = {
                   available: false,
-                  reason: `Erro na busca: ${socioErr.message?.slice(0, 100)}`,
+                  reason: "PARTNER_PHONE_PROVIDER_FAILED",
                 };
               }
             } else {
@@ -1099,8 +1360,8 @@ serve(async (req: Request) => {
             activeSources.has("TECHNOGRAPHIC");
 
           if (crawlActive) {
-            console.log(`  🌐 Web Scraper: Crawling "${website || lead.name}" website...`);
-            const crawlResult = await crawlWebsite(website || lead.website);
+            console.log(`  Web Scraper: enriquecendo lead ${lead.id}`);
+            let crawlResult = await crawlWebsite(website || lead.website, usageContext);
 
             // A. Cyber Risk Scraper
             if (activeSources.has("CYBER_RISK")) {
@@ -1150,7 +1411,7 @@ serve(async (req: Request) => {
 
             // A.1. Firecrawl Enrichment
             if (activeSources.has("FIRECRAWL_ENRICHMENT")) {
-              console.log(`  🔥 Firecrawl: Iniciando scraping para ${website || lead.name}...`);
+              console.log(`  Firecrawl: enriquecendo lead ${lead.id}`);
               
               // Carrega API key do tenant
               const { data: secrets } = await supabase
@@ -1164,18 +1425,29 @@ serve(async (req: Request) => {
               if (firecrawlKey && website) {
                 try {
                   const targetUrl = website.startsWith("http") ? website : `https://${website}`;
+                  if (!isAllowedPublicHttpUrl(targetUrl)) {
+                    throw new Error("WEBSITE_URL_NOT_PUBLIC");
+                  }
                   
-                  const firecrawlResp = await fetch("https://api.firecrawl.dev/v1/scrape", {
-                    method: "POST",
-                    headers: {
-                      "Content-Type": "application/json",
-                      "Authorization": `Bearer ${firecrawlKey}`,
+                  const firecrawlResp = await fetchEnrichmentProvider({
+                    context: usageContext,
+                    url: "https://api.firecrawl.dev/v1/scrape",
+                    fetchOptions: {
+                      method: "POST",
+                      headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${firecrawlKey}`,
+                      },
+                      body: JSON.stringify({
+                        url: targetUrl,
+                        formats: ["markdown", "html"],
+                        onlyMainContent: true
+                      }),
                     },
-                    body: JSON.stringify({
-                      url: targetUrl,
-                      formats: ["markdown", "html"],
-                      onlyMainContent: true
-                    }),
+                    provider: "FIRECRAWL",
+                    service: "SCRAPE_API",
+                    operation: "WEBSITE_SCRAPE",
+                    estimatedCostMicros: configuredProviderCostMicros("FIRECRAWL_SCRAPE_COST_MICROS", true),
                   });
 
                   if (firecrawlResp.ok) {
@@ -1214,13 +1486,14 @@ serve(async (req: Request) => {
                        metadata.firecrawl = { available: false, reason: fcData.error || "Erro na API do Firecrawl" };
                     }
                   } else {
-                    const errText = await firecrawlResp.text();
-                    console.warn(`  ⚠️ Firecrawl API retornou HTTP ${firecrawlResp.status} - ${errText}`);
+                    await firecrawlResp.body?.cancel();
+                    console.warn(`  Firecrawl API retornou HTTP ${firecrawlResp.status}`);
                     metadata.firecrawl = { available: false, reason: `HTTP ${firecrawlResp.status}` };
                   }
                 } catch (fcErr: any) {
-                  console.warn(`  ⚠️ Firecrawl erro: ${fcErr.message?.slice(0, 80)}`);
-                  metadata.firecrawl = { available: false, reason: `Erro na consulta: ${fcErr.message?.slice(0, 100)}` };
+                  if (fcErr instanceof EnrichmentControlError) throw fcErr;
+                  console.warn(`  Firecrawl falhou para lead ${lead.id}`);
+                  metadata.firecrawl = { available: false, reason: "FIRECRAWL_PROVIDER_FAILED" };
                 }
               } else {
                 console.log(`  ℹ️ Firecrawl ignorado: API Key ausente ou website não encontrado`);
@@ -1402,11 +1675,11 @@ serve(async (req: Request) => {
                 console.log(`  🚛 Fleet Tracker: indicadores detectados — ${indicators.join("; ")}`);
               }
             } catch (fleetErr: any) {
-              console.warn(`  ⚠️ Fleet Tracker erro: ${fleetErr.message?.slice(0, 80)}`);
+              console.warn(`  Fleet Tracker falhou para lead ${lead.id}`);
               metadata.fleet_tracker = {
                 has_fleet: false,
                 available: false,
-                reason: `Erro na análise: ${fleetErr.message?.slice(0, 100)}`,
+                reason: "FLEET_ANALYSIS_FAILED",
               };
             }
           }
@@ -1417,18 +1690,23 @@ serve(async (req: Request) => {
             if (ESCAVADOR_TOKEN) {
               try {
                 const cnpjClean = cleanCnpj(cnpjInfo.cnpj);
-                console.log(`  ⚖️ Judicial Tracker: consultando processos para CNPJ ${cnpjClean}...`);
+                console.log(`  Judicial Tracker: enriquecendo lead ${lead.id}`);
 
-                const escResp = await fetch(
-                  `https://api.escavador.com/api/v2/processos?cpf_cnpj=${cnpjClean}`,
-                  {
+                const escResp = await fetchEnrichmentProvider({
+                  context: usageContext,
+                  url: `https://api.escavador.com/api/v2/processos?cpf_cnpj=${cnpjClean}`,
+                  fetchOptions: {
                     method: "GET",
                     headers: {
                       "Authorization": `Bearer ${ESCAVADOR_TOKEN}`,
                       "Accept": "application/json",
                     },
-                  }
-                );
+                  },
+                  provider: "ESCAVADOR",
+                  service: "PROCESS_SEARCH",
+                  operation: "CNPJ_LAWSUIT_LOOKUP",
+                  estimatedCostMicros: configuredProviderCostMicros("ESCAVADOR_SEARCH_COST_MICROS", true),
+                });
 
                 if (escResp.ok) {
                   const escData = await escResp.json();
@@ -1504,7 +1782,7 @@ serve(async (req: Request) => {
                     top_processes: [],
                     data_source: "escavador",
                   };
-                  console.log(`  ⚖️ Judicial: nenhum processo encontrado para CNPJ ${cnpjClean}`);
+                  console.log(`  Judicial: nenhum processo encontrado para lead ${lead.id}`);
                 } else {
                   console.warn(`  ⚠️ Escavador API retornou status ${escResp.status}`);
                   metadata.judicial_tracker = {
@@ -1530,11 +1808,12 @@ serve(async (req: Request) => {
                   created_at: now(),
                 });
               } catch (judErr: any) {
-                console.warn(`  ⚠️ Judicial Tracker erro: ${judErr.message?.slice(0, 80)}`);
+                if (judErr instanceof EnrichmentControlError) throw judErr;
+                console.warn(`  Judicial Tracker falhou para lead ${lead.id}`);
                 metadata.judicial_tracker = {
                   has_lawsuits: false,
                   available: false,
-                  reason: `Erro na consulta: ${judErr.message?.slice(0, 100)}`,
+                  reason: "JUDICIAL_PROVIDER_FAILED",
                 };
               }
             } else {
@@ -1544,7 +1823,6 @@ serve(async (req: Request) => {
           }
 
           // ── Step C: Recalculate fit score ───────────────────────
-          const campaign = campaignMap[lead.campaign_id] || { profession: lead.profession || "" };
           const icp = campaign.icps || campaign.filters || {};
           const weights = icp.weights || {
             profession_match: 3.0,
@@ -1661,7 +1939,7 @@ serve(async (req: Request) => {
           if (fitScore < minFitScore) archiveReasons.push(`Score (${fitScore.toFixed(1)}) abaixo do mínimo (${minFitScore})`);
           if (!lead.whatsapp) archiveReasons.push("Sem telefone");
           if (whatsappValid === false) archiveReasons.push("WhatsApp inválido");
-          if (!cnpjInfo) archiveReasons.push("CNPJ não encontrado");
+          if (!cnpjInfo && deepEnrichmentEnabled) archiveReasons.push("CNPJ não encontrado");
 
           events.push({
             tenant_id: tid,
@@ -1688,23 +1966,37 @@ serve(async (req: Request) => {
 
           await sleep(300);
         } catch (err: any) {
-          console.error(`  ❌ ${lead.name}: ${err.message?.slice(0, 80)}`);
+          console.error(`  Enriquecimento falhou para lead ${lead.id}`);
+          const failureCode = err instanceof EnrichmentControlError
+            ? err.message.slice(0, 120)
+            : "ENRICHMENT_PROVIDER_FAILED";
           // Log failure event too
           await supabase.from("lead_events").insert({
             tenant_id: tid,
             lead_id: lead.id,
             event_type: "enrichment_failed",
             payload: {
-              error: err.message?.slice(0, 200),
-              reason: `Erro durante enriquecimento: ${err.message?.slice(0, 100)}`,
+              error: failureCode,
+              reason: failureCode,
             },
             created_at: new Date().toISOString(),
           });
           failed++;
+          if (err instanceof EnrichmentControlError) {
+            stoppedReason = err.message.slice(0, 120);
+            break;
+          }
         }
       }
 
-      results.push({ tenant_id: tid, enriched, archived, failed, cnpj_found: cnpjFound });
+      results.push({
+        tenant_id: tid,
+        enriched,
+        archived,
+        failed,
+        cnpj_found: cnpjFound,
+        stop_reason: stoppedReason,
+      });
       console.log(`\n  🏁 ${enriched} enriched, ${archived} archived, ${failed} failed, ${cnpjFound} CNPJs found`);
     }
 
@@ -1712,8 +2004,8 @@ serve(async (req: Request) => {
       headers: { "Content-Type": "application/json" },
     });
   } catch (err: any) {
-    console.error("💥 Fatal:", err.message);
-    return new Response(JSON.stringify({ ok: false, error: err.message }), {
+    console.error("[enrich] fatal", { code: "ENRICHMENT_INTERNAL_ERROR" });
+    return new Response(JSON.stringify({ ok: false, error: "ENRICHMENT_INTERNAL_ERROR" }), {
       status: 500,
       headers: { "Content-Type": "application/json" },
     });

@@ -15,9 +15,9 @@ import { compactEvidence, redactGuardianText, sha256Hex } from "./evidence.ts";
 const GUARDIAN_ENGINE_V3_PHASE = "PHASE_6_CADENCE_LOCK_WAKE_SPREAD" as const;
 
 type SupabaseGuardianClient = {
-  rpc: (functionName: "get_guardian_active_config", args: { p_tenant_id: string }) => Promise<{ data: unknown; error: any }>;
+  rpc: (functionName: "get_guardian_active_config", args: { p_tenant_id: string }) => PromiseLike<{ data: unknown; error: any }>;
   from: (table: string) => {
-    insert: (payload: unknown) => Promise<{ data?: unknown; error: any }>;
+    insert: (payload: any) => PromiseLike<{ data?: unknown; error: any }>;
   };
 };
 

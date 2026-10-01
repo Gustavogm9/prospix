@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { Loader2, MapPin, ArrowRight, AlertCircle, X, Upload, Check, Copy, FileSpreadsheet, ClipboardCheck, Search } from 'lucide-react';
 import { leadSourcesQueries, campaignsQueries } from '@/lib/queries';
-import { useAuthStore } from '@/store/auth-store';
+import { getAccessToken, useAuthStore } from '@/store/auth-store';
 import { toast } from '@prospix/ui';
 import { supabase } from '@/lib/supabase';
 
@@ -776,7 +776,7 @@ export default function LeadSources() {
   // Fontes que são do tipo "descoberta ativa" (têm motor de busca)
   const DISCOVERY_SOURCES = new Set([
     'GOOGLE_MAPS', 'CNPJ_MINER', 'DOCTORALIA', 'COMPRASNET',
-    'VIVAREAL', 'INSTAGRAM_SCRAPER', 'CRM_SP', 'OAB_SP', 'CRO_SP'
+    'VIVAREAL', 'CRM_SP', 'OAB_SP', 'CRO_SP', 'TAVILY_B2B_SEARCH'
   ]);
 
   const fetchData = async () => {
@@ -964,9 +964,18 @@ export default function LeadSources() {
         searchTags = profNames[campaign.profession] || [campaign.name];
       }
 
+      const accessToken = await getAccessToken();
+      if (!accessToken) {
+        throw new Error('Sua sessao expirou. Entre novamente para executar a busca.');
+      }
+
       const response = await fetch('/api/discover', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+          'Idempotency-Key': `discover:${crypto.randomUUID()}`,
+        },
         body: JSON.stringify({
           tenant_id: tenantId,
           campaign_id: campaign.id,
@@ -990,7 +999,7 @@ export default function LeadSources() {
         );
         await fetchData();
       } else {
-        const errorMsg = data.error || data.errors?.join(', ') || 'Erro desconhecido';
+        const errorMsg = data.error?.message || data.error || data.errors?.join(', ') || 'Erro desconhecido';
         toast.error('Erro na busca', errorMsg);
       }
     } catch (err: any) {

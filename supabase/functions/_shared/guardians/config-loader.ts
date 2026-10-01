@@ -11,7 +11,7 @@ type SupabaseRpcClient = {
   rpc: (
     functionName: "get_guardian_active_config",
     args: { p_tenant_id: string },
-  ) => Promise<{ data: unknown; error: SupabaseRpcError | null }>;
+  ) => PromiseLike<{ data: unknown; error: SupabaseRpcError | null }>;
 };
 
 export class GuardianConfigError extends Error {

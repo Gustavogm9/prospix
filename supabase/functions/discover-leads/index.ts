@@ -30,6 +30,7 @@ type SourceType =
 interface DiscoverRequest {
   tenant_id: string;
   campaign_id: string;
+  run_id?: string;
   source_type: SourceType;
   config: {
     search_tags?: string[];
@@ -37,6 +38,8 @@ interface DiscoverRequest {
     state?: string;
     daily_limit?: number;
     profession?: string;
+    min_google_rating?: number;
+    min_reviews?: number;
   };
 }
 
@@ -48,7 +51,21 @@ interface DiscoveredLead {
   metadata: Record<string, any>;
   profession?: string;
   website?: string;
+  google_rating?: number | null;
+  google_reviews_count?: number | null;
+  provisional_eligible?: boolean;
+  provider_usage_event_id?: string | null;
+  search_usage_event_id?: string | null;
 }
+
+interface DiscoveryContext {
+  tenantId: string;
+  campaignId: string;
+  runId: string;
+  sourceType: SourceType;
+}
+
+type UsageGate = { event_id?: string; should_stop?: boolean; stop_reason?: string | null };
 
 interface DiscoverResult {
   ok: boolean;
@@ -65,6 +82,113 @@ interface DiscoverResult {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function envCostMicros(name: string): number {
+  const parsed = Number(Deno.env.get(name) || "0");
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0;
+}
+
+class ProspectingControlError extends Error {}
+
+async function recordProviderCall(params: {
+  context: DiscoveryContext;
+  provider: string;
+  service: string;
+  operation: string;
+  idempotencyKey: string;
+  status: "ATTEMPTED" | "SUCCEEDED" | "FAILED";
+  estimatedCostMicros?: number;
+  externalRequestId?: string | null;
+  metadata?: Record<string, unknown>;
+}): Promise<UsageGate> {
+  const { data, error } = await supabase.rpc("record_provider_usage_event", {
+    p_tenant_id: params.context.tenantId,
+    p_campaign_id: params.context.campaignId,
+    p_lead_id: null,
+    p_prospecting_run_id: params.context.runId,
+    p_provider: params.provider,
+    p_service: params.service,
+    p_operation: params.operation,
+    p_source_type: params.context.sourceType,
+    p_status: params.status,
+    p_quantity: 1,
+    p_unit: "request",
+    p_estimated_cost_micros: params.estimatedCostMicros || 0,
+    p_external_request_id: params.externalRequestId || null,
+    p_idempotency_key: params.idempotencyKey,
+    p_metadata: params.metadata || {},
+  });
+  if (error) throw new ProspectingControlError(`Nao foi possivel registrar o consumo do provedor (${error.code || "RPC"})`);
+  return (data || {}) as UsageGate;
+}
+
+async function fetchAndRecordProviderCall(params: {
+  context: DiscoveryContext;
+  url: string;
+  fetchOptions?: RequestInit;
+  timeoutMs?: number;
+  provider: string;
+  service: string;
+  operation: string;
+  idempotencyKey: string;
+  estimatedCostMicros: number;
+}): Promise<{ response: Response; gate: UsageGate }> {
+  await recordProviderCall({
+    context: params.context,
+    provider: params.provider,
+    service: params.service,
+    operation: params.operation,
+    idempotencyKey: params.idempotencyKey,
+    status: "ATTEMPTED",
+    estimatedCostMicros: params.estimatedCostMicros,
+  });
+
+  let response: Response;
+  try {
+    response = await safeFetch(params.url, params.fetchOptions || {}, params.timeoutMs);
+  } catch {
+    const gate = await recordProviderCall({
+      context: params.context,
+      provider: params.provider,
+      service: params.service,
+      operation: params.operation,
+      idempotencyKey: params.idempotencyKey,
+      status: "FAILED",
+      estimatedCostMicros: params.estimatedCostMicros,
+      metadata: { network_error: true },
+    });
+    if (gate.should_stop) {
+      throw new ProspectingControlError(gate.stop_reason || "PROSPECTING_BUDGET_STOPPED");
+    }
+    throw new Error("PROVIDER_NETWORK_ERROR");
+  }
+
+  const gate = await recordProviderCall({
+    context: params.context,
+    provider: params.provider,
+    service: params.service,
+    operation: params.operation,
+    idempotencyKey: params.idempotencyKey,
+    status: response.ok ? "SUCCEEDED" : "FAILED",
+    estimatedCostMicros: params.estimatedCostMicros,
+    externalRequestId: response.headers.get("x-request-id"),
+    metadata: { http_status: response.status },
+  });
+  return { response, gate };
+}
+
+async function recordRunCandidate(
+  context: DiscoveryContext,
+  eligible: boolean,
+): Promise<UsageGate> {
+  const { data, error } = await supabase.rpc("update_prospecting_run_progress", {
+    p_run_id: context.runId,
+    p_discovered_delta: 1,
+    p_eligible_delta: eligible ? 1 : 0,
+  });
+  if (error) throw new ProspectingControlError(`Nao foi possivel atualizar o limite da execucao (${error.code || "RPC"})`);
+  return (data || {}) as UsageGate;
 }
 
 /**
@@ -204,31 +328,54 @@ function daysAgo(n: number): Date {
 
 /**
  * Verifica quais telefones já existem na tabela leads para o tenant.
- * Retorna um Set com os telefones já cadastrados.
+ * Retorna telefone, id e campanha dos leads já cadastrados.
  */
 async function getExistingPhones(
   tenantId: string,
   phones: string[]
-): Promise<Set<string>> {
-  if (phones.length === 0) return new Set();
+): Promise<Map<string, { id: string; campaignId: string | null }>> {
+  if (phones.length === 0) return new Map();
 
   // Consulta em lotes de 50 para não estourar limites
-  const existing = new Set<string>();
+  const existing = new Map<string, { id: string; campaignId: string | null }>();
   const batchSize = 50;
   for (let i = 0; i < phones.length; i += batchSize) {
     const batch = phones.slice(i, i + batchSize);
     const { data } = await supabase
       .from("leads")
-      .select("whatsapp")
+      .select("id, whatsapp, campaign_id")
       .eq("tenant_id", tenantId)
       .in("whatsapp", batch);
     if (data) {
       for (const row of data) {
-        if (row.whatsapp) existing.add(row.whatsapp);
+        if (row.whatsapp) existing.set(row.whatsapp, {
+          id: row.id,
+          campaignId: row.campaign_id || null,
+        });
       }
     }
   }
   return existing;
+}
+
+async function linkProviderUsageToLead(params: {
+  tenantId: string;
+  campaignId: string;
+  leadId: string;
+  usageEventId?: string | null;
+}): Promise<void> {
+  if (!params.usageEventId) return;
+  const { data, error } = await supabase
+    .from("provider_usage_events")
+    .update({ lead_id: params.leadId })
+    .eq("id", params.usageEventId)
+    .eq("tenant_id", params.tenantId)
+    .eq("campaign_id", params.campaignId)
+    .select("id")
+    .maybeSingle();
+  if (error || !data) {
+    throw new ProspectingControlError(`Nao foi possivel atribuir consumo ao lead (${error?.code || "DB"})`);
+  }
 }
 
 /**
@@ -268,8 +415,17 @@ async function insertLeads(
   // Insere leads com telefone (que não são duplicatas)
   for (const [phone, lead] of phonesMap) {
     if (existingPhones.has(phone)) {
+      const existingLead = existingPhones.get(phone)!;
+      if (existingLead.campaignId === campaignId) {
+        await linkProviderUsageToLead({
+          tenantId,
+          campaignId,
+          leadId: existingLead.id,
+          usageEventId: lead.provider_usage_event_id,
+        });
+      }
       skipped++;
-      console.log(`  ⏭️ Duplicata: ${lead.name} (${phone})`);
+      console.log('  Lead duplicado ignorado.');
       continue;
     }
 
@@ -284,8 +440,15 @@ async function insertLeads(
           source: lead.source,
           status: "CAPTURED",
           address: lead.address,
-          metadata: { ...lead.metadata, website: lead.website || null },
+          metadata: {
+            ...lead.metadata,
+            website: lead.website || null,
+            discovery_provider_usage_event_id: lead.provider_usage_event_id || null,
+            discovery_search_usage_event_id: lead.search_usage_event_id || null,
+          },
           profession: lead.profession || null,
+          google_rating: lead.google_rating ?? null,
+          google_reviews_count: lead.google_reviews_count ?? null,
           created_at: now,
           updated_at: now,
         })
@@ -293,9 +456,16 @@ async function insertLeads(
         .single();
 
       if (error) {
-        console.error(`  ❌ Erro ao inserir ${lead.name}: ${error.message}`);
+        console.error('  Erro ao inserir lead com telefone.', { code: error.code });
         continue;
       }
+
+      await linkProviderUsageToLead({
+        tenantId,
+        campaignId,
+        leadId: insertedLead.id,
+        usageEventId: lead.provider_usage_event_id,
+      });
 
       // Registra evento de captura
       await supabase.from("lead_events").insert({
@@ -305,8 +475,6 @@ async function insertLeads(
         payload: {
           source: lead.source,
           source_type: sourceType,
-          name: lead.name,
-          phone: lead.whatsapp,
           city: lead.address?.city,
           state: lead.address?.state,
           profession: lead.profession || null,
@@ -317,20 +485,11 @@ async function insertLeads(
       });
 
       inserted++;
-      console.log(`  ✅ Inserido: ${lead.name} (${phone})`);
+      console.log(`  Lead inserido: ${insertedLead.id}`);
 
-      if (sourceType === "GOOGLE_MAPS") {
-        // Track Google Maps usage
-        await supabase.rpc("increment_tenant_usage", {
-          p_tenant_id: tenantId,
-          p_llm_tokens_input: 0,
-          p_llm_tokens_output: 0,
-          p_whatsapp_msgs: 0,
-          p_maps_calls: 1
-        });
-      }
-    } catch (err: any) {
-      console.error(`  💥 Erro inesperado ao inserir ${lead.name}: ${err.message}`);
+    } catch (error) {
+      if (error instanceof ProspectingControlError) throw error;
+      console.error('  Erro inesperado ao inserir lead com telefone.');
     }
   }
 
@@ -348,8 +507,15 @@ async function insertLeads(
           source: lead.source,
           status: "CAPTURED",
           address: lead.address,
-          metadata: { ...lead.metadata, website: lead.website || null },
+          metadata: {
+            ...lead.metadata,
+            website: lead.website || null,
+            discovery_provider_usage_event_id: lead.provider_usage_event_id || null,
+            discovery_search_usage_event_id: lead.search_usage_event_id || null,
+          },
           profession: lead.profession || null,
+          google_rating: lead.google_rating ?? null,
+          google_reviews_count: lead.google_reviews_count ?? null,
           created_at: now,
           updated_at: now,
         })
@@ -357,9 +523,17 @@ async function insertLeads(
         .single();
 
       if (error) {
-        console.error(`  ❌ Erro ao inserir ${lead.name} (sem tel): ${error.message}`);
+        console.error('  Erro ao inserir lead sem telefone.', { code: error.code });
         continue;
       }
+
+
+      await linkProviderUsageToLead({
+        tenantId,
+        campaignId,
+        leadId: insertedLead.id,
+        usageEventId: lead.provider_usage_event_id,
+      });
 
       await supabase.from("lead_events").insert({
         tenant_id: tenantId,
@@ -368,8 +542,6 @@ async function insertLeads(
         payload: {
           source: lead.source,
           source_type: sourceType,
-          name: lead.name,
-          phone: null,
           city: lead.address?.city,
           state: lead.address?.state,
           profession: lead.profession || null,
@@ -380,9 +552,10 @@ async function insertLeads(
       });
 
       inserted++;
-      console.log(`  ✅ Inserido (sem tel): ${lead.name} — precisa enriquecimento`);
-    } catch (err: any) {
-      console.error(`  💥 Erro inesperado ao inserir ${lead.name}: ${err.message}`);
+      console.log(`  Lead sem telefone inserido: ${insertedLead.id}`);
+    } catch (error) {
+      if (error instanceof ProspectingControlError) throw error;
+      console.error('  Erro inesperado ao inserir lead sem telefone.');
     }
   }
 
@@ -395,7 +568,8 @@ async function insertLeads(
 
 async function discoverGoogleMaps(
   tenantId: string,
-  config: DiscoverRequest["config"]
+  config: DiscoverRequest["config"],
+  context: DiscoveryContext,
 ): Promise<DiscoveredLead[]> {
   console.log("🗺️ Google Maps: Iniciando busca...");
 
@@ -414,14 +588,23 @@ async function discoverGoogleMaps(
   const tags = config.search_tags || [];
   const cities = config.cities || [];
   const dailyLimit = config.daily_limit || 20;
+  const textSearchCostMicros = envCostMicros("GOOGLE_MAPS_TEXT_SEARCH_COST_MICROS");
+  const placeDetailsCostMicros = envCostMicros("GOOGLE_MAPS_PLACE_DETAILS_COST_MICROS");
+  if (tags.length === 0 || cities.length === 0) {
+    throw new Error("Google Maps discovery requires at least one search tag and city");
+  }
+  if (textSearchCostMicros <= 0 || placeDetailsCostMicros <= 0) {
+    throw new Error("Google Maps cost estimates must be configured before discovery");
+  }
   const leads: DiscoveredLead[] = [];
+  let budgetStopped = false;
 
-  for (const city of cities) {
-    for (const tag of tags) {
-      if (leads.length >= dailyLimit) break;
+  for (const [cityIndex, city] of cities.entries()) {
+    for (const [tagIndex, tag] of tags.entries()) {
+      if (leads.length >= dailyLimit || budgetStopped) break;
 
       const query = `${tag} em ${city}`;
-      console.log(`  🔍 Buscando: "${query}"`);
+      console.log(`  Executando busca Google Maps ${cityIndex + 1}/${cities.length}, termo ${tagIndex + 1}/${tags.length}`);
 
       try {
         // Text Search para encontrar estabelecimentos
@@ -431,7 +614,20 @@ async function discoverGoogleMaps(
         searchUrl.searchParams.set("language", "pt-BR");
         searchUrl.searchParams.set("type", "establishment");
 
-        const searchResp = await safeFetch(searchUrl.toString());
+        const textSearchKey = `maps-text:${context.runId}:${cityIndex}:${tagIndex}`;
+        const { response: searchResp, gate: textSearchGate } = await fetchAndRecordProviderCall({
+          context,
+          url: searchUrl.toString(),
+          provider: "GOOGLE_MAPS",
+          service: "PLACES_API",
+          operation: "TEXT_SEARCH",
+          idempotencyKey: textSearchKey,
+          estimatedCostMicros: textSearchCostMicros,
+        });
+        if (textSearchGate.should_stop) {
+          budgetStopped = true;
+          break;
+        }
         if (!searchResp.ok) {
           console.error(`  ❌ Text Search falhou: HTTP ${searchResp.status}`);
           continue;
@@ -439,15 +635,25 @@ async function discoverGoogleMaps(
 
         const searchData = await searchResp.json();
         if (searchData.status !== "OK" && searchData.status !== "ZERO_RESULTS") {
+          await recordProviderCall({
+            context,
+            provider: "GOOGLE_MAPS",
+            service: "PLACES_API",
+            operation: "TEXT_SEARCH",
+            idempotencyKey: textSearchKey,
+            status: "FAILED",
+            estimatedCostMicros: textSearchCostMicros,
+            metadata: { provider_status: String(searchData.status || "UNKNOWN") },
+          });
           console.error(`  ❌ Text Search status: ${searchData.status} — ${searchData.error_message || ""}`);
           continue;
         }
 
         const results = searchData.results || [];
-        console.log(`  📍 ${results.length} resultados para "${query}"`);
+        console.log(`  Google Maps retornou ${results.length} resultados`);
 
         for (const place of results) {
-          if (leads.length >= dailyLimit) break;
+          if (leads.length >= dailyLimit || budgetStopped) break;
 
           try {
             // Rate limit: 200ms entre requests
@@ -459,10 +665,36 @@ async function discoverGoogleMaps(
             detailsUrl.searchParams.set("fields", "formatted_phone_number,international_phone_number,website,rating,user_ratings_total,address_components");
             detailsUrl.searchParams.set("key", apiKey);
 
-            const detailsResp = await safeFetch(detailsUrl.toString());
+            const detailUsageKey = `maps-detail:${context.runId}:${place.place_id}`;
+            const { response: detailsResp, gate: detailsGate } = await fetchAndRecordProviderCall({
+              context,
+              url: detailsUrl.toString(),
+              provider: "GOOGLE_MAPS",
+              service: "PLACES_API",
+              operation: "PLACE_DETAILS",
+              idempotencyKey: detailUsageKey,
+              estimatedCostMicros: placeDetailsCostMicros,
+            });
+            if (detailsGate.should_stop) {
+              budgetStopped = true;
+              break;
+            }
             if (!detailsResp.ok) continue;
 
             const detailsData = await detailsResp.json();
+            if (detailsData.status !== "OK") {
+              await recordProviderCall({
+                context,
+                provider: "GOOGLE_MAPS",
+                service: "PLACES_API",
+                operation: "PLACE_DETAILS",
+                idempotencyKey: detailUsageKey,
+                status: "FAILED",
+                estimatedCostMicros: placeDetailsCostMicros,
+                metadata: { provider_status: String(detailsData.status || "UNKNOWN") },
+              });
+              continue;
+            }
             const detail = detailsData.result || {};
 
             // Extrai telefone e normaliza
@@ -483,11 +715,23 @@ async function discoverGoogleMaps(
               }
             }
 
+            const rating = Number(detail.rating || place.rating || 0);
+            const reviews = Number(detail.user_ratings_total || place.user_ratings_total || 0);
+            const provisionalEligible = Boolean(phone) &&
+              rating >= Number(config.min_google_rating || 0) &&
+              reviews >= Number(config.min_reviews || 0);
+
             leads.push({
               name: place.name || "Sem nome",
               whatsapp: phone,
               source: "GOOGLE_MAPS",
               website: detail.website || null,
+              profession: config.profession,
+              google_rating: rating || null,
+              google_reviews_count: reviews || null,
+              provisional_eligible: provisionalEligible,
+              provider_usage_event_id: detailsGate.event_id || null,
+              search_usage_event_id: textSearchGate.event_id || null,
               address: {
                 city: placeCity,
                 state: placeState,
@@ -497,18 +741,24 @@ async function discoverGoogleMaps(
                 google_place_id: place.place_id,
                 google_rating: detail.rating || place.rating || null,
                 google_reviews_count: detail.user_ratings_total || null,
-                raw_phone: rawPhone || null,
                 website: detail.website || null,
                 search_tag: tag,
                 search_city: city,
               },
             });
-          } catch (err: any) {
-            console.error(`  ⚠️ Erro no detalhe de ${place.name}: ${err.message}`);
+            const candidateGate = await recordRunCandidate(context, provisionalEligible);
+            if (candidateGate.should_stop) {
+              budgetStopped = true;
+              break;
+            }
+          } catch (error) {
+            if (error instanceof ProspectingControlError) throw error;
+            console.error('  Falha ao processar detalhe de um resultado do Google Maps.');
           }
         }
-      } catch (err: any) {
-        console.error(`  💥 Erro na busca "${query}": ${err.message}`);
+      } catch (error) {
+        if (error instanceof ProspectingControlError) throw error;
+        console.error('  Falha na busca Google Maps.');
       }
     }
   }
@@ -536,7 +786,8 @@ const PROFESSION_CNAE_MAP: Record<string, string[]> = {
 };
 
 async function discoverCnpjMiner(
-  config: DiscoverRequest["config"]
+  config: DiscoverRequest["config"],
+  context: DiscoveryContext,
 ): Promise<DiscoveredLead[]> {
   console.log("🏭 CNPJ Miner: Iniciando busca...");
 
@@ -551,12 +802,17 @@ async function discoverCnpjMiner(
   const dailyLimit = config.daily_limit || 20;
   const profession = config.profession;
   const leads: DiscoveredLead[] = [];
+  const requestCostMicros = envCostMicros("CNPJA_SEARCH_COST_MICROS");
+  if (requestCostMicros <= 0) {
+    throw new Error("CNPJa cost estimate must be configured before discovery");
+  }
+  let budgetStopped = false;
 
   // Data de 30 dias atrás para buscar empresas recém-abertas
   const thirtyDaysAgo = formatDate(daysAgo(30));
 
-  for (const city of cities) {
-    if (leads.length >= dailyLimit) break;
+  for (const [cityIndex, city] of cities.entries()) {
+    if (leads.length >= dailyLimit || budgetStopped) break;
 
     console.log(`  🔍 Buscando empresas novas em: ${city}`);
 
@@ -573,12 +829,25 @@ async function discoverCnpjMiner(
         params.set("mainActivity.id.in", PROFESSION_CNAE_MAP[profession].join(","));
       }
 
-      const resp = await safeFetch(`https://api.cnpja.com/office?${params}`, {
-        headers: {
-          Authorization: cnpjaKey,
-          "Content-Type": "application/json",
+      const { response: resp, gate: usageGate } = await fetchAndRecordProviderCall({
+        context,
+        url: `https://api.cnpja.com/office?${params}`,
+        fetchOptions: {
+          headers: {
+            Authorization: cnpjaKey,
+            "Content-Type": "application/json",
+          },
         },
+        provider: "CNPJA",
+        service: "OFFICE_API",
+        operation: "SEARCH",
+        idempotencyKey: `cnpja-search:${context.runId}:${cityIndex}`,
+        estimatedCostMicros: requestCostMicros,
       });
+      if (usageGate.should_stop) {
+        budgetStopped = true;
+        break;
+      }
 
       if (!resp.ok) {
         console.error(`  ❌ CNPJá API falhou: HTTP ${resp.status}`);
@@ -636,8 +905,14 @@ async function discoverCnpjMiner(
           },
           profession: profession || undefined,
         });
+        const candidateGate = await recordRunCandidate(context, Boolean(phone));
+        if (candidateGate.should_stop) {
+          budgetStopped = true;
+          break;
+        }
       }
     } catch (err: any) {
+      if (err instanceof ProspectingControlError) throw err;
       console.error(`  💥 Erro ao buscar em ${city}: ${err.message}`);
     }
   }
@@ -706,7 +981,8 @@ const DOCTORALIA_TAG_SLUG_MAP: Record<string, string> = {
 };
 
 async function discoverDoctoralia(
-  config: DiscoverRequest["config"]
+  config: DiscoverRequest["config"],
+  context: DiscoveryContext,
 ): Promise<DiscoveredLead[]> {
   console.log("🩺 Doctoralia: Iniciando busca...");
 
@@ -725,6 +1001,7 @@ async function discoverDoctoralia(
   const cities = config.cities || [];
   const dailyLimit = config.daily_limit || 20;
   const leads: DiscoveredLead[] = [];
+  let budgetStopped = false;
 
   // If no tags provided, use default specialties for the profession
   const validSlugs = DOCTORALIA_SPECIALTY_SLUGS[profession] || [];
@@ -746,9 +1023,9 @@ async function discoverDoctoralia(
 
   console.log(`  📋 Profissão: ${profession}, Tags mapeadas: [${effectiveTags.join(", ")}]`);
 
-  for (const city of cities) {
-    for (const specialtySlug of effectiveTags) {
-      if (leads.length >= dailyLimit) break;
+  for (const [cityIndex, city] of cities.entries()) {
+    for (const [tagIndex, specialtySlug] of effectiveTags.entries()) {
+      if (leads.length >= dailyLimit || budgetStopped) break;
 
       const citySlug = toSlug(city);
       const url = `https://www.doctoralia.com.br/${specialtySlug}/${citySlug}`;
@@ -759,7 +1036,20 @@ async function discoverDoctoralia(
         // Rate limit: 3 segundos entre requests para evitar ban
         await sleep(3000);
 
-        const resp = await safeFetch(url, {}, 20000);
+        const { response: resp, gate: usageGate } = await fetchAndRecordProviderCall({
+          context,
+          url,
+          timeoutMs: 20000,
+          provider: "DOCTORALIA",
+          service: "PUBLIC_WEB",
+          operation: "SEARCH_PAGE",
+          idempotencyKey: `doctoralia:${context.runId}:${cityIndex}:${tagIndex}`,
+          estimatedCostMicros: 0,
+        });
+        if (usageGate.should_stop) {
+          budgetStopped = true;
+          break;
+        }
         if (!resp.ok) {
           console.error(`  ❌ Doctoralia retornou HTTP ${resp.status} para ${url}`);
           if (resp.status === 404) {
@@ -773,10 +1063,6 @@ async function discoverDoctoralia(
 
         // Extrai telefones do HTML
         const phones = extractPhonesFromText(html);
-
-        // Diagnostic: log a snippet of the HTML to help debug extraction
-        const htmlSnippet = html.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<style[\s\S]*?<\/style>/gi, "").slice(0, 2000);
-        console.log(`  🔬 HTML snippet (primeiro 2000 chars sem scripts): ${htmlSnippet.slice(0, 500)}`);
 
         // Strategy 1: Extract from data-doctor-name attributes
         const dataNameRegex = /data-doctor-name=["']([^"']+)["']/gi;
@@ -891,11 +1177,18 @@ async function discoverDoctoralia(
             },
             profession: profession,
           });
+          const candidateGate = await recordRunCandidate(context, Boolean(phone));
+          if (candidateGate.should_stop) {
+            budgetStopped = true;
+            break;
+          }
         }
       } catch (err: any) {
+        if (err instanceof ProspectingControlError) throw err;
         console.error(`  💥 Erro ao scrape Doctoralia (${url}): ${err.message}`);
       }
     }
+    if (budgetStopped) break;
   }
 
   console.log(`🩺 Doctoralia: ${leads.length} leads encontrados`);
@@ -907,7 +1200,8 @@ async function discoverDoctoralia(
 // ══════════════════════════════════════════════════════════════════════════════
 
 async function discoverComprasnet(
-  config: DiscoverRequest["config"]
+  config: DiscoverRequest["config"],
+  context: DiscoveryContext,
 ): Promise<DiscoveredLead[]> {
   console.log("🏛️ ComprasNet/PNCP: Iniciando busca...");
 
@@ -929,13 +1223,22 @@ async function discoverComprasnet(
 
     console.log(`  🔍 Consultando PNCP: ${pncpUrl}`);
 
-    const resp = await safeFetch(pncpUrl.toString(), {
-      headers: { Accept: "application/json" },
-    }, 20000);
+    const { response: resp, gate: usageGate } = await fetchAndRecordProviderCall({
+      context,
+      url: pncpUrl.toString(),
+      fetchOptions: { headers: { Accept: "application/json" } },
+      timeoutMs: 20000,
+      provider: "OTHER",
+      service: "PNCP_PUBLIC_API",
+      operation: "SEARCH",
+      idempotencyKey: `pncp-primary:${context.runId}`,
+      estimatedCostMicros: 0,
+    });
+    if (usageGate.should_stop) return leads;
 
     if (resp.ok) {
       const rawText = await resp.text();
-      console.log(`  📄 PNCP resposta: ${rawText.length} bytes, preview: ${rawText.slice(0, 300)}`);
+      console.log(`  PNCP resposta recebida: ${rawText.length} bytes`);
 
       let data: any;
       try {
@@ -1005,11 +1308,14 @@ async function discoverComprasnet(
             scrape_date: new Date().toISOString(),
           },
         });
+        const candidateGate = await recordRunCandidate(context, false);
+        if (candidateGate.should_stop) return leads;
       }
     } else {
       console.warn(`  ⚠️ PNCP retornou HTTP ${resp.status}, tentando API alternativa...`);
     }
   } catch (err: any) {
+    if (err instanceof ProspectingControlError) throw err;
     console.error(`  ⚠️ PNCP falhou: ${err.message}. Tentando API alternativa...`);
   }
 
@@ -1021,9 +1327,18 @@ async function discoverComprasnet(
 
       console.log(`  🔍 Tentando API alternativa: dados.gov.br`);
 
-      const resp = await safeFetch(altUrl, {
-        headers: { Accept: "application/json" },
-      }, 20000);
+      const { response: resp, gate: usageGate } = await fetchAndRecordProviderCall({
+        context,
+        url: altUrl,
+        fetchOptions: { headers: { Accept: "application/json" } },
+        timeoutMs: 20000,
+        provider: "OTHER",
+        service: "DADOS_GOV_BR_COMPRAS",
+        operation: "SEARCH",
+        idempotencyKey: `pncp-alternative:${context.runId}`,
+        estimatedCostMicros: 0,
+      });
+      if (usageGate.should_stop) return leads;
 
       if (resp.ok) {
         const data = await resp.json();
@@ -1053,11 +1368,14 @@ async function discoverComprasnet(
               scrape_date: new Date().toISOString(),
             },
           });
+          const candidateGate = await recordRunCandidate(context, false);
+          if (candidateGate.should_stop) return leads;
         }
       } else {
         console.error(`  ❌ API alternativa também falhou: HTTP ${resp.status}`);
       }
     } catch (err: any) {
+      if (err instanceof ProspectingControlError) throw err;
       console.error(`  💥 Erro na API alternativa: ${err.message}`);
     }
   }
@@ -1072,14 +1390,15 @@ async function discoverComprasnet(
 
 async function discoverVivaReal(
   tenant_id: string,
-  config: DiscoverRequest["config"]
+  config: DiscoverRequest["config"],
+  context: DiscoveryContext,
 ): Promise<DiscoveredLead[]> {
   console.log("🏠 VivaReal: Fonte bloqueada por Cloudflare. Fazendo fallback para Tavily B2B Search...");
   return discoverTavily(tenant_id, {
     ...config,
     profession: "imobiliária ou corretor de imóveis",
     search_tags: ["imobiliária", "corretor de imóveis", "venda de imóveis"]
-  });
+  }, context);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1088,14 +1407,15 @@ async function discoverVivaReal(
 
 async function discoverCrmSp(
   tenant_id: string,
-  config: DiscoverRequest["config"]
+  config: DiscoverRequest["config"],
+  context: DiscoveryContext,
 ): Promise<DiscoveredLead[]> {
   console.log("⚕️ CRM-SP: Fonte bloqueada (WAF/CAPTCHA). Fazendo fallback para Tavily B2B Search...");
   return discoverTavily(tenant_id, {
     ...config,
     profession: "médico ou clínica médica",
     search_tags: ["médico", "clínica médica", "consultório médico"]
-  });
+  }, context);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1104,14 +1424,15 @@ async function discoverCrmSp(
 
 async function discoverOabSp(
   tenant_id: string,
-  config: DiscoverRequest["config"]
+  config: DiscoverRequest["config"],
+  context: DiscoveryContext,
 ): Promise<DiscoveredLead[]> {
   console.log("⚖️ OAB-SP: SPA/API bloqueada. Fazendo fallback para Tavily B2B Search...");
   return discoverTavily(tenant_id, {
     ...config,
     profession: "advogado ou escritório de advocacia",
     search_tags: ["advogado", "escritório de advocacia", "advocacia"]
-  });
+  }, context);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1120,14 +1441,15 @@ async function discoverOabSp(
 
 async function discoverCroSp(
   tenant_id: string,
-  config: DiscoverRequest["config"]
+  config: DiscoverRequest["config"],
+  context: DiscoveryContext,
 ): Promise<DiscoveredLead[]> {
   console.log("🦷 CRO-SP: WAF bloqueando. Fazendo fallback para Tavily B2B Search...");
   return discoverTavily(tenant_id, {
     ...config,
     profession: "dentista ou clínica odontológica",
     search_tags: ["dentista", "clínica odontológica", "consultório odontológico"]
-  });
+  }, context);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1136,7 +1458,8 @@ async function discoverCroSp(
 
 async function discoverTavily(
   tenant_id: string,
-  config: DiscoverRequest["config"]
+  config: DiscoverRequest["config"],
+  context: DiscoveryContext,
 ): Promise<DiscoveredLead[]> {
   console.log("🌐 Tavily: Iniciando busca...");
 
@@ -1155,25 +1478,43 @@ async function discoverTavily(
   const tags = config.search_tags || [];
   const dailyLimit = config.daily_limit || 10;
   const leads: DiscoveredLead[] = [];
+  const requestCostMicros = envCostMicros("TAVILY_SEARCH_COST_MICROS");
+  if (requestCostMicros <= 0) {
+    throw new Error("Tavily cost estimate must be configured before discovery");
+  }
+  let budgetStopped = false;
 
-  for (const city of cities) {
-    if (leads.length >= dailyLimit) break;
+  for (const [cityIndex, city] of cities.entries()) {
+    if (leads.length >= dailyLimit || budgetStopped) break;
     const queryStr = tags.length > 0 ? tags.join(" OR ") : config.profession || "empresas";
     const searchQuery = `"${queryStr}" em ${city} brasil contato whatsapp`;
 
     try {
-      const resp = await safeFetch("https://api.tavily.com/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          api_key: tavilyKey,
-          query: searchQuery,
-          search_depth: "basic",
-          include_answer: false,
-          include_raw_content: false,
-          max_results: Math.max(5, dailyLimit - leads.length),
-        }),
+      const { response: resp, gate: usageGate } = await fetchAndRecordProviderCall({
+        context,
+        url: "https://api.tavily.com/search",
+        fetchOptions: {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            api_key: tavilyKey,
+            query: searchQuery,
+            search_depth: "basic",
+            include_answer: false,
+            include_raw_content: false,
+            max_results: Math.max(5, dailyLimit - leads.length),
+          }),
+        },
+        provider: "TAVILY",
+        service: "SEARCH_API",
+        operation: "BASIC_SEARCH",
+        idempotencyKey: `tavily:${context.runId}:${cityIndex}`,
+        estimatedCostMicros: requestCostMicros,
       });
+      if (usageGate.should_stop) {
+        budgetStopped = true;
+        break;
+      }
 
       // Increment usage
       await supabase.rpc("increment_tenant_usage", {
@@ -1205,8 +1546,14 @@ async function discoverTavily(
             scrape_date: new Date().toISOString(),
           },
         });
+        const candidateGate = await recordRunCandidate(context, false);
+        if (candidateGate.should_stop) {
+          budgetStopped = true;
+          break;
+        }
       }
     } catch (err: any) {
+      if (err instanceof ProspectingControlError) throw err;
       console.error(`  💥 Erro no Tavily: ${err.message}`);
     }
   }
@@ -1219,29 +1566,30 @@ async function discoverTavily(
 // ══════════════════════════════════════════════════════════════════════════════
 
 async function routeDiscovery(
-  request: DiscoverRequest
+  request: DiscoverRequest,
+  context: DiscoveryContext,
 ): Promise<DiscoveredLead[]> {
   const { tenant_id, source_type, config } = request;
 
   switch (source_type) {
     case "GOOGLE_MAPS":
-      return discoverGoogleMaps(tenant_id, config);
+      return discoverGoogleMaps(tenant_id, config, context);
     case "CNPJ_MINER":
-      return discoverCnpjMiner(config);
+      return discoverCnpjMiner(config, context);
     case "DOCTORALIA":
-      return discoverDoctoralia(config);
+      return discoverDoctoralia(config, context);
     case "COMPRASNET":
-      return discoverComprasnet(config);
+      return discoverComprasnet(config, context);
     case "VIVAREAL":
-      return discoverVivaReal(tenant_id, config);
+      return discoverVivaReal(tenant_id, config, context);
     case "CRM_SP":
-      return discoverCrmSp(tenant_id, config);
+      return discoverCrmSp(tenant_id, config, context);
     case "OAB_SP":
-      return discoverOabSp(tenant_id, config);
+      return discoverOabSp(tenant_id, config, context);
     case "CRO_SP":
-      return discoverCroSp(tenant_id, config);
+      return discoverCroSp(tenant_id, config, context);
     case "TAVILY_B2B_SEARCH":
-      return discoverTavily(tenant_id, config);
+      return discoverTavily(tenant_id, config, context);
     default:
       throw new Error(`source_type desconhecido: ${source_type}`);
   }
@@ -1251,241 +1599,254 @@ async function routeDiscovery(
 // MAIN HANDLER
 // ══════════════════════════════════════════════════════════════════════════════
 
-serve(async (req: Request) => {
-  // Apenas aceita POST
-  if (req.method !== "POST") {
-    return new Response(
-      JSON.stringify({ ok: false, error: "Método não permitido. Use POST." }),
-      { status: 405, headers: { "Content-Type": "application/json" } }
-    );
-  }
+const VALID_SOURCES: SourceType[] = [
+  "GOOGLE_MAPS", "CNPJ_MINER", "DOCTORALIA", "COMPRASNET",
+  "VIVAREAL", "CRM_SP", "OAB_SP", "CRO_SP", "TAVILY_B2B_SEARCH",
+];
+
+type CampaignConfigRow = {
+  id: string;
+  tenant_id: string;
+  name: string;
+  status: string;
+  profession: string | null;
+  filters: Record<string, any> | null;
+  cities: string[] | null;
+  state: string | null;
+  search_tags: string[] | null;
+  capture_sources: string[] | null;
+  daily_limit: number;
+  discovery_auto_enabled: boolean;
+  homologation_mode: boolean;
+  icps?: { min_google_rating?: number | null; min_reviews?: number | null } | null;
+};
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+  });
+}
+
+function isAuthorizedWorker(req: Request): boolean {
+  const authorization = req.headers.get("authorization") || "";
+  if (authorization === `Bearer ${SUPABASE_KEY}`) return true;
+  const cronSecret = Deno.env.get("CRON_SECRET") || "";
+  return Boolean(cronSecret) && (
+    authorization === `Bearer ${cronSecret}` || req.headers.get("x-cron-secret") === cronSecret
+  );
+}
+
+function campaignDiscoveryConfig(campaign: CampaignConfigRow, limit: number): DiscoverRequest["config"] {
+  const fallbackTerms = campaign.filters?.search_terms?.[campaign.profession || ""];
+  return {
+    cities: campaign.cities?.length ? campaign.cities : (campaign.filters?.cities || []),
+    state: campaign.state || "SP",
+    search_tags: campaign.search_tags?.length ? campaign.search_tags : (Array.isArray(fallbackTerms) ? fallbackTerms : []),
+    profession: campaign.profession || undefined,
+    daily_limit: Math.min(Math.max(limit || 1, 1), 100),
+    min_google_rating: Number(campaign.icps?.min_google_rating ?? campaign.filters?.min_google_rating ?? 0),
+    min_reviews: Number(campaign.icps?.min_reviews ?? campaign.filters?.min_reviews ?? 0),
+  };
+}
+
+function brtDateKey(now = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(now);
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day}`;
+}
+
+async function executeDiscoveryRun(params: {
+  campaign: CampaignConfigRow;
+  sourceType: SourceType;
+  runId: string;
+  limit: number;
+}): Promise<DiscoverResult & { run_id: string; status: string }> {
+  const config = campaignDiscoveryConfig(params.campaign, params.limit);
+  const context: DiscoveryContext = {
+    tenantId: params.campaign.tenant_id,
+    campaignId: params.campaign.id,
+    runId: params.runId,
+    sourceType: params.sourceType,
+  };
+
+  await supabase.from("prospecting_runs").update({
+    status: "RUNNING",
+    started_at: new Date().toISOString(),
+  }).eq("id", params.runId).eq("status", "QUEUED");
 
   try {
-    const body: any = await req.json();
-
-    if (body.auto_mode === true) {
-      console.log(`\n${"═".repeat(70)}`);
-      console.log(`🤖 Auto-Discovery Mode Started`);
-      console.log(`   Time: ${new Date().toISOString()}`);
-      console.log(`${"═".repeat(70)}\n`);
-
-      const { data: activeCampaigns } = await supabase
-        .from("campaigns")
-        .select("id, tenant_id, name, target_audience, filters, profession")
-        .eq("status", "ACTIVE");
-
-      if (!activeCampaigns || activeCampaigns.length === 0) {
-        return new Response(JSON.stringify({ ok: true, message: "No active campaigns found" }), { headers: { "Content-Type": "application/json" } });
-      }
-
-      let totalFound = 0;
-      let totalInserted = 0;
-      const results: any[] = [];
-
-      for (const campaign of activeCampaigns) {
-        console.log(`\n📢 Auto-running campaign: ${campaign.name} (${campaign.id})`);
-        
-        const isMedical = campaign.profession === "DOCTOR" || campaign.profession === "DENTIST";
-        const sourcesToRun: SourceType[] = isMedical ? ["DOCTORALIA", "CNPJ_MINER"] : ["CNPJ_MINER", "GOOGLE_MAPS"];
-
-        const cities = campaign.filters?.cities || [];
-        const tags = campaign.target_audience ? [campaign.target_audience] : [];
-
-        if (cities.length === 0) {
-          console.log(`  ⏭️ Skipping: No cities configured.`);
-          continue;
-        }
-
-        const config = {
-          cities,
-          search_tags: tags,
-          profession: campaign.profession,
-          daily_limit: 10
-        };
-
-        for (const source of sourcesToRun) {
-          console.log(`  -> Running source: ${source}`);
-          try {
-            const discoveredLeads = await routeDiscovery({
-              tenant_id: campaign.tenant_id,
-              campaign_id: campaign.id,
-              source_type: source,
-              config
-            });
-
-            if (discoveredLeads.length > 0) {
-               const { inserted, skipped } = await insertLeads(
-                 campaign.tenant_id,
-                 campaign.id,
-                 source,
-                 discoveredLeads
-               );
-
-               totalFound += discoveredLeads.length;
-               totalInserted += inserted;
-               
-               results.push({
-                 campaign_id: campaign.id,
-                 source,
-                 found: discoveredLeads.length,
-                 inserted
-               });
-            }
-          } catch(e: any) {
-            console.error(`  ❌ Auto-discovery error for ${source}: ${e.message}`);
-          }
-        }
-      }
-
-      return new Response(JSON.stringify({ ok: true, totalFound, totalInserted, results }), {
-        headers: { "Content-Type": "application/json" }
-      });
-    }
-
-    const { tenant_id, campaign_id, source_type, config } = body as DiscoverRequest;
-
-    // Validações básicas
-    if (!tenant_id || !campaign_id || !source_type) {
-      return new Response(
-        JSON.stringify({
-          ok: false,
-          error: "Campos obrigatórios: tenant_id, campaign_id, source_type",
-        }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    const validSources: SourceType[] = [
-      "GOOGLE_MAPS", "CNPJ_MINER", "DOCTORALIA", "COMPRASNET",
-      "VIVAREAL", "CRM_SP", "OAB_SP", "CRO_SP", "TAVILY_B2B_SEARCH"
-    ];
-    if (!validSources.includes(source_type)) {
-      return new Response(
-        JSON.stringify({
-          ok: false,
-          error: `source_type inválido: ${source_type}. Válidos: ${validSources.join(", ")}`,
-        }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    console.log(`\n${"═".repeat(70)}`);
-    console.log(`🔎 ProspIX Discovery Engine`);
-    console.log(`   Time:        ${new Date().toISOString()}`);
-    console.log(`   Tenant:      ${tenant_id}`);
-    console.log(`   Campaign:    ${campaign_id}`);
-    console.log(`   Source:      ${source_type}`);
-    console.log(`   Config:      ${JSON.stringify(config || {})}`);
-    console.log(`${"═".repeat(70)}\n`);
-
-    // Verifica se o tenant e campanha existem
-    const { data: campaign, error: campError } = await supabase
-      .from("campaigns")
-      .select("id, name, status, profession")
-      .eq("id", campaign_id)
-      .eq("tenant_id", tenant_id)
-      .single();
-
-    if (campError || !campaign) {
-      return new Response(
-        JSON.stringify({
-          ok: false,
-          error: `Campanha ${campaign_id} não encontrada para o tenant ${tenant_id}`,
-        }),
-        { status: 404, headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    console.log(`📢 Campanha: ${campaign.name} (${campaign.status})`);
-
-    // Injeta profissão da campanha no config se disponível
-    if (campaign.profession && !config?.profession) {
-      (config as any).profession = campaign.profession;
-    }
-
-    // ── Executa o handler de descoberta ──────────────────────────
-    let discoveredLeads: DiscoveredLead[] = [];
-    const errors: string[] = [];
-
-    try {
-      if (source_type === "TAVILY_B2B_SEARCH") {
-         discoveredLeads = await discoverTavily(tenant_id, config);
-      } else {
-         discoveredLeads = await routeDiscovery({ tenant_id, campaign_id, source_type, config });
-      }
-    } catch (err: any) {
-      const errorMsg = err.message || "Erro desconhecido no handler de descoberta";
-      console.error(`❌ Erro no handler ${source_type}: ${errorMsg}`);
-      errors.push(errorMsg);
-
-      // Retorna erro gracioso, não crasha
-      const result: DiscoverResult = {
-        ok: false,
-        source_type,
-        leads_found: 0,
-        leads_inserted: 0,
-        leads_skipped_duplicate: 0,
-        errors,
-      };
-      return new Response(JSON.stringify(result), {
-        status: 200, // 200 mesmo com erro no handler — o erro está no payload
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-
-    console.log(`\n📊 Leads descobertos: ${discoveredLeads.length}`);
-
-    // ── Deduplica e insere ───────────────────────────────────────
+    const discoveredLeads = await routeDiscovery({
+      tenant_id: params.campaign.tenant_id,
+      campaign_id: params.campaign.id,
+      run_id: params.runId,
+      source_type: params.sourceType,
+      config,
+    }, context);
     const { inserted, skipped } = await insertLeads(
-      tenant_id,
-      campaign_id,
-      source_type,
-      discoveredLeads
+      params.campaign.tenant_id,
+      params.campaign.id,
+      params.sourceType,
+      discoveredLeads,
     );
-
-    // ── Registra execução no tenant_discoveries (se a tabela existir)
-    try {
-      await supabase.from("tenant_discoveries").insert({
-        tenant_id,
-        campaign_id,
-        source_type,
-        leads_found: discoveredLeads.length,
-        leads_inserted: inserted,
-        leads_skipped: skipped,
-        config: config || {},
-        errors: errors.length > 0 ? errors : null,
-        executed_at: new Date().toISOString(),
-      });
-    } catch (_e) {
-      // Tabela pode não existir — não é crítico
-      console.warn("⚠️ Não foi possível registrar em tenant_discoveries");
-    }
-
-    // ── Resposta final ──────────────────────────────────────────
-    const result: DiscoverResult = {
+    const { data: currentRun } = await supabase
+      .from("prospecting_runs")
+      .select("status")
+      .eq("id", params.runId)
+      .single();
+    const status = currentRun?.status === "STOPPED_BUDGET" ? "STOPPED_BUDGET" : "SUCCEEDED";
+    await supabase.rpc("finish_prospecting_run", {
+      p_run_id: params.runId,
+      p_status: status,
+      p_discovered_count: discoveredLeads.length,
+      p_inserted_count: inserted,
+      p_duplicate_count: skipped,
+      p_eligible_count: discoveredLeads.filter((lead) => lead.provisional_eligible ?? Boolean(lead.whatsapp)).length,
+      p_error_code: null,
+      p_error_message: null,
+    });
+    return {
       ok: true,
-      source_type,
+      run_id: params.runId,
+      status,
+      source_type: params.sourceType,
       leads_found: discoveredLeads.length,
       leads_inserted: inserted,
       leads_skipped_duplicate: skipped,
-      errors: errors.length > 0 ? errors : undefined,
     };
-
-    console.log(`\n🏁 Resultado final:`);
-    console.log(`   Encontrados: ${result.leads_found}`);
-    console.log(`   Inseridos:   ${result.leads_inserted}`);
-    console.log(`   Duplicatas:  ${result.leads_skipped_duplicate}`);
-    console.log(`${"═".repeat(70)}\n`);
-
-    return new Response(JSON.stringify(result), {
-      headers: { "Content-Type": "application/json" },
+  } catch (error) {
+    const code = "DISCOVERY_PROVIDER_ERROR";
+    const { data: failedRun } = await supabase
+      .from("prospecting_runs")
+      .select("status, stop_reason, discovered_count, inserted_count, duplicate_count, eligible_count")
+      .eq("id", params.runId)
+      .maybeSingle();
+    const finalStatus = failedRun?.status === "STOPPED_BUDGET" ? "STOPPED_BUDGET" : "FAILED";
+    const discoveredCount = Math.max(0, Number(failedRun?.discovered_count || 0));
+    const insertedCount = Math.max(0, Number(failedRun?.inserted_count || 0));
+    const duplicateCount = Math.max(0, Number(failedRun?.duplicate_count || 0));
+    const eligibleCount = Math.max(0, Number(failedRun?.eligible_count || 0));
+    await supabase.rpc("finish_prospecting_run", {
+      p_run_id: params.runId,
+      p_status: finalStatus,
+      p_discovered_count: discoveredCount,
+      p_inserted_count: insertedCount,
+      p_duplicate_count: duplicateCount,
+      p_eligible_count: eligibleCount,
+      p_error_code: code,
+      p_error_message: error instanceof Error ? error.message : code,
     });
-  } catch (err: any) {
-    console.error("💥 Fatal error:", err.message);
-    console.error(err.stack);
-    return new Response(
-      JSON.stringify({ ok: false, error: err.message }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
-    );
+    console.error("[discover] run failed", { runId: params.runId, source: params.sourceType, code });
+    return {
+      ok: false,
+      run_id: params.runId,
+      status: finalStatus,
+      source_type: params.sourceType,
+      leads_found: discoveredCount,
+      leads_inserted: insertedCount,
+      leads_skipped_duplicate: duplicateCount,
+      errors: [code],
+    };
+  }
+}
+
+serve(async (req: Request) => {
+  if (req.method !== "POST") return jsonResponse({ ok: false, error: "METHOD_NOT_ALLOWED" }, 405);
+  if (!isAuthorizedWorker(req)) return jsonResponse({ ok: false, error: "UNAUTHORIZED" }, 401);
+
+  try {
+    const body = await req.json() as Record<string, any>;
+    if (body.auto_mode === true) {
+      const { data: activeCampaigns, error } = await supabase
+        .from("campaigns")
+        .select("id, tenant_id, name, status, profession, filters, cities, state, search_tags, capture_sources, daily_limit, discovery_auto_enabled, homologation_mode, icps:icp_id(min_google_rating,min_reviews)")
+        .eq("status", "ACTIVE")
+        .eq("discovery_auto_enabled", true);
+      if (error) throw error;
+
+      const results: unknown[] = [];
+      for (const rawCampaign of activeCampaigns || []) {
+        const campaign = rawCampaign as CampaignConfigRow;
+        const scheduledSources = campaign.homologation_mode
+          ? (campaign.capture_sources || []).slice(0, 1)
+          : (campaign.capture_sources || []);
+        for (const rawSource of scheduledSources) {
+          const sourceType = String(rawSource).toUpperCase() as SourceType;
+          if (!VALID_SOURCES.includes(sourceType)) continue;
+          const idempotencyKey = `cron:${brtDateKey()}:${campaign.id}:${sourceType}`;
+          const config = campaignDiscoveryConfig(campaign, campaign.daily_limit);
+          const { data: gate, error: gateError } = await supabase.rpc("begin_scheduled_prospecting_run", {
+            p_tenant_id: campaign.tenant_id,
+            p_campaign_id: campaign.id,
+            p_source_type: sourceType,
+            p_idempotency_key: idempotencyKey,
+            p_requested_limit: campaign.daily_limit,
+            p_config: config,
+          });
+          if (gateError || !gate?.ok || gate?.replayed) {
+            results.push({ campaign_id: campaign.id, source_type: sourceType, status: gate?.code || gate?.status || "SKIPPED" });
+            continue;
+          }
+          results.push(await executeDiscoveryRun({
+            campaign,
+            sourceType,
+            runId: gate.run_id,
+            limit: gate.effective_limit,
+          }));
+        }
+      }
+      return jsonResponse({ ok: true, results });
+    }
+
+    const { tenant_id, campaign_id, source_type, run_id } = body as DiscoverRequest;
+    const headerRunId = req.headers.get("x-prospix-discovery-run");
+    if (!tenant_id || !campaign_id || !run_id || headerRunId !== run_id || !VALID_SOURCES.includes(source_type)) {
+      return jsonResponse({ ok: false, error: "INVALID_RUN_SCOPE" }, 400);
+    }
+
+    const { data: run, error: runError } = await supabase
+      .from("prospecting_runs")
+      .select("id, tenant_id, campaign_id, source_type, requested_limit, status")
+      .eq("id", run_id)
+      .eq("tenant_id", tenant_id)
+      .eq("campaign_id", campaign_id)
+      .eq("source_type", source_type)
+      .in("status", ["QUEUED", "RUNNING"])
+      .single();
+    if (runError || !run) return jsonResponse({ ok: false, error: "RUN_NOT_AUTHORIZED" }, 403);
+
+    const { data: campaign, error: campaignError } = await supabase
+      .from("campaigns")
+      .select("id, tenant_id, name, status, profession, filters, cities, state, search_tags, capture_sources, daily_limit, discovery_auto_enabled, homologation_mode, icps:icp_id(min_google_rating,min_reviews)")
+      .eq("id", campaign_id)
+      .eq("tenant_id", tenant_id)
+      .eq("status", "ACTIVE")
+      .single();
+    if (campaignError || !campaign || !(campaign.capture_sources || []).includes(source_type)) {
+      await supabase.rpc("finish_prospecting_run", {
+        p_run_id: run_id,
+        p_status: "SKIPPED",
+        p_discovered_count: 0,
+        p_inserted_count: 0,
+        p_duplicate_count: 0,
+        p_eligible_count: 0,
+        p_error_code: "DISCOVERY_CAMPAIGN_NOT_ACTIVE",
+        p_error_message: "Campaign is not active or source is disabled",
+      });
+      return jsonResponse({ ok: false, error: "DISCOVERY_CAMPAIGN_NOT_ACTIVE" }, 409);
+    }
+
+    const result = await executeDiscoveryRun({
+      campaign: campaign as CampaignConfigRow,
+      sourceType: source_type,
+      runId: run_id,
+      limit: run.requested_limit,
+    });
+    return jsonResponse(result, result.ok ? 200 : 502);
+  } catch (error) {
+    console.error("[discover] fatal", { code: "DISCOVERY_INTERNAL_ERROR" });
+    return jsonResponse({ ok: false, error: "DISCOVERY_INTERNAL_ERROR" }, 500);
   }
 });

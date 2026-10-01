@@ -29,6 +29,7 @@ import {
   loadTenantAiOutboundGate,
   tenantAiOutboundPausedRetryIso,
 } from '../_shared/tenant-ai-outbound-control.ts';
+import { canBypassTenantOutboundPause } from '../_shared/qa-homologation.ts';
 import {
   fetchWhatsAppConnectionStatus as fetchProviderConnectionStatus,
   loadTenantWhatsAppChannel,
@@ -54,6 +55,59 @@ function uuid(): string {
   return crypto.randomUUID();
 }
 
+async function recordWhatsAppUsage(params: {
+  tenantId: string;
+  campaignId: string | null;
+  leadId: string | null;
+  pendingOutboundId: string;
+  channel: WhatsAppChannel;
+  status: 'ATTEMPTED' | 'SUCCEEDED' | 'FAILED';
+  providerMessageId?: string | null;
+  messageType?: string | null;
+}): Promise<boolean> {
+  const configuredCost = Number(Deno.env.get('WHATSAPP_MESSAGE_COST_MICROS') || '0');
+  const { error } = await supabase.rpc('record_provider_usage_event', {
+    p_tenant_id: params.tenantId,
+    p_campaign_id: params.campaignId,
+    p_lead_id: params.leadId,
+    p_prospecting_run_id: null,
+    p_provider: params.channel.provider,
+    p_service: 'WHATSAPP_MESSAGE',
+    p_operation: 'SEND',
+    p_source_type: params.messageType || 'OUTBOUND',
+    p_status: params.status,
+    p_quantity: 1,
+    p_unit: 'message',
+    p_estimated_cost_micros:
+      Number.isFinite(configuredCost) && configuredCost > 0 ? Math.floor(configuredCost) : 0,
+    p_external_request_id: params.providerMessageId || null,
+    p_idempotency_key: `send:${params.pendingOutboundId}`,
+    p_metadata: { channel_id: params.channel.id, message_type: params.messageType || null },
+  });
+  if (error) {
+    console.warn('[send] provider usage ledger unavailable', { code: error.code });
+    return false;
+  }
+  return true;
+}
+
+async function hasActiveQaHomologation(tenantId: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('campaign_qa_allowlist')
+    .select('lead_id, campaigns!inner(id, tenant_id, status, homologation_mode)')
+    .gt('expires_at', new Date().toISOString())
+    .eq('campaigns.tenant_id', tenantId)
+    .eq('campaigns.status', 'ACTIVE')
+    .eq('campaigns.homologation_mode', true)
+    .limit(1);
+
+  if (error) {
+    console.warn('[send] QA homologation gate unavailable', { code: error.code });
+    return false;
+  }
+  return Boolean(data?.length);
+}
+
 type ConversationLockResult = {
   acquired: boolean;
   requestedLockUntil: string;
@@ -63,6 +117,7 @@ type ConversationLockResult = {
 
 type GuardianDelayDecision = {
   reasonCode: string;
+  guardianKey: string | null;
   scheduledFor: string;
   finalDecision: 'DELAY';
 };
@@ -1981,6 +2036,20 @@ async function processFirstTouch(
 
     // Iterar sobre os candidatos encontrados até achar um válido
     for (const lead of leads) {
+      if (campaign.homologation_mode) {
+        const { data: qaAllowed } = await supabase
+          .from('campaign_qa_allowlist')
+          .select('lead_id')
+          .eq('campaign_id', campaign.id)
+          .eq('lead_id', lead.id)
+          .gt('expires_at', new Date().toISOString())
+          .maybeSingle();
+        if (!qaAllowed) {
+          processedLeadIds.add(lead.id);
+          continue;
+        }
+      }
+
       const phone = lead.whatsapp || '';
       const companyName = (lead.name || '').toLowerCase().trim();
 
@@ -1990,7 +2059,7 @@ async function processFirstTouch(
 
       if (!isCelular) {
         console.log(
-          `  🚫 [Filtro Celular] Lead "${lead.name}" (ID: ${lead.id}) pulado. Telefone fixo/inválido: ${phone}`,
+          `  [Filtro Celular] Lead ${lead.id} pulado por formato de número inválido.`,
         );
         await supabase
           .from('leads')
@@ -2055,7 +2124,7 @@ async function processFirstTouch(
 
         if (hasCommercialTerm) {
           console.log(
-            `  🚫 [Filtro Comercial] Lead "${lead.name}" (ID: ${lead.id}) pulado. Termo comercial incompatível com script liberal.`,
+            `  [Filtro Comercial] Lead ${lead.id} pulado por incompatibilidade com o roteiro.`,
           );
           await supabase
             .from('leads')
@@ -2576,7 +2645,10 @@ async function runGuardianWorkerForTenant(
 
       // 2. Coletar estatísticas dinâmicas
       const tenantOutboundGate = await loadTenantAiOutboundGate(supabase, tenantId);
-      if (!tenantOutboundGate.allow) {
+      const tenantPauseQaBypass = !tenantOutboundGate.allow
+        ? await hasActiveQaHomologation(tenantId)
+        : false;
+      if (!tenantOutboundGate.allow && !tenantPauseQaBypass) {
         console.log(
           '  [Tenant AI Pause] Envios bloqueados para tenant ' +
             tenantId +
@@ -2585,6 +2657,9 @@ async function runGuardianWorkerForTenant(
         );
         await sleep(5000);
         continue;
+      }
+      if (!tenantOutboundGate.allow && tenantPauseQaBypass) {
+        console.log('  [Tenant AI Pause] Processando somente a fila QA allowlisted.');
       }
 
       const oneMinuteAgo = new Date(Date.now() - 60 * 1000).toISOString();
@@ -2758,7 +2833,7 @@ async function runGuardianWorkerForTenant(
         const { data: conversation } = await supabase
           .from('conversations')
           .select(
-            '*, leads!conversations_lead_id_fkey(whatsapp, name, id, status, title_verified, identity_confidence, gender_confidence, entity_type, relevance_score, relevance_status, fit_score, phone_validation_status, phone_validation_confidence)',
+            '*, leads!conversations_lead_id_fkey(whatsapp, name, id, campaign_id, status, title_verified, identity_confidence, gender_confidence, entity_type, relevance_score, relevance_status, fit_score, phone_validation_status, phone_validation_confidence)',
           )
           .eq('id', item.conversation_id)
           .single();
@@ -2780,6 +2855,60 @@ async function runGuardianWorkerForTenant(
         const leadName = (conversation.leads as any).name || 'Lead';
         const leadId = (conversation.leads as any).id || null;
         const leadRecord = conversation.leads as any;
+        const campaignId = leadRecord.campaign_id || null;
+
+        if (!campaignId) {
+          await supabase
+            .from('pending_outbound')
+            .update({
+              scheduled_for: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+              failed_reason: 'CAMPAIGN_REQUIRED_FINAL_GATE',
+            })
+            .eq('id', item.id);
+          continue;
+        }
+
+        const { data: activeCampaign } = campaignId
+          ? await supabase
+              .from('campaigns')
+              .select('id, homologation_mode')
+              .eq('id', campaignId)
+              .eq('tenant_id', tenantId)
+              .eq('status', 'ACTIVE')
+              .maybeSingle()
+          : { data: null };
+        if (campaignId && !activeCampaign) {
+          await supabase
+            .from('pending_outbound')
+            .update({
+              scheduled_for: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+              failed_reason: 'CAMPAIGN_INACTIVE_FINAL_GATE',
+            })
+            .eq('id', item.id);
+          continue;
+        }
+        if (activeCampaign?.homologation_mode) {
+          const { data: qaAllowed } = await supabase
+            .from('campaign_qa_allowlist')
+            .select('lead_id')
+            .eq('campaign_id', campaignId)
+            .eq('lead_id', leadId)
+            .gt('expires_at', new Date().toISOString())
+            .maybeSingle();
+          if (!qaAllowed) {
+            await supabase
+              .from('pending_outbound')
+              .update({
+                failed_at: new Date().toISOString(),
+                failed_reason: 'QA_LEAD_NOT_ALLOWLISTED',
+                validation_status: 'BLOCKED',
+                validation_reason_code: 'QA_LEAD_NOT_ALLOWLISTED',
+              })
+              .eq('id', item.id);
+            failed++;
+            continue;
+          }
+        }
 
         const preGenerationGuardianRun = await GuardianRunner.observe({
           supabase,
@@ -3001,6 +3130,7 @@ async function runGuardianWorkerForTenant(
           const retryDelay: GuardianDelayDecision = {
             reasonCode:
               lockGuardianRun.blockingDecision?.reason_code || 'G21_CONCURRENCY_LOCK_BLOCKED',
+            guardianKey: lockGuardianRun.blockingDecision?.guardian_key || null,
             scheduledFor: new Date(Date.now() + 15 * 1000).toISOString(),
             finalDecision: 'DELAY',
           };
@@ -3254,8 +3384,59 @@ async function runGuardianWorkerForTenant(
           }
 
           // 9. Enviar via provedor WhatsApp ativo (Evolution legado ou WAHA)
+          const { data: finalActiveCampaign, error: finalCampaignError } = await supabase
+            .from('campaigns')
+            .select('id, homologation_mode')
+            .eq('id', campaignId)
+            .eq('tenant_id', tenantId)
+            .eq('status', 'ACTIVE')
+            .maybeSingle();
+          if (finalCampaignError || !finalActiveCampaign) {
+            await supabase
+              .from('pending_outbound')
+              .update({
+                scheduled_for: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+                failed_reason: 'CAMPAIGN_INACTIVE_IMMEDIATE_PRE_SEND_GATE',
+              })
+              .eq('id', item.id);
+            await sleep(500);
+            continue;
+          }
+
+          let finalQaHomologationAllowed = false;
+          if (finalActiveCampaign.homologation_mode) {
+            const { data: finalQaAllowed, error: finalQaError } = await supabase
+              .from('campaign_qa_allowlist')
+              .select('lead_id')
+              .eq('campaign_id', campaignId)
+              .eq('lead_id', leadId)
+              .gt('expires_at', new Date().toISOString())
+              .maybeSingle();
+            if (finalQaError || !finalQaAllowed) {
+              await supabase
+                .from('pending_outbound')
+                .update({
+                  failed_at: new Date().toISOString(),
+                  failed_reason: 'QA_LEAD_NOT_ALLOWLISTED_IMMEDIATE_PRE_SEND_GATE',
+                  validation_status: 'BLOCKED',
+                  validation_reason_code: 'QA_LEAD_NOT_ALLOWLISTED_IMMEDIATE_PRE_SEND_GATE',
+                })
+                .eq('id', item.id);
+              failed++;
+              await sleep(500);
+              continue;
+            }
+            finalQaHomologationAllowed = true;
+          }
+
           const finalTenantOutboundGate = await loadTenantAiOutboundGate(supabase, tenantId);
-          if (!finalTenantOutboundGate.allow) {
+          const finalQaPauseBypass = canBypassTenantOutboundPause({
+            tenantOutboundAllowed: finalTenantOutboundGate.allow,
+            campaignActive: true,
+            homologationMode: finalActiveCampaign.homologation_mode === true,
+            leadAllowlisted: finalQaHomologationAllowed,
+          });
+          if (!finalTenantOutboundGate.allow && !finalQaPauseBypass) {
             await delayPendingForTenantAiOutboundPause({
               tenantId,
               pendingOutboundId: item.id,
@@ -3269,6 +3450,22 @@ async function runGuardianWorkerForTenant(
             continue;
           }
 
+          if (finalQaPauseBypass) {
+            await supabase.from('lead_events').insert({
+              tenant_id: tenantId,
+              lead_id: leadId,
+              event_type: 'qa_homologation_pause_bypass',
+              payload: {
+                conversation_id: item.conversation_id,
+                pending_outbound_id: item.id,
+                campaign_id: campaignId,
+                reason_code: finalTenantOutboundGate.reasonCode,
+                source: 'send-messages',
+              },
+              created_at: new Date().toISOString(),
+            });
+          }
+
           if (!whatsappChannel) {
             await supabase
               .from('pending_outbound')
@@ -3279,6 +3476,28 @@ async function runGuardianWorkerForTenant(
               })
               .eq('id', item.id);
             failed++;
+            continue;
+          }
+
+          const usageReserved = await recordWhatsAppUsage({
+            tenantId,
+            campaignId,
+            leadId,
+            pendingOutboundId: item.id,
+            channel: whatsappChannel,
+            status: 'ATTEMPTED',
+            messageType: item.message_type,
+          });
+          if (!usageReserved) {
+            await supabase
+              .from('pending_outbound')
+              .update({
+                scheduled_for: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+                failed_reason: 'PROVIDER_USAGE_LEDGER_UNAVAILABLE',
+              })
+              .eq('id', item.id);
+            failed++;
+            await sleep(500);
             continue;
           }
 
@@ -3298,6 +3517,16 @@ async function runGuardianWorkerForTenant(
             },
           );
           const sendTime = new Date().toISOString();
+          await recordWhatsAppUsage({
+            tenantId,
+            campaignId,
+            leadId,
+            pendingOutboundId: item.id,
+            channel: whatsappChannel,
+            status: sendResult.ok ? 'SUCCEEDED' : 'FAILED',
+            providerMessageId: sendResult.whatsappMsgId || null,
+            messageType: item.message_type,
+          });
 
           if (sendResult.ok) {
             const pendingSentPayload = {
@@ -3449,13 +3678,7 @@ async function runGuardianWorkerForTenant(
               .eq('tenant_id', tenantId);
 
             sent++;
-            console.log(
-              '  ✅ [Guard] Mensagem enviada para ' +
-                leadName +
-                ' (Tipo: ' +
-                item.message_type +
-                ')',
-            );
+            console.log('  [Guard] Mensagem enviada. Lead: ' + leadId + ' Tipo: ' + item.message_type);
 
             // Registrar Telemetria
             try {
@@ -3717,12 +3940,8 @@ async function runGuardianWorkerForTenant(
             } catch (_) {}
 
             console.log(
-              '  ❌ Falha no envio para ' +
-                leadName +
-                ' (Tentativa ' +
-                attempts +
-                '): ' +
-                sendResult.error,
+              '  Falha no envio. Lead: ' + leadId + ' Tentativa: ' + attempts +
+                ' Motivo: ' + failure.reasonCode,
             );
           }
         } finally {
@@ -3755,6 +3974,16 @@ async function runGuardianWorkerForTenant(
 }
 
 serve(async (req: Request) => {
+  const authorization = req.headers.get('Authorization') || '';
+  const cronSecret = Deno.env.get('CRON_SECRET') || '';
+  const authorized = authorization === `Bearer ${SUPABASE_KEY}` ||
+    (Boolean(cronSecret) && authorization === `Bearer ${cronSecret}`);
+  if (!authorized) {
+    return new Response(JSON.stringify({ ok: false, error: 'UNAUTHORIZED' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+    });
+  }
   try {
     console.log('📤 ProspIX WhatsApp Guardian Worker');
     console.log('   Time: ' + new Date().toISOString());

@@ -34,6 +34,7 @@ import {
   MapPin,
   TrendingUp,
   Radio,
+  ReceiptText,
 } from 'lucide-react';
 import { Avatar, Dropdown, DropdownItem } from '@prospix/ui';
 import { GlobalSearch } from './GlobalSearch';
@@ -58,6 +59,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
         { name: 'Cadastrar Tenant', path: '/admin/tenants/novo', icon: PlusCircle, permission: 'tenants.manage' },
         { name: 'Templates Master', path: '/admin/templates', icon: FileText },
         { name: 'Faturamento', path: '/admin/faturamento', icon: CreditCard, permission: 'billing.manage' },
+        { name: 'Custos de provedores', path: '/admin/custos', icon: ReceiptText, permission: 'billing.manage' },
       ],
     },
     {

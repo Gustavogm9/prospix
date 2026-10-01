@@ -1,6 +1,13 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const appDir = path.dirname(fileURLToPath(import.meta.url));
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Prevent a stray user-level package-lock.json from becoming the tracing root.
+  outputFileTracingRoot: path.resolve(appDir, '../..'),
   // Transpile workspace packages
   transpilePackages: ['@prospix/ui', '@prospix/shared-types'],
   // Only lint the app directory (skip legacy src/pages/ during migration)

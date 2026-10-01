@@ -212,7 +212,10 @@ async function buildFollowupGuardianDecision(params: {
 serve(async (req) => {
   try {
     const authHeader = req.headers.get('Authorization');
-    if (authHeader !== `Bearer ${Deno.env.get("CRON_SECRET")}` && !req.headers.get("x-local-dev")) {
+    const cronSecret = Deno.env.get("CRON_SECRET") || "";
+    const authorized = authHeader === `Bearer ${supabaseKey}` ||
+      (Boolean(cronSecret) && authHeader === `Bearer ${cronSecret}`);
+    if (!authorized) {
       return new Response('Unauthorized', { status: 401 });
     }
 
@@ -227,7 +230,7 @@ serve(async (req) => {
     // where last_message_at <= cutoffDate, and then check the last message.
     const { data: conversations, error: convError } = await supabase
       .from("conversations")
-      .select("*, leads!conversations_lead_id_fkey(name, whatsapp)")
+      .select("*, leads!conversations_lead_id_fkey(name, whatsapp, campaign_id)")
       .eq("status", "ACTIVE")
       .eq("ai_handling", true)
       .lte("last_message_at", cutoffDate)
@@ -245,6 +248,29 @@ serve(async (req) => {
     let processed = 0;
 
     for (const conv of conversations) {
+      const campaignId = conv.leads?.campaign_id || null;
+      if (!campaignId) continue;
+      const { data: campaign } = campaignId
+        ? await supabase
+            .from("campaigns")
+            .select("id, status, homologation_mode")
+            .eq("id", campaignId)
+            .eq("tenant_id", conv.tenant_id)
+            .eq("status", "ACTIVE")
+            .maybeSingle()
+        : { data: null };
+      if (campaignId && !campaign) continue;
+      if (campaign?.homologation_mode) {
+        const { data: allowed } = await supabase
+          .from("campaign_qa_allowlist")
+          .select("lead_id")
+          .eq("campaign_id", campaignId)
+          .eq("lead_id", conv.lead_id)
+          .gt("expires_at", new Date().toISOString())
+          .maybeSingle();
+        if (!allowed) continue;
+      }
+
       const tenantOutboundGate = await loadTenantAiOutboundGate(supabase, conv.tenant_id);
       if (!tenantOutboundGate.allow) {
         console.log(
@@ -292,7 +318,7 @@ serve(async (req) => {
         continue;
       }
 
-      console.log(`Queueing Guardian-approved follow-up for ${conv.id} (Lead: ${leadName})`);
+      console.log(`Queueing Guardian-approved follow-up for ${conv.id}`);
       const { error: insertError } = await supabase.from("pending_outbound").insert({
         id: uuid(),
         tenant_id: conv.tenant_id,
