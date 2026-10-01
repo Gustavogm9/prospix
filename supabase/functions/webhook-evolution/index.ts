@@ -36,6 +36,7 @@ import {
   evaluateQualification,
   mergeQualificationFacts,
   nextQualificationQuestion,
+  normalizeQualificationAnswerSemantics,
   parseQualificationExtraction,
   restrictQualificationAnswersToExpectedCriterion,
   type QualificationConfig,
@@ -2855,10 +2856,14 @@ async function processMessageUpsert(
         );
         qualificationTokensIn = extraction.tokensIn;
         qualificationTokensOut = extraction.tokensOut;
+        const normalizedAnswers = normalizeQualificationAnswerSemantics({
+          message: messageContent,
+          answers: parseQualificationExtraction(extraction.content),
+        });
         const answersForTurn = restrictQualificationAnswersToExpectedCriterion({
           message: messageContent,
           expectedCriterionKey,
-          answers: parseQualificationExtraction(extraction.content),
+          answers: normalizedAnswers,
         });
         const merged = mergeQualificationFacts({
           config: qualificationConfig,

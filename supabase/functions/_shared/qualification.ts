@@ -100,6 +100,55 @@ export function restrictQualificationAnswersToExpectedCriterion(params: {
   );
 }
 
+function normalizedMessageText(value: string): string {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+export function normalizeQualificationAnswerSemantics(params: {
+  message: string;
+  answers: QualificationAnswer[];
+}): QualificationAnswer[] {
+  const message = normalizedMessageText(params.message);
+
+  return params.answers.map((answer) => {
+    if (answer.criterion_key !== "protection_gap") return answer;
+
+    // Despite the legacy key name, NONE/PARTIAL/FULL represent current
+    // protection coverage, not the size of the uncovered gap.
+    if (
+      /\b(nenhum|nenhuma|nao tenho|nao possuo|sem protecao|sem cobertura)\b/
+        .test(message)
+    ) {
+      return {
+        ...answer,
+        value: "NONE",
+        confidence: Math.max(answer.confidence, 0.99),
+      };
+    }
+    if (/\b(parcial|algum|alguma|um pouco|so uma parte)\b/.test(message)) {
+      return {
+        ...answer,
+        value: "PARTIAL",
+        confidence: Math.max(answer.confidence, 0.9),
+      };
+    }
+    if (
+      /\b(completa|completo|total|integral|totalmente protegido|totalmente protegida)\b/
+        .test(message)
+    ) {
+      return {
+        ...answer,
+        value: "FULL",
+        confidence: Math.max(answer.confidence, 0.9),
+      };
+    }
+    return answer;
+  });
+}
+
 export function mergeQualificationFacts(params: {
   config: QualificationConfig;
   currentFacts?: Record<string, QualificationValue> | null;
@@ -207,6 +256,8 @@ export function buildQualificationExtractionPrompt(params: {
   const criteria = (params.config.criteria || []).map((criterion) => ({
     key: criterion.key,
     values: criterion.values || criterion.accepted || null,
+    accepted: criterion.accepted || null,
+    question: criterion.question || null,
   }));
   return `Voce extrai fatos objetivos de qualificacao de uma unica mensagem de WhatsApp.
 Retorne SOMENTE JSON valido no formato {"answers":[{"criterion_key":"...","value":"...","confidence":0.0}]}.
@@ -218,6 +269,7 @@ Pergunta imediatamente anterior: ${
 Criterio esperado para uma resposta curta ou ambigua: ${
     JSON.stringify(params.expectedCriterionKey || null)
   }.
+Para protection_gap, os valores descrevem a cobertura atual: NONE = nenhuma protecao, PARTIAL = alguma protecao e FULL = protecao completa.
 Nao infira profissao, renda, cargo ou protecao. Se nao estiver explicito, omita.
 Se a mensagem for apenas uma confirmacao ou negacao curta, associe-a somente ao criterio esperado.
 Nao extraia nem registre dado de saude, peso, altura, doenca, tabagismo ou historico familiar.

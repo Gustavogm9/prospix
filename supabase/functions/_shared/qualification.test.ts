@@ -1,6 +1,7 @@
 import { assertEquals } from "jsr:@std/assert@1";
 import {
   enforceQualificationResponse,
+  normalizeQualificationAnswerSemantics,
   restrictQualificationAnswersToExpectedCriterion,
 } from "./qualification.ts";
 
@@ -16,6 +17,23 @@ Deno.test("short answers cannot populate a different qualification criterion", (
   });
 
   assertEquals(answers, []);
+});
+
+Deno.test("no current protection maps to NONE coverage despite the legacy gap key", () => {
+  const answers = normalizeQualificationAnswerSemantics({
+    message: "nenhuma infelizmente",
+    answers: [{
+      criterion_key: "protection_gap",
+      value: "FULL",
+      confidence: 0.8,
+    }],
+  });
+
+  assertEquals(answers, [{
+    criterion_key: "protection_gap",
+    value: "NONE",
+    confidence: 0.99,
+  }]);
 });
 
 Deno.test("long explicit answers may populate more than the expected criterion", () => {
