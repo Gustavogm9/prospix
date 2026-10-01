@@ -64,7 +64,7 @@ Compliance: não informe prêmio, não prometa cobertura, não garanta aceitaç�
 
 Nesta fase não pergunte peso, altura, doença, tabagismo, histórico familiar ou qualquer dado de saúde. Esses dados pertencem a uma fase posterior, com base legal e consentimento próprios.
       $instructions$,
-      ARRAY['ESCALATE']::TEXT[],
+      '["ESCALATE"]'::JSONB,
       $restrictions$
 Nunca se apresentar como se fosse o próprio Giovane; nunca inventar nome, título, gênero, profissão ou fatos; nunca expor score interno; nunca prometer cobertura, aprovação, preço ou retorno; nunca marcar horário sem agenda real; nunca coletar dado de saúde nesta fase; nunca insistir após recusa ou opt-out.
       $restrictions$,
