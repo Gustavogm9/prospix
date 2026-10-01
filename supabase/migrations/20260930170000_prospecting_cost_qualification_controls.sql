@@ -1044,7 +1044,7 @@ BEGIN
       COALESCE(v_answer->'value', 'null'::JSONB),
       LEAST(GREATEST(COALESCE((v_answer->>'confidence')::NUMERIC, 0), 0), 1),
       p_source_message_id,
-      encode(digest(
+      encode(extensions.digest(
         concat_ws('|', v_session.id::TEXT, v_answer->>'criterion_key',
           COALESCE((v_answer->'value')::TEXT, 'null'), COALESCE(p_source_message_id::TEXT, '')),
         'sha256'
