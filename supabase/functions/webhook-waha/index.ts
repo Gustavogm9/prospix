@@ -3,6 +3,7 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { readStoredSecret } from '../_shared/secrets.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -262,7 +263,8 @@ async function verifyWahaWebhookSecret(
       return { ok: false, status: 202, reason: 'waha channel webhook secret not configured' };
     }
 
-    if (supplied && supplied === data.webhook_secret) {
+    const expected = await readStoredSecret(data.webhook_secret);
+    if (supplied && supplied === expected) {
       return { ok: true, status: 200, reason: 'ok' };
     }
 

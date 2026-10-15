@@ -11,10 +11,10 @@ import type { BrowserContext, Page, Route } from '@playwright/test';
 // ── Mock tokens ─────────────────────────────────────────────────────────────
 
 export const MOCK_JWT =
-  'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJtb2NrIn0.eyJzaWduYXR1cmUtbW9jay1mb3ItZTJlIn0=';
+  'mock-user-access-token';
 
 export const MOCK_ADMIN_TOKEN =
-  'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJndWlsZHMtYWRtaW4ifQ.eyJzaWduYXR1cmUtbW9jay1mb3ItZTJlIn0=';
+  'mock-admin-access-token';
 
 export const MOCK_TENANT_ID = '11111111-1111-1111-1111-111111111111';
 export const MOCK_OWNER_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';

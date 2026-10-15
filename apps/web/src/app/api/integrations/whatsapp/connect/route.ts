@@ -8,6 +8,7 @@ import {
   loadTenantWahaChannel,
 } from '../../../_lib/whatsapp-provider';
 import crypto from 'crypto';
+import { encryptSecret, readStoredSecret } from '@/lib/secrets';
 
 const DEFAULT_WAHA_BASE_URL = 'https://waha-waha.qr4jgl.easypanel.host';
 
@@ -23,11 +24,24 @@ export async function POST(request: NextRequest) {
   const auth = await authenticateRequest(request);
   if ('error' in auth) return auth.error;
 
-  const { tenantId } = auth;
+  const { tenantId, role } = auth;
+
+  if (role !== 'OWNER' && role !== 'GUILDS_ADMIN') {
+    return NextResponse.json(
+      { error: 'Forbidden', message: 'Somente o proprietário pode conectar o WhatsApp.' },
+      { status: 403 },
+    );
+  }
 
   try {
     const body = await readRequestBody(request);
     const requestedProvider = String(body.provider || '').toUpperCase();
+    if (requestedProvider && !['EVOLUTION', 'WAHA'].includes(requestedProvider)) {
+      return NextResponse.json(
+        { error: 'ValidationError', message: 'Provedor de WhatsApp inválido.' },
+        { status: 400 },
+      );
+    }
 
     // Get tenant info for slug
     const { data: tenant, error: tenantErr } = await supabaseAdmin
@@ -67,8 +81,8 @@ export async function POST(request: NextRequest) {
             label: `WAHA - ${tenant.name}`,
             base_url: process.env.WAHA_BASE_URL || DEFAULT_WAHA_BASE_URL,
             instance_name: defaultInstanceName,
-            api_key_encrypted: apiKey,
-            webhook_secret: crypto.randomBytes(32).toString('hex'),
+            api_key_encrypted: encryptSecret(apiKey),
+            webhook_secret: encryptSecret(crypto.randomBytes(32).toString('hex')),
             active: false,
             send_enabled: false,
             receive_enabled: false,
@@ -215,7 +229,7 @@ export async function POST(request: NextRequest) {
         .insert({
           tenant_id: tenantId,
           evolution_instance_name: defaultInstanceName,
-          evolution_webhook_secret: crypto.randomBytes(16).toString('hex'),
+          evolution_webhook_secret: encryptSecret(crypto.randomBytes(16).toString('hex')),
           updated_at: new Date().toISOString(),
         })
         .select()
@@ -239,7 +253,18 @@ export async function POST(request: NextRequest) {
 
     const instanceName = secretRecord!.evolution_instance_name!;
     const baseUrl = secretRecord!.evolution_base_url || process.env.EVOLUTION_BASE_URL;
-    const apiKey = secretRecord!.evolution_api_key_encrypted || process.env.EVOLUTION_GUILDS_API_KEY || '';
+    const apiKey = secretRecord!.evolution_api_key_encrypted
+      ? readStoredSecret(secretRecord!.evolution_api_key_encrypted, undefined, {
+          allowLegacyPlaintext: process.env.ALLOW_LEGACY_PLAINTEXT_SECRETS === 'true',
+        })
+      : process.env.EVOLUTION_GUILDS_API_KEY || '';
+
+    if (!baseUrl || !apiKey) {
+      return NextResponse.json(
+        { error: 'ConfigurationError', message: 'Evolution API não configurada.' },
+        { status: 503 },
+      );
+    }
 
     // Create instance on Evolution API
     await fetch(`${baseUrl}/instance/create`, {

@@ -13,6 +13,7 @@ import {
 import { isAllowedPublicHttpUrl } from "../_shared/public-url.ts";
 import { campaignEnrichmentPolicy } from "../_shared/enrichment-policy.ts";
 import { isAuthorizedWorkerRequest } from "../_shared/worker-auth.ts";
+import { readStoredSecret } from "../_shared/secrets.ts";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -1422,7 +1423,10 @@ serve(async (req: Request) => {
                 .eq("tenant_id", tid)
                 .single();
 
-              const firecrawlKey = secrets?.firecrawl_api_key_encrypted;
+              const storedFirecrawlKey = secrets?.firecrawl_api_key_encrypted;
+              const firecrawlKey = storedFirecrawlKey
+                ? await readStoredSecret(storedFirecrawlKey)
+                : null;
 
               if (firecrawlKey && website) {
                 try {

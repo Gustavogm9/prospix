@@ -14,7 +14,8 @@ type LoginUser = {
   tenant_id: string | null;
   name: string;
   email: string;
-  role: 'OWNER' | 'ASSISTANT' | 'ADMIN' | 'GUILDS_ADMIN';
+  role: 'OWNER' | 'ASSISTANT' | 'GUILDS_ADMIN';
+  deleted_at: string | null;
 };
 
 export default function Login() {
@@ -67,7 +68,12 @@ export default function Login() {
       return target;
     }
 
-    if (!user.tenant_id || user.role === 'GUILDS_ADMIN') {
+    if (
+      !user.tenant_id ||
+      user.deleted_at ||
+      (user.role !== 'OWNER' && user.role !== 'ASSISTANT')
+    ) {
+      await supabase.auth.signOut({ scope: 'local' });
       throw new Error('Usuário sem corretora vinculada. Contate o suporte.');
     }
 
@@ -102,14 +108,20 @@ export default function Login() {
       });
 
       if (authError) {
-        throw new Error(authError.message);
+        const rateLimited = /rate limit|too many requests/i.test(authError.message);
+        throw new Error(
+          rateLimited
+            ? 'Muitas tentativas. Aguarde alguns minutos e tente novamente.'
+            : 'E-mail ou senha incorretos. Verifique suas credenciais.',
+        );
       }
 
       // Fetch user profile from users table
       const { data: userData, error: userError } = await supabase
         .from('users')
-        .select('id, tenant_id, name, email, role')
+        .select('id, tenant_id, name, email, role, deleted_at')
         .eq('id', data.user.id)
+        .is('deleted_at', null)
         .single();
 
       if (userError || !userData) {
@@ -133,22 +145,12 @@ export default function Login() {
         toast.success('Acesso Autorizado!', `Olá, ${userData.name}! Bem-vindo(a) de volta.`);
         navTimerRef.current = setTimeout(() => router.push(target.path), 1000);
       }
-    } catch (error: any) {
-      const msg = error.message || '';
-      // Translate common Supabase auth errors to Portuguese
-      const translations: Record<string, string> = {
-        'Invalid login credentials': 'E-mail ou senha incorretos. Verifique suas credenciais.',
-        'Email not confirmed': 'Seu e-mail ainda não foi confirmado. Verifique sua caixa de entrada.',
-        'User not found': 'Nenhuma conta encontrada com este e-mail.',
-        'Too many requests': 'Muitas tentativas. Aguarde alguns minutos e tente novamente.',
-        'Email rate limit exceeded': 'Muitas tentativas. Aguarde alguns minutos.',
-        'Invalid email or password': 'E-mail ou senha incorretos.',
-      };
-      const friendlyMsg = Object.entries(translations).find(([key]) => 
-        msg.toLowerCase().includes(key.toLowerCase())
-      )?.[1] || msg || 'E-mail ou senha incorretos. Verifique suas credenciais.';
-      
-      toast.error('Erro ao entrar', friendlyMsg);
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : 'E-mail ou senha incorretos. Verifique suas credenciais.';
+      toast.error('Erro ao entrar', message);
     } finally {
       setIsLoading(false);
     }
@@ -195,8 +197,13 @@ export default function Login() {
 
       toast.success('Senha Atualizada!', 'Sua nova senha foi salva. Bem-vindo(a) ao Prospix!');
       navTimerRef.current = setTimeout(() => router.push(target.path), 1000);
-    } catch (error: any) {
-      toast.error('Erro ao trocar senha', error.message || 'Não foi possível atualizar a senha.');
+    } catch (error: unknown) {
+      toast.error(
+        'Erro ao trocar senha',
+        error instanceof Error && error.message
+          ? error.message
+          : 'Não foi possível atualizar a senha.',
+      );
     } finally {
       setIsChanging(false);
     }

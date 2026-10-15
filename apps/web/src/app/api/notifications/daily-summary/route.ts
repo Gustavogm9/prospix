@@ -1,5 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { getSupabaseAdmin } from '../../_lib/supabase-admin';
+
+function isValidCronAuthorization(authorization: string | null, secret: string): boolean {
+  if (!authorization?.startsWith('Bearer ')) return false;
+
+  const suppliedDigest = createHash('sha256').update(authorization.slice(7)).digest();
+  const expectedDigest = createHash('sha256').update(secret).digest();
+  return timingSafeEqual(suppliedDigest, expectedDigest);
+}
 
 /**
  * POST /api/notifications/daily-summary
@@ -12,8 +21,8 @@ import { getSupabaseAdmin } from '../../_lib/supabase-admin';
 export async function POST(request: NextRequest) {
   // Validate cron secret
   const authHeader = request.headers.get('authorization');
-  const cronSecret = process.env.CRON_SECRET || 'prospix-cron-2025';
-  if (authHeader !== `Bearer ${cronSecret}`) {
+  const cronSecret = process.env.CRON_SECRET?.trim();
+  if (!cronSecret || !isValidCronAuthorization(authHeader, cronSecret)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

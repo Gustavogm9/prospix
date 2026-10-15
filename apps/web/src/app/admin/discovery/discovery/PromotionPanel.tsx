@@ -3,8 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badge, toast } from '@prospix/ui';
 import { Shield, Rocket, CheckCircle2, AlertCircle, Loader2, RefreshCw } from 'lucide-react';
-import { adminNextApi } from '@/lib/admin-api-fetch';
-import { AxiosError } from 'axios';
+import { AdminApiError, adminNextApi } from '@/lib/admin-api-fetch';
 
 interface GateField {
   count: number;
@@ -53,7 +52,7 @@ export function PromotionPanel({ tenantId, discoveryStatus, validationRounds, on
       const response = await adminNextApi.get(`/api/admin/tenants/${tenantId}/discovery/quality`);
       setReport(response.data?.data ?? null);
     } catch (err: unknown) {
-      const message = err instanceof AxiosError
+      const message = err instanceof AdminApiError
         ? err.response?.data?.message || 'Falha ao calcular gates.'
         : 'Falha ao calcular gates.';
       toast.error('Erro de gates', message);
@@ -79,7 +78,7 @@ export function PromotionPanel({ tenantId, discoveryStatus, validationRounds, on
       onChanged();
       await fetchReport();
     } catch (err: unknown) {
-      const message = err instanceof AxiosError
+      const message = err instanceof AdminApiError
         ? err.response?.data?.message || 'Falha ao validar.'
         : 'Falha ao validar.';
       toast.error('Erro', message);
@@ -97,7 +96,7 @@ export function PromotionPanel({ tenantId, discoveryStatus, validationRounds, on
       onChanged();
       await fetchReport();
     } catch (err: unknown) {
-      const message = err instanceof AxiosError
+      const message = err instanceof AdminApiError
         ? err.response?.data?.message || 'Falha ao aprovar.'
         : 'Falha ao aprovar.';
       toast.error('Erro', message);
@@ -116,8 +115,8 @@ export function PromotionPanel({ tenantId, discoveryStatus, validationRounds, on
       onChanged();
       await fetchReport();
     } catch (err: unknown) {
-      const blockingReasons = err instanceof AxiosError ? err.response?.data?.blockingReasons : null;
-      const message = err instanceof AxiosError
+      const blockingReasons = err instanceof AdminApiError ? (err.response?.data as any)?.blockingReasons : null;
+      const message = err instanceof AdminApiError
         ? err.response?.data?.message || 'Falha ao promover.'
         : 'Falha ao promover.';
       if (Array.isArray(blockingReasons) && blockingReasons.length > 0) {

@@ -1,4 +1,4 @@
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient, type User } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 
 /**
@@ -8,11 +8,28 @@ import { NextRequest, NextResponse } from 'next/server';
  */
 let _supabaseAdmin: SupabaseClient | null = null;
 
+function requiredServerEnv(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    throw new Error(`Configuração obrigatória ausente: ${name}`);
+  }
+  return value;
+}
+
 export function getSupabaseAdmin(): SupabaseClient {
   if (!_supabaseAdmin) {
+    const supabaseUrl =
+      process.env.SUPABASE_URL?.trim() || requiredServerEnv('NEXT_PUBLIC_SUPABASE_URL');
+    const serviceRoleKey = requiredServerEnv('SUPABASE_SERVICE_ROLE_KEY');
+
+    if (serviceRoleKey === process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim()) {
+      throw new Error('SUPABASE_SERVICE_ROLE_KEY não pode ser igual à chave pública.');
+    }
+
     _supabaseAdmin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
+      supabaseUrl,
+      serviceRoleKey,
+      { auth: { autoRefreshToken: false, persistSession: false } },
     );
   }
   return _supabaseAdmin;
@@ -29,7 +46,18 @@ export const supabaseAdmin = new Proxy({} as SupabaseClient, {
  * Extract and verify the user from the Authorization header.
  * Returns { user, userId, tenantId } on success, or a NextResponse error.
  */
-export async function authenticateRequest(request: NextRequest) {
+export type AuthenticatedRequest = {
+  user: User;
+  userId: string;
+  tenantId: string;
+  role: string;
+};
+
+export type AuthenticationResult =
+  | AuthenticatedRequest
+  | { error: NextResponse };
+
+export async function authenticateRequest(request: NextRequest): Promise<AuthenticationResult> {
   const authHeader = request.headers.get('authorization');
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return {
@@ -58,7 +86,7 @@ export async function authenticateRequest(request: NextRequest) {
   // Get user's tenant_id
   const { data: userData, error: userError } = await supabaseAdmin
     .from('users')
-    .select('tenant_id, role')
+    .select('tenant_id, role, deleted_at')
     .eq('id', user.id)
     .maybeSingle();
 
@@ -67,6 +95,24 @@ export async function authenticateRequest(request: NextRequest) {
       error: NextResponse.json(
         { error: 'Unauthorized', message: 'User not found' },
         { status: 401 }
+      ),
+    };
+  }
+
+  if (userData.deleted_at) {
+    return {
+      error: NextResponse.json(
+        { error: 'Forbidden', message: 'User access is disabled' },
+        { status: 403 },
+      ),
+    };
+  }
+
+  if (!userData.tenant_id && userData.role !== 'GUILDS_ADMIN') {
+    return {
+      error: NextResponse.json(
+        { error: 'Forbidden', message: 'User has no active organization' },
+        { status: 403 },
       ),
     };
   }

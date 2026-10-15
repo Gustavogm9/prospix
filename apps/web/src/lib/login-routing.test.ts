@@ -10,7 +10,7 @@ describe('resolveLoginTarget', () => {
     });
   });
 
-  it.each(['OWNER', 'ASSISTANT', 'ADMIN'] as const)('routes %s to the tenant dashboard', (role) => {
+  it.each(['OWNER', 'ASSISTANT'] as const)('routes %s to the tenant dashboard', (role) => {
     expect(
       resolveLoginTarget({
         role,

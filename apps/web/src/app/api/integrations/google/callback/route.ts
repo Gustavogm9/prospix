@@ -1,29 +1,74 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '../../../_lib/supabase-admin';
+import {
+  getConfiguredAppOrigin,
+  GOOGLE_OAUTH_NONCE_COOKIE,
+  verifyGoogleOAuthState,
+} from '@/lib/google-oauth-state';
+import { encryptSecret } from '@/lib/secrets';
+
+function clearOAuthCookie(response: NextResponse) {
+  response.cookies.set({
+    name: GOOGLE_OAUTH_NONCE_COOKIE,
+    value: '',
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/api/integrations/google/callback',
+    expires: new Date(0),
+  });
+  return response;
+}
+
+function oauthRedirect(origin: string, result: string) {
+  return clearOAuthCookie(NextResponse.redirect(new URL(`/configuracoes?${result}`, origin)));
+}
 
 export async function GET(request: NextRequest) {
-  // O callback original na migração não foi portado. Estamos recriando.
   const searchParams = request.nextUrl.searchParams;
   const code = searchParams.get('code');
   const error = searchParams.get('error');
   const state = searchParams.get('state');
 
+  let origin: string;
+  try {
+    origin = getConfiguredAppOrigin(process.env.NEXT_PUBLIC_APP_URL);
+  } catch {
+    return clearOAuthCookie(
+      NextResponse.json(
+        { error: 'ConfigurationError', message: 'Integração Google indisponível.' },
+        { status: 503 },
+      ),
+    );
+  }
+
   if (error) {
-    console.error('Google OAuth Error:', error);
-    return NextResponse.redirect(new URL('/configuracoes?error=google_oauth_denied', request.url));
+    return oauthRedirect(origin, 'error=google_oauth_denied');
   }
 
   if (!code || !state) {
-    return NextResponse.redirect(new URL('/configuracoes?error=missing_oauth_params', request.url));
+    return oauthRedirect(origin, 'error=missing_oauth_params');
   }
 
-  // O state contém o tenantId injetado na rota de oauth: `${tenantId}:${randomHex}`
-  const tenantId = state.split(':')[0];
+  const stateSecret = process.env.GOOGLE_OAUTH_STATE_SECRET;
+  const nonce = request.cookies.get(GOOGLE_OAUTH_NONCE_COOKIE)?.value;
+  if (!stateSecret || !nonce) {
+    return oauthRedirect(origin, 'error=invalid_oauth_state');
+  }
+
+  let tenantId: string;
+  try {
+    ({ tenantId } = verifyGoogleOAuthState(state, nonce, stateSecret));
+  } catch {
+    return oauthRedirect(origin, 'error=invalid_oauth_state');
+  }
 
   try {
-    const origin = request.headers.get('x-forwarded-host') 
-      ? `https://${request.headers.get('x-forwarded-host')}` 
-      : request.nextUrl.origin;
+    const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID || process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET;
+    if (!clientId || !clientSecret) {
+      return oauthRedirect(origin, 'error=google_not_configured');
+    }
     const redirectUri = `${origin}/api/integrations/google/callback`;
 
     // 1. Trocar o authorization code por access_token e refresh_token
@@ -31,28 +76,30 @@ export async function GET(request: NextRequest) {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
-        client_id: process.env.GOOGLE_OAUTH_CLIENT_ID || process.env.GOOGLE_CLIENT_ID || '',
-        client_secret: process.env.GOOGLE_OAUTH_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET || '',
+        client_id: clientId,
+        client_secret: clientSecret,
         code,
         grant_type: 'authorization_code',
         redirect_uri: redirectUri,
       }).toString(),
     });
 
-    const tokenData = await tokenResponse.json();
+    const tokenData: unknown = await tokenResponse.json();
 
     if (!tokenResponse.ok) {
-      console.error('Google token exchange failed:', tokenData);
-      return NextResponse.redirect(new URL('/configuracoes?error=google_token_exchange_failed', request.url));
+      return oauthRedirect(origin, 'error=google_token_exchange_failed');
     }
 
-    const { refresh_token } = tokenData;
+    const refreshToken =
+      tokenData &&
+      typeof tokenData === 'object' &&
+      'refresh_token' in tokenData &&
+      typeof tokenData.refresh_token === 'string'
+        ? tokenData.refresh_token
+        : null;
 
-    // Apenas continuamos se recebemos o refresh_token (necessário access_type: 'offline' e prompt: 'consent')
-    if (!refresh_token) {
-      console.error('No refresh token received. The user may have already granted access previously without revoking.');
-      // Opcional: tentar forçar revogação ou aceitar e pedir pro usuário reconectar
-      return NextResponse.redirect(new URL('/configuracoes?error=no_refresh_token', request.url));
+    if (!refreshToken) {
+      return oauthRedirect(origin, 'error=no_refresh_token');
     }
 
     // 2. Gravar o token no tenant_secrets
@@ -64,7 +111,7 @@ export async function GET(request: NextRequest) {
       .upsert(
         {
           tenant_id: tenantId,
-          google_oauth_refresh_encrypted: refresh_token,
+          google_oauth_refresh_encrypted: encryptSecret(refreshToken),
           updated_at: new Date().toISOString(),
         },
         { onConflict: 'tenant_id' }
@@ -75,10 +122,9 @@ export async function GET(request: NextRequest) {
       throw upsertError;
     }
 
-    // Redireciona de volta com sucesso
-    return NextResponse.redirect(new URL('/configuracoes?success=google_connected', request.url));
+    return oauthRedirect(origin, 'success=google_connected');
   } catch (err) {
     console.error('Callback OAuth error:', err);
-    return NextResponse.redirect(new URL('/configuracoes?error=google_callback_failed', request.url));
+    return oauthRedirect(origin, 'error=google_callback_failed');
   }
 }

@@ -16,7 +16,12 @@ SELECT cron.schedule(
   $$
   SELECT net.http_post(
     url := 'https://yvbyplzfqfrlfujathii.supabase.co/functions/v1/enrich-leads',
-    headers := '{"Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl2YnlwbHpmcWZybGZ1amF0aGlpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3OTM2MDU3NSwiZXhwIjoyMDk0OTM2NTc1fQ.EELrhswIWep6vB_HSxmrdD1BhhNVLR8QFuFJs2x6dCs", "Content-Type": "application/json"}'::jsonb,
+    headers := jsonb_build_object(
+      'Authorization',
+      'Bearer ' || (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'edge_function_anon_key' LIMIT 1),
+      'Content-Type',
+      'application/json'
+    ),
     body := '{"batch_size": 50}'::jsonb
   );
   $$

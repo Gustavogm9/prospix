@@ -10,7 +10,7 @@ import { AlertTriangle } from 'lucide-react';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const { user, tenantId, clearSession, initialized, setInitialized } = useAuthStore();
+  const { user, tenantId, clearSession, initialized, initializeFromSupabase } = useAuthStore();
   const [hasHydrated, setHasHydrated] = useState(false);
   const [isSessionExpired, setIsSessionExpired] = useState(false);
 
@@ -30,19 +30,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     if (!hasHydrated) return;
     if (initialized) return;
 
-    supabase.auth.getSession().then(({ data }) => {
-      if (!data.session) {
-        // Don't call clearSession() here — it resets `initialized` to false,
-        // creating a loop. Just clear user data directly without signOut.
-        useAuthStore.setState({ tenantId: null, user: null });
-      }
-      setInitialized(true);
-    }).catch(() => {
-      // If getSession fails (network error, etc.), still mark initialized
-      // so the layout can redirect to /login instead of showing spinner forever.
-      setInitialized(true);
-    });
-  }, [hasHydrated, initialized, setInitialized]);
+    initializeFromSupabase();
+  }, [hasHydrated, initialized, initializeFromSupabase]);
 
   // Listen for Supabase auth state changes (e.g. token refresh, sign-out)
   useEffect(() => {
@@ -59,7 +48,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const isAuthorized =
     !!tenantId &&
     !!user &&
-    ['OWNER', 'ASSISTANT', 'ADMIN'].includes(user.role);
+    ['OWNER', 'ASSISTANT'].includes(user.role);
 
   // Redirect to login if not authorized after hydration + session check
   useEffect(() => {

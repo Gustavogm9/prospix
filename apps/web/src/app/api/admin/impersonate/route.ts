@@ -8,7 +8,7 @@ import { requireAdmin, supabaseAdmin } from '../../_lib/auth';
 // =========================================================================
 export async function POST(request: NextRequest) {
   const auth = await requireAdmin(request);
-  if ('error' in auth) return auth.error;
+  if (auth instanceof NextResponse) return auth;
   const adminId = auth.userId;
 
   let body: { tenantId?: string; userId?: string; reason?: string; mode?: string; sessionId?: string; action?: string };
@@ -187,7 +187,7 @@ async function handleEnd(adminId: string, sessionId: string, request: NextReques
 // =========================================================================
 export async function GET(request: NextRequest) {
   const auth = await requireAdmin(request);
-  if ('error' in auth) return auth.error;
+  if (auth instanceof NextResponse) return auth;
 
   try {
     const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);

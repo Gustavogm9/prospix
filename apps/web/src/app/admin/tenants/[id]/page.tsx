@@ -8,9 +8,8 @@ import {
   CheckCircle2, AlertCircle, Loader2, RefreshCw, MessageSquare, Calendar,
   FileText, ShieldAlert, DollarSign, Activity, Zap, Mail, Copy, XCircle, Plus,
 } from 'lucide-react';
-import { adminNextApi } from '@/lib/admin-api-fetch';
+import { AdminApiError, adminNextApi } from '@/lib/admin-api-fetch';
 import { adminTenantsQueries } from '@/lib/admin-queries';
-import { AxiosError } from 'axios';
 
 interface TenantUser { id: string; name: string; email: string; role: string; }
 
@@ -243,7 +242,7 @@ export default function TenantDetail() {
       toast.success('Convite revogado com sucesso.');
       await fetchInvitations();
     } catch (err: unknown) {
-      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha ao revogar convite.' : 'Falha ao revogar convite.';
+      const message = err instanceof AdminApiError ? (err.response?.data as any)?.message || 'Falha ao revogar convite.' : 'Falha ao revogar convite.';
       toast.error('Erro', message);
     } finally {
       setInvitationBusy(null);
@@ -259,7 +258,7 @@ export default function TenantDetail() {
       toast.success('Convite gerado com sucesso.');
       await fetchInvitations();
     } catch (err: unknown) {
-      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha ao gerar convite.' : 'Falha ao gerar convite.';
+      const message = err instanceof AdminApiError ? (err.response?.data as any)?.message || 'Falha ao gerar convite.' : 'Falha ao gerar convite.';
       toast.error('Erro', message);
     } finally {
       setInvitationBusy(null);
@@ -283,7 +282,7 @@ export default function TenantDetail() {
       toast.success('Tenant suspenso', `${tenant.name} agora está SUSPENDED.`);
       await fetchAll();
     } catch (err: unknown) {
-      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha.' : 'Falha.';
+      const message = err instanceof AdminApiError ? (err.response?.data as any)?.message || 'Falha.' : 'Falha.';
       toast.error('Erro', message);
     } finally {
       setActionBusy(null);
@@ -298,7 +297,7 @@ export default function TenantDetail() {
       toast.success('Tenant reativado');
       await fetchAll();
     } catch (err: unknown) {
-      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha.' : 'Falha.';
+      const message = err instanceof AdminApiError ? (err.response?.data as any)?.message || 'Falha.' : 'Falha.';
       toast.error('Erro', message);
     } finally {
       setActionBusy(null);
@@ -316,7 +315,7 @@ export default function TenantDetail() {
       toast.success('Tenant marcado como churning');
       await fetchAll();
     } catch (err: unknown) {
-      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha.' : 'Falha.';
+      const message = err instanceof AdminApiError ? (err.response?.data as any)?.message || 'Falha.' : 'Falha.';
       toast.error('Erro', message);
     } finally {
       setActionBusy(null);
@@ -359,7 +358,7 @@ export default function TenantDetail() {
       setAiPauseReason('');
       await fetchAll();
     } catch (err: unknown) {
-      const message = err instanceof AxiosError
+      const message = err instanceof AdminApiError
         ? err.response?.data?.message || 'Falha ao atualizar controle da IA.'
         : 'Falha ao atualizar controle da IA.';
       toast.error('Erro', message);

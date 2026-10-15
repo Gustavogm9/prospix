@@ -1,7 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticateRequest, supabaseAdmin } from '../../_lib/supabase-admin';
+import { encryptSecret } from '@/lib/secrets';
+import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
+
+const optionalSecret = z.union([z.string().min(1).max(8192), z.literal(''), z.null()]).optional();
+const credentialsPatchSchema = z.object({
+  aiProvider: z.enum(['GUILDS_SHARED', 'TENANT_OWN']).optional(),
+  evolutionBaseUrl: z.union([z.string().url().max(2048), z.literal(''), z.null()]).optional(),
+  openaiApiKey: optionalSecret,
+  anthropicApiKey: optionalSecret,
+  googleAiApiKey: optionalSecret,
+  googleMapsApiKey: optionalSecret,
+  evolutionApiKey: optionalSecret,
+  tavilyApiKey: optionalSecret,
+  firecrawlApiKey: optionalSecret,
+  googleCalendarId: z.union([z.string().min(1).max(512), z.literal(''), z.null()]).optional(),
+}).strict();
+
+function encryptedValue(value: string | null | undefined) {
+  return value ? encryptSecret(value) : null;
+}
 
 // GET /api/integrations/credentials — Safe credential status for Settings
 export async function GET(request: NextRequest) {
@@ -57,7 +77,15 @@ export async function PATCH(request: NextRequest) {
     );
   }
 
-  const body = await request.json();
+  let body: z.infer<typeof credentialsPatchSchema>;
+  try {
+    body = credentialsPatchSchema.parse(await request.json());
+  } catch {
+    return NextResponse.json(
+      { error: 'ValidationError', message: 'Credenciais de integração inválidas.' },
+      { status: 400 },
+    );
+  }
 
   // Build update payload — only include fields that were sent
   const updateData: Record<string, unknown> = {};
@@ -65,14 +93,13 @@ export async function PATCH(request: NextRequest) {
   if (body.aiProvider !== undefined) updateData.ai_provider = body.aiProvider;
   if (body.evolutionBaseUrl !== undefined) updateData.evolution_base_url = body.evolutionBaseUrl || null;
 
-  // For API keys, if sent, store them directly (encryption handled by DB triggers or handled in production)
-  if (body.openaiApiKey !== undefined) updateData.openai_api_key_encrypted = body.openaiApiKey || null;
-  if (body.anthropicApiKey !== undefined) updateData.anthropic_api_key_encrypted = body.anthropicApiKey || null;
-  if (body.googleAiApiKey !== undefined) updateData.google_ai_api_key_encrypted = body.googleAiApiKey || null;
-  if (body.googleMapsApiKey !== undefined) updateData.google_maps_api_key_encrypted = body.googleMapsApiKey || null;
-  if (body.evolutionApiKey !== undefined) updateData.evolution_api_key_encrypted = body.evolutionApiKey || null;
-  if (body.tavilyApiKey !== undefined) updateData.tavily_api_key_encrypted = body.tavilyApiKey || null;
-  if (body.firecrawlApiKey !== undefined) updateData.firecrawl_api_key_encrypted = body.firecrawlApiKey || null;
+  if (body.openaiApiKey !== undefined) updateData.openai_api_key_encrypted = encryptedValue(body.openaiApiKey);
+  if (body.anthropicApiKey !== undefined) updateData.anthropic_api_key_encrypted = encryptedValue(body.anthropicApiKey);
+  if (body.googleAiApiKey !== undefined) updateData.google_ai_api_key_encrypted = encryptedValue(body.googleAiApiKey);
+  if (body.googleMapsApiKey !== undefined) updateData.google_maps_api_key_encrypted = encryptedValue(body.googleMapsApiKey);
+  if (body.evolutionApiKey !== undefined) updateData.evolution_api_key_encrypted = encryptedValue(body.evolutionApiKey);
+  if (body.tavilyApiKey !== undefined) updateData.tavily_api_key_encrypted = encryptedValue(body.tavilyApiKey);
+  if (body.firecrawlApiKey !== undefined) updateData.firecrawl_api_key_encrypted = encryptedValue(body.firecrawlApiKey);
   if (body.googleCalendarId !== undefined) updateData.google_calendar_id = body.googleCalendarId || null;
 
   // Auto-set ai_provider to TENANT_OWN if any key is provided

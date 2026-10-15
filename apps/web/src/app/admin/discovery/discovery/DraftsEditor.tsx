@@ -3,8 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, toast } from '@prospix/ui';
 import { Save, Loader2, AlertCircle, CheckCircle2, FileText, MessageSquare } from 'lucide-react';
-import { adminNextApi } from '@/lib/admin-api-fetch';
-import { AxiosError } from 'axios';
+import { AdminApiError, adminNextApi } from '@/lib/admin-api-fetch';
 
 interface ObjectionEntry {
   trigger?: string;
@@ -88,7 +87,7 @@ export function DraftsEditor({ tenantId, onSaved }: DraftsEditorProps) {
         setVoiceProfileText(data?.voiceProfile ? JSON.stringify(data.voiceProfile, null, 2) : '');
         setScriptsText(data?.scripts ? JSON.stringify(data.scripts, null, 2) : '');
       } catch (err: unknown) {
-        const message = err instanceof AxiosError
+        const message = err instanceof AdminApiError
           ? err.response?.data?.message || 'Falha ao carregar drafts.'
           : 'Falha ao carregar drafts.';
         toast.error('Erro ao carregar', message);
@@ -147,7 +146,7 @@ export function DraftsEditor({ tenantId, onSaved }: DraftsEditorProps) {
       toast.success('Voice profile salvo', `${objectionsCount} objeções · ${complianceCount} compliance`);
       onSaved();
     } catch (err: unknown) {
-      const message = err instanceof AxiosError
+      const message = err instanceof AdminApiError
         ? err.response?.data?.message || 'Falha ao salvar.'
         : 'Falha ao salvar.';
       toast.error('Erro', message);
@@ -171,7 +170,7 @@ export function DraftsEditor({ tenantId, onSaved }: DraftsEditorProps) {
       toast.success('Scripts salvos');
       onSaved();
     } catch (err: unknown) {
-      const message = err instanceof AxiosError
+      const message = err instanceof AdminApiError
         ? err.response?.data?.message || 'Falha ao salvar.'
         : 'Falha ao salvar.';
       toast.error('Erro', message);

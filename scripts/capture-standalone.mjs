@@ -8,11 +8,17 @@
  */
 import { randomUUID } from 'node:crypto';
 
-// ── Config (env vars with fallbacks) ────────────────────────────────────────
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://yvbyplzfqfrlfujathii.supabase.co';
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl2YnlwbHpmcWZybGZ1amF0aGlpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3OTM2MDU3NSwiZXhwIjoyMDk0OTM2NTc1fQ.EELrhswIWep6vB_HSxmrdD1BhhNVLR8QFuFJs2x6dCs';
-const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || 'AIzaSyBfNuGc7Yta2fFtSm7aqMLmuks9NJc_O4g';
-const TENANT_ID = process.env.TENANT_ID || '220e676e-ef8d-4312-814d-fb4dca962c06';
+// ── Config (required env vars; never use credential or tenant fallbacks) ─────
+function requiredEnv(name) {
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`Missing required environment variable: ${name}`);
+  return value;
+}
+
+const SUPABASE_URL = requiredEnv('SUPABASE_URL');
+const SUPABASE_KEY = requiredEnv('SUPABASE_SERVICE_ROLE_KEY');
+const GOOGLE_MAPS_API_KEY = requiredEnv('GOOGLE_MAPS_API_KEY');
+const TENANT_ID = requiredEnv('TENANT_ID');
 const now = () => new Date().toISOString();
 
 const HEADERS = {

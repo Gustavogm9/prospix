@@ -1,6 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin, supabaseAdmin } from '../../../../_lib/auth';
 
+const PAGE_SIZE = 1_000;
+const IN_FILTER_CHUNK_SIZE = 100;
+
+type ScriptImpact = { id: string; tenant_id: string };
+type TenantImpact = { id: string; name: string; slug: string; status: string };
+
+function chunks<T>(items: T[], size: number): T[][] {
+  return Array.from({ length: Math.ceil(items.length / size) }, (_, index) =>
+    items.slice(index * size, (index + 1) * size),
+  );
+}
+
 // =========================================================================
 // GET /api/admin/templates/[id]/impact — Count usage per tenant before delete
 // =========================================================================
@@ -19,7 +31,10 @@ export async function GET(
       .eq('id', id)
       .single();
     if (!template) {
-      return NextResponse.json({ error: 'RESOURCE_NOT_FOUND', message: 'Template not found' }, { status: 404 });
+      return NextResponse.json(
+        { error: 'RESOURCE_NOT_FOUND', message: 'Template não encontrado.' },
+        { status: 404 },
+      );
     }
 
     // Count scripts cloned from this template
@@ -29,46 +44,53 @@ export async function GET(
       .eq('cloned_from_template_id', id)
       .is('archived_at', null);
 
-    // Get distinct tenants using this template
-    let tenantsUsingRaw: any[] = [];
-    try {
-      const { data } = await supabaseAdmin.rpc('exec_sql' as any, {
-        query: `
-          SELECT DISTINCT s.tenant_id, t.id, t.name, t.slug, t.status
-          FROM scripts s
-          JOIN tenants t ON s.tenant_id = t.id
-          WHERE s.cloned_from_template_id = '${id}' AND s.archived_at IS NULL
-        `,
-      });
-      tenantsUsingRaw = data ?? [];
-    } catch { /* RPC may not exist, fallback to count only */ }
+    // Resolve impact with parameterized PostgREST filters. Never pass URL data to raw SQL.
+    const impactedScripts: ScriptImpact[] = [];
+    for (let offset = 0; ; offset += PAGE_SIZE) {
+      const { data, error } = await supabaseAdmin
+        .from('scripts')
+        .select('id, tenant_id')
+        .eq('cloned_from_template_id', id)
+        .is('archived_at', null)
+        .range(offset, offset + PAGE_SIZE - 1);
 
-    // Count active campaigns using scripts cloned from this template
+      if (error) throw error;
+      const page = (data ?? []) as ScriptImpact[];
+      impactedScripts.push(...page);
+      if (page.length < PAGE_SIZE) break;
+    }
+
+    const scriptIds = impactedScripts.map((script) => script.id);
+    const tenantIds = [...new Set(impactedScripts.map((script) => script.tenant_id))];
+    const tenantsUsing: TenantImpact[] = [];
+
+    for (const tenantIdChunk of chunks(tenantIds, IN_FILTER_CHUNK_SIZE)) {
+      const { data, error } = await supabaseAdmin
+        .from('tenants')
+        .select('id, name, slug, status')
+        .in('id', tenantIdChunk);
+      if (error) throw error;
+      tenantsUsing.push(...((data ?? []) as TenantImpact[]));
+    }
+
     let activeCampaignsCount = 0;
-    try {
-      const { data } = await supabaseAdmin.rpc('exec_sql' as any, {
-        query: `
-          SELECT COUNT(DISTINCT c.id)::bigint AS cnt
-          FROM campaigns c
-          JOIN scripts s ON c.active_script_id = s.id
-          WHERE c.status = 'ACTIVE' AND s.cloned_from_template_id = '${id}' AND s.archived_at IS NULL
-        `,
-      });
-      activeCampaignsCount = Number(data?.[0]?.cnt ?? 0);
-    } catch { /* fallback */ }
+    for (const scriptIdChunk of chunks(scriptIds, IN_FILTER_CHUNK_SIZE)) {
+      const { count, error } = await supabaseAdmin
+        .from('campaigns')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'ACTIVE')
+        .in('active_script_id', scriptIdChunk);
+      if (error) throw error;
+      activeCampaignsCount += count ?? 0;
+    }
 
     return NextResponse.json({
       data: {
         templateId: template.id,
         templateName: template.name,
         scriptsCloned: scriptsCloned ?? 0,
-        tenantsCount: tenantsUsingRaw.length,
-        tenants: tenantsUsingRaw.map((t: any) => ({
-          id: t.id,
-          name: t.name,
-          slug: t.slug,
-          status: t.status,
-        })),
+        tenantsCount: tenantsUsing.length,
+        tenants: tenantsUsing,
         activeCampaigns: activeCampaignsCount,
       },
     });

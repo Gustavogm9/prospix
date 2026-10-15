@@ -2,6 +2,7 @@
 
 import { supabaseAdmin } from './supabase';
 import { useAdminAuthStore } from '../store/admin-auth-store';
+import { fetchWithSessionRetry } from './authenticated-fetch';
 
 /**
  * Low-level fetch wrapper for admin Next.js API route handlers.
@@ -11,41 +12,37 @@ async function baseFetch(
   path: string,
   options: RequestInit = {}
 ): Promise<Response> {
-  const { data } = await supabaseAdmin.auth.getSession();
-  const accessToken = data.session?.access_token;
-
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(options.headers as Record<string, string> || {}),
-  };
-
-  if (accessToken) {
-    headers['Authorization'] = `Bearer ${accessToken}`;
-  }
-
-  const response = await fetch(path, {
-    ...options,
-    headers,
+  return fetchWithSessionRetry(path, options, {
+    getAccessToken: async () => {
+      const { data } = await supabaseAdmin.auth.getSession();
+      return data.session?.access_token ?? null;
+    },
+    refreshAccessToken: async () => {
+      const { data, error } = await supabaseAdmin.auth.refreshSession();
+      return error ? null : data.session?.access_token ?? null;
+    },
+    onUnauthorized: () => {
+      if (path.includes('/admin/login')) return;
+      useAdminAuthStore.getState().clearAdminSession();
+      if (typeof window !== 'undefined') window.location.href = '/admin/login';
+    },
   });
-
-  if (response.status === 401 && !path.includes('/admin/login')) {
-    const { clearAdminSession } = useAdminAuthStore.getState();
-    clearAdminSession();
-    if (typeof window !== 'undefined') {
-      window.location.href = '/admin/login';
-    }
-  }
-
-  return response;
 }
 
-type AdminApiError = Error & {
+export class AdminApiError extends Error {
   status?: number;
   response?: {
     status: number;
-    data: unknown;
+    data: any;
   };
-};
+
+  constructor(message: string, status?: number, data?: any) {
+    super(message);
+    this.name = 'AdminApiError';
+    this.status = status;
+    if (status !== undefined) this.response = { status, data };
+  }
+}
 
 async function parseAdminResponse(res: Response) {
   const contentType = res.headers.get('content-type') || '';
@@ -56,17 +53,15 @@ async function parseAdminResponse(res: Response) {
     const message = isJson && data && typeof data === 'object' && 'message' in data
       ? String((data as { message?: unknown }).message || `HTTP ${res.status}`)
       : `HTTP ${res.status}: resposta inesperada do servidor`;
-    const error = new Error(message) as AdminApiError;
-    error.status = res.status;
-    error.response = { status: res.status, data };
-    throw error;
+    throw new AdminApiError(message, res.status, data);
   }
 
   if (!isJson) {
-    const error = new Error('Resposta inesperada do servidor: conteudo nao JSON.') as AdminApiError;
-    error.status = res.status;
-    error.response = { status: res.status, data };
-    throw error;
+    throw new AdminApiError(
+      'Resposta inesperada do servidor: conteúdo não JSON.',
+      res.status,
+      data,
+    );
   }
 
   return data;

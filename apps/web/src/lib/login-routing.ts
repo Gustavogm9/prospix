@@ -1,5 +1,5 @@
 export type LoginProfile = {
-  role: 'OWNER' | 'ASSISTANT' | 'ADMIN' | 'GUILDS_ADMIN';
+  role: 'OWNER' | 'ASSISTANT' | 'GUILDS_ADMIN';
   tenant_id: string | null;
 };
 

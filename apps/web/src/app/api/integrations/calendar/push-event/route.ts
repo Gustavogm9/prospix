@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticateRequest, getSupabaseAdmin } from '../../../_lib/supabase-admin';
 import { createEvent } from '../../../_lib/google-calendar';
+import { readStoredSecret } from '@/lib/secrets';
 
 /**
  * POST /api/integrations/calendar/push-event
@@ -61,7 +62,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const refreshToken = secretRecord.google_oauth_refresh_encrypted as string;
+    const refreshToken = readStoredSecret(
+      secretRecord.google_oauth_refresh_encrypted as string,
+      undefined,
+      { allowLegacyPlaintext: process.env.ALLOW_LEGACY_PLAINTEXT_SECRETS === 'true' },
+    );
     const calendarId = (secretRecord.google_calendar_id as string) || 'primary';
 
     // 3. Build the Google Calendar event payload

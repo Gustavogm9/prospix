@@ -6,7 +6,7 @@ interface AdminSession {
   id: string;
   name: string;
   email: string;
-  role: 'SUPER_ADMIN' | 'ADMIN' | 'GUILDS_ADMIN';
+  role: 'GUILDS_ADMIN';
 }
 
 interface AdminAuthState {
@@ -44,17 +44,17 @@ export const useAdminAuthStore = create<AdminAuthState>()(
           const session = sessionData.session;
 
           if (!session?.user) {
-            set({ initialized: true });
+            set({ adminUser: null, initialized: true });
             return;
           }
 
           const { data: userData, error } = await supabase
             .from('users')
-            .select('id, name, email, role')
+            .select('id, name, email, role, deleted_at')
             .eq('id', session.user.id)
             .maybeSingle();
 
-          if (error || !userData) {
+          if (error || !userData || userData.deleted_at) {
             // Force clear session if admin user does not exist in the public table (e.g. after DB reset)
             supabase.auth.signOut().catch(() => {});
             set({
@@ -64,19 +64,23 @@ export const useAdminAuthStore = create<AdminAuthState>()(
             return;
           }
 
-          // Only allow admin roles
-          const adminRoles: AdminSession['role'][] = ['SUPER_ADMIN', 'ADMIN', 'GUILDS_ADMIN'];
-          if (!adminRoles.includes(userData.role as AdminSession['role'])) {
-            set({ initialized: true });
+          if (userData.role !== 'GUILDS_ADMIN') {
+            supabase.auth.signOut().catch(() => {});
+            set({ adminUser: null, initialized: true });
             return;
           }
 
           set({
-            adminUser: userData as AdminSession,
+            adminUser: {
+              id: userData.id,
+              name: userData.name,
+              email: userData.email,
+              role: 'GUILDS_ADMIN',
+            },
             initialized: true,
           });
         } catch {
-          set({ initialized: true });
+          set({ adminUser: null, initialized: true });
         }
       },
     }),

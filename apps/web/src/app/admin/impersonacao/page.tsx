@@ -3,9 +3,8 @@
 import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badge, toast } from '@prospix/ui';
 import { UserCheck, Shield, Loader2, RefreshCw, AlertTriangle, ExternalLink, Clock, X } from 'lucide-react';
-import { adminNextApi } from '@/lib/admin-api-fetch';
+import { AdminApiError, adminNextApi } from '@/lib/admin-api-fetch';
 import { adminTenantsQueries, adminUsersQueries } from '@/lib/admin-queries';
-import { AxiosError } from 'axios';
 
 interface Tenant { id: string; name: string; slug: string; status: string; }
 interface TenantUser { id: string; name: string; email: string; role: string; }
@@ -94,7 +93,7 @@ export default function Impersonation() {
       toast.success('Sessão iniciada', `Impersonando ${data.targetUser.name} em ${data.targetTenant.name}`);
       await fetchActiveSessions();
     } catch (err: unknown) {
-      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha.' : 'Falha.';
+      const message = err instanceof AdminApiError ? (err.response?.data as any)?.message || 'Falha.' : 'Falha.';
       toast.error('Erro', message);
     } finally {
       setIsLoading(false);
@@ -107,7 +106,7 @@ export default function Impersonation() {
       toast.success('Encerrada', 'Sessão de impersonificação encerrada.');
       await fetchActiveSessions();
     } catch (err: unknown) {
-      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha.' : 'Falha.';
+      const message = err instanceof AdminApiError ? (err.response?.data as any)?.message || 'Falha.' : 'Falha.';
       toast.error('Erro', message);
     }
   };

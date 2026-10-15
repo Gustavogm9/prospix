@@ -23,6 +23,7 @@
     "test:e2e:smoke": "playwright test",
     "test:e2e:smoke:install": "playwright install --with-deps chromium",
     "homologate:prospecting": "node scripts/homologate-prospecting.ts",
+    "secrets:backfill": "tsx scripts/backfill-encrypt-tenant-secrets.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "clean": "turbo run clean && rm -rf node_modules"
@@ -45,9 +46,13 @@
   },
   "pnpm": {
     "overrides": {
-      "postcss@<8.5.10": ">=8.5.10",
+      "postcss@<8.5.23": ">=8.5.23",
       "form-data@>=4.0.0 <4.0.6": ">=4.0.6",
       "vite@<=6.4.2": "6.4.3",
+      "esbuild@<0.28.1": "0.28.2",
+      "@babel/core@<=7.29.0": ">=7.29.6",
+      "browserslist@<4.29.3": ">=4.29.3",
+      "postcss-selector-parser@<7.1.6": "7.1.6",
       "minimatch@3.1.5>brace-expansion": "1.1.16",
       "minimatch@5.1.9>brace-expansion": "2.1.2",
       "minimatch@9.0.9>brace-expansion": "2.1.2",

@@ -6,6 +6,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { isAuthorizedWorkerRequest } from "../_shared/worker-auth.ts";
+import { readStoredSecret } from "../_shared/secrets.ts";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -581,10 +582,11 @@ async function discoverGoogleMaps(
     .eq("tenant_id", tenantId)
     .single();
 
-  const apiKey = secrets?.google_maps_api_key_encrypted;
-  if (!apiKey) {
+  const storedApiKey = secrets?.google_maps_api_key_encrypted;
+  if (!storedApiKey) {
     throw new Error("Google Maps API Key não configurada para este tenant");
   }
+  const apiKey = await readStoredSecret(storedApiKey);
 
   const tags = config.search_tags || [];
   const cities = config.cities || [];
@@ -1470,10 +1472,11 @@ async function discoverTavily(
     .eq("tenant_id", tenant_id)
     .single();
 
-  const tavilyKey = secrets?.tavily_api_key_encrypted;
-  if (!tavilyKey) {
+  const storedTavilyKey = secrets?.tavily_api_key_encrypted;
+  if (!storedTavilyKey) {
     throw new Error("API key do Tavily não configurada neste tenant.");
   }
+  const tavilyKey = await readStoredSecret(storedTavilyKey);
 
   const cities = config.cities || [];
   const tags = config.search_tags || [];

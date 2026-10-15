@@ -32,14 +32,20 @@ export default function Login() {
       });
 
       if (authError) {
-        throw new Error(authError.message);
+        const rateLimited = /rate limit|too many requests/i.test(authError.message);
+        throw new Error(
+          rateLimited
+            ? 'Muitas tentativas. Aguarde alguns minutos e tente novamente.'
+            : 'E-mail ou senha incorretos. Verifique suas credenciais.',
+        );
       }
 
       // Fetch user profile and verify admin role
       const { data: userData, error: userError } = await supabaseAdmin
         .from('users')
-        .select('id, name, email, role')
+        .select('id, name, email, role, deleted_at')
         .eq('id', data.user.id)
+        .is('deleted_at', null)
         .single();
 
       if (userError || !userData) {
@@ -62,7 +68,7 @@ export default function Login() {
       toast.success('Acesso Autorizado', 'Conexão ativa com o banco de dados.');
       router.push('/admin');
     } catch (err: unknown) {
-      const message = err instanceof Error
+      const message = err instanceof Error && err.message
         ? err.message
         : 'Credenciais inválidas ou erro ao conectar com o servidor.';
       toast.error('Erro de Autenticação', message);

@@ -7,7 +7,7 @@ export interface UserSession {
   tenant_id: string;
   name: string;
   email: string;
-  role: 'OWNER' | 'ASSISTANT' | 'ADMIN';
+  role: 'OWNER' | 'ASSISTANT';
 }
 
 interface AuthState {
@@ -49,17 +49,23 @@ export const useAuthStore = create<AuthState>()(
           const session = sessionData.session;
 
           if (!session?.user) {
-            set({ initialized: true });
+            set({ tenantId: null, user: null, initialized: true });
             return;
           }
 
           const { data: userData, error } = await supabase
             .from('users')
-            .select('id, tenant_id, name, email, role')
+            .select('id, tenant_id, name, email, role, deleted_at')
             .eq('id', session.user.id)
             .maybeSingle();
 
-          if (error || !userData) {
+          if (
+            error ||
+            !userData ||
+            !userData.tenant_id ||
+            userData.deleted_at ||
+            !['OWNER', 'ASSISTANT'].includes(userData.role)
+          ) {
             // Force clear session if user does not exist in the public table (e.g. after DB reset)
             supabase.auth.signOut().catch(() => {});
             set({
@@ -76,7 +82,7 @@ export const useAuthStore = create<AuthState>()(
             initialized: true,
           });
         } catch {
-          set({ initialized: true });
+          set({ tenantId: null, user: null, initialized: true });
         }
       },
     }),

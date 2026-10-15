@@ -57,7 +57,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const auth = await requireAdmin(request);
-  if ('error' in auth) return auth.error;
+  if (auth instanceof NextResponse) return auth;
   const { id } = await params;
 
   try {
@@ -82,7 +82,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const auth = await requireAdmin(request);
-  if ('error' in auth) return auth.error;
+  if (auth instanceof NextResponse) return auth;
   const adminId = auth.userId;
   const { id } = await params;
 

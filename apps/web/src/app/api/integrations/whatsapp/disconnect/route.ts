@@ -1,12 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticateRequest, supabaseAdmin } from '../../../_lib/supabase-admin';
 import { loadTenantWhatsAppChannel, logoutWahaSession } from '../../../_lib/whatsapp-provider';
+import { readStoredSecret } from '@/lib/secrets';
 
 export async function POST(request: NextRequest) {
   const auth = await authenticateRequest(request);
   if ('error' in auth) return auth.error;
 
-  const { tenantId } = auth;
+  const { tenantId, role } = auth;
+
+  if (role !== 'OWNER' && role !== 'GUILDS_ADMIN') {
+    return NextResponse.json(
+      { error: 'Forbidden', message: 'Somente o proprietário pode desconectar o WhatsApp.' },
+      { status: 403 },
+    );
+  }
 
   try {
     const activeChannel = await loadTenantWhatsAppChannel(supabaseAdmin, tenantId);
@@ -64,7 +72,18 @@ export async function POST(request: NextRequest) {
 
     const instanceName = secretRecord.evolution_instance_name;
     const baseUrl = secretRecord.evolution_base_url || process.env.EVOLUTION_BASE_URL;
-    const apiKey = process.env.EVOLUTION_GUILDS_API_KEY || '';
+    const apiKey = secretRecord.evolution_api_key_encrypted
+      ? readStoredSecret(secretRecord.evolution_api_key_encrypted, undefined, {
+          allowLegacyPlaintext: process.env.ALLOW_LEGACY_PLAINTEXT_SECRETS === 'true',
+        })
+      : process.env.EVOLUTION_GUILDS_API_KEY || '';
+
+    if (!baseUrl || !apiKey) {
+      return NextResponse.json(
+        { error: 'ConfigurationError', message: 'Evolution API não configurada.' },
+        { status: 503 },
+      );
+    }
 
     // Logout instance
     await fetch(`${baseUrl}/instance/logout/${instanceName}`, {

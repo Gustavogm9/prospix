@@ -1,5 +1,6 @@
 import { buildEvolutionHeaders } from './evolution-auth.ts';
 import { calculateHumanTypingDelayMs } from './human-message.ts';
+import { readStoredSecret } from './secrets.ts';
 
 type SupabaseLike = any;
 
@@ -74,9 +75,9 @@ function normalizeProvider(value: unknown): WhatsAppProvider {
   return String(value || '').toUpperCase() === 'WAHA' ? 'WAHA' : 'EVOLUTION';
 }
 
-function apiKeyForProvider(provider: WhatsAppProvider, rowKey?: string | null): string {
+async function apiKeyForProvider(provider: WhatsAppProvider, rowKey?: string | null): Promise<string> {
   const direct = rowKey && rowKey.trim() ? rowKey.trim() : null;
-  if (direct) return direct;
+  if (direct) return readStoredSecret(direct);
   if (provider === 'WAHA') {
     return env('WAHA_API_KEY') || '';
   }
@@ -268,7 +269,7 @@ export async function loadTenantWhatsAppChannel(
       label: channel.label ?? null,
       baseUrl: normalizeBaseUrl(channel.base_url || (provider === 'WAHA' ? DEFAULT_WAHA_BASE_URL : DEFAULT_EVOLUTION_BASE_URL)),
       instanceName: channel.instance_name,
-      apiKey: apiKeyForProvider(provider, channel.api_key_encrypted),
+      apiKey: await apiKeyForProvider(provider, channel.api_key_encrypted),
       source: 'whatsapp_channels',
       sendEnabled: channel.send_enabled !== false,
       receiveEnabled: channel.receive_enabled !== false,
@@ -293,7 +294,7 @@ export async function loadTenantWhatsAppChannel(
     label: 'Evolution legado',
     baseUrl: normalizeBaseUrl(legacy.evolution_base_url || env('EVOLUTION_BASE_URL') || DEFAULT_EVOLUTION_BASE_URL),
     instanceName: legacy.evolution_instance_name,
-    apiKey: apiKeyForProvider('EVOLUTION', legacy.evolution_api_key_encrypted),
+    apiKey: await apiKeyForProvider('EVOLUTION', legacy.evolution_api_key_encrypted),
     source: 'tenant_secrets',
     sendEnabled: true,
     receiveEnabled: true,

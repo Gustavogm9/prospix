@@ -3,13 +3,12 @@
 import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAdminAuthStore } from '@/store/admin-auth-store';
-import { supabaseAdmin } from '@/lib/supabase';
 import AdminShell from '@/layout/AdminShell';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() ?? '';
   const router = useRouter();
-  const { adminUser, setAdminSession, clearAdminSession } = useAdminAuthStore();
+  const { initializeFromSupabase, clearAdminSession } = useAdminAuthStore();
   const [isChecking, setIsChecking] = useState(true);
 
   // Login page should NOT be wrapped in the AdminShell or auth-protected
@@ -23,23 +22,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
     const checkSession = async () => {
       try {
-        const { data: { session } } = await supabaseAdmin.auth.getSession();
-
-        if (!session) {
+        await initializeFromSupabase();
+        if (!useAdminAuthStore.getState().adminUser) {
           clearAdminSession();
           router.replace('/admin/login');
           return;
-        }
-
-        // If we have a Supabase session but no admin user in Zustand, restore it
-        if (!adminUser && session.user) {
-          const meta = session.user.user_metadata;
-          setAdminSession({
-            id: session.user.id,
-            name: meta?.name || session.user.email || 'Admin',
-            email: session.user.email || '',
-            role: meta?.role || 'ADMIN',
-          });
         }
       } catch {
         clearAdminSession();
@@ -51,8 +38,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     };
 
     checkSession();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoginPage]);
+  }, [clearAdminSession, initializeFromSupabase, isLoginPage, router]);
 
   // Login page: render children directly (no shell, no auth check)
   if (isLoginPage) {

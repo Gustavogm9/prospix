@@ -1,3 +1,5 @@
+import { readStoredSecret } from '@/lib/secrets';
+
 type SupabaseAdminLike = any;
 
 export type WhatsAppProvider = 'EVOLUTION' | 'WAHA';
@@ -33,9 +35,20 @@ function normalizeProvider(value: unknown): WhatsAppProvider {
 }
 
 function apiKeyForProvider(provider: WhatsAppProvider, rowKey?: string | null): string {
-  if (rowKey && rowKey.trim()) return rowKey.trim();
+  if (rowKey && rowKey.trim()) {
+    return readStoredSecret(rowKey.trim(), undefined, {
+      allowLegacyPlaintext: process.env.ALLOW_LEGACY_PLAINTEXT_SECRETS === 'true',
+    });
+  }
   if (provider === 'WAHA') return env('WAHA_API_KEY') || '';
   return env('EVOLUTION_GUILDS_API_KEY') || env('EVOLUTION_API_KEY') || '';
+}
+
+function storedWebhookSecret(value?: string | null) {
+  if (!value) return null;
+  return readStoredSecret(value, undefined, {
+    allowLegacyPlaintext: process.env.ALLOW_LEGACY_PLAINTEXT_SECRETS === 'true',
+  });
 }
 
 export async function loadTenantWhatsAppChannel(
@@ -63,7 +76,7 @@ export async function loadTenantWhatsAppChannel(
       baseUrl: normalizeBaseUrl(channel.base_url || (provider === 'WAHA' ? DEFAULT_WAHA_BASE_URL : DEFAULT_EVOLUTION_BASE_URL)),
       instanceName: channel.instance_name,
       apiKey: apiKeyForProvider(provider, channel.api_key_encrypted),
-      webhookSecret: channel.webhook_secret || null,
+      webhookSecret: storedWebhookSecret(channel.webhook_secret),
       active: true,
       source: 'whatsapp_channels',
       sendEnabled: channel.send_enabled !== false,
@@ -118,7 +131,7 @@ export async function loadTenantWahaChannel(
     baseUrl: normalizeBaseUrl(channel.base_url || DEFAULT_WAHA_BASE_URL),
     instanceName: channel.instance_name,
     apiKey: apiKeyForProvider('WAHA', channel.api_key_encrypted),
-    webhookSecret: channel.webhook_secret || null,
+    webhookSecret: storedWebhookSecret(channel.webhook_secret),
     active: channel.active === true,
     source: 'whatsapp_channels',
     sendEnabled: channel.send_enabled !== false,

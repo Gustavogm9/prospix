@@ -177,7 +177,7 @@ export default function AppMobile() {
       {/* Benefits */}
       <div className="flex items-center gap-3 px-4 py-3 bg-[#ECFDF3] border border-[rgba(3,152,85,0.15)] rounded-xl text-[12px] text-[#027A48]">
         <Wifi className="w-4 h-4 shrink-0" />
-        <div><strong>Funciona offline!</strong> Após instalar, o app carrega mesmo sem internet e sincroniza quando voltar online.</div>
+        <div><strong>Acesso offline:</strong> o app mostra uma tela de reconexão sem internet. Conversas, campanhas e alterações exigem conexão.</div>
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { GlobalToast } from '@/components/global-toast';
+import { ServiceWorkerRegistrar } from '@/components/ServiceWorkerRegistrar';
 import { VersionChecker } from '@/components/VersionChecker';
 
 export const metadata: Metadata = {
@@ -42,6 +43,7 @@ export default function RootLayout({
       <body className="antialiased min-h-[100dvh] bg-bg text-text">
         {children}
         <GlobalToast />
+        <ServiceWorkerRegistrar />
         <VersionChecker />
       </body>
     </html>

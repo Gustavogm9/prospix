@@ -3,8 +3,7 @@
 import React, { useState } from 'react';
 import { Card, CardContent, Button, Input, Select, toast, Badge } from '@prospix/ui';
 import { CheckCircle2, ChevronRight, ChevronLeft, Building, DollarSign, User, FileText, Cpu, Key, Copy, Sparkles } from 'lucide-react';
-import { adminNextApi } from '@/lib/admin-api-fetch';
-import { AxiosError } from 'axios';
+import { AdminApiError, adminNextApi } from '@/lib/admin-api-fetch';
 
 export default function NewTenant() {
   const [step, setStep] = useState(1);
@@ -162,7 +161,7 @@ export default function NewTenant() {
     } catch (err: unknown) {
       console.error('Error creating tenant wizard:', err);
       setGeneratedCode(null);
-      const message = err instanceof AxiosError
+      const message = err instanceof AdminApiError
         ? err.response?.data?.message || err.message || 'A API não confirmou o provisionamento. Nenhum convite foi gerado.'
         : err instanceof Error
         ? err.message

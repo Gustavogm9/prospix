@@ -9,7 +9,7 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 // Use dummy values to avoid crashing the build — the client won't
 // make real requests during SSR anyway.
 const DUMMY_URL = 'https://placeholder.supabase.co';
-const DUMMY_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBsYWNlaG9sZGVyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MjAwMDAwMDAwMH0.placeholder';
+const DUMMY_KEY = 'build-placeholder-anon-key';
 
 const resolvedUrl = supabaseUrl || DUMMY_URL;
 const resolvedKey = supabaseAnonKey || DUMMY_KEY;

@@ -3,8 +3,7 @@
 import { useState } from 'react';
 import { Button, toast } from '@prospix/ui';
 import { Upload, Trash2, Download, Loader2, CheckCircle2, AlertCircle, FileAudio, FileVideo, FileText, ImageIcon } from 'lucide-react';
-import { adminNextApi } from '@/lib/admin-api-fetch';
-import { AxiosError } from 'axios';
+import { AdminApiError, adminNextApi } from '@/lib/admin-api-fetch';
 
 export type MaterialKind = 'audio' | 'video' | 'transcript' | 'approval_proof';
 
@@ -73,7 +72,7 @@ export function MaterialsUploader({ tenantId, presentMaterials, onMaterialChange
       toast.success('Upload concluído', `${file.name} salvo.`);
       onMaterialChanged();
     } catch (err: unknown) {
-      const message = err instanceof AxiosError
+      const message = err instanceof AdminApiError
         ? err.response?.data?.message || 'Falha no upload.'
         : err instanceof Error
           ? err.message
@@ -92,7 +91,7 @@ export function MaterialsUploader({ tenantId, presentMaterials, onMaterialChange
       toast.success('Material removido');
       onMaterialChanged();
     } catch (err: unknown) {
-      const message = err instanceof AxiosError
+      const message = err instanceof AdminApiError
         ? err.response?.data?.message || 'Falha ao remover.'
         : 'Falha ao remover.';
       toast.error('Erro', message);
@@ -109,7 +108,7 @@ export function MaterialsUploader({ tenantId, presentMaterials, onMaterialChange
       if (!url) throw new Error('URL ausente.');
       window.open(url, '_blank', 'noopener,noreferrer');
     } catch (err: unknown) {
-      const message = err instanceof AxiosError
+      const message = err instanceof AdminApiError
         ? err.response?.data?.message || 'Falha ao baixar.'
         : 'Falha ao baixar.';
       toast.error('Erro', message);

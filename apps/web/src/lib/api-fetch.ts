@@ -2,6 +2,7 @@
 
 import { supabase } from './supabase';
 import { useAuthStore } from '../store/auth-store';
+import { fetchWithSessionRetry } from './authenticated-fetch';
 
 /**
  * Lightweight fetch wrapper for Next.js API route handlers.
@@ -15,40 +16,25 @@ export async function apiFetch(
   path: string,
   options: RequestInit = {}
 ): Promise<Response> {
-  const { data } = await supabase.auth.getSession();
-  const accessToken = data.session?.access_token;
   const { tenantId } = useAuthStore.getState();
-
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(options.headers as Record<string, string> || {}),
-  };
-
-  if (accessToken) {
-    headers['Authorization'] = `Bearer ${accessToken}`;
-  }
-
-  if (tenantId) {
-    headers['X-Tenant-Id'] = tenantId;
-  }
-
-  const response = await fetch(path, {
-    ...options,
-    headers,
-    cache: 'no-store',
-  });
-
-  // Auto-redirect on 401 (session expired)
-  if (
-    response.status === 401 &&
-    !path.includes('/auth/login')
-  ) {
-    const { clearSession } = useAuthStore.getState();
-    clearSession();
-    if (typeof window !== 'undefined') {
-      window.location.href = '/login';
-    }
-  }
-
-  return response;
+  return fetchWithSessionRetry(
+    path,
+    options,
+    {
+      getAccessToken: async () => {
+        const { data } = await supabase.auth.getSession();
+        return data.session?.access_token ?? null;
+      },
+      refreshAccessToken: async () => {
+        const { data, error } = await supabase.auth.refreshSession();
+        return error ? null : data.session?.access_token ?? null;
+      },
+      onUnauthorized: () => {
+        if (path.includes('/auth/login')) return;
+        useAuthStore.getState().clearSession();
+        if (typeof window !== 'undefined') window.location.href = '/login';
+      },
+    },
+    tenantId ? { 'X-Tenant-Id': tenantId } : {},
+  );
 }

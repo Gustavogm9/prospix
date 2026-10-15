@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticateRequest, getSupabaseAdmin } from '../../../_lib/supabase-admin';
 import { listCalendars } from '../../../_lib/google-calendar';
+import { readStoredSecret } from '@/lib/secrets';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,7 +38,11 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const refreshToken = secretRecord.google_oauth_refresh_encrypted as string;
+    const refreshToken = readStoredSecret(
+      secretRecord.google_oauth_refresh_encrypted as string,
+      undefined,
+      { allowLegacyPlaintext: process.env.ALLOW_LEGACY_PLAINTEXT_SECRETS === 'true' },
+    );
 
     // 2. Fetch calendars from Google
     const calendars = await listCalendars(refreshToken);

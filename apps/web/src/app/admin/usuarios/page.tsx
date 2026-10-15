@@ -4,9 +4,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle, Button, Badge, toast } from '@prospix/ui';
 import { Users as UsersIcon, Plus, Loader2, Search, RefreshCw, KeyRound, UserX, UserCheck, Pencil, AlertCircle, Copy, Eye, EyeOff } from 'lucide-react';
-import { adminNextApi } from '@/lib/admin-api-fetch';
+import { AdminApiError, adminNextApi } from '@/lib/admin-api-fetch';
 import { adminTenantsQueries, adminUsersQueries } from '@/lib/admin-queries';
-import { AxiosError } from 'axios';
 
 interface UserItem {
   id: string;
@@ -129,7 +128,7 @@ export default function UserManagement() {
       toast.success('Usuário criado', `${user?.name} foi criado com sucesso.`);
       await fetchUsers(0);
     } catch (err: unknown) {
-      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha ao criar usuário.' : 'Falha ao criar usuário.';
+      const message = err instanceof AdminApiError ? (err.response?.data as any)?.message || 'Falha ao criar usuário.' : 'Falha ao criar usuário.';
       toast.error('Erro', message);
     } finally {
       setCreateLoading(false);
@@ -145,7 +144,7 @@ export default function UserManagement() {
       setShowEditModal(false);
       await fetchUsers(pagination.offset);
     } catch (err: unknown) {
-      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha.' : 'Falha.';
+      const message = err instanceof AdminApiError ? (err.response?.data as any)?.message || 'Falha.' : 'Falha.';
       toast.error('Erro', message);
     } finally {
       setEditLoading(false);
@@ -161,7 +160,7 @@ export default function UserManagement() {
       setResetResult({ userId, tempPassword: result?.tempPassword ?? '' });
       toast.success('Senha resetada', 'Nova senha temporária gerada.');
     } catch (err: unknown) {
-      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha.' : 'Falha.';
+      const message = err instanceof AdminApiError ? (err.response?.data as any)?.message || 'Falha.' : 'Falha.';
       toast.error('Erro', message);
     } finally {
       setBusyId(null);
@@ -176,7 +175,7 @@ export default function UserManagement() {
       toast.success('Desativado', 'Usuário desativado com sucesso.');
       await fetchUsers(pagination.offset);
     } catch (err: unknown) {
-      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha.' : 'Falha.';
+      const message = err instanceof AdminApiError ? (err.response?.data as any)?.message || 'Falha.' : 'Falha.';
       toast.error('Erro', message);
     } finally {
       setBusyId(null);
@@ -190,7 +189,7 @@ export default function UserManagement() {
       toast.success('Reativado', 'Usuário reativado com sucesso.');
       await fetchUsers(pagination.offset);
     } catch (err: unknown) {
-      const message = err instanceof AxiosError ? err.response?.data?.message || 'Falha.' : 'Falha.';
+      const message = err instanceof AdminApiError ? (err.response?.data as any)?.message || 'Falha.' : 'Falha.';
       toast.error('Erro', message);
     } finally {
       setBusyId(null);

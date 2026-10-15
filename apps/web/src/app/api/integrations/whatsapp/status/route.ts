@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { readStoredSecret } from '@/lib/secrets';
 import { authenticateRequest, supabaseAdmin } from '../../../_lib/supabase-admin';
 import { loadAiActivityMonitor, type TenantAiActivity } from '../../../_lib/ai-activity-monitor';
 import {
@@ -691,7 +692,18 @@ export async function GET(request: NextRequest) {
 
     const instanceName = secretRecord.evolution_instance_name;
     const baseUrl = secretRecord.evolution_base_url || process.env.EVOLUTION_BASE_URL;
-    const apiKey = secretRecord.evolution_api_key_encrypted || process.env.EVOLUTION_GUILDS_API_KEY || '';
+    const apiKey = secretRecord.evolution_api_key_encrypted
+      ? readStoredSecret(secretRecord.evolution_api_key_encrypted, undefined, {
+          allowLegacyPlaintext: process.env.ALLOW_LEGACY_PLAINTEXT_SECRETS === 'true',
+        })
+      : process.env.EVOLUTION_GUILDS_API_KEY || '';
+
+    if (!baseUrl || !apiKey) {
+      return NextResponse.json(
+        { error: 'ConfigurationError', message: 'Evolution API não configurada.' },
+        { status: 503 },
+      );
+    }
 
     // Call Evolution API fetchInstances to get rich metadata about the instances
     const evoRes = await fetch(`${baseUrl}/instance/fetchInstances`, {
