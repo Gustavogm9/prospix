@@ -36,3 +36,26 @@ Data: 30/09/2026. Escopo: `/api/discover`, `discover-leads`, `enrich-leads`, Evo
 - A campanha pausada e o kill switch do tenant prevalecem sobre fila, follow-up e resposta reativa; a única exceção é QA explícita, auditada e restrita ao lead exato da allowlist.
 - Não há coleta de peso, altura, doença ou histórico familiar nesta entrega.
 - Homologação usa registros `QA TESTE` e um contato previamente autorizado; nenhuma base real de terceiros recebe mensagem.
+
+## RAG comercial e humanização da conversa — 16/10/2026
+
+Escopo: cadastro e recuperação de conhecimento comercial por tenant e roteiro, montagem do contexto da IA, geração de resposta e trilha das fontes consultadas. Nível alvo: ASVS L1. O conteúdo da base é tratado como dado interno não confiável, nunca como instrução de sistema.
+
+| ID | Fronteira | Ameaça (frase de abuso) | STRIDE | Ativo e classe | P × I | Controle | Teste | Dono/data |
+|---|---|---|---|---|---|---|---|---|
+| RAG-01 | Edge Function → banco | Uma conversa recupera conhecimento de outro tenant ou de outro roteiro | I, E | estratégia comercial/sigilo | média × alta | RLS, função com `search_path` fixo, validação do tenant atual e filtro explícito de `tenant_id` e `script_id` | tenant A não recupera item de B; roteiro A não recupera item exclusivo de B | engenharia, 16/10 |
+| RAG-02 | editor → base → prompt | Texto cadastrado tenta substituir as regras do sistema ou solicitar segredo/ferramenta | T, I, E | integridade do prompt/segredos | média × alta | delimitação e sanitização, aviso explícito de conteúdo não confiável, conteúdo sem autoridade para comandar ferramentas | fechamento de tag e “ignore instruções” continuam apenas como texto | engenharia, 16/10 |
+| RAG-03 | base → conversa | Rascunho, versão arquivada ou fato não aprovado fundamenta uma resposta | T, R | reputação/decisão comercial | média × alta | recuperação somente de registros `APPROVED` e ativos, com versão e origem auditáveis | rascunho e arquivado não aparecem na recuperação | engenharia, 16/10 |
+| RAG-04 | mensagem → busca | Entrada gigante ou termos adversariais ampliam consulta, tokens e custo | D | orçamento/disponibilidade | média × média | consulta truncada, no máximo três trechos e orçamento rígido de caracteres | texto gigante produz contexto dentro do limite | engenharia, 16/10 |
+| RAG-05 | material legado → rede | Um link interno ou malicioso faz o servidor buscar localhost, metadata ou rede privada | S, I | infraestrutura/segredo | média × alta | nenhum URL é baixado pelo webhook; link é somente metadado para o administrador | documento com URL privada não provoca requisição | engenharia, 16/10 |
+| RAG-06 | IA → lead | O modelo inventa capacidade, preço, condição ou caso não presente nas fontes aprovadas | I, T | reputação/comercial | média × alta | fatos separados de técnicas comportamentais, instrução de admitir desconhecimento e Guardian pós-geração | pergunta sem fonte factual não recebe afirmação inventada | engenharia, 16/10 |
+| RAG-07 | histórico → IA | Histórico sem papéis ou estado defasado faz a IA repetir saudação, pergunta ou dado já respondido | T | experiência/qualificação | alta × média | mensagens com papéis reais, mensagem inicial apenas no primeiro contato, estado estruturado e proteção determinística contra nova saudação nominal | após “30 por semana”, reconhece o volume e avança sem perguntar volume outra vez | engenharia, 16/10 |
+| RAG-08 | base → log | Conteúdo comercial ou dado pessoal completo aparece em log de produção | I | sigilo/LGPD | média × alta | log apenas de ids, tipo, versão e contagem dos trechos; nunca conteúdo nem consulta bruta | inspeção de log não encontra texto da base nem mensagem do lead | engenharia, 16/10 |
+
+### Decisões específicas
+
+- A recuperação usa busca textual no PostgreSQL e não faz uma segunda chamada de IA nem usa embeddings nesta fase.
+- A resposta recebe no máximo três trechos aprovados. Técnica comercial orienta comportamento; apenas registros factuais podem sustentar afirmações sobre produto, preço ou operação.
+- A Edge Function falha de forma segura: indisponibilidade da busca remove o contexto adicional, registra somente metadados e não interrompe a conversa.
+- O identificador e a versão de cada trecho utilizado são associados ao evento da conversa para auditoria, sem copiar o conteúdo para o log.
+- Escrita da base fica restrita a proprietário do tenant e administrador Guilds; assistente pode consultar somente o próprio tenant.

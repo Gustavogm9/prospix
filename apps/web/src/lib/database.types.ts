@@ -159,6 +159,104 @@ export type Database = {
           },
         ]
       }
+      commercial_knowledge_chunks: {
+        Row: {
+          active: boolean
+          content: string
+          created_at: string
+          created_by: string | null
+          id: string
+          keywords: string[]
+          kind: "SKILL" | "PRODUCT_FACT" | "OBJECTION" | "RESTRICTION"
+          priority: number
+          script_id: string | null
+          search_vector: unknown
+          skill_key: "opening" | "discovery" | "implication" | "qualification" | "objection" | "value" | "commitment" | "disqualification" | "handoff"
+          source_url: string | null
+          stage: string | null
+          status: "DRAFT" | "APPROVED" | "ARCHIVED"
+          tenant_id: string
+          title: string
+          trigger_intents: string[]
+          updated_at: string
+          updated_by: string | null
+          version: number
+        }
+        Insert: {
+          active?: boolean
+          content: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          keywords?: string[]
+          kind?: "SKILL" | "PRODUCT_FACT" | "OBJECTION" | "RESTRICTION"
+          priority?: number
+          script_id?: string | null
+          search_vector?: unknown
+          skill_key: "opening" | "discovery" | "implication" | "qualification" | "objection" | "value" | "commitment" | "disqualification" | "handoff"
+          source_url?: string | null
+          stage?: string | null
+          status?: "DRAFT" | "APPROVED" | "ARCHIVED"
+          tenant_id: string
+          title: string
+          trigger_intents?: string[]
+          updated_at?: string
+          updated_by?: string | null
+          version?: number
+        }
+        Update: {
+          active?: boolean
+          content?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          keywords?: string[]
+          kind?: "SKILL" | "PRODUCT_FACT" | "OBJECTION" | "RESTRICTION"
+          priority?: number
+          script_id?: string | null
+          search_vector?: unknown
+          skill_key?: "opening" | "discovery" | "implication" | "qualification" | "objection" | "value" | "commitment" | "disqualification" | "handoff"
+          source_url?: string | null
+          stage?: string | null
+          status?: "DRAFT" | "APPROVED" | "ARCHIVED"
+          tenant_id?: string
+          title?: string
+          trigger_intents?: string[]
+          updated_at?: string
+          updated_by?: string | null
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "commercial_knowledge_chunks_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "commercial_knowledge_chunks_script_id_fkey"
+            columns: ["script_id"]
+            isOneToOne: false
+            referencedRelation: "scripts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "commercial_knowledge_chunks_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "commercial_knowledge_chunks_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       conversations: {
         Row: {
           ai_handling: boolean
@@ -2049,6 +2147,30 @@ export type Database = {
     Functions: {
       current_tenant_id: { Args: never; Returns: string }
       current_user_role: { Args: never; Returns: string }
+      retrieve_commercial_knowledge: {
+        Args: {
+          p_intent: string
+          p_limit: number
+          p_query: string
+          p_script_id: string | null
+          p_skill_key: string
+          p_stage: string
+          p_tenant_id: string
+        }
+        Returns: {
+          content: string
+          id: string
+          keywords: string[]
+          kind: string
+          priority: number
+          rank: number
+          skill_key: string
+          stage: string | null
+          title: string
+          trigger_intents: string[]
+          version: number
+        }[]
+      }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
     }

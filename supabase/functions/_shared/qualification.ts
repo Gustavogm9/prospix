@@ -33,6 +33,14 @@ export type QualificationEvaluation = {
 const HEALTH_DATA_PATTERN =
   /\b(peso|altura|imc|doen[cç]a|diagn[oó]stico|tabag|fumante|hist[oó]rico familiar|medicamento|cirurgia)\b/i;
 
+const MONTHLY_LEAD_VOLUME_RANGES = new Set([
+  "UP_TO_100",
+  "FROM_101_TO_500",
+  "FROM_501_TO_2000",
+  "ABOVE_2000",
+  "UNKNOWN",
+]);
+
 function cleanKey(value: unknown): string {
   return String(value || "").trim().replace(/[^a-z0-9_]/gi, "").slice(0, 80);
 }
@@ -107,6 +115,41 @@ function normalizedMessageText(value: string): string {
     .toLowerCase();
 }
 
+function parseLocalizedNumber(value: unknown): number | null {
+  const match = String(value ?? "").match(/\d[\d.,]*/);
+  if (!match) return null;
+  const raw = match[0];
+  const normalized = raw.includes(",")
+    ? raw.replace(/\./g, "").replace(",", ".")
+    : /^\d{1,3}(?:\.\d{3})+$/.test(raw)
+    ? raw.replace(/\./g, "")
+    : raw;
+  const number = Number(normalized);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+function monthlyLeadVolumeFromMessage(message: string): number | null {
+  const weekly = message.match(
+    /\b(\d[\d.,]*)\s*(?:(?:novos?\s+)?(?:contatos?|leads?)\s*)?(?:por|\/)\s*semana\b/,
+  );
+  if (weekly) {
+    const value = parseLocalizedNumber(weekly[1]);
+    return value === null ? null : value * 4;
+  }
+
+  const monthly = message.match(
+    /\b(\d[\d.,]*)\s*(?:(?:novos?\s+)?(?:contatos?|leads?)\s*)?(?:por|\/)\s*mes\b/,
+  );
+  return monthly ? parseLocalizedNumber(monthly[1]) : null;
+}
+
+function monthlyLeadVolumeRange(value: number): string {
+  if (value <= 100) return "UP_TO_100";
+  if (value <= 500) return "FROM_101_TO_500";
+  if (value <= 2000) return "FROM_501_TO_2000";
+  return "ABOVE_2000";
+}
+
 export function normalizeQualificationAnswerSemantics(params: {
   message: string;
   answers: QualificationAnswer[];
@@ -114,6 +157,25 @@ export function normalizeQualificationAnswerSemantics(params: {
   const message = normalizedMessageText(params.message);
 
   return params.answers.map((answer) => {
+    if (answer.criterion_key === "monthly_lead_volume") {
+      const currentValue = normalizedComparable(answer.value);
+      if (
+        typeof currentValue === "string" &&
+        MONTHLY_LEAD_VOLUME_RANGES.has(currentValue)
+      ) return { ...answer, value: currentValue };
+
+      const monthlyVolume = monthlyLeadVolumeFromMessage(message) ??
+        parseLocalizedNumber(answer.value);
+      if (monthlyVolume !== null) {
+        return {
+          ...answer,
+          value: monthlyLeadVolumeRange(monthlyVolume),
+          confidence: Math.max(answer.confidence, 0.9),
+        };
+      }
+      return answer;
+    }
+
     if (answer.criterion_key !== "protection_gap") return answer;
 
     // Despite the legacy key name, NONE/PARTIAL/FULL represent current
@@ -270,6 +332,7 @@ Criterio esperado para uma resposta curta ou ambigua: ${
     JSON.stringify(params.expectedCriterionKey || null)
   }.
 Para protection_gap, os valores descrevem a cobertura atual: NONE = nenhuma protecao, PARTIAL = alguma protecao e FULL = protecao completa.
+Para monthly_lead_volume, converta volume semanal em mensal multiplicando por 4 e retorne somente a faixa configurada, nunca o numero bruto.
 Nao infira profissao, renda, cargo ou protecao. Se nao estiver explicito, omita.
 Se a mensagem for apenas uma confirmacao ou negacao curta, associe-a somente ao criterio esperado.
 Nao extraia nem registre dado de saude, peso, altura, doenca, tabagismo ou historico familiar.

@@ -6,13 +6,20 @@ import { Button, Input, Textarea, toast, Badge } from '@prospix/ui';
 import { 
   Sparkles, MessageSquare, Plus, Save, Trash2, Wand2, X, 
   Bot, ShieldAlert, GitBranch, ArrowLeft, BarChart2, Settings,
-  ToggleRight, ToggleLeft, Copy
+  ToggleRight, ToggleLeft, Copy, BookOpen, Pencil
 } from 'lucide-react';
-import { scriptsQueries, objectionsQueries, Objection, icpsQueries } from '@/lib/queries';
+import {
+  scriptsQueries,
+  objectionsQueries,
+  commercialKnowledgeQueries,
+  type CommercialKnowledge,
+  type Objection,
+  icpsQueries,
+} from '@/lib/queries';
 import { useAuthStore } from '@/store/auth-store';
 import { ScriptFlowBuilder } from './ScriptFlowBuilder';
 
-type ActiveTab = 'FLUXO' | 'MESSAGES' | 'PERFORMANCE' | 'CONFIG' | 'OBJECTIONS';
+type ActiveTab = 'FLUXO' | 'MESSAGES' | 'PERFORMANCE' | 'CONFIG' | 'KNOWLEDGE' | 'OBJECTIONS';
 
 interface ScriptVariation {
   id: string;
@@ -22,12 +29,30 @@ interface ScriptVariation {
 }
 
 const VARIATION_COLORS = ['bg-[#039855]', 'bg-[#1B3A6B]', 'bg-[#E47320]', 'bg-[#5A2A82]'];
+const COMMERCIAL_SKILL_LABELS: Record<CommercialKnowledge['skill_key'], string> = {
+  opening: 'Abertura',
+  discovery: 'Descoberta',
+  implication: 'Impacto do problema',
+  qualification: 'Qualificação',
+  objection: 'Tratamento de objeção',
+  value: 'Construção de valor',
+  commitment: 'Próximo passo',
+  disqualification: 'Desqualificação respeitosa',
+  handoff: 'Transferência humana',
+};
+const KNOWLEDGE_KIND_LABELS: Record<CommercialKnowledge['kind'], string> = {
+  SKILL: 'Orientação de conversa',
+  PRODUCT_FACT: 'Fato de produto ou operação',
+  OBJECTION: 'Resposta a objeção',
+  RESTRICTION: 'Restrição obrigatória',
+};
 
 export default function ScriptDetailsPage() {
   const router = useRouter();
   const params = useParams();
   const scriptId = params.id as string;
   const tenantId = useAuthStore(state => state.tenantId);
+  const currentUser = useAuthStore(state => state.user);
   
   const [activeTab, setActiveTab] = useState<ActiveTab>('FLUXO');
   const [isLoading, setIsLoading] = useState(true);
@@ -46,6 +71,21 @@ export default function ScriptDetailsPage() {
   const [contextDocuments, setContextDocuments] = useState<Array<{ title: string; url: string }>>([]);
   const [newDocTitle, setNewDocTitle] = useState('');
   const [newDocUrl, setNewDocUrl] = useState('');
+
+  // Commercial knowledge (tenant/script-scoped RAG)
+  const [commercialKnowledge, setCommercialKnowledge] = useState<CommercialKnowledge[]>([]);
+  const [isKnowledgeLoading, setIsKnowledgeLoading] = useState(false);
+  const [isSavingKnowledge, setIsSavingKnowledge] = useState(false);
+  const [editingKnowledgeId, setEditingKnowledgeId] = useState<string | null>(null);
+  const [knowledgeTitle, setKnowledgeTitle] = useState('');
+  const [knowledgeContent, setKnowledgeContent] = useState('');
+  const [knowledgeKind, setKnowledgeKind] = useState<CommercialKnowledge['kind']>('SKILL');
+  const [knowledgeSkill, setKnowledgeSkill] = useState<CommercialKnowledge['skill_key']>('discovery');
+  const [knowledgeKeywords, setKnowledgeKeywords] = useState('');
+  const [knowledgeIntents, setKnowledgeIntents] = useState('INTERESTED, QUESTION');
+  const [knowledgePriority, setKnowledgePriority] = useState(50);
+  const [knowledgeStatus, setKnowledgeStatus] = useState<CommercialKnowledge['status']>('DRAFT');
+  const canManageKnowledge = currentUser?.role === 'OWNER';
 
   // Guardians State
   const [guardiansConfig, setGuardiansConfig] = useState<Record<string, boolean>>({
@@ -100,8 +140,10 @@ export default function ScriptDetailsPage() {
             setBaseMessage(script.base_message || '');
             setAiTools(script.ai_tools || ['calendar', 'forward']);
             setFlowData((script.flow as any) || null);
-            // in a real scenario ai_instructions would be fetched from DB
-            setAiInstructions(script.ai_instructions || 'Você é um consultor MetLife focado em fechar reuniões de 10 min. Seja direto e não mande áudios.');
+            setAiInstructions(
+              script.ai_instructions ||
+                'Você é uma assistente comercial transparente. Responda primeiro ao que a pessoa disse, use apenas fatos aprovados e faça no máximo uma pergunta por mensagem.',
+            );
             setRestrictions(script.restrictions || '');
             setContextDocuments(Array.isArray(script.context_documents) ? (script.context_documents as any) : []);
             setGuardiansConfig(script.guardians_config ? (script.guardians_config as any) : {
@@ -275,6 +317,123 @@ export default function ScriptDetailsPage() {
     fetchObjections();
   }, [tenantId, scriptId, activeTab]);
 
+  useEffect(() => {
+    if (!tenantId || !scriptId || scriptId === 'new' || activeTab !== 'KNOWLEDGE') return;
+
+    const fetchCommercialKnowledge = async () => {
+      setIsKnowledgeLoading(true);
+      try {
+        const { data, error } = await commercialKnowledgeQueries.list(tenantId, scriptId);
+        if (error) throw error;
+        setCommercialKnowledge(data);
+      } catch (error) {
+        console.error(error);
+        toast.error('Erro ao carregar conhecimento', 'Verifique se a atualização do banco já foi aplicada.');
+      } finally {
+        setIsKnowledgeLoading(false);
+      }
+    };
+
+    fetchCommercialKnowledge();
+  }, [tenantId, scriptId, activeTab]);
+
+  const resetKnowledgeForm = () => {
+    setEditingKnowledgeId(null);
+    setKnowledgeTitle('');
+    setKnowledgeContent('');
+    setKnowledgeKind('SKILL');
+    setKnowledgeSkill('discovery');
+    setKnowledgeKeywords('');
+    setKnowledgeIntents('INTERESTED, QUESTION');
+    setKnowledgePriority(50);
+    setKnowledgeStatus('DRAFT');
+  };
+
+  const commaSeparatedValues = (value: string) => Array.from(new Set(
+    value.split(',').map(item => item.trim()).filter(Boolean),
+  ));
+
+  const handleSaveKnowledge = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!tenantId || scriptId === 'new' || !canManageKnowledge) return;
+    if (!knowledgeTitle.trim() || !knowledgeContent.trim()) {
+      toast.error('Preencha título e conteúdo');
+      return;
+    }
+    if (knowledgeTitle.trim().length > 160 || knowledgeContent.trim().length > 4000) {
+      toast.error('Conteúdo acima do limite', 'Use até 160 caracteres no título e 4.000 no conteúdo.');
+      return;
+    }
+
+    setIsSavingKnowledge(true);
+    try {
+      const input = {
+        title: knowledgeTitle.trim(),
+        content: knowledgeContent.trim(),
+        kind: knowledgeKind,
+        skillKey: knowledgeSkill,
+        triggerIntents: commaSeparatedValues(knowledgeIntents).map(value => value.toUpperCase()),
+        keywords: commaSeparatedValues(knowledgeKeywords).map(value => value.toLocaleLowerCase('pt-BR')),
+        priority: Math.min(100, Math.max(0, knowledgePriority)),
+        status: knowledgeStatus,
+      };
+
+      if (editingKnowledgeId) {
+        const { data, error } = await commercialKnowledgeQueries.update(
+          tenantId,
+          editingKnowledgeId,
+          input,
+        );
+        if (error || !data) throw error || new Error('Conhecimento não atualizado');
+        setCommercialKnowledge(current => current.map(item => item.id === data.id ? data : item));
+        toast.success('Conhecimento atualizado');
+      } else {
+        const { data, error } = await commercialKnowledgeQueries.create(tenantId, {
+          ...input,
+          scriptId,
+        });
+        if (error || !data) throw error || new Error('Conhecimento não criado');
+        setCommercialKnowledge(current => [data, ...current]);
+        toast.success(
+          knowledgeStatus === 'APPROVED'
+            ? 'Conhecimento aprovado e disponível para a conversa'
+            : 'Conhecimento salvo como rascunho',
+        );
+      }
+      resetKnowledgeForm();
+    } catch (error) {
+      console.error(error);
+      toast.error('Erro ao salvar conhecimento');
+    } finally {
+      setIsSavingKnowledge(false);
+    }
+  };
+
+  const startEditKnowledge = (item: CommercialKnowledge) => {
+    setEditingKnowledgeId(item.id);
+    setKnowledgeTitle(item.title);
+    setKnowledgeContent(item.content);
+    setKnowledgeKind(item.kind);
+    setKnowledgeSkill(item.skill_key);
+    setKnowledgeKeywords(item.keywords.join(', '));
+    setKnowledgeIntents(item.trigger_intents.join(', '));
+    setKnowledgePriority(item.priority);
+    setKnowledgeStatus(item.status);
+  };
+
+  const handleDeleteKnowledge = async (id: string) => {
+    if (!tenantId || !canManageKnowledge) return;
+    if (!window.confirm('Excluir este conhecimento comercial?')) return;
+    const { success, error } = await commercialKnowledgeQueries.delete(tenantId, id);
+    if (!success || error) {
+      toast.error('Erro ao excluir conhecimento');
+      return;
+    }
+    setCommercialKnowledge(current => current.filter(item => item.id !== id));
+    if (editingKnowledgeId === id) resetKnowledgeForm();
+    toast.success('Conhecimento excluído');
+  };
+
   const handleCreateObjection = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!tenantId || !scriptId) return;
@@ -393,7 +552,7 @@ export default function ScriptDetailsPage() {
         </div>
 
         {/* Tabs Row */}
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-6 overflow-x-auto">
           <button 
             onClick={() => setActiveTab('FLUXO')}
             className={`pb-3 text-[13px] font-bold border-b-2 transition-all flex items-center gap-2 ${activeTab === 'FLUXO' ? 'border-[#1B3A6B] text-[#1B3A6B]' : 'border-transparent text-[#64748B] hover:text-[#0F172A]'}`}
@@ -423,6 +582,12 @@ export default function ScriptDetailsPage() {
             className={`pb-3 text-[13px] font-bold border-b-2 transition-all flex items-center gap-2 ${activeTab === 'OBJECTIONS' ? 'border-[#1B3A6B] text-[#1B3A6B]' : 'border-transparent text-[#64748B] hover:text-[#0F172A]'}`}
           >
             <ShieldAlert className="w-4 h-4" /> Objeções
+          </button>
+          <button
+            onClick={() => setActiveTab('KNOWLEDGE')}
+            className={`pb-3 text-[13px] font-bold border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'KNOWLEDGE' ? 'border-[#1B3A6B] text-[#1B3A6B]' : 'border-transparent text-[#64748B] hover:text-[#0F172A]'}`}
+          >
+            <BookOpen className="w-4 h-4" /> Conhecimento comercial
           </button>
         </div>
       </div>
@@ -780,8 +945,10 @@ export default function ScriptDetailsPage() {
             </div>
 
             <div className="bg-white border border-[#E5E7EB] rounded-2xl p-6 shadow-sm">
-              <h3 className="text-[16px] font-bold text-[#0F172A] mb-6">Materiais de Apoio (Documentos e Links)</h3>
-              <p className="text-[12px] text-[#64748B] mb-4">Adicione links de materiais, tabelas ou sites oficiais para a IA consultar quando o lead fizer perguntas técnicas.</p>
+              <h3 className="text-[16px] font-bold text-[#0F172A] mb-2">Links de referência do roteiro</h3>
+              <p className="text-[12px] text-[#64748B] mb-4">
+                Estes links ficam registrados para consulta humana e não são abertos automaticamente pela IA. Para usar conteúdo na conversa, cadastre um item aprovado em <strong>Conhecimento comercial</strong>.
+              </p>
               
               {contextDocuments.length > 0 ? (
                 <div className="space-y-2 mb-6">
@@ -841,8 +1008,8 @@ export default function ScriptDetailsPage() {
               <div className="space-y-6">
                 <div className="flex items-center justify-between border-b border-[#F1F3F6] pb-5">
                   <div>
-                    <label className="text-[13px] font-bold text-[#0F172A] block">Consultar agenda do Giovane</label>
-                    <span className="text-[11px] text-[#94A3B8] block mt-0.5">Pra oferecer horários reais</span>
+                    <label className="text-[13px] font-bold text-[#0F172A] block">Consultar agenda da equipe</label>
+                    <span className="text-[11px] text-[#94A3B8] block mt-0.5">Para oferecer somente horários reais</span>
                   </div>
                   <button onClick={() => toggleAiTool('calendar_read')}>
                     {aiTools.includes('calendar_read') || aiTools.includes('calendar') ? <ToggleRight className="w-10 h-10 text-[#1B3A6B]" /> : <ToggleLeft className="w-10 h-10 text-[#CBD5E1]" />}
@@ -861,7 +1028,7 @@ export default function ScriptDetailsPage() {
 
                 <div className="flex items-center justify-between border-b border-[#F1F3F6] pb-5">
                   <div>
-                    <label className="text-[13px] font-bold text-[#0F172A] block">Enviar PDF institucional MetLife</label>
+                    <label className="text-[13px] font-bold text-[#0F172A] block">Enviar PDF institucional</label>
                     <span className="text-[11px] text-[#94A3B8] block mt-0.5">Quando lead pedir mais informação</span>
                   </div>
                   <button onClick={() => toggleAiTool('pdf')}>
@@ -871,8 +1038,8 @@ export default function ScriptDetailsPage() {
 
                 <div className="flex items-center justify-between">
                   <div>
-                    <label className="text-[13px] font-bold text-[#0F172A] block">Encaminhar pra Giovane</label>
-                    <span className="text-[11px] text-[#94A3B8] block mt-0.5">Quando lead pedir ligação ou ficar bravo</span>
+                    <label className="text-[13px] font-bold text-[#0F172A] block">Encaminhar para atendimento humano</label>
+                    <span className="text-[11px] text-[#94A3B8] block mt-0.5">Quando o lead pedir ligação ou precisar de confirmação</span>
                   </div>
                   <button onClick={() => toggleAiTool('forward')}>
                     {aiTools.includes('forward') ? <ToggleRight className="w-10 h-10 text-[#1B3A6B]" /> : <ToggleLeft className="w-10 h-10 text-[#CBD5E1]" />}
@@ -887,8 +1054,8 @@ export default function ScriptDetailsPage() {
               <div className="space-y-6">
                 <div className="flex items-center justify-between border-b border-[#F1F3F6] pb-5">
                   <div>
-                    <label className="text-[13px] font-bold text-[#0F172A] block">Guardião de Objeções (Framework Jeb Blount L-D-A)</label>
-                    <span className="text-[11px] text-[#94A3B8] block mt-0.5">Detecta quando o lead faz uma objeção e força a IA a contorná-la estruturadamente</span>
+                    <label className="text-[13px] font-bold text-[#0F172A] block">Tratamento humano de objeções</label>
+                    <span className="text-[11px] text-[#94A3B8] block mt-0.5">Reconhece a preocupação, responde com fatos aprovados e avança sem pressão</span>
                   </div>
                   <button onClick={() => setGuardiansConfig(prev => ({ ...prev, objections_enabled: !prev.objections_enabled }))}>
                     {guardiansConfig.objections_enabled ? <ToggleRight className="w-10 h-10 text-[#1B3A6B]" /> : <ToggleLeft className="w-10 h-10 text-[#CBD5E1]" />}
@@ -897,8 +1064,8 @@ export default function ScriptDetailsPage() {
                 
                 <div className="flex items-center justify-between border-b border-[#F1F3F6] pb-5">
                   <div>
-                    <label className="text-[13px] font-bold text-[#0F172A] block">Guardião de Qualificação & Tom de Voz (SPIN / BANT)</label>
-                    <span className="text-[11px] text-[#94A3B8] block mt-0.5">Conduz o lead sutilmente por perguntas de diagnóstico e dor sem parecer um interrogatório</span>
+                    <label className="text-[13px] font-bold text-[#0F172A] block">Qualificação consultiva</label>
+                    <span className="text-[11px] text-[#94A3B8] block mt-0.5">Usa o que já foi respondido e faz somente a próxima pergunta necessária</span>
                   </div>
                   <button onClick={() => setGuardiansConfig(prev => ({ ...prev, qualification_enabled: !prev.qualification_enabled }))}>
                     {guardiansConfig.qualification_enabled ? <ToggleRight className="w-10 h-10 text-[#1B3A6B]" /> : <ToggleLeft className="w-10 h-10 text-[#CBD5E1]" />}
@@ -907,8 +1074,8 @@ export default function ScriptDetailsPage() {
 
                 <div className="flex items-center justify-between">
                   <div>
-                    <label className="text-[13px] font-bold text-[#0F172A] block">Guardião de Respostas Curtas (Aaron Ross - Spear-phishing)</label>
-                    <span className="text-[11px] text-[#94A3B8] block mt-0.5">Garante mensagens concisas de no máximo 2 parágrafos curtos para parecer humano</span>
+                    <label className="text-[13px] font-bold text-[#0F172A] block">Respostas curtas e naturais</label>
+                    <span className="text-[11px] text-[#94A3B8] block mt-0.5">Mantém mensagens de até 2 parágrafos, sem bordões nem explicações longas</span>
                   </div>
                   <button onClick={() => setGuardiansConfig(prev => ({ ...prev, short_responses_enabled: !prev.short_responses_enabled }))}>
                     {guardiansConfig.short_responses_enabled ? <ToggleRight className="w-10 h-10 text-[#1B3A6B]" /> : <ToggleLeft className="w-10 h-10 text-[#CBD5E1]" />}
@@ -916,6 +1083,220 @@ export default function ScriptDetailsPage() {
                 </div>
               </div>
             </div>
+          </div>
+        )}
+
+        {activeTab === 'KNOWLEDGE' && (
+          <div className="animate-fadeIn max-w-[1200px] mx-auto w-full grid grid-cols-1 xl:grid-cols-[1fr_420px] gap-6">
+            <div className="bg-white border border-[#E5E7EB] rounded-2xl p-6 shadow-sm">
+              <div className="flex items-start justify-between gap-4 mb-6">
+                <div>
+                  <h3 className="text-[16px] font-bold text-[#0F172A] mb-1">Mapa de habilidades e conhecimento</h3>
+                  <p className="text-[12px] text-[#64748B] max-w-2xl">
+                    A conversa recupera somente os três itens mais relevantes. Apenas fatos aprovados podem sustentar afirmações sobre produto; orientações de conversa servem para guiar o atendimento.
+                  </p>
+                </div>
+                <Badge className="bg-[#EFF6FF] text-[#1B3A6B] border-none text-[10px] font-bold whitespace-nowrap">
+                  até 3 fontes por resposta
+                </Badge>
+              </div>
+
+              {scriptId === 'new' ? (
+                <div className="rounded-xl border border-dashed border-[#CBD5E1] p-10 text-center text-[13px] text-[#64748B]">
+                  Salve o roteiro antes de cadastrar o conhecimento comercial.
+                </div>
+              ) : isKnowledgeLoading ? (
+                <div className="py-12 text-center text-[13px] text-[#64748B]">Carregando conhecimento...</div>
+              ) : commercialKnowledge.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-[#CBD5E1] p-10 text-center">
+                  <BookOpen className="w-9 h-9 text-[#94A3B8] mx-auto mb-3" />
+                  <p className="text-[13px] font-bold text-[#0F172A]">Nenhum conhecimento cadastrado</p>
+                  <p className="text-[12px] text-[#64748B] mt-1">Cadastre o primeiro item no formulário ao lado.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {commercialKnowledge.map(item => (
+                    <article key={item.id} className="border border-[#E5E7EB] rounded-xl p-4 hover:border-[#CBD5E1] transition-colors">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2 mb-2">
+                            <span className="text-[13px] font-bold text-[#0F172A]">{item.title}</span>
+                            <Badge className={`${item.status === 'APPROVED' ? 'bg-[#ECFDF3] text-[#027A48]' : item.status === 'DRAFT' ? 'bg-[#FFF7ED] text-[#C2410C]' : 'bg-[#F1F5F9] text-[#475569]'} border-none text-[9px] font-bold`}>
+                              {item.status === 'APPROVED' ? 'Aprovado' : item.status === 'DRAFT' ? 'Rascunho' : 'Arquivado'}
+                            </Badge>
+                            <Badge className="bg-[#F1F5F9] text-[#475569] border-none text-[9px] font-semibold">
+                              {COMMERCIAL_SKILL_LABELS[item.skill_key]}
+                            </Badge>
+                            {item.script_id === null && (
+                              <Badge className="bg-[#F5F3FF] text-[#6941C6] border-none text-[9px] font-semibold">Todo o tenant</Badge>
+                            )}
+                          </div>
+                          <p className="text-[11px] font-semibold text-[#64748B] mb-2">{KNOWLEDGE_KIND_LABELS[item.kind]} · versão {item.version} · prioridade {item.priority}</p>
+                          <p className="text-[12px] leading-relaxed text-[#334155] whitespace-pre-wrap line-clamp-4">{item.content}</p>
+                          {item.keywords.length > 0 && (
+                            <p className="text-[10px] text-[#94A3B8] mt-3">Palavras-chave: {item.keywords.join(', ')}</p>
+                          )}
+                        </div>
+                        {canManageKnowledge && (
+                          <div className="flex gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => startEditKnowledge(item)}
+                              aria-label={`Editar ${item.title}`}
+                              className="p-2 text-[#64748B] hover:text-[#1B3A6B] hover:bg-[#EFF6FF] rounded-lg"
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteKnowledge(item.id)}
+                              aria-label={`Excluir ${item.title}`}
+                              className="p-2 text-[#94A3B8] hover:text-[#D92D20] hover:bg-red-50 rounded-lg"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <aside className="bg-white border border-[#E5E7EB] rounded-2xl p-6 shadow-sm h-fit">
+              <h3 className="text-[15px] font-bold text-[#0F172A] mb-1">
+                {editingKnowledgeId ? 'Editar conhecimento' : 'Novo conhecimento'}
+              </h3>
+              <p className="text-[11px] text-[#64748B] mb-5">
+                {canManageKnowledge
+                  ? 'Revise o conteúdo e aprove somente o que a IA pode usar.'
+                  : 'Seu perfil pode consultar, mas somente o proprietário pode alterar esta base.'}
+              </p>
+
+              <form onSubmit={handleSaveKnowledge} className="space-y-4">
+                <div>
+                  <label className="block text-[11px] font-bold text-[#475569] mb-1.5" htmlFor="knowledge-title">Título</label>
+                  <Input
+                    id="knowledge-title"
+                    value={knowledgeTitle}
+                    onChange={event => setKnowledgeTitle(event.target.value)}
+                    maxLength={160}
+                    disabled={!canManageKnowledge || scriptId === 'new'}
+                    placeholder="Ex: Diagnóstico do processo manual"
+                    className="h-10 text-[12px] rounded-lg"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-[#475569] mb-1.5" htmlFor="knowledge-kind">Tipo</label>
+                    <select
+                      id="knowledge-kind"
+                      value={knowledgeKind}
+                      onChange={event => setKnowledgeKind(event.target.value as CommercialKnowledge['kind'])}
+                      disabled={!canManageKnowledge || scriptId === 'new'}
+                      className="w-full h-10 px-3 rounded-lg border border-[#E5E7EB] bg-white text-[12px] text-[#334155] disabled:bg-[#F8F9FB]"
+                    >
+                      {Object.entries(KNOWLEDGE_KIND_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-[#475569] mb-1.5" htmlFor="knowledge-skill">Habilidade</label>
+                    <select
+                      id="knowledge-skill"
+                      value={knowledgeSkill}
+                      onChange={event => setKnowledgeSkill(event.target.value as CommercialKnowledge['skill_key'])}
+                      disabled={!canManageKnowledge || scriptId === 'new'}
+                      className="w-full h-10 px-3 rounded-lg border border-[#E5E7EB] bg-white text-[12px] text-[#334155] disabled:bg-[#F8F9FB]"
+                    >
+                      {Object.entries(COMMERCIAL_SKILL_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-[#475569] mb-1.5" htmlFor="knowledge-content">Conteúdo aprovado</label>
+                  <Textarea
+                    id="knowledge-content"
+                    value={knowledgeContent}
+                    onChange={event => setKnowledgeContent(event.target.value)}
+                    maxLength={4000}
+                    disabled={!canManageKnowledge || scriptId === 'new'}
+                    placeholder="Descreva a técnica, o fato ou a restrição de forma objetiva."
+                    className="min-h-[170px] text-[12px] leading-relaxed rounded-lg"
+                  />
+                  <span className="block text-right text-[10px] text-[#94A3B8] mt-1">{knowledgeContent.length}/4.000</span>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-[#475569] mb-1.5" htmlFor="knowledge-keywords">Palavras-chave</label>
+                  <Input
+                    id="knowledge-keywords"
+                    value={knowledgeKeywords}
+                    onChange={event => setKnowledgeKeywords(event.target.value)}
+                    disabled={!canManageKnowledge || scriptId === 'new'}
+                    placeholder="manual, agenda, automação"
+                    className="h-10 text-[12px] rounded-lg"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-[#475569] mb-1.5" htmlFor="knowledge-intents">Intenções</label>
+                  <Input
+                    id="knowledge-intents"
+                    value={knowledgeIntents}
+                    onChange={event => setKnowledgeIntents(event.target.value)}
+                    disabled={!canManageKnowledge || scriptId === 'new'}
+                    placeholder="INTERESTED, QUESTION"
+                    className="h-10 text-[12px] rounded-lg"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-[#475569] mb-1.5" htmlFor="knowledge-priority">Prioridade</label>
+                    <Input
+                      id="knowledge-priority"
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={knowledgePriority}
+                      onChange={event => setKnowledgePriority(Number(event.target.value))}
+                      disabled={!canManageKnowledge || scriptId === 'new'}
+                      className="h-10 text-[12px] rounded-lg"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-[#475569] mb-1.5" htmlFor="knowledge-status">Situação</label>
+                    <select
+                      id="knowledge-status"
+                      value={knowledgeStatus}
+                      onChange={event => setKnowledgeStatus(event.target.value as CommercialKnowledge['status'])}
+                      disabled={!canManageKnowledge || scriptId === 'new'}
+                      className="w-full h-10 px-3 rounded-lg border border-[#E5E7EB] bg-white text-[12px] text-[#334155] disabled:bg-[#F8F9FB]"
+                    >
+                      <option value="DRAFT">Rascunho</option>
+                      <option value="APPROVED">Aprovado</option>
+                      <option value="ARCHIVED">Arquivado</option>
+                    </select>
+                  </div>
+                </div>
+
+                {canManageKnowledge && scriptId !== 'new' && (
+                  <div className="flex items-center justify-end gap-2 pt-2">
+                    {editingKnowledgeId && (
+                      <Button type="button" onClick={resetKnowledgeForm} className="h-9 px-4 bg-white text-[#475569] border border-[#E5E7EB] hover:bg-[#F8F9FB] text-[12px] rounded-lg">
+                        Cancelar
+                      </Button>
+                    )}
+                    <Button type="submit" disabled={isSavingKnowledge} className="h-9 px-4 bg-[#1B3A6B] hover:bg-[#142C52] text-white text-[12px] font-bold rounded-lg">
+                      {isSavingKnowledge ? 'Salvando...' : editingKnowledgeId ? 'Atualizar' : 'Cadastrar'}
+                    </Button>
+                  </div>
+                )}
+              </form>
+            </aside>
           </div>
         )}
 

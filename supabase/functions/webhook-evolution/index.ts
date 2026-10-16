@@ -26,6 +26,18 @@ import {
 import { resolveEvolutionWebhookEvent } from "../_shared/webhook-event.ts";
 import { sanitizePromptDatum } from "../_shared/human-message.ts";
 import {
+  buildChatConversationMessages,
+  buildCommercialKnowledgeContext,
+  buildCommercialRetrievalQuery,
+  buildHumanConversationInstructions,
+  type CommercialKnowledgeItem,
+  type ConversationRoleMessage,
+  inferCommercialSkill,
+  legacyDocumentsToKnowledge,
+  selectCommercialKnowledge,
+  stripRepeatedNamedGreeting,
+} from "../_shared/commercial-rag.ts";
+import {
   canBypassTenantOutboundPause,
   shouldEscalateLegacyAntiLoop,
 } from "../_shared/qa-homologation.ts";
@@ -38,10 +50,10 @@ import {
   nextQualificationQuestion,
   normalizeQualificationAnswerSemantics,
   parseQualificationExtraction,
-  restrictQualificationAnswersToExpectedCriterion,
   type QualificationConfig,
   type QualificationEvaluation,
   type QualificationValue,
+  restrictQualificationAnswersToExpectedCriterion,
 } from "../_shared/qualification.ts";
 
 // ── Config ──────────────────────────────────────────────────────────────────
@@ -928,7 +940,7 @@ async function handleConnectionUpdate(payload: any): Promise<Response> {
 } // ── OpenAI Call ──────────────────────────────────────────────────────────────
 async function callOpenAI(
   systemPrompt: string,
-  userMessage: string,
+  userMessage: string | ConversationRoleMessage[],
   temperature = 0.7,
   maxTokens = 300,
   model = MODEL,
@@ -946,11 +958,14 @@ async function callOpenAI(
     25000,
   );
 
+  const conversationMessages = Array.isArray(userMessage)
+    ? userMessage
+    : [{ role: "user", content: userMessage }];
   const payload: any = {
     model,
     messages: [
       { role: "system", content: systemPrompt },
-      { role: "user", content: userMessage },
+      ...conversationMessages,
     ],
     temperature,
     max_tokens: maxTokens,
@@ -1062,26 +1077,25 @@ function buildResponsePrompt(
   scriptBaseMessage: string | null,
   aiTools?: string[] | null,
   aiInstructions?: string | null,
+  conversation?: {
+    hasPreviousOutbound: boolean;
+    selectedSkill: ReturnType<typeof inferCommercialSkill>;
+    knowledgeContext: string;
+  },
 ): string {
   let prompt = aiInstructions ||
-    `Você é um consultor de seguros profissional e simpático.
-Você está prospectando via WhatsApp.
-Responda de forma natural, curta (máx 2 parágrafos), e consultiva.
-Nunca mencione preços específicos.
-Não faça promessas.
-Use o roteiro como guia mas adapte à conversa.
-Se o lead não tem interesse, agradeça educadamente.`;
-
-  if (scriptBaseMessage) {
-    prompt += `\n\nRoteiro base:\n${scriptBaseMessage}`;
-  }
+    `Você é uma assistente virtual comercial e conversa pelo WhatsApp.
+Responda de forma natural, curta (máximo de 2 parágrafos) e consultiva.
+Use somente fatos aprovados e o que a pessoa confirmou na conversa.
+Não invente preço, capacidade, integração, prazo ou resultado e não faça promessas.
+Se o lead não tiver interesse, agradeça e encerre sem insistir.`;
 
   if (aiTools && aiTools.length > 0) {
     prompt +=
       `\n\n### FERRAMENTAS AUTORIZADAS (Você pode avisar o lead que usará estas ferramentas se necessário):`;
     if (aiTools.includes("CALENDAR_READ")) {
       prompt +=
-        `\n- CONSULTAR AGENDA: Você tem acesso à agenda e pode dizer algo como "Vou verificar a agenda do Giovane e te passo opções de horários."`;
+        `\n- CONSULTAR AGENDA: Consulte a ferramenta antes de mencionar disponibilidade. Diga apenas que vai verificar a agenda da equipe.`;
     }
     if (aiTools.includes("CALENDAR_WRITE")) {
       prompt +=
@@ -1093,20 +1107,18 @@ Se o lead não tem interesse, agradeça educadamente.`;
     }
     if (aiTools.includes("ESCALATE")) {
       prompt +=
-        `\n- ENCAMINHAR PARA HUMANO: Você tem autorização para passar a conversa para um especialista humano (Giovane) se o lead quiser ligação ou fizer perguntas complexas: "Vou pedir pro Giovane te ligar ou continuar o atendimento por aqui."`;
+        `\n- ENCAMINHAR PARA HUMANO: Você pode transferir para uma pessoa da equipe quando o lead pedir ligação ou trouxer uma questão que exige confirmação. Não invente nome nem prazo de retorno.`;
     }
   }
 
-  return prompt;
-}
+  prompt += buildHumanConversationInstructions({
+    baseMessage: scriptBaseMessage,
+    hasPreviousOutbound: conversation?.hasPreviousOutbound ?? false,
+    selectedSkill: conversation?.selectedSkill || "opening",
+    knowledgeContext: conversation?.knowledgeContext || "",
+  });
 
-function buildConversationContext(messages: any[], leadName: string): string {
-  let ctx = `Conversa com ${leadName || "o lead"}:\n\n`;
-  for (const msg of messages) {
-    const who = msg.direction === "INBOUND" ? "Lead" : "Consultor";
-    ctx += `${who}: ${msg.content}\n`;
-  }
-  return ctx;
+  return prompt;
 }
 
 function buildLeadEnrichedPrompt(lead: any): string {
@@ -2757,6 +2769,12 @@ async function processMessageUpsert(
       .order("created_at", { ascending: false })
       .limit(10);
     const recentMessages = [...(recentMessagesNewestFirst || [])].reverse();
+    const hasPreviousOutbound = Boolean(conversation.last_outbound_at) ||
+      recentMessages.some((message: any) => message.direction === "OUTBOUND");
+    const lastOutboundMessage = [...recentMessages]
+      .reverse()
+      .find((message: any) => message.direction === "OUTBOUND")?.content ||
+      null;
 
     // Fetch the active script for context
     let scriptBaseMessage: string | null = null;
@@ -2764,6 +2782,7 @@ async function processMessageUpsert(
     let aiInstructions: string | null = null;
     let scriptFlow: any = null;
     let guardiansConfig: any = null;
+    let legacyContextDocuments: unknown[] = [];
     let qualificationConfig: QualificationConfig | null = null;
     let qualificationEvaluation: QualificationEvaluation = {
       score: 0,
@@ -2789,23 +2808,14 @@ async function processMessageUpsert(
       scriptFlow = script?.flow || null;
       guardiansConfig = script?.guardians_config || null;
       qualificationConfig = script?.qualification_config || null;
+      legacyContextDocuments = Array.isArray(script?.context_documents)
+        ? script.context_documents
+        : [];
 
       if (script?.restrictions) {
         aiInstructions = (aiInstructions || "") +
           "\n\n### ⛔ RESTRIÇÕES DA IA (O que você NUNCA deve falar/fazer):\n" +
           script.restrictions;
-      }
-      if (
-        script?.context_documents &&
-        Array.isArray(script.context_documents) &&
-        script.context_documents.length > 0
-      ) {
-        let docsPrompt =
-          "\n\n### 📖 MATERIAIS DE APOIO (Documentos de Referência):\nUse as informações contidas nos links abaixo para tirar dúvidas técnicas do lead se ele perguntar:\n";
-        script.context_documents.forEach((doc: any) => {
-          docsPrompt += `- **${doc.title}**: ${doc.url}\n`;
-        });
-        aiInstructions = (aiInstructions || "") + docsPrompt;
       }
     }
 
@@ -2826,10 +2836,6 @@ async function processMessageUpsert(
         string,
         QualificationValue
       >;
-      const lastOutboundMessage = [...recentMessages]
-        .reverse()
-        .find((message: any) => message.direction === "OUTBOUND")?.content ||
-        null;
       const expectedCriterionKey =
         existingQualification?.current_question_key ||
         (qualificationConfig.criteria || []).find((criterion) => (
@@ -3095,16 +3101,15 @@ Importante: Gere a resposta para o lead com base nesta etapa atual e garanta que
 
       const objectionGuardrail = `
 
-### 🛡️ GUARDIÃO DE OBJEÇÕES (Framework JEB BLOUNT - Objections):
-O lead acabou de apresentar uma objeção (tempo, preço, status quo, já tem fornecedor, etc).
-APLIQUE IMEDIATAMENTE O FRAMEWORK L-D-A (Ledge, Disrupt, Ask) de Jeb Blount para contornar a objeção:
-1. **Ledge (Apoio/Empatia):** Concorde ou valide a objeção rapidamente. Nunca bata de frente. (Ex: "Entendo perfeitamente a correria", "Faz todo sentido você já estar satisfeito com seu fornecedor atual").
-2. **Disrupt (Ruptura):** Use um padrão de interrupção (ex técnica do "É exatamente por isso..."). (Ex: "É exatamente por isso que eu estou te chamando, a maioria dos nossos clientes também pensava assim até descobrir que...").
-3. **Ask (Pergunta para Retomar Controle):** Feche a mensagem sempre com uma pergunta focada em fechar a reunião ou avançar para o próximo passo.
-REGRA DE OURO: Integre as respostas recomendadas de contorno abaixo ao fluxo L-D-A.${matchedObjectionsText}`;
+### 🛡️ TRATAMENTO HUMANO DE OBJEÇÕES:
+O lead apresentou uma preocupação sobre tempo, preço, processo atual, fornecedor ou risco.
+1. Reconheça o ponto específico em uma frase, sem repetir a mensagem inteira e sem usar elogio automático.
+2. Responda somente com informação aprovada e relacionada ao que ele trouxe. Se faltar informação, diga que precisa confirmar.
+3. Faça no máximo uma pergunta curta que ajude a entender o cenário ou o próximo passo; não pressione por reunião.
+Evite bordões como "é exatamente por isso", histórias genéricas de outros clientes e qualquer urgência artificial.${matchedObjectionsText}`;
       aiInstructions = (aiInstructions || "") + objectionGuardrail;
       console.log(
-        "  🛡️ Guardião 2: Framework de Objeção (Jeb Blount) e Objeções Estruturadas injetados no prompt.",
+        "  🛡️ Guardião 2: tratamento humano e objeções estruturadas injetados no prompt.",
       );
     }
 
@@ -3114,27 +3119,23 @@ REGRA DE OURO: Integre as respostas recomendadas de contorno abaixo ao fluxo L-D
       qualificationEnabled &&
       !qualificationConfig?.criteria?.length
     ) {
-      // Guardião SPIN / BANT / Receita Previsível
+      // Qualificação consultiva quando ainda não há critérios estruturados.
       const salesFrameworkGuardrail = `
 
-### 🛡️ GUARDIÃO DE QUALIFICAÇÃO E DIAGNÓSTICO (SPIN / BANT / Receita Previsível):
+### 🛡️ QUALIFICAÇÃO CONSULTIVA:
 O lead demonstrou interesse inicial ou fez uma pergunta.
-NÃO VOMITE A AGENDA NEM DETALHES DO PRODUTO IMEDIATAMENTE.
-Use as seguintes técnicas combinadas:
-1. **Receita Previsível (Aaron Ross):** Mantenha mensagens CURTAS (formato "Spear-phishing"). Responda a dúvida dele de forma muito direta e passe a bola de volta. Se houver dúvida sobre quem decide, pergunte sutilmente: "Normalmente, você é a pessoa que lidera esses projetos por aí?"
-2. **SPIN Selling (Neil Rackham):** Comece a mapear a dor. Se a dor não estiver clara, faça 1 (apenas uma) pergunta de PROBLEMA ou IMPLICAÇÃO. (Ex: "Como você tem lidado com [Problema X] hoje?" ou "Qual impacto isso tem gerado na operação?").
-3. **BANT:** O objetivo final é entender Budget, Authority, Need e Timeframe, mas não pareça um interrogatório. Faça no máximo UMA pergunta por mensagem.
-REGRA: Responda a pergunta do lead in 1 frase. Em seguida, faça UMA pergunta SPIN focada em mapear o cenário atual (Need/Problema).`;
+Responda primeiro ao ponto trazido pelo lead em uma frase curta. Depois, se ainda for necessário, faça UMA pergunta para entender o processo atual, o principal problema, quem decide ou a prioridade. Não transforme a conversa em questionário, não cite nomes de métodos comerciais e não repita um dado já confirmado.`;
       aiInstructions = (aiInstructions || "") + salesFrameworkGuardrail;
       console.log(
-        "  🛡️ Guardião 4: SPIN/BANT/Receita Previsível Injetado no prompt.",
+        "  🛡️ Guardião 4: qualificação consultiva injetada no prompt.",
       );
 
       const agendaGuardrail = `
 
 ### 🛡️ GUARDIÃO DE AGENDA (FECHAMENTO):
-Só proponha a agenda se: 1) O lead pedir, OU 2) A dor (Need do BANT) já estiver clara após as perguntas do SPIN.
-- Quando propuser agenda, use o fechamento direto: "Faz sentido batermos um papo rápido de 15 min? Tenho uma brecha na Segunda às 10h ou às 14h, qual fica melhor?"
+Só proponha agenda se o lead pedir ou se o problema e o interesse em avançar já estiverem claros.
+- Nunca invente disponibilidade. Só mencione data e horário que tenham sido retornados por uma ferramenta de agenda nesta conversa.
+- Se não houver disponibilidade confirmada, pergunte apenas a preferência de período ou encaminhe para o atendimento humano combinar.
 - Nunca marque fim de semana.`;
       aiInstructions = (aiInstructions || "") + agendaGuardrail;
       console.log(
@@ -3146,7 +3147,7 @@ Só proponha a agenda se: 1) O lead pedir, OU 2) A dor (Need do BANT) já estive
       const shortResponseGuardrail = `
 
 ### 🛡️ GUARDIÃO DE RESPOSTAS CURTAS:
-OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágrafos curtos). Nunca mande textos longos ou listas explicativas longas. Simule uma conversa humana fluida.`;
+OBRIGATÓRIO: Escreva mensagens curtas e diretas (máximo de 2 parágrafos curtos). Evite listas, explicações longas e bordões repetidos. Mantenha uma conversa natural.`;
       aiInstructions = (aiInstructions || "") + shortResponseGuardrail;
       console.log(
         "  🛡️ Guardião 5: Respostas Curtas (Spear-phishing) injetado no prompt.",
@@ -3165,7 +3166,7 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
     if (normalizedHour >= 20 || normalizedHour < 8) {
       isSleepMode = true;
       const sleepModeGuardrail =
-        `\n\n### 🌙 GUARDIÃO DE HORÁRIO COMERCIAL (SLEEP MODE):\nATENÇÃO: Você está recebendo essa mensagem fora do horário comercial (${normalizedHour}h). \n- Aja como se tivesse visto a mensagem no dia seguinte de manhã.\n- OBRIGATÓRIO COMEÇAR A MENSAGEM COM: 'Bom dia! Desculpe a demora, já não estava no escritório ontem...'\n- Depois disso, siga a resposta normalmente.`;
+        `\n\n### 🌙 GUARDIÃO DE HORÁRIO COMERCIAL (SLEEP MODE):\nATENÇÃO: Esta mensagem será respondida na próxima janela comercial (${normalizedHour}h no recebimento).\n- Comece de forma breve e verdadeira: "Bom dia! Vi sua mensagem agora."\n- Não invente que uma pessoa estava fora do escritório e não peça desculpas repetidamente.\n- Depois disso, responda normalmente ao conteúdo recebido.`;
       aiInstructions = (aiInstructions || "") + sleepModeGuardrail;
       console.log(
         `  🌙 Guardião Sleep Mode Ativado (Hora BRT: ${normalizedHour}h).`,
@@ -3188,17 +3189,100 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
       .single();
 
     const modelToUse = tenantAiConfig?.system_model || MODEL;
-    const tempToUse = tenantAiConfig?.system_temperature ?? 0.7;
+    const configuredTemperature = Number(
+      tenantAiConfig?.system_temperature ?? 0.7,
+    );
+    const tempToUse = Math.min(
+      0.55,
+      Math.max(
+        0,
+        Number.isFinite(configuredTemperature) ? configuredTemperature : 0.55,
+      ),
+    );
+
+    const selectedCommercialSkill = inferCommercialSkill({
+      intent: classification.intent,
+      qualificationStatus: qualificationEvaluation.status,
+      currentCriterionKey: qualificationNextQuestion?.key || null,
+      hasPreviousOutbound,
+    });
+    const commercialRetrievalQuery = buildCommercialRetrievalQuery({
+      message: messageContent,
+      intent: classification.intent,
+      currentCriterionKey: qualificationNextQuestion?.key || null,
+      lastOutboundMessage,
+    });
+    let databaseKnowledge: CommercialKnowledgeItem[] = [];
+    try {
+      const { data: retrievedRows, error: retrievalError } = await supabase.rpc(
+        "retrieve_commercial_knowledge",
+        {
+          p_tenant_id: tenantId,
+          p_script_id: conversation.script_id || null,
+          p_query: commercialRetrievalQuery,
+          p_intent: classification.intent,
+          p_stage: qualificationEvaluation.status,
+          p_skill_key: selectedCommercialSkill,
+          p_limit: 3,
+        },
+      );
+      if (retrievalError) {
+        console.warn("[commercial-rag] retrieval unavailable", {
+          code: retrievalError.code || "UNKNOWN",
+        });
+      } else {
+        databaseKnowledge = (retrievedRows || []) as CommercialKnowledgeItem[];
+      }
+    } catch (_error) {
+      console.warn("[commercial-rag] retrieval exception");
+    }
+
+    const retrievedKnowledge = selectCommercialKnowledge(
+      [
+        ...databaseKnowledge,
+        ...legacyDocumentsToKnowledge(legacyContextDocuments),
+      ],
+      {
+        query: commercialRetrievalQuery,
+        skillKey: selectedCommercialSkill,
+        intent: classification.intent,
+        stage: qualificationEvaluation.status,
+        limit: 3,
+      },
+    );
+    const knowledgeContext = buildCommercialKnowledgeContext(
+      retrievedKnowledge,
+    );
+    const knowledgeSources = retrievedKnowledge.map((item) => ({
+      id: item.id,
+      version: Math.max(1, Number(item.version || 1)),
+      kind: item.kind,
+    }));
+    console.log("[commercial-rag] context selected", {
+      skill: selectedCommercialSkill,
+      count: knowledgeSources.length,
+      source_ids: knowledgeSources.map((source) => source.id),
+    });
 
     const responsePrompt = buildResponsePrompt(
       scriptBaseMessage,
       aiTools,
       aiInstructions,
+      {
+        hasPreviousOutbound,
+        selectedSkill: selectedCommercialSkill,
+        knowledgeContext,
+      },
     );
-    const conversationCtx = buildConversationContext(
+    const conversationCtx = buildChatConversationMessages(
       recentMessages || [],
-      lead.name || "",
     );
+    if (conversationCtx.length === 0) {
+      conversationCtx.push({
+        role: "user",
+        content: sanitizePromptDatum(messageContent, 2000),
+      });
+    }
 
     const openAiTools = [];
     if (aiTools?.includes("SEND_PDF")) {
@@ -3256,7 +3340,7 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
       modelToUse,
       openAiTools,
     );
-    let responseText = applyGuardrails(aiResponse.content);
+    let responseText = aiResponse.content;
     let mediaUrl = null;
     let mediaType = null;
 
@@ -3325,6 +3409,12 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
       });
     }
 
+    responseText = stripRepeatedNamedGreeting(
+      applyGuardrails(responseText),
+      hasPreviousOutbound,
+      lead.name || null,
+    );
+
     console.log("  AI response generated and sent to Guardian validation.");
     // ── Step 5: Queue in pending_outbound with delay ─────────
     const blocks = splitMessageIntoBlocks(responseText);
@@ -3335,6 +3425,8 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
       intent: classification.intent,
       leadName: lead.name,
     });
+    candidatePayload.commercial_skill = selectedCommercialSkill;
+    candidatePayload.knowledge_sources = knowledgeSources;
 
     let candidateId: string | null = null;
     let guardianConfigVersionId = guardianConfig?.active_version?.id || null;
@@ -3347,7 +3439,7 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
           conversation_id: conversation.id,
           inbound_message_id: inboundMsgId,
           model_name: modelToUse,
-          prompt_version: "webhook-evolution:v3-phase5",
+          prompt_version: "webhook-evolution:v4-commercial-rag",
           guardian_config_version_id: guardianConfigVersionId,
           candidate_payload: candidatePayload,
           status: "GENERATED",
@@ -3412,6 +3504,8 @@ OBRIGATÓRIO: Escreva mensagens CURTAS e DIRETA ao ponto (máximo de 2 parágraf
         qualification_missing_fields: qualificationEvaluation.missingFields,
         qualification_next_question: qualificationNextQuestion?.question ||
           null,
+        commercial_skill: selectedCommercialSkill,
+        knowledge_source_ids: knowledgeSources.map((source) => source.id),
         user_requested_human: classification.intent === "CALLBACK_REQUEST",
       },
     });

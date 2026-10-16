@@ -34,6 +34,7 @@ export type Script = Tables['scripts']['Row'];
 export type ScriptInsert = Tables['scripts']['Insert'];
 export type ScriptUpdate = Tables['scripts']['Update'];
 export type ScriptVariation = Tables['script_variations']['Row'];
+export type CommercialKnowledge = Tables['commercial_knowledge_chunks']['Row'];
 export type Objection = Tables['objections']['Row'];
 export type ObjectionInsert = Tables['objections']['Insert'];
 export type ObjectionUpdate = Tables['objections']['Update'];
@@ -3119,6 +3120,113 @@ export const leadSourcesQueries = {
       return { data: { leadSource: data, addon }, error: null };
     }
   }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMMERCIAL KNOWLEDGE (RAG)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export const commercialKnowledgeQueries = {
+  list: async (tenantId: string, scriptId: string) => {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(scriptId)) {
+      return { data: [], error: { message: 'Roteiro inválido', code: 'INVALID_SCRIPT_ID' } };
+    }
+    const { data, error } = await supabase
+      .from('commercial_knowledge_chunks')
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .or(`script_id.eq.${scriptId},script_id.is.null`)
+      .order('priority', { ascending: false })
+      .order('updated_at', { ascending: false });
+
+    if (error) return { data: [], error: mapError(error) };
+    return { data: (data ?? []) as CommercialKnowledge[], error: null };
+  },
+
+  create: async (tenantId: string, input: {
+    scriptId: string | null;
+    title: string;
+    content: string;
+    kind: CommercialKnowledge['kind'];
+    skillKey: CommercialKnowledge['skill_key'];
+    stage?: string | null;
+    triggerIntents?: string[];
+    keywords?: string[];
+    sourceUrl?: string | null;
+    priority?: number;
+    status?: CommercialKnowledge['status'];
+  }) => {
+    const { data, error } = await supabase
+      .from('commercial_knowledge_chunks')
+      .insert({
+        tenant_id: tenantId,
+        script_id: input.scriptId,
+        title: input.title,
+        content: input.content,
+        kind: input.kind,
+        skill_key: input.skillKey,
+        stage: input.stage || null,
+        trigger_intents: input.triggerIntents || [],
+        keywords: input.keywords || [],
+        source_url: input.sourceUrl || null,
+        priority: input.priority ?? 50,
+        status: input.status || 'DRAFT',
+      })
+      .select()
+      .single();
+
+    if (error) return { data: null, error: mapError(error) };
+    return { data: data as CommercialKnowledge, error: null };
+  },
+
+  update: async (tenantId: string, id: string, input: Partial<{
+    title: string;
+    content: string;
+    kind: CommercialKnowledge['kind'];
+    skillKey: CommercialKnowledge['skill_key'];
+    stage: string | null;
+    triggerIntents: string[];
+    keywords: string[];
+    sourceUrl: string | null;
+    priority: number;
+    status: CommercialKnowledge['status'];
+    active: boolean;
+  }>) => {
+    const payload: Tables['commercial_knowledge_chunks']['Update'] = {};
+    if (input.title !== undefined) payload.title = input.title;
+    if (input.content !== undefined) payload.content = input.content;
+    if (input.kind !== undefined) payload.kind = input.kind;
+    if (input.skillKey !== undefined) payload.skill_key = input.skillKey;
+    if (input.stage !== undefined) payload.stage = input.stage;
+    if (input.triggerIntents !== undefined) payload.trigger_intents = input.triggerIntents;
+    if (input.keywords !== undefined) payload.keywords = input.keywords;
+    if (input.sourceUrl !== undefined) payload.source_url = input.sourceUrl;
+    if (input.priority !== undefined) payload.priority = input.priority;
+    if (input.status !== undefined) payload.status = input.status;
+    if (input.active !== undefined) payload.active = input.active;
+
+    const { data, error } = await supabase
+      .from('commercial_knowledge_chunks')
+      .update(payload)
+      .eq('id', id)
+      .eq('tenant_id', tenantId)
+      .select()
+      .single();
+
+    if (error) return { data: null, error: mapError(error) };
+    return { data: data as CommercialKnowledge, error: null };
+  },
+
+  delete: async (tenantId: string, id: string) => {
+    const { error } = await supabase
+      .from('commercial_knowledge_chunks')
+      .delete()
+      .eq('id', id)
+      .eq('tenant_id', tenantId);
+
+    if (error) return { success: false, error: mapError(error) };
+    return { success: true, error: null };
+  },
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════

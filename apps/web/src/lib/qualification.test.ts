@@ -6,6 +6,7 @@ import {
   evaluateQualification,
   mergeQualificationFacts,
   nextQualificationQuestion,
+  normalizeQualificationAnswerSemantics,
   parseQualificationExtraction,
   type QualificationConfig,
 } from '../../../../supabase/functions/_shared/qualification';
@@ -89,5 +90,29 @@ describe('structured qualification', () => {
     expect(prompt).toContain('professional_profile_confirmed');
     expect(prompt).toContain('resposta curta ou ambigua');
     expect(prompt).toContain('Sua renda depende da sua atuacao?');
+  });
+
+  it('converts a weekly lead volume into the configured monthly range', () => {
+    const volumeConfig: QualificationConfig = {
+      minimum_score: 70,
+      criteria: [{
+        key: 'monthly_lead_volume',
+        required: true,
+        weight: 100,
+        values: ['UP_TO_100', 'FROM_101_TO_500', 'FROM_501_TO_2000', 'ABOVE_2000', 'UNKNOWN'],
+        accepted: ['UP_TO_100', 'FROM_101_TO_500', 'FROM_501_TO_2000', 'ABOVE_2000'],
+        question: 'Em média, quantos novos contatos vocês tentam trabalhar por mês?',
+      }],
+    };
+    for (const extractedValue of [30, 120]) {
+      const answers = normalizeQualificationAnswerSemantics({
+        message: 'Não sei direito, mas uns 30 por semana',
+        answers: [{ criterion_key: 'monthly_lead_volume', value: extractedValue, confidence: 0.95 }],
+      });
+      const merged = mergeQualificationFacts({ config: volumeConfig, answers });
+
+      expect(merged.facts).toEqual({ monthly_lead_volume: 'FROM_101_TO_500' });
+      expect(evaluateQualification(volumeConfig, merged.facts).missingFields).toEqual([]);
+    }
   });
 });
