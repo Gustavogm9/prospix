@@ -1,5 +1,12 @@
+param(
+  [System.Security.SecureString]$AccessToken
+)
+
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+
+$repoRoot = Split-Path -Parent $PSScriptRoot
+Set-Location -LiteralPath $repoRoot
 
 $projectRef = 'yvbyplzfqfrlfujathii'
 $projectApi = "https://api.supabase.com/v1/projects/$projectRef"
@@ -97,7 +104,7 @@ $previousSupabaseToken = $env:SUPABASE_ACCESS_TOKEN
 $previousNoColor = $env:NO_COLOR
 
 try {
-  $securePat = Read-Host 'Supabase access token' -AsSecureString
+  $securePat = if ($AccessToken) { $AccessToken } else { Read-Host 'Supabase access token' -AsSecureString }
   $patBstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePat)
   $script:patValue = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($patBstr)
 

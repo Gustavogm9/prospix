@@ -1,3 +1,8 @@
+param(
+  [System.Security.SecureString]$AccessToken,
+  [System.Security.SecureString]$ExpectedPhone
+)
+
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
@@ -81,20 +86,20 @@ function Invoke-ManagementSql([string]$query) {
 $patBstr = [IntPtr]::Zero
 $phoneBstr = [IntPtr]::Zero
 try {
-  $securePat = Read-Host 'Supabase access token' -AsSecureString
+  $securePat = if ($AccessToken) { $AccessToken } else { Read-Host 'Supabase access token' -AsSecureString }
   $patBstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePat)
   $script:patValue = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($patBstr)
 
-  $secureExpectedPhone = Read-Host 'CEO test phone' -AsSecureString
+  $secureExpectedPhone = if ($ExpectedPhone) { $ExpectedPhone } else { Read-Host 'CEO test phone' -AsSecureString }
   $phoneBstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureExpectedPhone)
-  $expectedPhone = ([Runtime.InteropServices.Marshal]::PtrToStringBSTR($phoneBstr)) -replace '\D', ''
+  $expectedPhoneDigits = ([Runtime.InteropServices.Marshal]::PtrToStringBSTR($phoneBstr)) -replace '\D', ''
 
   Write-Stage 'confirmando destino autorizado e chave de servico'
   $phone = (Invoke-SshCommand 'docker exec guilds-reports-api printenv CEO_WHATSAPP_NUMBER') -replace '\D', ''
   if ($phone -notmatch '^55\d{2}9\d{8}$') {
     throw 'O numero autorizado na VPS nao tem formato movel brasileiro valido.'
   }
-  if ($phone -ne $expectedPhone) {
+  if ($phone -ne $expectedPhoneDigits) {
     throw 'O numero confirmado pelo usuario diverge do destino protegido na VPS.'
   }
 
@@ -288,12 +293,6 @@ BEGIN
     true, true, v_now, jsonb_build_object('qa_run', '__QA_RUN__')
   );
 
-  IF EXISTS (
-    SELECT 1 FROM public.pending_outbound WHERE idempotency_key = '__IDEMPOTENCY__'
-  ) THEN
-    RETURN;
-  END IF;
-
   SELECT id, COALESCE(metadata->>'qa_run', '')
   INTO v_existing_lead_id, v_existing_marker
   FROM public.leads
@@ -382,18 +381,22 @@ BEGIN
   WHERE id = '__CAMPAIGN__'::uuid
     AND tenant_id = '__TENANT__'::uuid;
 
-  INSERT INTO public.pending_outbound (
-    id, tenant_id, conversation_id, content, scheduled_for,
-    idempotency_key, attempts, message_type, priority,
-    validation_status, validation_reason_code, final_guardian_checked_at,
-    final_guardian_decision, whatsapp_provider, whatsapp_channel_id, created_at
-  ) VALUES (
-    '__PENDING__'::uuid, '__TENANT__'::uuid, '__CONVERSATION__'::uuid,
-    $message$Olá, Gustavo! Aqui é a IA da Prospix em um teste autorizado da nova infraestrutura. Vou simular uma qualificação da MetLife. Você pode responder como um potencial cliente? Primeira pergunta: hoje sua renda depende diretamente da sua atuação profissional?$message$,
-    v_now, '__IDEMPOTENCY__', 0, 'OUTBOUND_START', 0,
-    'APPROVED', 'QA_AUTHORIZED_TEST', v_now, 'PASS',
-    'EVOLUTION', '__CHANNEL__'::uuid, v_now
-  );
+  IF NOT EXISTS (
+    SELECT 1 FROM public.pending_outbound WHERE idempotency_key = '__IDEMPOTENCY__'
+  ) THEN
+    INSERT INTO public.pending_outbound (
+      id, tenant_id, conversation_id, content, scheduled_for,
+      idempotency_key, attempts, message_type, priority,
+      validation_status, validation_reason_code, final_guardian_checked_at,
+      final_guardian_decision, whatsapp_provider, whatsapp_channel_id, created_at
+    ) VALUES (
+      '__PENDING__'::uuid, '__TENANT__'::uuid, '__CONVERSATION__'::uuid,
+      $message$Olá, Gustavo! Aqui é a IA da Prospix em um teste autorizado da nova infraestrutura. Vou simular uma qualificação da MetLife. Você pode responder como um potencial cliente? Primeira pergunta: hoje sua renda depende diretamente da sua atuação profissional?$message$,
+      v_now, '__IDEMPOTENCY__', 0, 'OUTBOUND_START', 0,
+      'APPROVED', 'QA_AUTHORIZED_TEST', v_now, 'PASS',
+      'EVOLUTION', '__CHANNEL__'::uuid, v_now
+    );
+  END IF;
 END
 $qa$;
 '@
@@ -472,7 +475,7 @@ SELECT jsonb_build_object(
   $script:patValue = $null
   $securePat = $null
   $secureExpectedPhone = $null
-  $expectedPhone = $null
+  $expectedPhoneDigits = $null
   $serviceRoleKey = $null
   $phone = $null
 }
