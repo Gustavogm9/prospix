@@ -13,6 +13,15 @@ function outputText(context: GuardianRunContext): string {
   }).filter(Boolean).join('\n');
 }
 
+function containsMeetingInvite(text: string): boolean {
+  const directInvite = /\b(?:quer|gostaria|podemos|posso|vamos|topa|prefere|consegue|pode)\s+(?:(?:que|de)\s+)?(?:agend(?:ar|armos)|marc(?:ar|armos)|combin(?:ar|armos))\b/i;
+  const schedulingAction = /\b(?:agend(?:ar|amos|e)|marc(?:ar|amos|o)|combin(?:ar|amos))\s+(?:(?:uma|um|a|o)\s+)?(?:reuni[aã]o|liga[cç][aã]o|conversa|papo|hor[aá]rio)\b/i;
+  const timedConversation = /\b(?:reuni[aã]o|liga[cç][aã]o|conversa|papo)\s+(?:r[aá]pid[oa]\s+)?de\s+\d+\s*min(?:uto)?s?\b/i;
+  const schedulingChoice = /\b(?:qual|que)\s+(?:dia|hor[aá]rio)\s+(?:funciona|prefere|fica\s+melhor|seria\s+melhor)\b/i;
+
+  return [directInvite, schedulingAction, timedConversation, schedulingChoice].some((pattern) => pattern.test(text));
+}
+
 export function validateQualification(
   _guardian: EffectiveGuardian,
   context: GuardianRunContext,
@@ -21,7 +30,7 @@ export function validateQualification(
   const questionCount = (text.match(/\?/g) || []).length;
   const status = String(context.facts?.qualification_status || 'IN_PROGRESS');
   const userRequestedHuman = context.facts?.user_requested_human === true;
-  const agendaInvite = /\b(agend|agenda|reuni[aã]o|liga[cç][aã]o|hor[aá]rio|papo\s+(?:de\s+)?\d+\s*min)/i.test(text);
+  const agendaInvite = containsMeetingInvite(text);
   const healthDataQuestion = /\b(peso|altura|imc|doen[cç]a|diagn[oó]stico|tabag|fumante|hist[oó]rico familiar|medicamento|cirurgia)\b/i.test(text);
   const reasons: string[] = [];
   if (questionCount > 1) reasons.push('question_stack');

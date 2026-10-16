@@ -41,4 +41,22 @@ describe('G09 qualification guardian', () => {
     });
     expect(result.decision).toBe('PASS');
   });
+
+  it('allows discussing available calendar capacity without treating it as a meeting invitation', () => {
+    const result = validateQualification(guardian, {
+      tenantId: 'tenant',
+      stage: 'POST_GENERATION',
+      functionScope: 'webhook-evolution',
+      output: {
+        messages: [
+          {
+            text: 'Entendi, então sua agenda comercial tem espaço. Você atua diretamente como corretor de seguros ou lidera uma equipe comercial?',
+          },
+        ],
+      },
+      facts: { qualification_status: 'IN_PROGRESS', user_requested_human: false },
+    });
+
+    expect(result.decision).toBe('PASS');
+  });
 });
