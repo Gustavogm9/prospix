@@ -11,7 +11,7 @@
  * Backend: /v1/tenant/lgpd/requests
  * Schema model: LgpdRequest (PENDING -> PROCESSING -> COMPLETED | REJECTED | CANCELED)
  */
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Card,
   CardHeader,
@@ -97,7 +97,7 @@ export default function PrivacyTab() {
   const [leadWhatsapp, setLeadWhatsapp] = useState('');
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
 
-  const fetchRequests = async () => {
+  const fetchRequests = useCallback(async () => {
     if (!tenantId) return;
     setIsLoading(true);
     setLoadError(null);
@@ -122,11 +122,11 @@ export default function PrivacyTab() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [tenantId]);
 
   useEffect(() => {
-    fetchRequests();
-  }, [tenantId]);
+    void fetchRequests();
+  }, [fetchRequests]);
 
   const createRequest = async (
     type: LgpdRequestType,

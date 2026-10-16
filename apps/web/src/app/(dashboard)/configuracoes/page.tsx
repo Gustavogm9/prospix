@@ -1205,22 +1205,7 @@ export default function Settings() {
     };
   }, [activeTab, tenantId, scheduleWhatsAppStatusRefresh]);
 
-  useEffect(() => {
-    if (qrCountdown <= 0 || !qrCode) return;
-    const t = setInterval(() => {
-      setQrCountdown((prev) => {
-        if (prev <= 1) {
-          clearInterval(t);
-          handleConnectWhatsapp(qrProviderRef.current); // Auto-refresh QR code for the same provider.
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(t);
-  }, [qrCountdown, qrCode]);
-
-  const handleConnectWhatsapp = async (provider: 'EVOLUTION' | 'WAHA' | null = null) => {
+  const handleConnectWhatsapp = useCallback(async (provider: 'EVOLUTION' | 'WAHA' | null = null) => {
     setIsGeneratingQr(true);
     setQrCode(null);
     setQrProvider(provider);
@@ -1273,7 +1258,22 @@ export default function Settings() {
       setQrProvider(null);
       qrProviderRef.current = null;
     }
-  };
+  }, [checkStatus]);
+
+  useEffect(() => {
+    if (qrCountdown <= 0 || !qrCode) return;
+    const timer = setInterval(() => {
+      setQrCountdown((previous) => {
+        if (previous <= 1) {
+          clearInterval(timer);
+          void handleConnectWhatsapp(qrProviderRef.current);
+          return 0;
+        }
+        return previous - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [handleConnectWhatsapp, qrCountdown, qrCode]);
 
   const handlePromoteWaha = async () => {
     setIsPromotingWaha(true);

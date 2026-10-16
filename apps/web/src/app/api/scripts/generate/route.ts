@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
   let body: any = {};
   try {
     body = await request.json();
-  } catch (err) {
+  } catch {
     // Ignore body parse errors for fallback
   }
 

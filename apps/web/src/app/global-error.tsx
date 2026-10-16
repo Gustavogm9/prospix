@@ -10,7 +10,7 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error('Unhandled error:', error);
+    console.error('Falha global de renderização.', { digest: error.digest ?? 'sem-referência' });
   }, [error]);
 
   return (

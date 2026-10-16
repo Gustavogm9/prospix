@@ -779,7 +779,7 @@ export default function LeadSources() {
     'VIVAREAL', 'CRM_SP', 'OAB_SP', 'CRO_SP', 'TAVILY_B2B_SEARCH'
   ]);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     if (!tenantId) return;
     try {
       const [listResult, statsResult] = await Promise.all([
@@ -798,11 +798,11 @@ export default function LeadSources() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [tenantId]);
 
   useEffect(() => {
-    fetchData();
-  }, [tenantId]);
+    void fetchData();
+  }, [fetchData]);
 
   useEffect(() => {
     if (!tenantId) return;

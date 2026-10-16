@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badge, toast } from '@prospix/ui';
 import { Contact, RefreshCw, Loader2, Search, Download } from 'lucide-react';
@@ -45,6 +45,48 @@ const STATUS_STYLES: Record<string, string> = {
   INACTIVE: 'bg-gray-100 text-gray-600 border-gray-200',
 };
 
+async function loadLeadStats(): Promise<Stats | null> {
+  try {
+    const { data: allLeads } = await supabaseAdmin
+      .from('leads')
+      .select('id, status, source, tenant_id, created_at, tenants(name)')
+      .is('deleted_at', null);
+
+    const rows = allLeads ?? [];
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+    const byStatus: Record<string, number> = {};
+    const bySource: Record<string, number> = {};
+    const tenantCounts: Record<string, { name: string; count: number }> = {};
+
+    rows.forEach((lead: any) => {
+      byStatus[lead.status] = (byStatus[lead.status] || 0) + 1;
+      bySource[lead.source] = (bySource[lead.source] || 0) + 1;
+      const tenantId = lead.tenant_id;
+      const tenantName = (lead.tenants as any)?.name ?? 'Desconhecido';
+      if (!tenantCounts[tenantId]) tenantCounts[tenantId] = { name: tenantName, count: 0 };
+      tenantCounts[tenantId].count += 1;
+    });
+
+    return {
+      totalAll: rows.length,
+      newToday: rows.filter((lead: any) => lead.created_at >= todayStart).length,
+      newWeek: rows.filter((lead: any) => lead.created_at >= weekAgo).length,
+      newMonth: rows.filter((lead: any) => lead.created_at >= monthStart).length,
+      byStatus,
+      bySource,
+      topTenants: Object.entries(tenantCounts)
+        .map(([tenantId, value]) => ({ tenantId, tenantName: value.name, count: value.count }))
+        .sort((left, right) => right.count - left.count)
+        .slice(0, 5),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export default function LeadManagement() {
   const [items, setItems] = useState<LeadItem[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
@@ -55,7 +97,7 @@ export default function LeadManagement() {
 
   const [exporting, setExporting] = useState(false);
 
-  const fetchLeads = async (newOffset = 0) => {
+  const fetchLeads = useCallback(async (newOffset = 0) => {
     setIsLoading(true);
     try {
       // ── Build leads query ──
@@ -108,70 +150,23 @@ export default function LeadManagement() {
       setPagination({ total, limit: PAGE_SIZE, offset: newOffset, hasMore: newOffset + PAGE_SIZE < total });
 
       // ── Compute stats client-side ──
-      await fetchStats();
+      const nextStats = await loadLeadStats();
+      if (nextStats) setStats(nextStats);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Falha ao carregar leads.';
       toast.error('Erro', message);
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const fetchStats = async () => {
-    try {
-      const { data: allLeads } = await supabaseAdmin
-        .from('leads')
-        .select('id, status, source, tenant_id, created_at, tenants(name)')
-        .is('deleted_at', null);
-
-      const rows = allLeads ?? [];
-      const now = new Date();
-      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-      const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-
-      const newToday = rows.filter((l: any) => l.created_at >= todayStart).length;
-      const newWeek = rows.filter((l: any) => l.created_at >= weekAgo).length;
-      const newMonth = rows.filter((l: any) => l.created_at >= monthStart).length;
-
-      const byStatus: Record<string, number> = {};
-      const bySource: Record<string, number> = {};
-      const tenantCounts: Record<string, { name: string; count: number }> = {};
-
-      rows.forEach((l: any) => {
-        byStatus[l.status] = (byStatus[l.status] || 0) + 1;
-        bySource[l.source] = (bySource[l.source] || 0) + 1;
-        const tid = l.tenant_id;
-        const tname = (l.tenants as any)?.name ?? 'Unknown';
-        if (!tenantCounts[tid]) tenantCounts[tid] = { name: tname, count: 0 };
-        tenantCounts[tid].count++;
-      });
-
-      const topTenants = Object.entries(tenantCounts)
-        .map(([tenantId, v]) => ({ tenantId, tenantName: v.name, count: v.count }))
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 5);
-
-      setStats({
-        totalAll: rows.length,
-        newToday,
-        newWeek,
-        newMonth,
-        byStatus,
-        bySource,
-        topTenants,
-      });
-    } catch {
-      // non-blocking
-    }
-  };
-
-  useEffect(() => { fetchLeads(0); }, [filterStatus]);
+  }, [filterStatus, searchTerm]);
 
   useEffect(() => {
-    const timeout = setTimeout(() => fetchLeads(0), 400);
+    const timeout = setTimeout(
+      () => void fetchLeads(0),
+      searchTerm.trim() ? 400 : 0,
+    );
     return () => clearTimeout(timeout);
-  }, [searchTerm]);
+  }, [fetchLeads, searchTerm]);
 
   const handleExport = async () => {
     setExporting(true);

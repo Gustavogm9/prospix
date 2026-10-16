@@ -11,8 +11,8 @@ export default function Error({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error('Page error:', error);
-    toast.error('Erro inesperado', error.message || 'Algo deu errado. Tente novamente.');
+    console.error('Falha ao renderizar página.', { digest: error.digest ?? 'sem-referência' });
+    toast.error('Erro inesperado', 'Não foi possível carregar esta página. Tente novamente.');
   }, [error]);
 
   return (

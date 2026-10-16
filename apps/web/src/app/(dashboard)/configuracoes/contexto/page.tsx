@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button, Input, Textarea, Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, toast } from "@prospix/ui";
 import { Save, User, Briefcase, MessagesSquare, Target } from "lucide-react";
 import { supabase } from "@/lib/supabase";
@@ -20,13 +20,7 @@ export default function AIContextPage() {
     tone_of_voice: "",
   });
 
-  useEffect(() => {
-    if (tenantId) {
-      loadContext();
-    }
-  }, [tenantId]);
-
-  const loadContext = async () => {
+  const loadContext = useCallback(async () => {
     try {
       setLoading(true);
       
@@ -51,7 +45,13 @@ export default function AIContextPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [tenantId]);
+
+  useEffect(() => {
+    if (tenantId) {
+      void loadContext();
+    }
+  }, [tenantId, loadContext]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;

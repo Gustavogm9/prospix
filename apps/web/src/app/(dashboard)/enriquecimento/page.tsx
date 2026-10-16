@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Loader2, Cpu, ArrowRight, AlertCircle, X } from 'lucide-react';
 import { leadSourcesQueries } from '@/lib/queries';
 import { useAuthStore } from '@/store/auth-store';
@@ -171,7 +171,7 @@ export default function DataEnrichment() {
   const [submittingPremium, setSubmittingPremium] = useState(false);
   const [togglingSource, setTogglingSource] = useState<string | null>(null);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     if (!tenantId) return;
     try {
       const [listResult, statsResult] = await Promise.all([
@@ -190,11 +190,11 @@ export default function DataEnrichment() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [tenantId]);
 
   useEffect(() => {
-    fetchData();
-  }, [tenantId]);
+    void fetchData();
+  }, [fetchData]);
 
   const getSourceStatus = (type: string, isPremium: boolean): 'ACTIVE' | 'PAUSED' | 'DISABLED' => {
     const dbSrc = dbSources.find(s => s.source_type === type);

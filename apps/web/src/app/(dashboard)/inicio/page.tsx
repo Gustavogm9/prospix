@@ -248,6 +248,8 @@ export default function HomePage() {
 
   // Drawer state and handlers (matching conversas/page.tsx + custom notes)
   const [selectedConv, setSelectedConv] = useState<Conversation | null>(null);
+  const selectedConversationId = selectedConv?.id;
+  const selectedLeadId = selectedConv?.leadId;
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [isOutcomeModalOpen, setIsOutcomeModalOpen] = useState(false);
@@ -264,11 +266,11 @@ export default function HomePage() {
 
   // Fetch Messages for selected conversation
   useEffect(() => {
-    if (!selectedConv || !tenantId) return;
+    if (!selectedConversationId || !tenantId) return;
 
     const fetchMessages = async () => {
       try {
-        const result = await conversationsQueries.getMessages(selectedConv.id, tenantId);
+        const result = await conversationsQueries.getMessages(selectedConversationId, tenantId);
         if (result.error) throw new Error(result.error.message);
         setMessages((result.data || []).map(mapBackendMessage));
       } catch (error) {
@@ -278,7 +280,7 @@ export default function HomePage() {
     };
 
     fetchMessages();
-  }, [selectedConv?.id, tenantId]);
+  }, [selectedConversationId, tenantId]);
 
   // Scroll to bottom of chat
   useEffect(() => {
@@ -287,12 +289,11 @@ export default function HomePage() {
 
   // Fetch real lead events when history tab is opened
   useEffect(() => {
-    if (!selectedConv || drawerTab !== 'history') return;
-    if (!selectedConv.leadId || !tenantId) return;
+    if (!selectedLeadId || drawerTab !== 'history' || !tenantId) return;
 
     const fetchEvents = async () => {
       try {
-        const result = await leadsQueries.getEvents(tenantId, selectedConv.leadId);
+        const result = await leadsQueries.getEvents(tenantId, selectedLeadId);
         if (result.error) throw new Error(result.error.message);
         setLeadEvents(result.data || []);
       } catch (err) {
@@ -302,16 +303,16 @@ export default function HomePage() {
     };
 
     fetchEvents();
-  }, [selectedConv?.leadId, drawerTab, tenantId]);
+  }, [selectedLeadId, drawerTab, tenantId]);
 
   // Fetch notes when Ficha is opened
   useEffect(() => {
-    if (!selectedConv || !tenantId || drawerTab !== 'info') return;
+    if (!selectedLeadId || !tenantId || drawerTab !== 'info') return;
 
     const fetchNotes = async () => {
       setIsLoadingNotes(true);
       try {
-        const result = await leadsQueries.getNotes(tenantId, selectedConv.leadId);
+        const result = await leadsQueries.getNotes(tenantId, selectedLeadId);
         if (result.error) throw new Error(result.error.message);
         setNotes(result.data || []);
       } catch (err) {
@@ -322,7 +323,7 @@ export default function HomePage() {
     };
 
     fetchNotes();
-  }, [selectedConv?.leadId, tenantId, drawerTab]);
+  }, [selectedLeadId, tenantId, drawerTab]);
 
   const handleSaveNote = async () => {
     if (!newNote.trim() || !selectedConv || !tenantId) return;

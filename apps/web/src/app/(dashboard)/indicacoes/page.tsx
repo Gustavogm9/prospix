@@ -1,7 +1,7 @@
 'use client';
 
 import { Star, Copy, Users, Loader2, ChevronRight, MessageSquare } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { referralsQueries, leadsQueries } from '@/lib/queries';
 import { toast, Badge } from '@prospix/ui';
 import { useAuthStore } from '@/store/auth-store';
@@ -47,15 +47,7 @@ export default function ReferralsPage() {
   const refCode = tenantId ? tenantId.substring(0, 8) : (user?.id?.substring(0, 8) || 'default');
   const referralLink = typeof window !== 'undefined' ? `${window.location.origin}/ref/${refCode}` : '';
 
-  useEffect(() => {
-    if (activeTab === 'BROKERS') {
-      fetchBrokerReferrals();
-    } else {
-      fetchClientReferrals();
-    }
-  }, [activeTab, user?.id, tenantId]);
-
-  const fetchBrokerReferrals = async () => {
+  const fetchBrokerReferrals = useCallback(async () => {
     if (!user?.id) return;
     setLoadingBrokers(true);
     try {
@@ -78,14 +70,14 @@ export default function ReferralsPage() {
           createdAt: u.created_at ? new Date(u.created_at).toLocaleDateString('pt-BR') : '—',
         })));
       }
-    } catch (err) {
+    } catch {
       toast.error('Erro ao carregar', 'Não foi possível carregar indicações.');
     } finally {
       setLoadingBrokers(false);
     }
-  };
+  }, [refCode, user?.id]);
 
-  const fetchClientReferrals = async () => {
+  const fetchClientReferrals = useCallback(async () => {
     if (!tenantId) return;
     setLoadingClients(true);
     try {
@@ -93,12 +85,20 @@ export default function ReferralsPage() {
       if (!error && data) {
         setClientReferrals(data);
       }
-    } catch (err) {
+    } catch {
       toast.error('Erro', 'Não foi possível carregar as indicações de clientes.');
     } finally {
       setLoadingClients(false);
     }
-  };
+  }, [tenantId]);
+
+  useEffect(() => {
+    if (activeTab === 'BROKERS') {
+      void fetchBrokerReferrals();
+    } else {
+      void fetchClientReferrals();
+    }
+  }, [activeTab, fetchBrokerReferrals, fetchClientReferrals]);
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(referralLink);

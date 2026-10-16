@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badge, toast } from '@prospix/ui';
 import { MessageSquare, RefreshCw, Loader2, Search, Bot, ChevronDown, ChevronUp } from 'lucide-react';
@@ -42,6 +42,43 @@ const STATUS_STYLES: Record<string, string> = {
   CLOSED: 'bg-gray-100 text-gray-600 border-gray-200',
 };
 
+async function loadConversationStats(): Promise<Stats | null> {
+  try {
+    const { data: allConversations } = await supabaseAdmin
+      .from('conversations')
+      .select('id, status, ai_handling, tenant_id, started_at, tenants(name)');
+
+    const rows = allConversations ?? [];
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+    const tenantCounts: Record<string, { name: string; count: number }> = {};
+
+    rows.forEach((conversation: any) => {
+      const tenantId = conversation.tenant_id;
+      const tenantName = (conversation.tenants as any)?.name ?? 'Desconhecido';
+      if (!tenantCounts[tenantId]) tenantCounts[tenantId] = { name: tenantName, count: 0 };
+      tenantCounts[tenantId].count += 1;
+    });
+
+    return {
+      totalAll: rows.length,
+      totalToday: rows.filter((conversation: any) => conversation.started_at >= todayStart).length,
+      totalWeek: rows.filter((conversation: any) => conversation.started_at >= weekAgo).length,
+      totalMonth: rows.filter((conversation: any) => conversation.started_at >= monthStart).length,
+      activeAI: rows.filter((conversation: any) => conversation.status === 'ACTIVE' && conversation.ai_handling).length,
+      escalated: rows.filter((conversation: any) => conversation.status === 'ESCALATED').length,
+      topTenants: Object.entries(tenantCounts)
+        .map(([tenantId, value]) => ({ tenantId, tenantName: value.name, count: value.count }))
+        .sort((left, right) => right.count - left.count)
+        .slice(0, 5),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export default function Conversations() {
   const [items, setItems] = useState<ConversationItem[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
@@ -52,7 +89,7 @@ export default function Conversations() {
   const [filterAI, setFilterAI] = useState<string>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  const fetchConversations = async (newOffset = 0) => {
+  const fetchConversations = useCallback(async (newOffset = 0) => {
     setIsLoading(true);
     try {
       // ── Build conversation query ──
@@ -78,7 +115,8 @@ export default function Conversations() {
           setPagination({ total: 0, limit: PAGE_SIZE, offset: 0, hasMore: false });
           setIsLoading(false);
           // Still fetch stats
-          await fetchStats();
+          const nextStats = await loadConversationStats();
+          if (nextStats) setStats(nextStats);
           return;
         }
         query = query.in('lead_id', leadIds);
@@ -133,68 +171,23 @@ export default function Conversations() {
       setPagination({ total, limit: PAGE_SIZE, offset: newOffset, hasMore: newOffset + PAGE_SIZE < total });
 
       // ── Compute stats client-side ──
-      await fetchStats();
+      const nextStats = await loadConversationStats();
+      if (nextStats) setStats(nextStats);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Falha ao carregar conversas.';
       toast.error('Erro', message);
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const fetchStats = async () => {
-    try {
-      const { data: allConvs } = await supabaseAdmin
-        .from('conversations')
-        .select('id, status, ai_handling, tenant_id, started_at, tenants(name)');
-
-      const rows = allConvs ?? [];
-      const now = new Date();
-      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-      const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-
-      const totalToday = rows.filter((c: any) => c.started_at >= todayStart).length;
-      const totalWeek = rows.filter((c: any) => c.started_at >= weekAgo).length;
-      const totalMonth = rows.filter((c: any) => c.started_at >= monthStart).length;
-      const activeAI = rows.filter((c: any) => c.status === 'ACTIVE' && c.ai_handling).length;
-      const escalated = rows.filter((c: any) => c.status === 'ESCALATED').length;
-
-      // Top tenants
-      const tenantCounts: Record<string, { name: string; count: number }> = {};
-      rows.forEach((c: any) => {
-        const tid = c.tenant_id;
-        const tname = (c.tenants as any)?.name ?? 'Unknown';
-        if (!tenantCounts[tid]) tenantCounts[tid] = { name: tname, count: 0 };
-        tenantCounts[tid].count++;
-      });
-      const topTenants = Object.entries(tenantCounts)
-        .map(([tenantId, v]) => ({ tenantId, tenantName: v.name, count: v.count }))
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 5);
-
-      setStats({
-        totalAll: rows.length,
-        totalToday,
-        totalWeek,
-        totalMonth,
-        activeAI,
-        escalated,
-        topTenants,
-      });
-    } catch {
-      // non-blocking
-    }
-  };
+  }, [filterAI, filterStatus, searchTerm]);
 
   useEffect(() => {
-    fetchConversations(0);
-  }, [filterStatus, filterAI]);
-
-  useEffect(() => {
-    const timeout = setTimeout(() => fetchConversations(0), 400);
+    const timeout = setTimeout(
+      () => void fetchConversations(0),
+      searchTerm.trim() ? 400 : 0,
+    );
     return () => clearTimeout(timeout);
-  }, [searchTerm]);
+  }, [fetchConversations, searchTerm]);
 
   return (
     <div className="space-y-6 animate-fadeIn">

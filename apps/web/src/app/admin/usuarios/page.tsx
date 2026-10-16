@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle, Button, Badge, toast } from '@prospix/ui';
 import { Users as UsersIcon, Plus, Loader2, Search, RefreshCw, KeyRound, UserX, UserCheck, Pencil, AlertCircle, Copy, Eye, EyeOff } from 'lucide-react';
@@ -64,7 +64,7 @@ export default function UserManagement() {
   // Tenants for dropdown
   const [tenants, setTenants] = useState<{ id: string; name: string; slug: string }[]>([]);
 
-  const fetchUsers = async (newOffset = 0) => {
+  const fetchUsers = useCallback(async (newOffset = 0) => {
     setIsLoading(true);
     try {
       const result = await adminUsersQueries.list({
@@ -96,24 +96,26 @@ export default function UserManagement() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [filterRole, searchTerm]);
 
-  const fetchTenants = async () => {
+  const fetchTenants = useCallback(async () => {
     const result = await adminTenantsQueries.list();
     if (!result.error) {
       setTenants(result.data.map((t) => ({ id: t.id, name: t.name, slug: t.slug })));
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchUsers(0);
-    fetchTenants();
-  }, [filterRole]);
+    void fetchTenants();
+  }, [fetchTenants]);
 
   useEffect(() => {
-    const timeout = setTimeout(() => fetchUsers(0), 300);
+    const timeout = setTimeout(
+      () => void fetchUsers(0),
+      searchTerm.trim() ? 300 : 0,
+    );
     return () => clearTimeout(timeout);
-  }, [searchTerm]);
+  }, [fetchUsers, searchTerm]);
 
   const handleCreate = async () => {
     if (!createForm.tenantId || !createForm.name || !createForm.email) {

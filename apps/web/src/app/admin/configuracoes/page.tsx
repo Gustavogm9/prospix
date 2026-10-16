@@ -20,7 +20,6 @@ import {
   MessageCircle,
   Github,
   BookOpen,
-  CheckCircle2,
   Info,
 } from 'lucide-react';
 import { useAdminAuthStore } from '@/store/admin-auth-store';
@@ -57,25 +56,25 @@ const INTEGRATIONS = [
     name: 'Evolution API',
     description: 'Gateway de WhatsApp para envio e recebimento de mensagens.',
     icon: MessageSquare,
-    status: 'connected' as const,
+    status: 'unverified' as const,
   },
   {
     name: 'Google Calendar',
     description: 'Sincronização de agendamentos com calendários Google.',
     icon: Calendar,
-    status: 'connected' as const,
+    status: 'unverified' as const,
   },
   {
     name: 'Google Maps',
     description: 'Geocodificação e validação de endereços de leads.',
     icon: MapPin,
-    status: 'connected' as const,
+    status: 'unverified' as const,
   },
   {
     name: 'AI Providers',
     description: 'OpenAI, Anthropic e outros provedores de inteligência artificial.',
     icon: Brain,
-    status: 'connected' as const,
+    status: 'unverified' as const,
   },
 ];
 
@@ -118,6 +117,10 @@ const STATUS_INDICATOR: Record<string, { label: string; className: string }> = {
   pending: {
     label: 'Pendente',
     className: 'bg-amber-50 text-amber-800 border-amber-300',
+  },
+  unverified: {
+    label: 'Não verificado',
+    className: 'bg-gray-100 text-gray-700 border-gray-300',
   },
 };
 
@@ -227,7 +230,7 @@ export default function Settings() {
               <div>
                 <p className="text-xs font-semibold text-text">TTL dos Convites</p>
                 <p className="text-[11px] text-text-secondary mt-0.5">
-                  Os convites expiram automaticamente após <span className="font-semibold text-text">7 dias</span> da geração.
+                  Os convites expiram automaticamente após <span className="font-semibold text-text">14 dias</span> da geração.
                 </p>
               </div>
             </div>
@@ -254,11 +257,11 @@ export default function Settings() {
                 Planos Disponíveis
               </CardTitle>
               <CardDescription className="text-text-secondary text-xs">
-                Planos de assinatura configurados no sistema.
+                Referências comerciais exibidas pela interface administrativa.
               </CardDescription>
             </div>
             <Badge className="bg-amber-50 text-amber-800 border border-amber-300 text-[9px] px-2 py-0.5">
-              Somente leitura
+              Referência
             </Badge>
           </div>
         </CardHeader>
@@ -282,7 +285,7 @@ export default function Settings() {
           </div>
           <p className="text-[10px] text-text-secondary mt-3 italic flex items-center gap-1">
             <Info className="w-3 h-3" aria-hidden />
-            CRUD de planos será implementado em breve.
+            Estes valores não comprovam a configuração do faturamento. Confirme-os no provedor antes de apresentar uma proposta.
           </p>
         </CardContent>
       </Card>
@@ -295,7 +298,7 @@ export default function Settings() {
             Integrações do Sistema
           </CardTitle>
           <CardDescription className="text-text-secondary text-xs">
-            Status das integrações externas configuradas.
+            Catálogo de integrações. O selo não substitui um health check real do provedor.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -318,7 +321,7 @@ export default function Settings() {
                     </div>
                   </div>
                   <Badge className={`text-[9px] px-1.5 py-0 border shrink-0 ml-2 flex items-center gap-1 ${statusInfo?.className ?? ''}`}>
-                    <CheckCircle2 className="w-3 h-3" aria-hidden />
+                    <Info className="w-3 h-3" aria-hidden />
                     {statusInfo?.label ?? integration.status}
                   </Badge>
                 </div>

@@ -7,7 +7,7 @@ overrides:
   'form-data@>=4.0.0 <4.0.6': '>=4.0.6'
   'vite@<=6.4.2': '6.4.3'
   'esbuild@<0.28.1': '0.28.2'
-  '@babel/core@<=7.29.0': '>=7.29.6'
+  '@babel/core@<=7.29.0': '7.29.6'
   'browserslist@<4.29.3': '>=4.29.3'
   'postcss-selector-parser@<7.1.6': '7.1.6'
   'minimatch@3.1.5>brace-expansion': '1.1.16'

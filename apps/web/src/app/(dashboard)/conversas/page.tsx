@@ -106,6 +106,8 @@ export default function Conversations() {
   const operationalView = operationalStatus?.view;
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedConv, setSelectedConv] = useState<Conversation | null>(null);
+  const selectedConversationId = selectedConv?.id;
+  const selectedLeadId = selectedConv?.leadId;
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [activeFilter, setActiveFilter] = useState<FilterType>('all');
@@ -263,11 +265,11 @@ export default function Conversations() {
 
   // 2. Fetch Messages for selected conversation
   useEffect(() => {
-    if (!selectedConv || !tenantId) return;
+    if (!selectedConversationId || !tenantId) return;
 
     const fetchMessages = async () => {
       try {
-        const result = await conversationsQueries.getMessages(selectedConv.id, tenantId);
+        const result = await conversationsQueries.getMessages(selectedConversationId, tenantId);
         if (result.error) throw new Error(result.error.message);
         setMessages((result.data || []).map(mapBackendMessage));
       } catch (error) {
@@ -277,7 +279,7 @@ export default function Conversations() {
     };
 
     fetchMessages();
-  }, [selectedConv?.id, tenantId]);
+  }, [selectedConversationId, tenantId]);
 
    // 3. SSE Real-time Synchronization (replaces Supabase Realtime)
   useRealtimeEvents(tenantId, {
@@ -338,12 +340,11 @@ export default function Conversations() {
 
   // Fetch real lead events when history tab is opened
   useEffect(() => {
-    if (!selectedConv || drawerTab !== 'history') return;
-    if (!selectedConv.leadId || !tenantId) return;
+    if (!selectedLeadId || drawerTab !== 'history' || !tenantId) return;
 
     const fetchEvents = async () => {
       try {
-        const result = await leadsQueries.getEvents(tenantId, selectedConv.leadId);
+        const result = await leadsQueries.getEvents(tenantId, selectedLeadId);
         if (result.error) throw new Error(result.error.message);
         setLeadEvents(result.data || []);
       } catch (err) {
@@ -353,7 +354,7 @@ export default function Conversations() {
     };
 
     fetchEvents();
-  }, [selectedConv?.leadId, drawerTab, tenantId]);
+  }, [selectedLeadId, drawerTab, tenantId]);
 
   const handleTakeover = async () => {
     if (!selectedConv || !tenantId) return;
