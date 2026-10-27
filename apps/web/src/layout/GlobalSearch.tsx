@@ -150,7 +150,7 @@ export function GlobalSearch() {
   };
 
   return (
-    <div ref={containerRef} className="relative w-full max-w-md">
+    <div ref={containerRef} className="relative min-w-0 max-w-md flex-1">
       <div className="relative">
         <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary" aria-hidden />
         <input

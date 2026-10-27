@@ -258,8 +258,8 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
       {/* ── Main Area ──────────────────────────────────────────────────────── */}
       <div className="flex-1 flex flex-col min-w-0 min-h-[100dvh]">
         {/* Topbar (60px) */}
-        <header className="h-[60px] border-b border-border bg-surface/50 backdrop-blur-md sticky top-0 z-30 flex items-center justify-between px-5 shrink-0">
-          <div className="flex items-center gap-4">
+        <header className="h-[60px] border-b border-border bg-surface/50 backdrop-blur-md sticky top-0 z-30 flex items-center justify-between gap-3 px-5 shrink-0">
+          <div className="flex min-w-0 flex-1 items-center gap-3 xl:gap-4">
             <button
               onClick={() => setIsMobileMenuOpen(true)}
               aria-label="Abrir menu admin"
@@ -269,11 +269,11 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
             </button>
 
             {/* Greeting */}
-            <div className="hidden md:block">
-              <h2 className="text-[15px] font-semibold text-text leading-tight">
+            <div className="hidden shrink-0 xl:block">
+              <h2 className="whitespace-nowrap text-[15px] font-semibold text-text leading-tight">
                 {getGreeting()}, {adminUser?.name?.split(' ')[0] || 'Admin'}
               </h2>
-              <p className="text-[11px] text-text-secondary capitalize">
+              <p className="whitespace-nowrap text-[11px] text-text-secondary capitalize">
                 {new Date().toLocaleDateString('pt-BR', {
                   weekday: 'long',
                   day: 'numeric',
@@ -286,7 +286,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
             <GlobalSearch />
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex shrink-0 items-center gap-3">
             {/* bypass-RLS indicator */}
             <div
               className="hidden lg:flex items-center gap-1.5 text-[10px] font-semibold text-text-secondary"
