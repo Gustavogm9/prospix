@@ -12,7 +12,7 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const { setAdminSession } = useAdminAuthStore();
+  const { setAdminSession, clearAdminSession } = useAdminAuthStore();
   const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -38,6 +38,16 @@ export default function Login() {
             ? 'Muitas tentativas. Aguarde alguns minutos e tente novamente.'
             : 'E-mail ou senha incorretos. Verifique suas credenciais.',
         );
+      }
+
+      if (data.user.user_metadata?.must_change_password === true) {
+        clearAdminSession();
+        toast.info(
+          'Troca de senha obrigatória',
+          'Entre pela tela principal para definir uma nova senha antes de acessar o painel.',
+        );
+        router.replace('/login');
+        return;
       }
 
       // Fetch user profile and verify admin role
