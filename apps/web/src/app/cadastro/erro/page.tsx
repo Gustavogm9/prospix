@@ -7,7 +7,6 @@ import { Button } from '@prospix/ui';
 function InvitationErrorInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const code = searchParams.get('code') || 'PRSPX-XXXX-XXXX';
   const error = searchParams.get('error') || 'UNKNOWN_ERROR';
 
   const getErrorContent = () => {
@@ -57,7 +56,6 @@ function InvitationErrorInner() {
 
           <div className="space-y-1">
             <h2 className="text-xl font-bold font-heading text-zinc-100">{content.title}</h2>
-            <p className="text-xs text-zinc-500 font-mono select-all uppercase">{code}</p>
           </div>
 
           <p className="text-sm text-zinc-400 leading-relaxed px-4">

@@ -29,7 +29,10 @@ export async function PATCH(
     if (body.name !== undefined) updateData.name = body.name;
     if (body.segment !== undefined) updateData.segment = body.segment;
     if (body.category !== undefined) updateData.category = body.category;
-    if (body.flowTemplate !== undefined) updateData.flow_template = JSON.stringify(body.flowTemplate);
+    if (body.flowTemplate !== undefined) {
+      if (!Array.isArray(body.flowTemplate)) return NextResponse.json({ error: 'VALIDATION', message: 'Os nós do roteiro devem formar uma lista.' }, { status: 400 });
+      updateData.flow_template = body.flowTemplate;
+    }
     if (body.baseMessageTemplate !== undefined) updateData.base_message_template = body.baseMessageTemplate;
     if (body.variables !== undefined) updateData.variables = body.variables;
     if (body.description !== undefined) updateData.description = body.description;

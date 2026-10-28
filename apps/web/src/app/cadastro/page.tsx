@@ -45,6 +45,7 @@ export default function SignupCode() {
 
   const handleVerify = async (e: React.FormEvent) => {
     e.preventDefault();
+    sessionStorage.removeItem('prospix:invitation');
     
     // Check pattern PRSPX-XXXX-XXXX
     const pattern = /^PRSPX-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
@@ -67,9 +68,7 @@ export default function SignupCode() {
       
       if (!res.ok) {
         const errorType = json?.error || 'unknown';
-        const message = json?.message || 'Código expirado ou inválido.';
-        const params = new URLSearchParams({ code, error: errorType, message });
-        router.push(`/cadastro/erro?${params.toString()}`);
+        router.push(`/cadastro/erro?error=${encodeURIComponent(errorType)}`);
         return;
       }
 
@@ -79,12 +78,11 @@ export default function SignupCode() {
         `Bem-vindo ao workspace da ${tenant_name}.`
       );
 
-      // Navigate to details page with verified data via query params
-      const params = new URLSearchParams({ code, tenantName: tenant_name, role });
-      router.push(`/cadastro/detalhes?${params.toString()}`);
+      // Keep the one-time code out of URLs, browser history and referrer headers.
+      sessionStorage.setItem('prospix:invitation', JSON.stringify({ code, tenantName: tenant_name, role }));
+      router.push('/cadastro/detalhes');
     } catch (_error: any) {
-      const params = new URLSearchParams({ code, error: 'unknown', message: 'Código expirado ou inválido.' });
-      router.push(`/cadastro/erro?${params.toString()}`);
+      router.push('/cadastro/erro?error=UNKNOWN_ERROR');
     } finally {
       setIsLoading(false);
     }

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badge, Tabs, TabsList, TabsTrigger, TabsContent, toast, Modal, Textarea } from '@prospix/ui';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badge, Tabs, TabsList, TabsTrigger, TabsContent, toast, Modal, Textarea, Input } from '@prospix/ui';
 import {
   ArrowLeft, Building, Users, Settings as SettingsIcon, Ban, Play, AlertOctagon,
   CheckCircle2, AlertCircle, Loader2, RefreshCw, MessageSquare, Calendar,
@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { AdminApiError, adminNextApi } from '@/lib/admin-api-fetch';
 import { adminTenantsQueries } from '@/lib/admin-queries';
+import { normalizeOwnerEmail } from '@/lib/onboarding-validation';
 
 interface TenantUser { id: string; name: string; email: string; role: string; }
 
@@ -134,6 +135,9 @@ export default function TenantDetail() {
   const [activeTab, setActiveTab] = useState<'visao-geral' | 'integracoes' | 'usuarios' | 'convites' | 'faturamento'>('visao-geral');
   const [invitations, setInvitations] = useState<TenantInvitation[]>([]);
   const [invitationsLoading, setInvitationsLoading] = useState(false);
+  const [editingOwnerId, setEditingOwnerId] = useState<string | null>(null);
+  const [ownerEmailDraft, setOwnerEmailDraft] = useState('');
+  const [ownerEmailBusy, setOwnerEmailBusy] = useState(false);
   const [invitationBusy, setInvitationBusy] = useState<string | null>(null);
   const [aiPauseModal, setAiPauseModal] = useState<{ isOpen: boolean; paused: boolean }>({
     isOpen: false,
@@ -270,6 +274,21 @@ export default function TenantDetail() {
       () => toast.success('Código copiado!'),
       () => toast.error('Erro', 'Falha ao copiar código.'),
     );
+  };
+
+  const handleCorrectOwnerEmail = async () => {
+    const email = normalizeOwnerEmail(ownerEmailDraft);
+    if (!email) { toast.error('E-mail inválido', 'Informe um e-mail completo.'); return; }
+    setOwnerEmailBusy(true);
+    try {
+      await adminNextApi.patch(`/api/admin/tenants/${id}/owner-email`, { email });
+      toast.success('E-mail corrigido', 'O responsável deve usar este e-mail ao resgatar o convite.');
+      setEditingOwnerId(null);
+      await fetchAll();
+    } catch (err: unknown) {
+      const message = err instanceof AdminApiError ? err.response?.data?.message || err.message : 'Falha ao corrigir o e-mail.';
+      toast.error('Erro', message);
+    } finally { setOwnerEmailBusy(false); }
   };
 
   const handleSuspend = async () => {
@@ -670,15 +689,32 @@ export default function TenantDetail() {
                         <th className="text-left py-2 px-2">Nome</th>
                         <th className="text-left py-2 px-2">E-mail</th>
                         <th className="text-left py-2 px-2">Role</th>
+                        <th className="text-right py-2 px-2">Ações</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border/60">
                       {tenant.users.map((u) => (
                         <tr key={u.id} className="hover:bg-surface-sunken/40">
                           <td className="py-2 px-2">{u.name}</td>
-                          <td className="py-2 px-2 font-mono text-text-secondary">{u.email}</td>
+                          <td className="py-2 px-2 font-mono text-text-secondary">
+                            {editingOwnerId === u.id ? (
+                              <label className="block text-xs">E-mail do responsável
+                                <Input type="email" value={ownerEmailDraft} onChange={(event) => setOwnerEmailDraft(event.target.value)} className="mt-1 min-w-56" />
+                              </label>
+                            ) : u.email}
+                          </td>
                           <td className="py-2 px-2">
                             <Badge className="bg-surface-sunken text-text-secondary border border-border/60 text-[9px] px-1.5 py-0">{u.role}</Badge>
+                          </td>
+                          <td className="py-2 px-2 text-right whitespace-nowrap">
+                            {editingOwnerId === u.id ? (
+                              <>
+                                <Button type="button" disabled={ownerEmailBusy} onClick={handleCorrectOwnerEmail} className="text-xs px-2">Salvar</Button>
+                                <Button type="button" disabled={ownerEmailBusy} onClick={() => setEditingOwnerId(null)} variant="outline" className="ml-1 text-xs px-2">Cancelar</Button>
+                              </>
+                            ) : u.role === 'OWNER' && tenant.status === 'ONBOARDING' ? (
+                              <Button type="button" variant="outline" onClick={() => { setEditingOwnerId(u.id); setOwnerEmailDraft(u.email); }} className="text-xs px-2">Corrigir e-mail</Button>
+                            ) : null}
                           </td>
                         </tr>
                       ))}

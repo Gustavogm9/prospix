@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button, Badge } from '@prospix/ui';
 import { Users, RefreshCw, Loader2, AlertCircle, ChevronLeft, ChevronRight, Monitor, Clock, Building2, UserX } from 'lucide-react';
-import { supabaseAdmin } from '@/lib/supabase';
+import { adminNextApi } from '@/lib/admin-api-fetch';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -18,10 +18,6 @@ interface LoginEntry {
   tenantId: string | null;
   tenantName: string | null;
   tenantSlug: string | null;
-  ipAddress: string | null;
-  userAgent: string | null;
-  expiresAt: string;
-  revokedAt: string | null;
   createdAt: string;
 }
 
@@ -38,19 +34,12 @@ interface DormantTenant {
   slug: string;
 }
 
-interface TopTenant {
-  tenantId: string;
-  tenantName: string;
-  sessionCount: number;
-}
-
 interface ActivitySummary {
-  activeSessions: number;
+  usersWithLogin: number;
   loginsToday: number;
   loginsWeek: number;
   dormantTenantsCount: number;
   dormantTenants: DormantTenant[];
-  topTenants: TopTenant[];
 }
 
 const PAGE_SIZE = 50;
@@ -61,11 +50,6 @@ const ROLE_STYLES: Record<string, string> = {
   ASSISTANT: 'bg-slate-50 text-slate-700 border-slate-200',
 };
 
-function truncateUA(ua: string | null, max = 60): string {
-  if (!ua) return '—';
-  return ua.length > max ? ua.slice(0, max) + '…' : ua;
-}
-
 export default function Activity() {
   const [items, setItems] = useState<LoginEntry[]>([]);
   const [pagination, setPagination] = useState<Pagination>({ total: 0, limit: PAGE_SIZE, offset: 0, hasMore: false });
@@ -74,145 +58,29 @@ export default function Activity() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [filterTenantId, setFilterTenantId] = useState('');
 
-  /* ---------- Tenants for filter dropdown ---------- */
   const [tenants, setTenants] = useState<Array<{ id: string; name: string }>>([]);
 
-  useEffect(() => {
-    supabaseAdmin
-      .from('tenants')
-      .select('id, name')
-      .is('deleted_at', null)
-      .order('name')
-      .then(({ data }) => {
-        if (data) setTenants(data as Array<{ id: string; name: string }>);
-      });
-  }, []);
-
-  /* ---------- Fetch logins ---------- */
   const fetchLogins = useCallback(async (newOffset = 0) => {
     setIsLoading(true);
     setLoadError(null);
     try {
-      let query = supabaseAdmin
-        .from('sessions')
-        .select('*, users(id, name, email, role), tenants(id, name, slug)', { count: 'exact' })
-        .order('created_at', { ascending: false })
-        .range(newOffset, newOffset + PAGE_SIZE - 1);
-
-      if (filterTenantId) {
-        query = query.eq('tenant_id', filterTenantId);
-      }
-
-      const { data, error, count } = await query;
-      if (error) throw new Error(error.message);
-
-      const total = count ?? 0;
-      const mapped: LoginEntry[] = (data ?? []).map((s: any) => ({
-        id: s.id,
-        userId: s.user_id,
-        userName: s.users?.name ?? 'N/A',
-        userEmail: s.users?.email ?? 'N/A',
-        userRole: s.users?.role ?? 'UNKNOWN',
-        tenantId: s.tenant_id,
-        tenantName: s.tenants?.name ?? null,
-        tenantSlug: s.tenants?.slug ?? null,
-        ipAddress: s.ip_address,
-        userAgent: s.user_agent,
-        expiresAt: s.expires_at,
-        revokedAt: s.revoked_at,
-        createdAt: s.created_at,
-      }));
-
-      setItems(mapped);
-      setPagination({ total, limit: PAGE_SIZE, offset: newOffset, hasMore: newOffset + PAGE_SIZE < total });
+      const query = new URLSearchParams({ offset: String(newOffset) });
+      if (filterTenantId) query.set('tenantId', filterTenantId);
+      const response = await adminNextApi.get(`/api/admin/activity?${query.toString()}`);
+      setItems(response.data.data ?? []);
+      setPagination(response.data.pagination);
+      setSummary(response.data.summary);
+      setTenants(response.data.tenants ?? []);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Falha ao carregar logins.';
-      setLoadError(message);
+      setLoadError(err instanceof Error ? err.message : 'Falha ao carregar acessos.');
+      setSummary(null);
     } finally {
       setIsLoading(false);
     }
   }, [filterTenantId]);
-
-  /* ---------- Fetch summary ---------- */
-  const fetchSummary = useCallback(async () => {
-    try {
-      const now = new Date();
-      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-      const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-      const dormantThreshold = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000).toISOString();
-
-      // Active sessions (not expired, not revoked)
-      const { count: activeSessions } = await supabaseAdmin
-        .from('sessions')
-        .select('id', { count: 'exact', head: true })
-        .is('revoked_at', null)
-        .gt('expires_at', now.toISOString());
-
-      // Logins today
-      const { count: loginsToday } = await supabaseAdmin
-        .from('sessions')
-        .select('id', { count: 'exact', head: true })
-        .gte('created_at', todayStart);
-
-      // Logins this week
-      const { count: loginsWeek } = await supabaseAdmin
-        .from('sessions')
-        .select('id', { count: 'exact', head: true })
-        .gte('created_at', weekAgo);
-
-      // Dormant tenants (no sessions in last 14 days)
-      const { data: allTenants } = await supabaseAdmin
-        .from('tenants')
-        .select('id, name, slug')
-        .is('deleted_at', null)
-        .in('status', ['ACTIVE', 'ONBOARDING']);
-
-      const { data: recentSessions } = await supabaseAdmin
-        .from('sessions')
-        .select('tenant_id')
-        .gte('created_at', dormantThreshold);
-
-      const activeTenantIds = new Set((recentSessions ?? []).map((s: any) => s.tenant_id));
-      const dormantTenants = (allTenants ?? []).filter((t: any) => !activeTenantIds.has(t.id));
-
-      // Top tenants by session count (30d)
-      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
-      const { data: topData } = await supabaseAdmin
-        .from('sessions')
-        .select('tenant_id, tenants(name)')
-        .gte('created_at', thirtyDaysAgo)
-        .not('tenant_id', 'is', null);
-
-      const tenantCounts: Record<string, { tenantId: string; tenantName: string; sessionCount: number }> = {};
-      (topData ?? []).forEach((s: any) => {
-        const tid = s.tenant_id;
-        if (!tenantCounts[tid]) {
-          tenantCounts[tid] = { tenantId: tid, tenantName: s.tenants?.name ?? 'N/A', sessionCount: 0 };
-        }
-        tenantCounts[tid].sessionCount++;
-      });
-
-      const topTenants = Object.values(tenantCounts)
-        .sort((a, b) => b.sessionCount - a.sessionCount)
-        .slice(0, 10);
-
-      setSummary({
-        activeSessions: activeSessions ?? 0,
-        loginsToday: loginsToday ?? 0,
-        loginsWeek: loginsWeek ?? 0,
-        dormantTenantsCount: dormantTenants.length,
-        dormantTenants: dormantTenants.map((t: any) => ({ id: t.id, name: t.name, slug: t.slug })),
-        topTenants,
-      });
-    } catch {
-      /* non-blocking; KPIs stay at previous values */
-    }
-  }, []);
-
   /* ---------- Initial + filter-driven load ---------- */
   useEffect(() => {
     fetchLogins(0);
-    fetchSummary();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterTenantId]);
 
@@ -220,7 +88,6 @@ export default function Activity() {
   useEffect(() => {
     const timer = setInterval(() => {
       fetchLogins(pagination.offset);
-      fetchSummary();
     }, 60_000);
     return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -240,12 +107,12 @@ export default function Activity() {
             Atividade do Sistema
           </h2>
           <p className="text-text-secondary text-xs mt-1">
-            Sessões de login, atividade por tenant e detecção de dormência. Atualização automática a cada 60 s.
+            Último login de cada usuário e tenants sem acesso recente. Atualização automática a cada 60 s.
           </p>
         </div>
         <div className="flex gap-2">
           <Button
-            onClick={() => { fetchLogins(pagination.offset); fetchSummary(); }}
+            onClick={() => { fetchLogins(pagination.offset); }}
             disabled={isLoading}
             className="bg-white hover:bg-surface-sunken text-text border border-border text-xs px-3 h-9 rounded-lg flex items-center gap-1.5"
           >
@@ -260,8 +127,8 @@ export default function Activity() {
           <CardContent className="pt-4 pb-3">
             <div className="flex items-start justify-between">
               <div>
-                <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">Sessões Ativas</span>
-                <span className="text-2xl font-bold font-heading font-mono text-text">{summary?.activeSessions ?? '—'}</span>
+                <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">Usuários com login registrado</span>
+                <span className="text-2xl font-bold font-heading font-mono text-text">{summary?.usersWithLogin ?? '—'}</span>
               </div>
               <Monitor className="w-4 h-4 text-text-secondary opacity-80" aria-hidden />
             </div>
@@ -272,7 +139,7 @@ export default function Activity() {
           <CardContent className="pt-4 pb-3">
             <div className="flex items-start justify-between">
               <div>
-                <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">Logins Hoje</span>
+                <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">Usuários que acessaram hoje</span>
                 <span className="text-2xl font-bold font-heading font-mono text-text">{summary?.loginsToday ?? '—'}</span>
               </div>
               <Clock className="w-4 h-4 text-text-secondary opacity-80" aria-hidden />
@@ -284,7 +151,7 @@ export default function Activity() {
           <CardContent className="pt-4 pb-3">
             <div className="flex items-start justify-between">
               <div>
-                <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">Logins (7d)</span>
+                <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider block">Usuários que acessaram em 7 dias</span>
                 <span className="text-2xl font-bold font-heading font-mono text-text">{summary?.loginsWeek ?? '—'}</span>
               </div>
               <Building2 className="w-4 h-4 text-text-secondary opacity-80" aria-hidden />
@@ -325,24 +192,6 @@ export default function Activity() {
         </Card>
       )}
 
-      {/* ── Top tenants ── */}
-      {summary && summary.topTenants.length > 0 && (
-        <Card className="bg-white border-border shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-bold font-heading text-text">Top 10 tenants mais ativos (30d)</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-wrap gap-1.5">
-              {summary.topTenants.map((t, idx) => (
-                <Badge key={t.tenantId} className="bg-blue-50 text-blue-700 border border-blue-200 text-[10px] px-2 py-0.5">
-                  #{idx + 1} {t.tenantName} <span className="text-blue-500 font-mono ml-1">({t.sessionCount} sessões)</span>
-                </Badge>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
       {/* ── Filter bar ── */}
       <Card className="bg-white border-border shadow-sm">
         <CardHeader className="pb-3">
@@ -371,9 +220,9 @@ export default function Activity() {
       {/* ── Logins table ── */}
       <Card className="bg-white border-border shadow-sm">
         <CardHeader className="pb-3">
-          <CardTitle className="text-base font-bold font-heading text-text">Logins recentes</CardTitle>
+          <CardTitle className="text-base font-bold font-heading text-text">Último login por usuário</CardTitle>
           <CardDescription className="text-text-secondary text-xs">
-            {pagination.total.toLocaleString('pt-BR')} total · ordenado por data desc
+            {pagination.total.toLocaleString('pt-BR')} usuário(s) com acesso registrado · um login por usuário, ordenado pelo mais recente
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -402,18 +251,11 @@ export default function Activity() {
                       <th className="text-left py-2 px-2 text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Email</th>
                       <th className="text-left py-2 px-2 text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Role</th>
                       <th className="text-left py-2 px-2 text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Tenant</th>
-                      <th className="text-left py-2 px-2 text-[10px] font-semibold text-text-secondary uppercase tracking-wider">IP</th>
-                      <th className="text-left py-2 px-2 text-[10px] font-semibold text-text-secondary uppercase tracking-wider">User Agent</th>
-                      <th className="text-left py-2 px-2 text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Data</th>
-                      <th className="text-left py-2 px-2 text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Status</th>
+                      <th className="text-left py-2 px-2 text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Último acesso</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {items.map((entry) => {
-                      const isExpired = new Date(entry.expiresAt) < new Date();
-                      const isRevoked = !!entry.revokedAt;
-                      const isActive = !isExpired && !isRevoked;
-                      return (
+                    {items.map((entry) => (
                         <tr key={entry.id} className="border-b border-border/50 hover:bg-surface-sunken/30 transition-colors">
                           <td className="py-2 px-2 font-semibold text-text whitespace-nowrap">{entry.userName}</td>
                           <td className="py-2 px-2 text-text-secondary font-mono whitespace-nowrap">{entry.userEmail}</td>
@@ -423,25 +265,11 @@ export default function Activity() {
                             </Badge>
                           </td>
                           <td className="py-2 px-2 text-text whitespace-nowrap">{entry.tenantName ?? <span className="italic text-text-secondary">—</span>}</td>
-                          <td className="py-2 px-2 text-text-secondary font-mono whitespace-nowrap">{entry.ipAddress ?? '—'}</td>
-                          <td className="py-2 px-2 text-text-secondary max-w-[200px] truncate" title={entry.userAgent ?? undefined}>
-                            {truncateUA(entry.userAgent)}
-                          </td>
                           <td className="py-2 px-2 text-text-secondary font-mono whitespace-nowrap">
-                            {new Date(entry.createdAt).toLocaleString('pt-BR')}
-                          </td>
-                          <td className="py-2 px-2">
-                            {isActive ? (
-                              <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[9px] px-1.5 py-0">Ativa</Badge>
-                            ) : isRevoked ? (
-                              <Badge className="bg-red-50 text-red-700 border border-red-200 text-[9px] px-1.5 py-0">Revogada</Badge>
-                            ) : (
-                              <Badge className="bg-slate-50 text-slate-500 border border-slate-200 text-[9px] px-1.5 py-0">Expirada</Badge>
-                            )}
+                            {new Date(entry.createdAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
                           </td>
                         </tr>
-                      );
-                    })}
+                    ))}
                   </tbody>
                 </table>
               </div>

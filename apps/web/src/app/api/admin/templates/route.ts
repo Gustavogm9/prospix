@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { requireAdmin, supabaseAdmin } from '../../_lib/auth';
 
+const SCRIPT_CATEGORIES = new Set(['APPROACH', 'OBJECTION', 'EDUCATION', 'CLOSING', 'FOLLOW_UP', 'REFERRAL', 'REACTIVATION']);
+
 // =========================================================================
 // GET /api/admin/templates — List active templates
 // =========================================================================
@@ -39,8 +41,8 @@ export async function POST(request: NextRequest) {
 
   const { name, segment, category, targetProfession, flowTemplate, baseMessageTemplate, variables = [], description } = body;
 
-  if (!name || !segment) {
-    return NextResponse.json({ error: 'VALIDATION', message: 'name e segment são obrigatórios.' }, { status: 400 });
+  if (typeof name !== 'string' || !name.trim() || typeof segment !== 'string' || !segment.trim() || !SCRIPT_CATEGORIES.has(category) || !Array.isArray(flowTemplate)) {
+    return NextResponse.json({ error: 'VALIDATION', message: 'Nome, segmento, categoria e nós do roteiro são obrigatórios.' }, { status: 400 });
   }
 
   try {
@@ -48,11 +50,11 @@ export async function POST(request: NextRequest) {
       .from('script_templates')
       .insert({
         id: randomUUID(),
-        name,
-        segment,
+        name: name.trim(),
+        segment: segment.trim(),
         category,
         target_profession: targetProfession,
-        flow_template: JSON.stringify(flowTemplate),
+        flow_template: flowTemplate,
         base_message_template: baseMessageTemplate,
         variables,
         description,

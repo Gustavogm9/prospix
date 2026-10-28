@@ -28,6 +28,7 @@ export default function Templates() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [isEditingJson, setIsEditingJson] = useState(false);
   const [jsonString, setJsonString] = useState('');
@@ -161,6 +162,8 @@ export default function Templates() {
   };
 
   const handleCreateNew = async () => {
+    if (isCreating) return;
+    setIsCreating(true);
     const initialNodes = [
       { id: 'node_1', type: 'greeting', label: 'Boas vindas', messageText: 'Olá! Como posso ajudar você hoje?' }
     ];
@@ -168,7 +171,7 @@ export default function Templates() {
       await adminNextApi.post('/api/admin/templates', {
         name: 'Roteiro Master Novo',
         segment: 'general',
-        category: 'Geral',
+        category: 'APPROACH',
         flowTemplate: initialNodes,
         description: 'Abordagem geral B2B pronta para clonagem.',
         variables: [],
@@ -178,6 +181,8 @@ export default function Templates() {
     } catch (err: unknown) {
       console.error('Error creating template:', err);
       toast.error('Erro ao criar', 'Não foi possível salvar o template no servidor.');
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -194,6 +199,7 @@ export default function Templates() {
         {!isEditingJson && (
           <Button
             onClick={handleCreateNew}
+            disabled={isCreating}
             className="bg-primary hover:bg-primary/95 text-white font-bold text-xs px-4 h-10 rounded-xl flex items-center gap-2 self-start sm:self-auto shadow-sm transition-all"
           >
             <Plus className="w-4 h-4 text-white font-bold" />

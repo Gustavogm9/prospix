@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, Badge, Button, Input, toast } from '@prospix/ui';
 import { Compass, Loader2, AlertCircle, Save, FileText } from 'lucide-react';
-import { supabaseAdmin } from '@/lib/supabase';
+import { adminNextApi } from '@/lib/admin-api-fetch';
 import { adminTenantsQueries } from '@/lib/admin-queries';
 import { MaterialsUploader } from './discovery/MaterialsUploader';
 import { DraftsEditor } from './discovery/DraftsEditor';
@@ -84,28 +84,6 @@ function fromInputDateTime(value: string): string | null {
   return isNaN(d.getTime()) ? null : d.toISOString();
 }
 
-function mapRowToPayload(row: any): DiscoveryPayload {
-  return {
-    tenantId: row.tenant_id,
-    status: row.status,
-    scheduledFor: row.scheduled_for,
-    conductedAt: row.conducted_at,
-    validatedAt: row.validated_at,
-    validationRounds: row.validation_rounds ?? 0,
-    approvedAt: row.approved_at,
-    pmUserId: row.pm_user_id,
-    notes: row.notes,
-    hasAudio: row.has_audio ?? false,
-    hasVideo: row.has_video ?? false,
-    hasTranscript: row.has_transcript ?? false,
-    hasVoiceProfileDraft: row.has_voice_profile_draft ?? false,
-    hasScriptsDraft: row.has_scripts_draft ?? false,
-    hasApprovalProof: row.has_approval_proof ?? false,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
 export default function Discovery() {
   const [tenants, setTenants] = useState<TenantSummary[]>([]);
   const [tenantsError, setTenantsError] = useState<string | null>(null);
@@ -152,34 +130,9 @@ export default function Discovery() {
     if (!silent) setIsLoadingDiscovery(true);
     setDiscoveryError(null);
     try {
-      const { data: row, error } = await supabaseAdmin
-        .from('tenant_discoveries')
-        .select('*')
-        .eq('tenant_id', id)
-        .maybeSingle();
-
-      if (error) throw error;
-
-      if (!row) {
-        // No discovery record yet — create a fresh default
-        const { data: newRow, error: insertError } = await supabaseAdmin
-          .from('tenant_discoveries')
-          .insert({ tenant_id: id, status: 'NOT_STARTED' })
-          .select('*')
-          .single();
-        if (insertError) throw insertError;
-        const payload = mapRowToPayload(newRow);
-        setDiscovery(payload);
-        if (!silent) {
-          setDraftStatus(payload.status);
-          setDraftScheduledFor(toInputDateTime(payload.scheduledFor));
-          setDraftConductedAt(toInputDateTime(payload.conductedAt));
-          setDraftNotes(payload.notes ?? '');
-        }
-        return;
-      }
-
-      const payload = mapRowToPayload(row);
+      const response = await adminNextApi.get(`/api/admin/tenants/${id}/discovery`);
+      const payload = response.data?.data as DiscoveryPayload;
+      if (!payload) throw new Error('Discovery não retornada pelo servidor.');
       setDiscovery(payload);
       if (!silent) {
         setDraftStatus(payload.status);
@@ -208,23 +161,14 @@ export default function Discovery() {
     if (!selectedTenantId) return;
     setIsSaving(true);
     try {
-      const updateData: Record<string, any> = {
+      const updateData = {
         status: draftStatus,
-        scheduled_for: fromInputDateTime(draftScheduledFor),
-        conducted_at: fromInputDateTime(draftConductedAt),
+        scheduledFor: fromInputDateTime(draftScheduledFor),
+        conductedAt: fromInputDateTime(draftConductedAt),
         notes: draftNotes || null,
       };
-
-      const { data: updatedRow, error } = await supabaseAdmin
-        .from('tenant_discoveries')
-        .update(updateData)
-        .eq('tenant_id', selectedTenantId)
-        .select('*')
-        .single();
-
-      if (error) throw error;
-
-      const payload = mapRowToPayload(updatedRow);
+      const response = await adminNextApi.patch(`/api/admin/tenants/${selectedTenantId}/discovery`, updateData);
+      const payload = response.data?.data as DiscoveryPayload;
       setDiscovery(payload);
       toast.success('Discovery atualizada', `Status: ${STATUS_LABEL[payload.status]}`);
     } catch (err: unknown) {

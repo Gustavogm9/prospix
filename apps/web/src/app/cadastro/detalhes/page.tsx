@@ -1,16 +1,17 @@
 'use client';
 
 import { Suspense, useState, useEffect } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { Button, Input, toast } from '@prospix/ui';
+import { normalizeOwnerEmail } from '@/lib/onboarding-validation';
 
 
 function SignupDetailsInner() {
-  const searchParams = useSearchParams();
   const router = useRouter();
-  const code = searchParams.get('code') || '';
-  const tenantName = searchParams.get('tenantName') || '';
-  const role = searchParams.get('role') || '';
+  const [invite, setInvite] = useState<{ code: string; tenantName: string; role: string } | null>(null);
+  const code = invite?.code ?? '';
+  const tenantName = invite?.tenantName ?? '';
+  const role = invite?.role ?? '';
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -26,14 +27,12 @@ function SignupDetailsInner() {
 
   // Auto redirect if page is accessed without active invite verification state
   useEffect(() => {
-    if (!code || !tenantName) {
-      toast.error(
-        'Acesso inválido',
-        'Por favor, insira e valide um código de convite antes de preencher os dados.'
-      );
-      router.push('/cadastro');
-    }
-  }, [code, tenantName, router]);
+    try {
+      const stored = JSON.parse(sessionStorage.getItem('prospix:invitation') || 'null');
+      if (stored?.code && stored?.tenantName) { setInvite(stored); return; }
+    } catch { /* invalid or expired browser state */ }
+    router.replace('/cadastro');
+  }, [router]);
 
   // Handle WhatsApp masking
   const handleWhatsappChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -69,7 +68,7 @@ function SignupDetailsInner() {
       toast.error('Nome obrigatório', 'Por favor, informe seu nome completo.');
       return;
     }
-    if (!email.trim() || !email.includes('@')) {
+    if (!normalizeOwnerEmail(email)) {
       toast.error('E-mail inválido', 'Por favor, informe um e-mail válido.');
       return;
     }
@@ -85,8 +84,8 @@ function SignupDetailsInner() {
       return;
     }
 
-    if (password.length < 6) {
-      toast.error('Senha fraca', 'A senha deve conter pelo menos 6 caracteres.');
+    if (password.length < 8) {
+      toast.error('Senha fraca', 'A senha deve conter pelo menos 8 caracteres.');
       return;
     }
 
@@ -109,7 +108,7 @@ function SignupDetailsInner() {
           code,
           user: {
             name,
-            email,
+            email: normalizeOwnerEmail(email),
             whatsapp: rawWhatsapp,
             susep: susep.trim() || null,
             city: city.trim() || null,
@@ -120,6 +119,7 @@ function SignupDetailsInner() {
       });
 
       if (res.status === 201 || res.ok) {
+        sessionStorage.removeItem('prospix:invitation');
         setIsSuccess(true);
         toast.success('Cadastro Concluído!', 'Conta criada e ativada com sucesso.');
       } else {
@@ -138,6 +138,10 @@ function SignupDetailsInner() {
       setIsLoading(false);
     }
   };
+
+  if (!invite && !isSuccess) {
+    return <div className="auth-dark min-h-[100dvh] flex items-center justify-center bg-bg text-text">Carregando convite...</div>;
+  }
 
   if (isSuccess) {
     return (

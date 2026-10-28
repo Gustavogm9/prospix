@@ -99,7 +99,7 @@ export async function POST(
       action: 'tenant.invitation_created',
       target_type: 'tenant',
       target_id: tenantId,
-      payload: { code: invitation.code },
+      payload: { invitation_id: invitation.id },
     });
 
     return NextResponse.json(invitation, { status: 201 });
@@ -127,7 +127,19 @@ export async function GET(
       .eq('tenant_id', tenantId)
       .order('created_at', { ascending: false });
     if (error) throw error;
-    return NextResponse.json({ data: invitations });
+    return NextResponse.json({ data: (invitations ?? []).map((inv) => ({
+      id: inv.id,
+      code: inv.code,
+      tenantId: inv.tenant_id,
+      role: inv.role,
+      createdById: inv.created_by_id,
+      expiresAt: inv.expires_at,
+      usedAt: inv.used_at,
+      usedByUserId: inv.used_by_user_id,
+      revokedAt: inv.revoked_at,
+      notes: inv.notes,
+      createdAt: inv.created_at,
+    })) });
   } catch (err) {
     console.error('admin/tenants/[id]/invitations → GET failed', err);
     return NextResponse.json({ error: 'INTERNAL', message: 'Falha ao listar convites.' }, { status: 500 });

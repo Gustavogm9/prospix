@@ -1,9 +1,12 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Card, CardContent, Button, Input, Select, toast, Badge } from '@prospix/ui';
 import { CheckCircle2, ChevronRight, ChevronLeft, Building, DollarSign, User, FileText, Cpu, Key, Copy, Sparkles } from 'lucide-react';
 import { AdminApiError, adminNextApi } from '@/lib/admin-api-fetch';
+import { normalizeOwnerEmail } from '@/lib/onboarding-validation';
+
+interface MasterTemplate { id: string; name: string; description: string | null; flow_template: unknown; }
 
 export default function NewTenant() {
   const [step, setStep] = useState(1);
@@ -12,18 +15,27 @@ export default function NewTenant() {
   const [formData, setFormData] = useState({
     name: '',
     slug: '',
-    plan: 'Premium Multi',
+    plan: 'PREMIUM',
     mrrCentavos: '',
     ownerName: '',
     ownerEmail: '',
     ownerWhatsapp: '',
-    templateId: '1',
+    templateId: '',
     openAiKey: '',
     evolutionInstance: ''
   });
 
   const [generatedCode, setGeneratedCode] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [templates, setTemplates] = useState<MasterTemplate[]>([]);
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
+
+  useEffect(() => {
+    adminNextApi.get('/api/admin/templates').then(
+      (result) => setTemplates(result.data?.data ?? []),
+      () => setTemplatesError('Não foi possível carregar os roteiros. Tente novamente mais tarde.'),
+    );
+  }, []);
 
   // Auto-generate slug from name
   const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -109,6 +121,10 @@ export default function NewTenant() {
       toast.error('Dados do Corretor Owner', 'Todos os campos de contato do owner são obrigatórios.');
       return;
     }
+    if (step === 3 && !normalizeOwnerEmail(formData.ownerEmail)) {
+      toast.error('E-mail inválido', 'Informe um e-mail completo, por exemplo nome@empresa.com.br.');
+      return;
+    }
 
     setStep(prev => Math.min(prev + 1, 6));
   };
@@ -125,10 +141,16 @@ export default function NewTenant() {
   };
 
   const handleSubmit = async () => {
+    const ownerEmail = normalizeOwnerEmail(formData.ownerEmail);
+    if (!ownerEmail) {
+      setStep(3);
+      toast.error('E-mail inválido', 'Corrija o e-mail do responsável antes de criar o tenant.');
+      return;
+    }
     setIsSubmitting(true);
     
     try {
-      const planValue = formData.plan === 'Start' ? 'STARTER' : formData.plan === 'Enterprise' ? 'ENTERPRISE' : 'STANDARD';
+      const planValue = formData.plan;
       
       const response = await adminNextApi.post('/api/admin/tenants', {
         name: formData.name,
@@ -136,8 +158,11 @@ export default function NewTenant() {
         plan: planValue,
         mrrCents: parseInt(formData.mrrCentavos, 10) || 0,
         ownerName: formData.ownerName,
-        ownerEmail: formData.ownerEmail,
+        ownerEmail,
         ownerWhatsapp: formData.ownerWhatsapp,
+        templateId: formData.templateId || null,
+        openAiKey: formData.openAiKey,
+        evolutionInstance: formData.evolutionInstance,
       });
       
       const tenantId = response.data.id;
@@ -145,16 +170,13 @@ export default function NewTenant() {
         throw new Error('Tenant ID not returned from API.');
       }
 
-      const inviteResponse = await adminNextApi.post(`/api/admin/tenants/${tenantId}/invitations`, {
-        notes: 'Chave de Onboarding gerada no wizard do painel super-admin',
-      });
-      
-      const inviteCode = inviteResponse.data.code;
+      const inviteCode = response.data.invitationCode;
       if (!inviteCode) {
         throw new Error('Invitation code not returned from API.');
       }
 
       setGeneratedCode(inviteCode);
+      setFormData(prev => ({ ...prev, openAiKey: '' }));
       setStep(6);
       
       toast.success('Tenant Criado com Sucesso!', 'Workspace registrado e convite gerado.');
@@ -287,9 +309,9 @@ export default function NewTenant() {
                     onChange={(e) => setFormData(prev => ({ ...prev, plan: e.target.value }))}
                     className="w-full bg-surface border-border text-text focus:border-primary/50 text-xs"
                   >
-                    <option value="Start">Start (1 corretor - R$ 199,00)</option>
-                    <option value="Premium Multi">Premium Multi (Até 5 corretores - R$ 399,00)</option>
-                    <option value="Enterprise">Enterprise (Faturamento Custom - R$ 999,00)</option>
+                    <option value="STARTER">Start</option>
+                    <option value="STANDARD">Padrão</option>
+                    <option value="PREMIUM">Premium Multi</option>
                   </Select>
                 </div>
 
@@ -372,28 +394,28 @@ export default function NewTenant() {
               </div>
 
               <div className="space-y-3">
-                {[
-                  { id: '1', title: 'Seguro Saúde Empresarial B2B', desc: 'Foco em pequenas empresas, conversão direta para sócios baseada em CNPJ.', nodes: '6 nós configurados' },
-                  { id: '2', title: 'Seguro de Automóvel Simplificado', desc: 'Roteiro dinâmico focado em dados do veículo e fit score de agilidade.', nodes: '5 nós configurados' },
-                  { id: '3', title: 'Seguro de Vida e Previdência', desc: 'Abordagem humanizada, com alta sensibilidade e inibidores de IA sob objeção.', nodes: '8 nós configurados' }
-                ].map((tpl) => (
-                  <div
+                {templatesError && <p role="alert" className="text-sm text-red-700">{templatesError}</p>}
+                {!templatesError && templates.length === 0 && <p className="text-sm text-text-secondary">Nenhum template master disponível. O tenant pode ser criado sem roteiro e configurado depois.</p>}
+                {templates.map((tpl) => (
+                  <button
+                    type="button"
+                    aria-pressed={formData.templateId === tpl.id}
                     key={tpl.id}
                     onClick={() => setFormData(prev => ({ ...prev, templateId: tpl.id }))}
-                    className={`p-4 rounded-xl border transition-all cursor-pointer flex justify-between items-center ${
+                    className={`w-full p-4 rounded-xl border-2 transition-all cursor-pointer flex justify-between items-center text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-800 ${
                       formData.templateId === tpl.id
-                        ? 'bg-primary-soft/30 border-primary/30 text-text shadow-sm'
+                        ? 'bg-blue-100 border-blue-800 text-slate-950 shadow-sm ring-2 ring-blue-300'
                         : 'bg-surface border-border hover:border-border-strong text-text-secondary'
                     }`}
                   >
                     <div>
-                      <div className="text-xs font-bold text-text">{tpl.title}</div>
-                      <div className="text-[10px] text-text-muted mt-1">{tpl.desc}</div>
+                      <div className="text-sm font-bold text-slate-950">{tpl.name}</div>
+                      <div className="text-xs text-slate-700 mt-1">{tpl.description || 'Roteiro master'}</div>
                     </div>
                     <Badge variant={formData.templateId === tpl.id ? 'primary' : 'neutral'}>
-                      {tpl.nodes}
+                      {Array.isArray(tpl.flow_template) ? tpl.flow_template.length : 0} nós
                     </Badge>
-                  </div>
+                  </button>
                 ))}
               </div>
             </div>
@@ -406,7 +428,7 @@ export default function NewTenant() {
                 <Cpu className="w-5 h-5 text-primary" />
                 <div>
                   <h3 className="text-base font-bold text-text">Infraestrutura e chaves LLM</h3>
-                  <p className="text-xs text-text-secondary">Configurações para instanciar Evolution API e Secrets Vault criptografados.</p>
+                  <p className="text-xs text-text-secondary">Defina a chave de IA e reserve o identificador da instância. A conexão do WhatsApp será feita depois.</p>
                 </div>
               </div>
 
@@ -423,7 +445,7 @@ export default function NewTenant() {
                       className="w-full bg-surface border-border text-text pl-10 font-mono text-xs focus:border-primary/50"
                     />
                   </div>
-                  <p className="text-[9px] text-text-muted">Se deixado em branco, o tenant utilizará a chave global com rate limit faturado.</p>
+                  <p className="text-xs text-text-secondary">Se informada, a chave será armazenada criptografada. Sem chave própria, o tenant usará a configuração compartilhada quando disponível.</p>
                 </div>
 
                 <div className="space-y-2">
@@ -434,7 +456,7 @@ export default function NewTenant() {
                     onChange={(e) => setFormData(prev => ({ ...prev, evolutionInstance: e.target.value.toLowerCase().replace(/\s+/g, '-') }))}
                     className="w-full bg-surface border-border text-text placeholder-text-muted focus:border-primary/50 text-xs"
                   />
-                  <p className="text-[9px] text-text-muted">Se omitido, a API criará dinamicamente uma instância com base no slug do tenant.</p>
+                  <p className="text-xs text-text-secondary">Se omitido, será reservado um nome baseado no identificador do tenant. A instância ainda precisará ser conectada.</p>
                 </div>
               </div>
             </div>
@@ -450,7 +472,7 @@ export default function NewTenant() {
               <div className="space-y-2">
                 <h3 className="text-xl font-bold text-text">Código de Convite Gated Criado!</h3>
                 <p className="text-xs text-text-secondary px-6 max-w-lg mx-auto">
-                  O workspace de <strong>{formData.name}</strong> está provisionado. Enviei o seguinte código para que o corretor finalize o onboarding e configure o WhatsApp.
+                  O workspace de <strong>{formData.name}</strong> está provisionado. Copie o código abaixo e compartilhe-o com o responsável por um canal seguro para concluir o cadastro.
                 </p>
               </div>
 
@@ -476,7 +498,7 @@ export default function NewTenant() {
                 <div className="border-t border-border pt-4 flex flex-col items-start gap-1.5 text-[10px] text-text-secondary text-left">
                   <div className="flex items-center gap-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 text-success shrink-0" />
-                    <span>Workspace permanent slug: <strong className="font-mono">{formData.slug}</strong></span>
+                    <span>Identificador do workspace: <strong className="font-mono">{formData.slug}</strong></span>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 text-success shrink-0" />
@@ -497,12 +519,12 @@ export default function NewTenant() {
                     setFormData({
                       name: '',
                       slug: '',
-                      plan: 'Premium Multi',
+                      plan: 'PREMIUM',
                       mrrCentavos: '',
                       ownerName: '',
                       ownerEmail: '',
                       ownerWhatsapp: '',
-                      templateId: '1',
+                      templateId: '',
                       openAiKey: '',
                       evolutionInstance: ''
                     });
