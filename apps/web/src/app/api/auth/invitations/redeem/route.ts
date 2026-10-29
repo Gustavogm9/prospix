@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '../../../_lib/supabase-admin';
-import { normalizeOwnerEmail } from '@/lib/onboarding-validation';
+import { findUniqueOwnerByEmail, normalizeOwnerEmail } from '../../../../../lib/onboarding-validation';
 
 // The invite is the one-time credential. The server binds it to the pending owner
 // email before creating an Auth account; browser-provided tenant/role are ignored.
@@ -39,10 +39,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'INVITATION_INVALID', message: 'Este tenant não pode receber cadastros.' }, { status: 410 });
     }
 
-    const { data: owner, error: ownerError } = await admin.from('users')
-      .select('id, email').eq('tenant_id', invitation.tenant_id).eq('role', 'OWNER').is('deleted_at', null).maybeSingle();
+    const { data: owners, error: ownerError } = await admin.from('users')
+      .select('id, email').eq('tenant_id', invitation.tenant_id).eq('role', 'OWNER').is('deleted_at', null);
     if (ownerError) throw ownerError;
-    if (!owner || owner.email.toLowerCase() !== email) {
+    const owner = findUniqueOwnerByEmail(owners, email);
+    if (!owner) {
       return NextResponse.json({ error: 'EMAIL_MISMATCH', message: 'O e-mail informado não corresponde ao responsável cadastrado. Peça a correção ao administrador.' }, { status: 400 });
     }
     oldProfileId = owner.id;

@@ -11,3 +11,12 @@ export function normalizeOwnerEmail(value: unknown): string | null {
   if (!/^[a-z]{2,63}$/i.test(labels[labels.length - 1] ?? '')) return null;
   return email;
 }
+
+/** Resolve the submitted address without assuming a tenant has only one owner. */
+export function findUniqueOwnerByEmail<T extends { id: string; email: string }>(
+  owners: T[] | null,
+  email: string,
+): T | null {
+  const matching = (owners ?? []).filter((owner) => normalizeOwnerEmail(owner.email) === email);
+  return matching.length === 1 ? matching[0] ?? null : null;
+}
