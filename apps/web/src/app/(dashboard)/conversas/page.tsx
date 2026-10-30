@@ -9,6 +9,7 @@ import { conversationsQueries, meetingsQueries, leadsQueries } from '@/lib/queri
 import { useRealtimeEvents } from '@/hooks/useRealtimeEvents';
 import { useAuthStore } from '@/store/auth-store';
 import { useOperationalStatusContext } from '@/hooks/useOperationalStatus';
+import { keepSelectedConversation } from '@/lib/conversation-selection';
 
 interface Message {
   id: string;
@@ -238,9 +239,7 @@ export default function Conversations() {
       if (list && list.length > 0) {
         const mapped = list.map((conv: any, idx: number) => mapBackendConversation(conv, idx));
         setConversations(mapped);
-        if (!selectedConv) {
-          setSelectedConv(mapped[0] || null);
-        }
+        setSelectedConv((current) => keepSelectedConversation(current, mapped));
       } else {
         setConversations([]);
         setSelectedConv(null);
