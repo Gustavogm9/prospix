@@ -59,3 +59,16 @@ Escopo: cadastro e recuperação de conhecimento comercial por tenant e roteiro,
 - A Edge Function falha de forma segura: indisponibilidade da busca remove o contexto adicional, registra somente metadados e não interrompe a conversa.
 - O identificador e a versão de cada trecho utilizado são associados ao evento da conversa para auditoria, sem copiar o conteúdo para o log.
 - Escrita da base fica restrita a proprietário do tenant e administrador Guilds; assistente pode consultar somente o próprio tenant.
+
+## Remoção de conversa da esteira — 10/11/2026
+
+Escopo: ação do corretor no painel, histórico da conversa, fila de WhatsApp e atualizações recebidas do provedor. Remover significa ocultar uma conversa da esteira e parar a IA nela; não apaga o cadastro do lead nem as mensagens.
+
+| ID | Fronteira | Ameaça | Controle | Prova |
+|---|---|---|---|---|
+| CONV-01 | navegador → banco | Usuário remove conversa de outro tenant, sem perfil ou com acesso desativado | Função autenticada confere papel, tenant ativo e vínculo da conversa sob bloqueio de linha | chamada com sessão ausente, outro tenant e perfil inativo é negada |
+| CONV-02 | banco → fila → WhatsApp | Mensagem já enfileirada sai depois da remoção | Transação encerra conversa e cancela pendências; worker relê `removed_at` antes do envio | pendência não é reclamada nem enviada depois da remoção |
+| CONV-03 | webhook → esteira | Resposta posterior do lead ou atualização atrasada faz o cartão voltar | Histórico pode receber a mensagem, mas `removed_at` permanece; consultas e estado local filtram o cartão | atualização tardia e nova mensagem não reabrem o cartão |
+| CONV-04 | interface → histórico | Clique acidental apaga evidência ou todas as conversas do mesmo lead | Confirmação nomeia o lead; só o ID da conversa é marcado; mensagens e lead são preservados; evento registra autor e horário | outra conversa do mesmo lead permanece visível; repetição é idempotente |
+
+Risco residual: um envio externo iniciado no mesmo instante da remoção pode já estar em trânsito no provedor. A confirmação e o worker reduzem essa janela; o recibo do provedor continua sendo a fonte de verdade para esse caso.

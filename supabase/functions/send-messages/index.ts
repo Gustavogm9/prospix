@@ -2037,6 +2037,21 @@ async function processFirstTouch(
 
     // Iterar sobre os candidatos encontrados até achar um válido
     for (const lead of leads) {
+      // A removed latest conversation must not be recreated by the fallback.
+      // A later, explicitly started conversation may proceed normally.
+      const { data: latestConversation, error: latestConversationError } = await supabase
+        .from('conversations')
+        .select('id, removed_at')
+        .eq('tenant_id', tenantId)
+        .eq('lead_id', lead.id)
+        .order('started_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (latestConversationError || latestConversation?.removed_at) {
+        processedLeadIds.add(lead.id);
+        continue;
+      }
+
       if (campaign.homologation_mode) {
         const { data: qaAllowed } = await supabase
           .from('campaign_qa_allowlist')
@@ -2852,6 +2867,17 @@ async function runGuardianWorkerForTenant(
           continue;
         }
 
+        if (conversation.removed_at) {
+          await supabase.from('pending_outbound').update({
+            failed_at: new Date().toISOString(),
+            failed_reason: 'CONVERSATION_REMOVED',
+            validation_status: 'BLOCKED',
+            validation_reason_code: 'CONVERSATION_REMOVED',
+          }).eq('id', item.id).eq('tenant_id', tenantId).is('sent_at', null);
+          failed++;
+          continue;
+        }
+
         const phone = (conversation.leads as any).whatsapp;
         const leadName = (conversation.leads as any).name || 'Lead';
         const leadId = (conversation.leads as any).id || null;
@@ -3499,6 +3525,25 @@ async function runGuardianWorkerForTenant(
               .eq('id', item.id);
             failed++;
             await sleep(500);
+            continue;
+          }
+
+          // Recheck immediately before calling the external provider: the
+          // conversation may have been removed while this item was claimed.
+          const { data: currentConversation, error: currentConversationError } = await supabase
+            .from('conversations')
+            .select('removed_at')
+            .eq('id', item.conversation_id)
+            .eq('tenant_id', tenantId)
+            .maybeSingle();
+          if (currentConversationError || !currentConversation || currentConversation.removed_at) {
+            await supabase.from('pending_outbound').update({
+              failed_at: new Date().toISOString(),
+              failed_reason: 'CONVERSATION_REMOVED_OR_UNAVAILABLE',
+              validation_status: 'BLOCKED',
+              validation_reason_code: 'CONVERSATION_REMOVED_OR_UNAVAILABLE',
+            }).eq('id', item.id).eq('tenant_id', tenantId).is('sent_at', null);
+            failed++;
             continue;
           }
 

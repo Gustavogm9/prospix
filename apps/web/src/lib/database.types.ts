@@ -269,6 +269,8 @@ export type Database = {
           last_outbound_at: string | null
           lead_id: string
           message_count: number
+          removed_at: string | null
+          removed_by: string | null
           script_id: string | null
           started_at: string
           status: Database["public"]["Enums"]["ConversationStatus"]
@@ -285,6 +287,8 @@ export type Database = {
           last_outbound_at?: string | null
           lead_id: string
           message_count?: number
+          removed_at?: string | null
+          removed_by?: string | null
           script_id?: string | null
           started_at?: string
           status?: Database["public"]["Enums"]["ConversationStatus"]
@@ -301,6 +305,8 @@ export type Database = {
           last_outbound_at?: string | null
           lead_id?: string
           message_count?: number
+          removed_at?: string | null
+          removed_by?: string | null
           script_id?: string | null
           started_at?: string
           status?: Database["public"]["Enums"]["ConversationStatus"]
@@ -2147,6 +2153,7 @@ export type Database = {
     Functions: {
       current_tenant_id: { Args: never; Returns: string }
       current_user_role: { Args: never; Returns: string }
+      dismiss_conversation: { Args: { p_conversation_id: string }; Returns: boolean }
       retrieve_commercial_knowledge: {
         Args: {
           p_intent: string

@@ -1098,6 +1098,7 @@ export const conversationsQueries = {
       .from('conversations')
       .select('*, leads(*, health_profiles(*))')
       .eq('tenant_id', tenantId)
+      .is('removed_at', null)
       .order('last_message_at', { ascending: false })
       .limit(limit + 1);
 
@@ -1123,6 +1124,7 @@ export const conversationsQueries = {
       .select('*, leads(*)')
       .eq('id', id)
       .eq('tenant_id', tenantId)
+      .is('removed_at', null)
       .maybeSingle();
 
     if (error) return { data: null, error: mapError(error) };
@@ -1156,6 +1158,15 @@ export const conversationsQueries = {
     return { data: list, nextCursor, error: null };
   },
 
+  /** Remove one conversation from the pipeline without erasing its history. */
+  dismiss: async (conversationId: string) => {
+    const { data, error } = await supabase.rpc('dismiss_conversation', {
+      p_conversation_id: conversationId,
+    });
+    if (error) return { data: false, error: mapError(error) };
+    return { data: data === true, error: null };
+  },
+
   /** Send a manual message (creates DB record; actual sending requires backend queue) */
   sendMessage: async (tenantId: string, conversationId: string, content: string) => {
     // Verify conversation exists and AI handling is off
@@ -1164,6 +1175,7 @@ export const conversationsQueries = {
       .select('ai_handling')
       .eq('id', conversationId)
       .eq('tenant_id', tenantId)
+      .is('removed_at', null)
       .maybeSingle();
 
     if (convErr) return { data: null, error: mapError(convErr) };
@@ -1198,6 +1210,7 @@ export const conversationsQueries = {
       .update({ ai_handling: aiHandling, status })
       .eq('id', id)
       .eq('tenant_id', tenantId)
+      .is('removed_at', null)
       .select()
       .single();
 
@@ -1225,6 +1238,7 @@ export const conversationsQueries = {
       .select('*, leads(*, health_profiles(*))')
       .eq('tenant_id', tenantId)
       .eq('lead_id', leadId)
+      .is('removed_at', null)
       .in('status', ['ACTIVE', 'PAUSED', 'ESCALATED'] as ConversationStatus[])
       .order('started_at', { ascending: false })
       .limit(1)

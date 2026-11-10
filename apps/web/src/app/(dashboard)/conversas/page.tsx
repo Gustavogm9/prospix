@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Button, Input, toast } from '@prospix/ui';
-import { MessageSquare, Send, Bot, User, Phone, ChevronRight, Filter, ArrowUpDown, LayoutList, Columns3, X, Award, Clock, Plus } from 'lucide-react';
+import { MessageSquare, Send, Bot, User, Phone, ChevronRight, Filter, ArrowUpDown, LayoutList, Columns3, X, Award, Clock, Plus, Trash2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { conversationsQueries, meetingsQueries, leadsQueries } from '@/lib/queries';
 
@@ -10,6 +10,7 @@ import { useRealtimeEvents } from '@/hooks/useRealtimeEvents';
 import { useAuthStore } from '@/store/auth-store';
 import { useOperationalStatusContext } from '@/hooks/useOperationalStatus';
 import { keepSelectedConversation } from '@/lib/conversation-selection';
+import { keepVisibleConversations } from '@/lib/conversation-dismissal';
 
 interface Message {
   id: string;
@@ -107,6 +108,9 @@ export default function Conversations() {
   const operationalView = operationalStatus?.view;
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedConv, setSelectedConv] = useState<Conversation | null>(null);
+  const [conversationToDismiss, setConversationToDismiss] = useState<Conversation | null>(null);
+  const [isDismissing, setIsDismissing] = useState(false);
+  const dismissedIdsRef = useRef(new Set<string>());
   const selectedConversationId = selectedConv?.id;
   const selectedLeadId = selectedConv?.leadId;
   const [messages, setMessages] = useState<Message[]>([]);
@@ -237,7 +241,10 @@ export default function Conversations() {
       if (result.error) throw new Error(result.error.message);
       const list = result.data;
       if (list && list.length > 0) {
-        const mapped = list.map((conv: any, idx: number) => mapBackendConversation(conv, idx));
+        const mapped = keepVisibleConversations(
+          list.map((conv: any, idx: number) => mapBackendConversation(conv, idx)),
+          dismissedIdsRef.current,
+        );
         setConversations(mapped);
         setSelectedConv((current) => keepSelectedConversation(current, mapped));
       } else {
@@ -315,6 +322,11 @@ export default function Conversations() {
     },
     onConversationUpdated: (payload: Record<string, unknown>) => {
       const updated = payload;
+      if (updated.removed_at) {
+        setConversations((current) => current.filter((conversation) => conversation.id !== updated.id));
+        setSelectedConv((current) => current?.id === updated.id ? null : current);
+        return;
+      }
       setConversations(prev =>
         prev.map(c => {
           if (c.id === (updated.id as string)) {
@@ -376,6 +388,26 @@ export default function Conversations() {
       const rolled = { ...selectedConv, aiHandling: true };
       setSelectedConv(rolled);
       setConversations(conversations.map(c => c.id === selectedConv.id ? rolled : c));
+    }
+  };
+
+  const handleDismissConversation = async () => {
+    if (!conversationToDismiss || isDismissing) return;
+    setIsDismissing(true);
+    try {
+      const result = await conversationsQueries.dismiss(conversationToDismiss.id);
+      if (result.error || !result.data) {
+        throw new Error(result.error?.message || 'Não foi possível remover a conversa.');
+      }
+      dismissedIdsRef.current.add(conversationToDismiss.id);
+      setConversations((current) => keepVisibleConversations(current, dismissedIdsRef.current));
+      setSelectedConv((current) => current?.id === conversationToDismiss.id ? null : current);
+      setConversationToDismiss(null);
+      toast.success('Conversa removida', 'Ela saiu da esteira. O histórico do lead foi preservado.');
+    } catch (error) {
+      toast.error('Erro ao remover conversa', error instanceof Error ? error.message : 'Tente novamente.');
+    } finally {
+      setIsDismissing(false);
     }
   };
 
@@ -808,6 +840,12 @@ export default function Conversations() {
                   </div>
                 </div>
 
+                <button type="button" title="Apagar da esteira"
+                  aria-label={`Apagar conversa com ${conv.leadName} da esteira`}
+                  onClick={(event) => { event.stopPropagation(); setConversationToDismiss(conv); }}
+                  className="shrink-0 rounded-lg p-2 text-[#667085] hover:bg-[#FEF3F2] hover:text-[#B42318] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#B42318]"
+                ><Trash2 className="h-4 w-4" /></button>
+
                 {/* Chevron action */}
                 <div className={`shrink-0 w-10 h-10 flex items-center justify-center rounded-lg transition-all ${
                   selectedConv?.id === conv.id 
@@ -857,6 +895,11 @@ export default function Conversations() {
                       <div className={`text-[11px] font-bold font-mono shrink-0 ${conv.fitScore >= 8 ? 'text-[#039855]' : conv.fitScore >= 5 ? 'text-[#A56B0A]' : 'text-[#64748B]'}`}>
                         {conv.fitScore}
                       </div>
+                      <button type="button" title="Apagar da esteira"
+                        aria-label={`Apagar conversa com ${conv.leadName} da esteira`}
+                        onClick={(event) => { event.stopPropagation(); setConversationToDismiss(conv); }}
+                        className="shrink-0 rounded-md p-1 text-[#667085] hover:bg-[#FEF3F2] hover:text-[#B42318] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#B42318]"
+                      ><Trash2 className="h-3.5 w-3.5" /></button>
                     </div>
                     <div className="text-[10.5px] text-[#475569] italic truncate">{conv.lastMessage}</div>
                     <div className="text-[9px] text-[#94A3B8] font-mono mt-1">{conv.whenLabel || conv.timestamp}</div>
@@ -927,6 +970,16 @@ export default function Conversations() {
                     <X className="w-[14px] h-[14px]" />
                   </button>
                 </div>
+              </div>
+              <div className="mt-3 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setConversationToDismiss(selectedConv)}
+                  className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-[#B42318] hover:bg-[#FEF3F2] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#B42318]"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Apagar da esteira
+                </button>
               </div>
             </div>
 
@@ -1389,6 +1442,36 @@ export default function Conversations() {
             </div>
           </div>
         </>
+      )}
+
+      {conversationToDismiss && (
+        <div className="fixed inset-0 z-[91] flex items-center justify-center bg-[rgba(15,23,42,0.6)] px-4"
+          onKeyDown={(event) => {
+            if (event.key === 'Escape' && !isDismissing) setConversationToDismiss(null);
+          }}
+        >
+          <div role="dialog" aria-modal="true" aria-labelledby="dismiss-conversation-title"
+            aria-describedby="dismiss-conversation-description"
+            className="w-full max-w-[440px] rounded-xl border border-[#E5E7EB] bg-white p-6 shadow-xl"
+          >
+            <h3 id="dismiss-conversation-title" className="text-lg font-semibold text-[#0F172A]">
+              Apagar conversa da esteira?
+            </h3>
+            <p id="dismiss-conversation-description" className="mt-3 text-sm leading-6 text-[#475569]">
+              A conversa com <strong className="text-[#0F172A]">{conversationToDismiss.leadName}</strong> sairá da tabela e do Kanban.
+              A IA deixará de responder nesta conversa e os envios pendentes dela serão cancelados. O cadastro do lead e o histórico ficam guardados.
+            </p>
+            <div className="mt-6 flex flex-wrap justify-end gap-2">
+              <button type="button" autoFocus disabled={isDismissing}
+                onClick={() => setConversationToDismiss(null)}
+                className="rounded-lg border border-[#D0D5DD] px-4 py-2 text-sm font-semibold text-[#0F172A] hover:bg-[#F1F3F6] disabled:opacity-60"
+              >Cancelar</button>
+              <button type="button" disabled={isDismissing} onClick={handleDismissConversation}
+                className="rounded-lg bg-[#B42318] px-4 py-2 text-sm font-semibold text-white hover:bg-[#912018] disabled:opacity-60"
+              >{isDismissing ? 'Apagando...' : 'Apagar conversa'}</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── Outcome closed modal ────────────────────────────────────────── */}
