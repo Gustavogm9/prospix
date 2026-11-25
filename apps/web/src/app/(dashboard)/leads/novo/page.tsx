@@ -42,13 +42,13 @@ function NewLeadForm({ tenantId }: { tenantId: string }) {
         throw new Error(result.erro?.mensagem || 'Não foi possível confirmar o cadastro. Confira Meus Leads antes de tentar novamente.');
       }
       notifyOnboardingProgress();
-      router.push('/onboarding');
+      router.push('/onbording');
     } catch (cause) {
       if (useAuthStore.getState().tenantId === scope) setError(cause instanceof Error ? cause.message : 'Não foi possível confirmar o cadastro.');
     } finally { saving.current = false; setBusy(false); }
   };
   return <section aria-labelledby="onboarding-client-title" className="mx-auto max-w-xl rounded-2xl border border-border bg-white p-5 shadow-sm sm:p-7">
-    <Link href="/onboarding" className="mb-5 inline-flex min-h-11 items-center text-sm text-primary underline">Voltar aos primeiros passos</Link>
+    <Link href="/onbording" className="mb-5 inline-flex min-h-11 items-center text-sm text-primary underline">Voltar aos primeiros passos</Link>
     <h1 id="onboarding-client-title" className="text-xl font-bold text-text">Cadastre seu primeiro cliente</h1>
     <p className="mt-2 text-sm text-text-secondary">Ele ficará em Meus Leads. Nenhuma mensagem será enviada ao salvar.</p>
     <form onSubmit={submit} className="mt-6 space-y-4" noValidate>

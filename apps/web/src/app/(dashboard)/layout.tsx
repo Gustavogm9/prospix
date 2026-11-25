@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { OnboardingFlow } from '@/components/OnboardingFlow';
 import { useAuthStore } from '@/store/auth-store';
@@ -14,6 +14,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const pathname = usePathname();
   const { user, tenantId, clearSession, initialized, initializeFromSupabase } = useAuthStore();
   const [hasHydrated, setHasHydrated] = useState(false);
+  const [tutorialIdentity, setTutorialIdentity] = useState<string | null>(null);
+  const identity = `${tenantId}:${user?.id}`;
+  const openTutorial = useCallback(() => setTutorialIdentity(identity), [identity]);
   const [isSessionExpired, setIsSessionExpired] = useState(false);
 
   // Wait for Zustand to hydrate from localStorage
@@ -77,10 +80,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   return (
     <>
-      <AppShell>
-        <OnboardingFlow showChecklist={pathname === '/inicio'} />
-        {children}
-      </AppShell>
+      <OnboardingFlow key={`onboarding:${identity}`} onComplete={openTutorial} />
+      {pathname === '/onbording' ? (
+        <main className="min-h-[100dvh] bg-bg px-4 py-8 sm:px-6">{children}</main>
+      ) : (
+        <AppShell key={`shell:${identity}`} tutorialOpen={tutorialIdentity === identity} onTutorialClose={() => setTutorialIdentity(null)}>
+          {children}
+        </AppShell>
+      )}
 
       {/* Session Expired Forced Modal */}
       {isSessionExpired && (

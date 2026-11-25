@@ -57,6 +57,8 @@ interface MenuItem {
 }
 
 interface AppShellProps {
+  tutorialOpen?: boolean;
+  onTutorialClose?: () => void;
   children: React.ReactNode;
 }
 
@@ -84,7 +86,7 @@ function dotPingClass(tone: OperationalTone): string {
   return 'bg-[#94A3B8]';
 }
 
-export default function AppShell({ children }: AppShellProps) {
+export default function AppShell({ children, tutorialOpen = false, onTutorialClose }: AppShellProps) {
   const { user, clearSession } = useAuthStore();
   const router = useRouter();
   const pathname = usePathname() ?? '';
@@ -156,6 +158,7 @@ export default function AppShell({ children }: AppShellProps) {
     {
       items: [
         { name: 'Início', path: '/inicio', icon: Home },
+        { name: 'Primeiros passos', path: '/onbording', icon: Lightbulb },
         { name: 'Conversas', path: '/conversas', icon: MessageSquare, badge: counters?.conversations || undefined },
         { name: 'Pipeline', path: '/funil', icon: Columns, badge: counters?.pipeline || undefined },
         { name: 'Minha Agenda', path: '/agenda', icon: Calendar },
@@ -539,7 +542,7 @@ export default function AppShell({ children }: AppShellProps) {
         </main>
       </div>
       
-      <TutorialModal isOpen={isTutorialOpen} onClose={() => setIsTutorialOpen(false)} />
+      <TutorialModal isOpen={isTutorialOpen || tutorialOpen} onClose={() => { setIsTutorialOpen(false); onTutorialClose?.(); }} />
     </div>
     </OperationalStatusProvider>
     </ErrorBoundary>

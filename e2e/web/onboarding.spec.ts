@@ -40,7 +40,7 @@ test.describe('Primeiros passos · dados fictícios e rede interceptada', () => 
     });
   });
 
-  async function login(page: Page) {
+  async function login(page: Page, expectedPath = '/onbording') {
     const profile = { ...authState.state.user, name: 'Cliente de teste', email: 'cliente@example.test', deleted_at: null };
     await page.route('**/rest/v1/users*', route => route.fulfill({ status: 200, json: profile }));
     await page.route('**/auth/v1/token*', route => route.fulfill({ status: 200, json: {
@@ -57,11 +57,11 @@ test.describe('Primeiros passos · dados fictícios e rede interceptada', () => 
     await page.locator('input[type=email]').fill(profile.email);
     await page.locator('input[type=password]').fill('fictional-test-password');
     await page.getByRole('button', { name: 'Entrar no Prospix' }).click();
-    await expect(page).toHaveURL(/\/inicio$/);
+    await expect(page).toHaveURL(new RegExp(`${expectedPath}$`), { timeout: 60_000 });
   }
 
   test('começa pelo WhatsApp, ignora marcação antiga e avança após confirmar conexão', async ({ page }) => {
-    await page.goto('/inicio');
+    await page.goto('/onbording');
     await expect(page.getByRole('link', { name: 'Conectar WhatsApp' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Cadastrar cliente', exact: true })).toHaveCount(0);
     await expect(page.getByRole('heading', { name: 'Sua máquina de prospecção autônoma.' })).toHaveCount(0);
@@ -93,72 +93,110 @@ test.describe('Primeiros passos · dados fictícios e rede interceptada', () => 
     expect(posts[0]).toBe(posts[1]);
   });
 
-  test('novo login reabre o guia minimizado somente da própria conta', async ({ page }) => {
+  test('login abre rota separada sem o menu e sem sobrepor pop-up', async ({ page }) => {
     await login(page);
-    const dialog = page.getByRole('dialog', { name: 'Vamos configurar sua conta' });
-    await expect(dialog.getByRole('link', { name: 'Conectar WhatsApp' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Conectar WhatsApp' })).toBeVisible();
+    await expect(page.getByRole('navigation')).toHaveCount(0);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
     const otherKey = 'prospix-onboarding:v2:outra-organizacao:outra-pessoa';
     expect(await page.evaluate(key => localStorage.getItem(key), otherKey)).toBe('minimized');
   });
 
-  test('pop-up acompanha as cinco etapas confirmadas e retoma após recarregar', async ({ page }) => {
+  test('acompanha etapas na rota própria e abre Como funciona ao concluir', async ({ page }) => {
     test.setTimeout(180_000);
     await login(page);
-    const dialog = page.getByRole('dialog');
-    await dialog.getByRole('link', { name: 'Conectar WhatsApp' }).click();
+    await page.getByRole('link', { name: 'Conectar WhatsApp' }).click();
     await expect(page).toHaveURL(/tab=integracoes/, { timeout: 30_000 });
-    await expect(dialog).toHaveCount(0);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
     await page.reload();
-    await expect(page.getByRole('button', { name: 'Ver próxima etapa' })).toBeVisible();
-    await expect(dialog).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Primeiros passos', exact: true })).toBeVisible();
     connected = true;
     await page.evaluate(() => window.dispatchEvent(new Event('prospix-onboarding-refresh')));
-    await dialog.getByRole('link', { name: 'Cadastrar cliente', exact: true }).click();
+    await expect(page).toHaveURL(/\/onbording$/);
+    await page.getByRole('link', { name: 'Cadastrar cliente', exact: true }).click();
     saveSuccess = true;
     await page.getByLabel('Nome do cliente').fill('Contato fictício');
     await page.getByLabel('WhatsApp com DDD').fill('11999991234');
     await page.getByRole('button', { name: 'Salvar cliente e continuar' }).click();
-    await dialog.getByRole('link', { name: 'Definir ICP' }).click();
+    await page.getByRole('link', { name: 'Definir ICP' }).click();
+    await expect(page).toHaveURL(/\/icps$/, { timeout: 30_000 });
     icpSaved = true;
     await page.evaluate(() => window.dispatchEvent(new Event('prospix-onboarding-refresh')));
-    await dialog.getByRole('link', { name: 'Preencher perfil comercial' }).click();
+    await page.getByRole('link', { name: 'Preencher perfil comercial' }).click();
+    await expect(page).toHaveURL(/tab=contexto/, { timeout: 30_000 });
     contextSaved = true;
     await page.evaluate(() => window.dispatchEvent(new Event('prospix-onboarding-refresh')));
-    await dialog.getByRole('link', { name: 'Preparar roteiro' }).click();
+    await page.getByRole('link', { name: 'Preparar roteiro' }).click();
+    await expect(page).toHaveURL(/\/roteiros$/, { timeout: 30_000 });
     scriptSaved = true;
     await page.evaluate(() => window.dispatchEvent(new Event('prospix-onboarding-refresh')));
-    await expect(page.getByRole('dialog', { name: 'Configuração inicial concluída' })).toBeVisible();
-    await dialog.getByRole('link', { name: 'Ir para o painel' }).click();
-    await expect(dialog).toHaveCount(0);
+    await expect(page).toHaveURL(/\/inicio$/);
+    const tutorial = page.getByRole('dialog', { name: 'Como funciona' });
+    await expect(tutorial.getByRole('heading', { name: '1. Descoberta de Leads' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(tutorial).toHaveCount(0);
+    await page.evaluate(() => window.dispatchEvent(new Event('prospix-onboarding-refresh')));
+    await expect(tutorial).toHaveCount(0);
+    await page.reload();
+    await expect(tutorial).toHaveCount(0);
+    await page.getByRole('button', { name: 'Tour de 2min' }).click();
+    await expect(tutorial.getByRole('heading', { name: '1. Descoberta de Leads' })).toBeVisible();
   });
 
-  test('dispensar o pop-up não o reabre por atualização automática', async ({ page }) => {
+  test('continuar depois mantém o painel sem guia e sem reabrir automaticamente', async ({ page }) => {
     await login(page);
-    await expect(page.getByRole('dialog').getByRole('link', { name: 'Conectar WhatsApp' })).toBeVisible();
-    await page.keyboard.press('Escape');
-    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await page.getByRole('link', { name: 'Continuar depois' }).click();
+    await expect(page).toHaveURL(/\/inicio$/);
     connected = true;
     await page.evaluate(() => window.dispatchEvent(new Event('prospix-onboarding-refresh')));
+    await expect(page).toHaveURL(/\/inicio$/);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Vamos preparar seu primeiro atendimento' })).toHaveCount(0);
+    await page.getByRole('link', { name: 'Primeiros passos', exact: true }).click();
+    await expect(page).toHaveURL(/\/onbording$/);
+    await expect(page.getByRole('link', { name: 'Cadastrar cliente', exact: true })).toBeVisible();
+  });
+
+  test('endereço antigo redireciona para /onbording', async ({ page }) => {
+    await page.goto('/onboarding');
+    await expect(page).toHaveURL(/\/onbording$/);
+    await expect(page.getByRole('link', { name: 'Conectar WhatsApp' })).toBeVisible();
+  });
+
+  test('conta já configurada entra no painel sem repetir guia ou tour', async ({ page }) => {
+    connected = created = icpSaved = contextSaved = scriptSaved = true;
+    await login(page, '/inicio');
+    await expect(page.getByRole('link', { name: 'Primeiros passos', exact: true })).toBeVisible();
+    await expect(page).toHaveURL(/\/inicio$/);
     await expect(page.getByRole('dialog')).toHaveCount(0);
   });
 
   for (const [width, height] of [[320, 568], [375, 812], [812, 375]]) {
-    test(`pop-up acessível em ${width}x${height}`, async ({ page }) => {
+    test(`Como funciona acessível em ${width}x${height}`, async ({ page }) => {
       await page.setViewportSize({ width, height });
-      await login(page);
-      const dialog = page.getByRole('dialog');
-      const action = dialog.getByRole('link', { name: 'Conectar WhatsApp' });
-      await expect(action).toBeVisible();
+      connected = created = icpSaved = contextSaved = scriptSaved = true;
+      await page.addInitScript(({ tenant, owner }) => sessionStorage.setItem(`prospix-onboarding-flow:v1:${tenant}:${owner}`, JSON.stringify({ open: false, step: 'firstScript' })), { tenant: MOCK_TENANT_ID, owner: MOCK_OWNER_ID });
+      await page.goto('/inicio');
+      const dialog = page.getByRole('dialog', { name: 'Como funciona' });
+      const action = dialog.getByRole('button', { name: 'Próximo' });
+      await expect(action).toBeVisible({ timeout: 30_000 });
       const box = await action.boundingBox();
       expect(box && box.y + box.height <= height).toBeTruthy();
       await action.focus(); await page.keyboard.press('Tab');
-      await expect(dialog.getByRole('button', { name: 'Fechar primeiros passos' })).toBeFocused();
-      await dialog.getByRole('region', { name: 'Detalhes das etapas' }).focus();
-      await page.keyboard.press('End');
-      await expect(dialog.getByText('Prepare e ative seu roteiro', { exact: true })).toBeInViewport();
+      await expect(dialog.getByRole('button', { name: 'Fechar como funciona' })).toBeFocused();
       const result = await new AxeBuilder({ page }).include('dialog').analyze();
       expect(result.violations.filter(issue => ['serious', 'critical'].includes(issue.impact || ''))).toEqual([]);
-      await page.screenshot({ path: `.local/onboarding-qa/popup-${width}x${height}.png` });
+      for (let step = 0; step < 4; step++) await dialog.getByRole('button', { name: 'Próximo' }).click();
+      await expect(dialog.getByRole('heading', { name: '5. Qualificação & Agendamento' })).toBeInViewport();
+      await expect(dialog.getByRole('button', { name: 'Começar agora' })).toBeInViewport();
+      await dialog.getByRole('region', { name: 'Explicação do funcionamento' }).focus();
+      await page.keyboard.press('End');
+      await expect(dialog.getByText('a equipe confirma o horário', { exact: false })).toBeInViewport();
+      await expect(dialog.getByRole('button', { name: 'Começar agora' })).toBeInViewport();
+      expect(await page.evaluate(() => window.scrollY)).toBe(0);
+      await page.screenshot({ path: `.local/onboarding-qa/tutorial-${width}x${height}.png` });
+      await dialog.getByRole('button', { name: 'Começar agora' }).click();
+      await expect(dialog).toHaveCount(0);
     });
   }
 
@@ -168,16 +206,16 @@ test.describe('Primeiros passos · dados fictícios e rede interceptada', () => 
     await page.getByLabel('Nome do cliente').fill('Contato fictício');
     await page.getByLabel('WhatsApp com DDD').fill('11999991234');
     await page.getByRole('button', { name: 'Salvar cliente e continuar' }).click();
-    await expect(page).toHaveURL(/\/onboarding$/);
+    await expect(page).toHaveURL(/\/onbording$/);
     await expect(page.getByRole('link', { name: 'Definir ICP' })).toBeVisible();
     expect(posts).toHaveLength(1);
   });
 
   test('guia e cadastro sem violações sérias de acessibilidade', async ({ page }) => {
-    for (const path of ['/onboarding', '/leads/novo']) {
+    for (const path of ['/onbording', '/leads/novo']) {
       await page.goto(path);
-      await expect(page.getByRole('heading', { name: path === '/onboarding' ? 'Vamos preparar seu primeiro atendimento' : 'Cadastre seu primeiro cliente' })).toBeVisible();
-      if (path === '/onboarding') await expect(page.getByRole('link', { name: 'Conectar WhatsApp' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: path === '/onbording' ? 'Vamos preparar seu primeiro atendimento' : 'Cadastre seu primeiro cliente' })).toBeVisible();
+      if (path === '/onbording') await expect(page.getByRole('link', { name: 'Conectar WhatsApp' })).toBeVisible();
       const result = await new AxeBuilder({ page }).include('section[aria-labelledby]').analyze();
       expect(result.violations.filter(issue => ['serious', 'critical'].includes(issue.impact || ''))).toEqual([]);
     }
@@ -187,12 +225,12 @@ test.describe('Primeiros passos · dados fictícios e rede interceptada', () => 
     test(`guia e formulário cabem em ${width}px`, async ({ page }) => {
       connected = true;
       await page.setViewportSize({ width, height: 812 });
-      for (const path of ['/onboarding', '/leads/novo']) {
+      for (const path of ['/onbording', '/leads/novo']) {
         await page.goto(path);
-        await expect(page.getByRole('heading', { name: path === '/onboarding' ? 'Vamos preparar seu primeiro atendimento' : 'Cadastre seu primeiro cliente' })).toBeVisible();
-        if (path === '/onboarding') await expect(page.getByRole('link', { name: 'Cadastrar cliente', exact: true })).toBeVisible();
+        await expect(page.getByRole('heading', { name: path === '/onbording' ? 'Vamos preparar seu primeiro atendimento' : 'Cadastre seu primeiro cliente' })).toBeVisible();
+        if (path === '/onbording') await expect(page.getByRole('link', { name: 'Cadastrar cliente', exact: true })).toBeVisible();
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-        if (path === '/onboarding') await page.screenshot({ path: `.local/onboarding-qa/onboarding-${width}.png`, fullPage: true });
+        if (path === '/onbording') await page.screenshot({ path: `.local/onboarding-qa/onboarding-${width}.png`, fullPage: true });
       }
     });
   }

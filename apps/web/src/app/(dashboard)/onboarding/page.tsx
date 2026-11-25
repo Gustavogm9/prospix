@@ -1,5 +1,5 @@
-'use client';
-import { OnboardingChecklist } from '@/components/OnboardingChecklist';
+import { redirect } from 'next/navigation';
+
 export default function OnboardingPage() {
-  return <div className="mx-auto max-w-3xl py-4"><OnboardingChecklist standalone /></div>;
+  redirect('/onbording');
 }

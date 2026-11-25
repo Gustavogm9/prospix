@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import { Target, Search, FileText, MessageSquare, Calendar, X, ChevronRight, Bot } from 'lucide-react';
 
 interface TutorialModalProps {
@@ -52,6 +52,21 @@ const STEPS = [
 export function TutorialModal({ isOpen, onClose }: TutorialModalProps) {
   const [currentStep, setCurrentStep] = useState(0);
 
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  const descriptionId = useId();
+  useEffect(() => {
+    if (!isOpen) { setCurrentStep(0); return; }
+    const dialog = dialogRef.current;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    if (dialog && !dialog.open) dialog.showModal();
+    return () => {
+      if (dialog?.open) dialog.close();
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
   const handleNext = () => {
@@ -59,8 +74,6 @@ export function TutorialModal({ isOpen, onClose }: TutorialModalProps) {
       setCurrentStep(currentStep + 1);
     } else {
       onClose();
-      // reset timer for next time
-      setTimeout(() => setCurrentStep(0), 500);
     }
   };
 
@@ -75,23 +88,29 @@ export function TutorialModal({ isOpen, onClose }: TutorialModalProps) {
   const Icon = step.icon;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      {/* Backdrop */}
-      <div 
-        className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
-        onClick={onClose}
-      />
-
+    <dialog ref={dialogRef} aria-label="Como funciona" aria-describedby={descriptionId}
+      onCancel={event => { event.preventDefault(); onClose(); }}
+      onClick={event => { if (event.target === event.currentTarget) onClose(); }}
+      onKeyDown={event => {
+        if (event.key !== 'Tab') return;
+        const controls = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
+        const first = controls[0]; const last = controls[controls.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }}
+      className="fixed inset-0 m-auto h-fit w-[calc(100%_-_2rem)] max-w-4xl overflow-hidden rounded-2xl border-0 bg-white p-0 text-text shadow-2xl backdrop:bg-black/60"
+    >
       {/* Modal */}
       <div className="relative w-full max-w-4xl bg-white rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
         <button 
           onClick={onClose}
-          className="absolute top-4 right-4 p-2 z-10 rounded-full bg-black/20 hover:bg-black/40 text-white backdrop-blur-md transition-all"
+          aria-label="Fechar como funciona"
+          className="absolute top-4 right-4 flex h-11 w-11 items-center justify-center z-10 rounded-full bg-surface-sunken text-primary backdrop-blur-md transition-all"
         >
           <X className="w-5 h-5" />
         </button>
 
-        <div className="flex flex-col md:flex-row h-[500px]">
+        <div className="flex max-h-[calc(100dvh_-_2rem)] flex-col md:h-[500px] md:flex-row">
           {/* Left Side - Visual/Image */}
           <div className="w-full md:w-1/2 relative bg-[#142C52] overflow-hidden hidden md:block">
             <img 
@@ -112,10 +131,10 @@ export function TutorialModal({ isOpen, onClose }: TutorialModalProps) {
           </div>
 
           {/* Right Side - Content */}
-          <div className="w-full md:w-1/2 p-8 md:p-12 flex flex-col h-full bg-white relative">
+          <div className="w-full min-h-0 md:w-1/2 p-5 pt-16 md:p-10 flex flex-col bg-white relative">
             
             {/* Progress indicators */}
-            <div className="flex gap-1.5 mb-8">
+            <div className="flex shrink-0 gap-1.5 mb-5">
               {STEPS.map((_, idx) => (
                 <div 
                   key={idx} 
@@ -127,26 +146,26 @@ export function TutorialModal({ isOpen, onClose }: TutorialModalProps) {
             </div>
 
             {/* Content */}
-            <div className="flex-1 flex flex-col justify-center">
+            <div role="region" aria-label="Explicação do funcionamento" tabIndex={0} className="min-h-0 flex-1 overflow-y-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
               <div className={`w-14 h-14 rounded-2xl ${step.bg} ${step.color} flex items-center justify-center mb-6`}>
                 <Icon className="w-7 h-7" />
               </div>
               
-              <h3 className="text-2xl font-bold text-gray-900 mb-4 tracking-tight">
+              <h3 id={titleId} className="text-2xl font-bold text-gray-900 mb-4 tracking-tight">
                 {step.title}
               </h3>
               
-              <p className="text-[15px] text-gray-500 leading-relaxed">
+              <p id={descriptionId} className="text-[15px] text-text-secondary leading-relaxed">
                 {step.description}
               </p>
             </div>
 
             {/* Footer / Controls */}
-            <div className="flex items-center justify-between mt-8 pt-6 border-t border-gray-100">
+            <div className="flex shrink-0 items-center justify-between mt-5 pt-4 border-t border-gray-100">
               <button
                 onClick={handlePrev}
                 disabled={currentStep === 0}
-                className={`text-sm font-medium transition-colors ${
+                className={`min-h-11 px-2 text-sm font-medium transition-colors ${
                   currentStep === 0 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-500 hover:text-gray-900'
                 }`}
               >
@@ -165,6 +184,6 @@ export function TutorialModal({ isOpen, onClose }: TutorialModalProps) {
           </div>
         </div>
       </div>
-    </div>
+    </dialog>
   );
 }

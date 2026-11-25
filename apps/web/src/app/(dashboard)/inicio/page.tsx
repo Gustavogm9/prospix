@@ -8,6 +8,7 @@ import { useAuthStore } from '@/store/auth-store';
 
 import { leadStageSummary } from '@/lib/lead-stage-summary';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 
 import { useOperationalStatusContext } from '@/hooks/useOperationalStatus';
 
@@ -555,7 +556,7 @@ export default function HomePage() {
               Bem-vindo ao Prospix! 🚀
             </h1>
             <p className="text-[13px] text-[#475569] leading-relaxed">
-              Sua máquina de prospecção autônoma está pronta para rodar. Siga o <strong className="text-[#0F172A]">checklist de primeiros passos</strong> abaixo para configurar tudo e começar a capturar leads.
+              Para configurar sua conta e preparar a prospecção, acesse o guia de <Link href="/onbording" className="font-semibold text-primary underline">primeiros passos</Link>.
             </p>
           </div>
         ) : (
@@ -582,9 +583,6 @@ export default function HomePage() {
           </>
         )}
       </div>
-
-      {/* Onboarding Checklist */}
-
 
       {/* ═══ Action Cards (4 cards) ═══ */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
