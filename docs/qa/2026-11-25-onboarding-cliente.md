@@ -62,3 +62,17 @@ Prova pública: HEAD /login respondeu 200 com X-Content-Type-Options nosniff e X
 O pedido adicional para reconhecer conclusão automática já é atendido pelo estado publicado: WhatsApp conectado no provedor; contato não excluído salvo; ICP salvo; contexto com persona, descrição e tom preenchidos; roteiro ACTIVE não arquivado. Eventos de salvamento pedem releitura, e a próxima pendência real é a que reabre o pop-up. Falha de leitura não confirma conclusão. Sessão local guarda apresentação, não é fonte das etapas concluídas.
 
 Limite da prova: login real e abertura inicial foram observados em produção; avanço completo continua certificado pelos cenários locais com dados fictícios, sem preencher a conta real. O usuário navegou posteriormente para o login; uma captura feita nesse momento foi identificada como login-after-user-navigation.jpg e não é usada como comprovante do pop-up. O registro da abertura e da primeira ação é a observação de acessibilidade do navegador na sessão. Não se atribui ao executor um clique manual no Questboard: a versão já estava publicada quando conferida.
+
+## Roteiro do teste real WhatsApp → próxima etapa — 25/11/2026
+
+Pedido autorizado: testar na conta cliente solicitada se conectar o WhatsApp confirma a primeira etapa e abre automaticamente o pop-up do primeiro contato. A abertura do pop-up no login já tem prova de produção na rodada anterior; isso não certifica o pareamento ou a transição real.
+
+Critérios desta rodada:
+1. Confirmar a conta pelo perfil exibido no painel.
+2. Observar a etapa Conecte seu WhatsApp antes de parear; usar o botão real do pop-up.
+3. Se necessário, pareamento do número correto feito pelo próprio usuário no QR Code, sem reutilizar canal/instância de outra organização.
+4. Observar confirmação de conexão ativa no próprio sistema/provedor.
+5. Verificar se o pop-up reaparece com Cadastrar cliente sem clicar em Conferir etapas, marcar conclusão, alterar armazenamento, simular resposta ou recarregar para provocar o avanço.
+6. Deixar a etapa do primeiro contato aberta, sem criar contato, ativar campanha ou enviar mensagem. Registrar o resultado e eventual demora/erro.
+
+Estado inicial: o usuário pediu reabrir o pop-up para outro responsável testar. A aba controlada voltou ao login quando foi aberta a rota protegida de configurações. E-mail da conta preenchido, entrada deixada ao usuário; retomada do pop-up e pareamento ainda aguardam sessão acessível. Não se declara transição real aprovada enquanto essas etapas não forem observadas.
