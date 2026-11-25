@@ -80,7 +80,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   return (
     <>
-      <OnboardingFlow key={`onboarding:${identity}`} onComplete={openTutorial} />
+      <OnboardingFlow key={`onboarding:${identity}`} onComplete={openTutorial}>
       {pathname === '/onbording' ? (
         <main className="min-h-[100dvh] bg-bg px-4 py-8 sm:px-6">{children}</main>
       ) : (
@@ -88,6 +88,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {children}
         </AppShell>
       )}
+      </OnboardingFlow>
 
       {/* Session Expired Forced Modal */}
       {isSessionExpired && (

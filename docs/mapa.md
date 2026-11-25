@@ -1,23 +1,22 @@
 # Mapa do onboarding
 
-Escopo: navegação e apresentação do onboarding; levantamento em 25/11/2026, base local `578761c`.
+Escopo atualizado em 25/11/2026; base `928d4ac`. Onboarding de uma etapa por vez, com ações na própria rota.
 
-- `apps/web/src/app/login/page.tsx:74`: inicia acompanhamento apenas para a identidade autenticada. O roteamento administrativo continua independente.
-- `apps/web/src/app/(dashboard)/layout.tsx:59`: guarda de sessão do dashboard, preservada também no onboarding.
-- `apps/web/src/app/(dashboard)/layout.tsx:83`: observador de progresso persiste entre rotas; somente `/onbording` usa o layout sem o menu das seções.
-- `apps/web/src/app/(dashboard)/onbording/page.tsx:1`: página dedicada com checklist.
-- `apps/web/src/app/(dashboard)/onboarding/page.tsx:1`: compatibilidade com a URL anterior por redirecionamento.
-- `apps/web/src/components/OnboardingFlow.tsx:44`: confirma progresso; etapa nova encaminha à página dedicada; conclusão abre o tutorial no painel.
-- `apps/web/src/components/OnboardingChecklist.tsx:25`: carregamento, erro, nova tentativa e ações sequenciais da página; dispensa encerra o acompanhamento.
-- `apps/web/src/lib/load-onboarding-progress.ts:1`: fontes existentes de conexão e cadastros confirmados no tenant; nenhuma nova persistência de progresso.
-- `apps/web/src/lib/onboarding-session.ts:1`: continuidade em memória/sessionStorage por tenant e pessoa.
-- `apps/web/src/app/(dashboard)/leads/novo/page.tsx:45`: retorna à nova rota após confirmação de cadastro.
-- `apps/web/src/app/(dashboard)/inicio/page.tsx:559`: boas-vindas aponta para o guia dedicado, sem citar um checklist abaixo do painel.
-- `apps/web/src/layout/AppShell.tsx:161`: acesso para retomar os primeiros passos.
-- `apps/web/src/layout/AppShell.tsx:545`: a abertura automática e os botões manuais usam o mesmo tutorial.
-- `apps/web/src/components/TutorialModal.tsx:52`: tutorial existente, com diálogo acessível, foco contido e conteúdo rolável.
-- `e2e/web/onboarding.spec.ts:1`: fluxo de navegador com rede interceptada e dados fictícios.
+- `apps/web/src/app/(dashboard)/layout.tsx:83`: guarda de sessão preservada; provedor de progresso envolve a rota dedicada e o shell.
+- `apps/web/src/components/OnboardingFlow.tsx:50`: única consulta de progresso, refresh após gravação e polling de 20 s; descarta resposta após troca de identidade/geração.
+- `apps/web/src/components/onboarding/OnboardingProgressContext.tsx:1`: compartilha a mesma confirmação entre o observador e a tela, eliminando a segunda consulta.
+- `apps/web/src/components/OnboardingChecklist.tsx:18`: wizard, com uma etapa visível, progresso, erro/retry e continuar depois.
+- `apps/web/src/components/onboarding/WhatsAppStep.tsx:8`: QR Code na etapa; chama o endpoint de conexão existente por ação explícita do OWNER; só sai após status confirmado.
+- `apps/web/src/components/onboarding/NewLeadForm.tsx:10`: formulário compartilhado entre a etapa 2 e `/leads/novo`, mantendo validação e Idempotency-Key existentes.
+- `apps/web/src/components/onboarding/SetupForms.tsx:17`: perfil ideal usando `icpsQueries.create`.
+- `apps/web/src/components/onboarding/SetupForms.tsx:50`: contexto comercial, preservando campos existentes; sucesso exige resposta com o tenant esperado.
+- `apps/web/src/components/onboarding/SetupForms.tsx:91`: roteiro com revisão explícita; reutiliza create/update existentes e confere status ACTIVE e texto retornados. Retém ID após criação para não duplicar no retry da ativação.
+- `apps/web/src/lib/load-onboarding-progress.ts:5`: confirmação de conexão e cadastros em paralelo, com deadline e cancelamento de 10 s.
+- `apps/web/src/app/api/integrations/whatsapp/status/route.ts:609`: `view=connection` consulta só canal ativo e provedor, sem diagnósticos/monitor da IA; tenant vem do gate existente e resposta é privada/no-store.
+- `apps/web/src/app/login/page.tsx:74`: inicia sessão do guia por usuário/tenant.
+- `apps/web/src/lib/onboarding-session.ts:1`: continuidade por identidade; estado local nunca comprova conclusão.
+- `apps/web/src/app/(dashboard)/onbording/page.tsx:1`: rota dedicada; `/onboarding` continua redirecionando para ela.
+- `apps/web/src/layout/AppShell.tsx:161`: retomada por Primeiros passos; o tutorial existente continua disponível manualmente.
+- `apps/web/src/components/TutorialModal.tsx:52`: tutorial Como funciona abre após conclusão confirmada da última etapa.
 
-## Limites desta alteração
-
-Somente código local de interface e navegação. Nenhum schema, migration, job, integração ou dado remoto alterado. Catálogo do banco e versão publicada não foram revalidados nesta fatia; a prova local não declara publicação.
+Nenhum schema, migration, job ou policy alterados. Testes de integração usam rede interceptada e dados fictícios; não comprovam publicação nem o estado do banco remoto.

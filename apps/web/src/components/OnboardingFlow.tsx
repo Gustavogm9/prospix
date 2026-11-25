@@ -1,22 +1,27 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuthStore } from '@/store/auth-store';
+import { OnboardingProgressContext } from './onboarding/OnboardingProgressContext';
+import type { OnboardingProgress } from '@/lib/onboarding-progress';
 import { loadOnboardingProgress } from '@/lib/load-onboarding-progress';
 import { advanceOnboardingSession, onboardingSessionKey, ONBOARDING_REFRESH, ONBOARDING_STARTED, readOnboardingSession, startOnboardingSession, writeOnboardingSession, type OnboardingSession } from '@/lib/onboarding-session';
 
-export function OnboardingFlow({ onComplete }: { onComplete: () => void }) {
+export function OnboardingFlow({ onComplete, children }: { onComplete: () => void; children: ReactNode }) {
   const { tenantId, user } = useAuthStore();
   if (!tenantId || !user) return null;
-  return <Flow key={onboardingSessionKey(tenantId, user.id)} tenantId={tenantId} userId={user.id} onComplete={onComplete} />;
+  return <Flow key={onboardingSessionKey(tenantId, user.id)} tenantId={tenantId} userId={user.id} onComplete={onComplete}>{children}</Flow>;
 }
 
-function Flow({ tenantId, userId, onComplete }: { tenantId: string; userId: string; onComplete: () => void }) {
+function Flow({ tenantId, userId, onComplete, children }: { tenantId: string; userId: string; onComplete: () => void; children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const key = onboardingSessionKey(tenantId, userId);
   const [session, setSession] = useState<OnboardingSession | null>(null);
+  const [progress, setProgress] = useState<OnboardingProgress | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [ready, setReady] = useState(false);
   const [restart, setRestart] = useState(0);
   const current = useRef<OnboardingSession | null>(null);
@@ -35,6 +40,7 @@ function Flow({ tenantId, userId, onComplete }: { tenantId: string; userId: stri
     setReady(true);
     const started = (event: Event) => {
       if ((event as CustomEvent).detail !== key) return;
+      setError(false);
       apply(readOnboardingSession(key)); setRestart(value => value + 1);
     };
     window.addEventListener(ONBOARDING_STARTED, started);
@@ -46,15 +52,18 @@ function Flow({ tenantId, userId, onComplete }: { tenantId: string; userId: stri
     if (busy.current) { queued.current = true; return; }
     busy.current = true;
     const requestGeneration = generation.current;
+    setLoading(true);
     try {
       const result = await loadOnboardingProgress(tenantId);
       if (!alive.current || requestGeneration !== generation.current || !current.current) return;
+      setProgress(result); setError(false);
       apply(advanceOnboardingSession(current.current, result));
     } catch {
-      // The dedicated page owns the error and retry UI.
+      if (alive.current && requestGeneration === generation.current) setError(true);
       if (alive.current && requestGeneration === generation.current && current.current?.open) router.replace('/onbording');
     } finally {
       busy.current = false;
+      if (alive.current && requestGeneration === generation.current) setLoading(false);
       if (queued.current && alive.current && current.current) { queued.current = false; void refresh(); }
     }
   }, [tenantId, apply, router]);
@@ -97,5 +106,5 @@ function Flow({ tenantId, userId, onComplete }: { tenantId: string; userId: stri
     }
   }, [session, pathname, apply, onComplete, router]);
 
-  return null;
+  return <OnboardingProgressContext.Provider value={{ progress, loading, error, refresh }}>{children}</OnboardingProgressContext.Provider>;
 }

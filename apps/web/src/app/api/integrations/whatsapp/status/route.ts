@@ -605,6 +605,27 @@ export async function GET(request: NextRequest) {
   const { tenantId } = auth;
 
   try {
+    // Onboarding only needs the live active connection, not operational diagnostics.
+    if (request.nextUrl.searchParams.get('view') === 'connection') {
+      const headers = { 'Cache-Control': 'private, no-store' };
+      if (!tenantId || !['OWNER', 'ASSISTANT'].includes(auth.role)) return NextResponse.json({ message: 'Acesso restrito à conta cliente.' }, { status: 403, headers });
+      const channel = await loadTenantWhatsAppChannel(supabaseAdmin, tenantId);
+      if (!channel) return NextResponse.json({ status: 'disconnected', configured: false }, { headers });
+      if (!channel.apiKey) return NextResponse.json({ status: 'unavailable', reason: 'not_configured', configured: true }, { headers });
+      if (channel.provider === 'EVOLUTION') {
+        const connection = await probeEvolutionConnection(channel);
+        return NextResponse.json({ ...connection, configured: true }, { headers });
+      }
+      try {
+        const session = await fetchWahaSession(channel);
+        const connection = session.ok && session.status
+          ? mapWahaStatusToAppStatus(session.status)
+          : { status: 'unavailable', reason: 'provider_unavailable' };
+        return NextResponse.json({ ...connection, configured: true }, { headers });
+      } catch {
+        return NextResponse.json({ status: 'unavailable', reason: 'provider_unavailable', configured: true }, { headers });
+      }
+    }
     const guardianTrace = await loadWhatsAppGuardianTrace(tenantId);
     const wahaCandidate = await loadWahaCandidateStatus(tenantId);
     const aiActivityMonitor = await loadAiActivityMonitor(supabaseAdmin, { tenantIds: [tenantId] });
