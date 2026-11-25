@@ -3,6 +3,7 @@
 import { Target, Plus, Edit2, Loader2, Info, X, Trash2, Sliders, AlertTriangle, ArrowLeft } from 'lucide-react';
 import { useEffect, useState, useCallback } from 'react';
 import { icpsQueries } from '@/lib/queries';
+import { notifyOnboardingProgress } from '@/lib/onboarding-session';
 import type { ICP } from '@/lib/queries';
 import { useAuthStore } from '@/store/auth-store';
 import { toast, Tooltip } from '@prospix/ui';
@@ -139,6 +140,7 @@ export default function ICPsPage() {
       setIsModalOpen(false);
       resetForm();
       await fetchIcps();
+      notifyOnboardingProgress();
     } catch (err) {
       console.error(err);
       toast.error('Erro ao salvar', editingIcp ? 'Não foi possível atualizar o ICP.' : 'Não foi possível criar o ICP.');

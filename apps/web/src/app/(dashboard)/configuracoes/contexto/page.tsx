@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button, Input, Textarea, Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle, toast } from "@prospix/ui";
 import { Save, User, Briefcase, MessagesSquare, Target } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { notifyOnboardingProgress } from "@/lib/onboarding-session";
 import { useAuthStore } from "@/store/auth-store";
 
 export default function AIContextPage() {
@@ -74,6 +75,7 @@ export default function AIContextPage() {
       if (error) throw error;
       
       toast.success("Contexto da IA atualizado com sucesso!");
+      notifyOnboardingProgress();
     } catch (error: any) {
       console.error("Error saving context:", error);
       toast.error("Erro ao salvar. Tem certeza que a tabela já existe no Supabase?");

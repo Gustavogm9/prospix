@@ -88,3 +88,10 @@ Escopo: guiar OWNER e ASSISTANT da organização autenticada por WhatsApp, prime
 | Conteúdo do contato executa HTML ou aparece em logs | React escapa texto; API não registra corpo; resposta de sucesso só devolve id | revisão do diff; não foi executado ataque em produção |
 
 Modelo de acesso mantido: ambos os perfis do painel cliente podem cadastrar contatos pelo serviço existente; administrador Guilds usa seus fluxos administrativos próprios. Etapas visuais não são novas regras de autorização nem bloqueiam rotas já permitidas pelo produto. Sem campanhas ou envios automáticos ao concluir. Validação isolada com dados fictícios e rede interceptada; sem uso de conta real para os testes de tela.
+
+### Complemento: pop-up sequencial — 25/11/2026
+
+- Sessão local por usuário/organização transporta somente apresentação (aberto/etapa observada). Alterar esses valores não altera autorização, RLS ou conclusão. Cada avanço é recalculado por loadOnboardingProgress; teste de avanço exige mudança dos dados confirmados.
+- Eventos de salvamento não carregam nome, conteúdo ou dado pessoal. Apenas solicitam releitura com a sessão atual; status antigo de outra rota/identidade é descartado por geração e remontagem por identidade.
+- Dismiss é escolha explícita: remove o acompanhamento e impede reabertura por atualização automática, provado no navegador. Falha/corrupção de armazenamento não confirma etapa e o fluxo pode seguir em memória, provado em unidade.
+- Diálogo nativo nomeado/explicado mantém o fundo inerte e o foco no modal. Corpo rolável e foco por teclado verificados em 320×568, 375×812 e paisagem; nenhuma gravação real ou envio externo fez parte dos testes.

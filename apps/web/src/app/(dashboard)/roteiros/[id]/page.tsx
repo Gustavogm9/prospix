@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
+import { notifyOnboardingProgress } from '@/lib/onboarding-session';
 import { Button, Input, Textarea, toast, Badge } from '@prospix/ui';
 import { 
   Sparkles, MessageSquare, Plus, Save, Trash2, Wand2, X, 
@@ -215,8 +216,10 @@ export default function ScriptDetailsPage() {
         const { data, error } = await scriptsQueries.create(tenantId, {
           name, category, baseMessage, aiInstructions, restrictions, contextDocuments, guardiansConfig
         });
+        if (error || !data?.id) throw error || new Error('Cadastro do roteiro não confirmado.');
         if (data?.id) {
-          await scriptsQueries.update(tenantId, data.id, { status, aiTools, variations: mappedVariations, restrictions, contextDocuments, guardiansConfig });
+          const update = await scriptsQueries.update(tenantId, data.id, { status, aiTools, variations: mappedVariations, restrictions, contextDocuments, guardiansConfig });
+          if (update.error) throw update.error;
         }
         if (error) throw error;
         toast.success('Roteiro salvo com sucesso');
@@ -228,6 +231,7 @@ export default function ScriptDetailsPage() {
         if (error) throw error;
         toast.success('Roteiro atualizado com sucesso');
       }
+      notifyOnboardingProgress();
     } catch (err) {
       console.error(err);
       toast.error('Erro ao salvar', 'Ocorreu um erro ao gravar o roteiro.');

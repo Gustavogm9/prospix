@@ -1,6 +1,6 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
-import { authState, MOCK_OWNER_ID } from '../fixtures/auth';
+import { authState, MOCK_OWNER_ID, MOCK_TENANT_ID } from '../fixtures/auth';
 
 test.describe('Primeiros passos · dados fictícios e rede interceptada', () => {
   test.describe.configure({ timeout: 90_000 });
@@ -8,9 +8,12 @@ test.describe('Primeiros passos · dados fictícios e rede interceptada', () => 
   let unavailable = false;
   let saveSuccess = false;
   let created = false;
+  let icpSaved = false;
+  let contextSaved = false;
+  let scriptSaved = false;
   let posts: string[];
   test.beforeEach(async ({ context, page }) => {
-    connected = false; unavailable = false; saveSuccess = false; created = false; posts = [];
+    connected = false; unavailable = false; saveSuccess = false; created = false; icpSaved = false; contextSaved = false; scriptSaved = false; posts = [];
     await page.routeWebSocket('**', socket => socket.close());
     await context.addInitScript(({ state, ownerId }) => {
       localStorage.setItem('prospix-auth-storage', JSON.stringify(state));
@@ -20,7 +23,10 @@ test.describe('Primeiros passos · dados fictícios e rede interceptada', () => 
     await page.route('**/*', async route => {
       const request = route.request();
       const url = new URL(request.url());
-      if (url.pathname.includes('/rest/v1/')) return route.fulfill({ status: 200, headers: { 'content-range': `*/${created && url.pathname.endsWith('/leads') ? 1 : 0}`, 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'content-range' }, json: url.pathname.endsWith('/tenant_business_context') ? null : [] });
+      if (url.pathname.includes('/rest/v1/')) {
+        const count = (created && url.pathname.endsWith('/leads')) || (icpSaved && url.pathname.endsWith('/icps')) || (scriptSaved && url.pathname.endsWith('/scripts')) ? 1 : 0;
+        return route.fulfill({ status: 200, headers: { 'content-range': `*/${count}`, 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'content-range' }, json: url.pathname.endsWith('/tenant_business_context') ? contextSaved ? { persona_name: 'Assistente', business_description: 'Empresa fictícia', tone_of_voice: 'Consultivo' } : null : [] });
+      }
       if (url.pathname.includes('/auth/v1/')) return route.fulfill({ status: 200, json: { id: MOCK_OWNER_ID, aud: 'authenticated', role: 'authenticated' } });
       if (url.pathname === '/api/integrations/whatsapp/status') return route.fulfill({ status: 200, json: { status: unavailable ? 'unavailable' : connected ? 'connected' : 'disconnected' } });
       if (url.pathname === '/api/onboarding/client') {
@@ -33,6 +39,26 @@ test.describe('Primeiros passos · dados fictícios e rede interceptada', () => 
       return route.continue();
     });
   });
+
+  async function login(page: Page) {
+    const profile = { ...authState.state.user, name: 'Cliente de teste', email: 'cliente@example.test', deleted_at: null };
+    await page.route('**/rest/v1/users*', route => route.fulfill({ status: 200, json: profile }));
+    await page.route('**/auth/v1/token*', route => route.fulfill({ status: 200, json: {
+      access_token: 'mock-user-access-token', refresh_token: 'mock-refresh', token_type: 'bearer', expires_in: 3600,
+      user: { id: MOCK_OWNER_ID, email: profile.email, aud: 'authenticated', role: 'authenticated', user_metadata: {} },
+    } }));
+    await page.goto('/login');
+    const ownKey = `prospix-onboarding:v2:${MOCK_TENANT_ID}:${MOCK_OWNER_ID}`;
+    const otherKey = 'prospix-onboarding:v2:outra-organizacao:outra-pessoa';
+    await page.evaluate(({ ownKey, otherKey }) => {
+      localStorage.setItem(ownKey, 'minimized');
+      localStorage.setItem(otherKey, 'minimized');
+    }, { ownKey, otherKey });
+    await page.locator('input[type=email]').fill(profile.email);
+    await page.locator('input[type=password]').fill('fictional-test-password');
+    await page.getByRole('button', { name: 'Entrar no Prospix' }).click();
+    await expect(page).toHaveURL(/\/inicio$/);
+  }
 
   test('começa pelo WhatsApp, ignora marcação antiga e avança após confirmar conexão', async ({ page }) => {
     await page.goto('/inicio');
@@ -66,6 +92,75 @@ test.describe('Primeiros passos · dados fictícios e rede interceptada', () => 
     await expect.poll(() => posts.length).toBe(2);
     expect(posts[0]).toBe(posts[1]);
   });
+
+  test('novo login reabre o guia minimizado somente da própria conta', async ({ page }) => {
+    await login(page);
+    const dialog = page.getByRole('dialog', { name: 'Vamos configurar sua conta' });
+    await expect(dialog.getByRole('link', { name: 'Conectar WhatsApp' })).toBeVisible();
+    const otherKey = 'prospix-onboarding:v2:outra-organizacao:outra-pessoa';
+    expect(await page.evaluate(key => localStorage.getItem(key), otherKey)).toBe('minimized');
+  });
+
+  test('pop-up acompanha as cinco etapas confirmadas e retoma após recarregar', async ({ page }) => {
+    test.setTimeout(180_000);
+    await login(page);
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('link', { name: 'Conectar WhatsApp' }).click();
+    await expect(page).toHaveURL(/tab=integracoes/, { timeout: 30_000 });
+    await expect(dialog).toHaveCount(0);
+    await page.reload();
+    await expect(page.getByRole('button', { name: 'Ver próxima etapa' })).toBeVisible();
+    await expect(dialog).toHaveCount(0);
+    connected = true;
+    await page.evaluate(() => window.dispatchEvent(new Event('prospix-onboarding-refresh')));
+    await dialog.getByRole('link', { name: 'Cadastrar cliente', exact: true }).click();
+    saveSuccess = true;
+    await page.getByLabel('Nome do cliente').fill('Contato fictício');
+    await page.getByLabel('WhatsApp com DDD').fill('11999991234');
+    await page.getByRole('button', { name: 'Salvar cliente e continuar' }).click();
+    await dialog.getByRole('link', { name: 'Definir ICP' }).click();
+    icpSaved = true;
+    await page.evaluate(() => window.dispatchEvent(new Event('prospix-onboarding-refresh')));
+    await dialog.getByRole('link', { name: 'Preencher perfil comercial' }).click();
+    contextSaved = true;
+    await page.evaluate(() => window.dispatchEvent(new Event('prospix-onboarding-refresh')));
+    await dialog.getByRole('link', { name: 'Preparar roteiro' }).click();
+    scriptSaved = true;
+    await page.evaluate(() => window.dispatchEvent(new Event('prospix-onboarding-refresh')));
+    await expect(page.getByRole('dialog', { name: 'Configuração inicial concluída' })).toBeVisible();
+    await dialog.getByRole('link', { name: 'Ir para o painel' }).click();
+    await expect(dialog).toHaveCount(0);
+  });
+
+  test('dispensar o pop-up não o reabre por atualização automática', async ({ page }) => {
+    await login(page);
+    await expect(page.getByRole('dialog').getByRole('link', { name: 'Conectar WhatsApp' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    connected = true;
+    await page.evaluate(() => window.dispatchEvent(new Event('prospix-onboarding-refresh')));
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+  });
+
+  for (const [width, height] of [[320, 568], [375, 812], [812, 375]]) {
+    test(`pop-up acessível em ${width}x${height}`, async ({ page }) => {
+      await page.setViewportSize({ width, height });
+      await login(page);
+      const dialog = page.getByRole('dialog');
+      const action = dialog.getByRole('link', { name: 'Conectar WhatsApp' });
+      await expect(action).toBeVisible();
+      const box = await action.boundingBox();
+      expect(box && box.y + box.height <= height).toBeTruthy();
+      await action.focus(); await page.keyboard.press('Tab');
+      await expect(dialog.getByRole('button', { name: 'Fechar primeiros passos' })).toBeFocused();
+      await dialog.getByRole('region', { name: 'Detalhes das etapas' }).focus();
+      await page.keyboard.press('End');
+      await expect(dialog.getByText('Prepare e ative seu roteiro', { exact: true })).toBeInViewport();
+      const result = await new AxeBuilder({ page }).include('dialog').analyze();
+      expect(result.violations.filter(issue => ['serious', 'critical'].includes(issue.impact || ''))).toEqual([]);
+      await page.screenshot({ path: `.local/onboarding-qa/popup-${width}x${height}.png` });
+    });
+  }
 
   test('cadastro confirmado retorna ao guia na próxima etapa', async ({ page }) => {
     connected = true; saveSuccess = true;

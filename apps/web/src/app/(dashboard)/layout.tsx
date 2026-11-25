@@ -2,8 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import Link from 'next/link';
-import { OnboardingChecklist } from '@/components/OnboardingChecklist';
+import { OnboardingFlow } from '@/components/OnboardingFlow';
 import { useAuthStore } from '@/store/auth-store';
 import { supabase } from '@/lib/supabase';
 import AppShell from '@/layout/AppShell';
@@ -79,10 +78,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <>
       <AppShell>
-        {pathname === '/inicio' && <OnboardingChecklist />}
-        {(pathname === '/configuracoes' || pathname === '/icps' || pathname?.startsWith('/roteiros')) && <div className="mb-4 rounded-xl border border-border bg-white px-4 py-2 text-sm text-text-secondary">
-          Preparando sua conta? <Link href="/onboarding" className="inline-flex min-h-11 items-center font-semibold text-primary underline">Continuar primeiros passos</Link>
-        </div>}
+        <OnboardingFlow showChecklist={pathname === '/inicio'} />
         {children}
       </AppShell>
 

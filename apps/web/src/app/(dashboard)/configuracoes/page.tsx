@@ -21,6 +21,7 @@ import {
 import { useAuthStore } from '@/store/auth-store';
 import { profileQueries, billingQueries } from '@/lib/queries';
 import { apiFetch } from '@/lib/api-fetch';
+import { notifyOnboardingProgress } from '@/lib/onboarding-session';
 import { supabase } from '@/lib/supabase';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { z } from 'zod';
@@ -923,6 +924,7 @@ export default function Settings() {
       }
       if (data.status === 'connected') {
         setWhatsappStatus('connected');
+        notifyOnboardingProgress();
         setInstanceName(data.instanceName);
         if (activeQrProvider !== 'WAHA') {
           setQrCode(null);

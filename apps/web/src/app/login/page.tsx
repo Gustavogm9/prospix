@@ -1,11 +1,12 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Input, toast } from '@prospix/ui';
 import type { Session } from '@supabase/supabase-js';
 import { supabase, supabaseAdmin } from '@/lib/supabase';
 import { resolveLoginTarget } from '@/lib/login-routing';
+import { startOnboardingSession } from '@/lib/onboarding-session';
 import { useAdminAuthStore } from '@/store/admin-auth-store';
 import { useAuthStore, type UserSession } from '@/store/auth-store';
 
@@ -26,13 +27,6 @@ export default function Login() {
   const setSession = useAuthStore((state) => state.setSession);
   const setAdminSession = useAdminAuthStore((state) => state.setAdminSession);
   const router = useRouter();
-  const navTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (navTimerRef.current) clearTimeout(navTimerRef.current);
-    };
-  }, []);
 
   // Force password change state
   const [mustChangePassword, setMustChangePassword] = useState(false);
@@ -76,6 +70,8 @@ export default function Login() {
       await supabase.auth.signOut({ scope: 'local' });
       throw new Error('Usuário sem corretora vinculada. Contate o suporte.');
     }
+
+    startOnboardingSession(user.tenant_id, user.id);
 
     setSession({
       id: user.id,
@@ -143,7 +139,7 @@ export default function Login() {
         }
         const target = await activateLoginSurface(loginUser, data.session);
         toast.success('Acesso Autorizado!', `Olá, ${userData.name}! Bem-vindo(a) de volta.`);
-        navTimerRef.current = setTimeout(() => router.push(target.path), 1000);
+        router.push(target.path);
       }
     } catch (error: unknown) {
       const message =
@@ -196,7 +192,7 @@ export default function Login() {
       setPendingUser(null);
 
       toast.success('Senha Atualizada!', 'Sua nova senha foi salva. Bem-vindo(a) ao Prospix!');
-      navTimerRef.current = setTimeout(() => router.push(target.path), 1000);
+      router.push(target.path);
     } catch (error: unknown) {
       toast.error(
         'Erro ao trocar senha',

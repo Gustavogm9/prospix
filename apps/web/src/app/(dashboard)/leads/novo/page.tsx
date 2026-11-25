@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { onboardingClientSchema as schema } from '@/lib/onboarding-client';
 import { apiFetch } from '@/lib/api-fetch';
+import { notifyOnboardingProgress } from '@/lib/onboarding-session';
 import { useAuthStore } from '@/store/auth-store';
 
 export default function NewLeadPage() {
@@ -40,6 +41,7 @@ function NewLeadForm({ tenantId }: { tenantId: string }) {
         if (result.erro?.campos) setFields(result.erro.campos);
         throw new Error(result.erro?.mensagem || 'Não foi possível confirmar o cadastro. Confira Meus Leads antes de tentar novamente.');
       }
+      notifyOnboardingProgress();
       router.push('/onboarding');
     } catch (cause) {
       if (useAuthStore.getState().tenantId === scope) setError(cause instanceof Error ? cause.message : 'Não foi possível confirmar o cadastro.');
