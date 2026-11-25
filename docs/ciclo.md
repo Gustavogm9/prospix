@@ -94,3 +94,7 @@ Resultado final da correção compartilhada: migration 20261125135500 e separaç
 ### Próximo login e publicação do onboarding — 25/11/2026
 
 Versão pública 2ce6f2b confirmada: onboarding anterior publicado pela esteira escolhida. Ajuste local adicional no login expande o guia apenas para a identidade autenticada, mesmo se ela o minimizou antes, preservando etapas e dados. Teste em navegador falhou antes e passou depois; oito cenários de tela, seis testes de regras/roteamento, lint e typecheck passaram. Nenhuma conta ou dado de produção alterados. Esse ajuste adicional aguarda publicação automática pelo Questboard; sem commit/push nesta rodada. Evidência em docs/qa/2026-11-25-onboarding-cliente.md.
+
+### Publicação do pop-up confirmada — 25/11/2026
+
+Main local/remoto e /api/version do domínio público conferidos em 54cf8c77004e881414aed732918b81f98c4327d1. Deploy não repetido porque a versão autorizada já estava no ar. Login real feito pelo usuário no navegador incorporado mostrou automaticamente o pop-up e a primeira ação Conectar WhatsApp na conta solicitada. Sem avançar etapas ou gravar dado comercial real. Critérios automáticos de conclusão conferidos no código publicado; passagem completa por todas as etapas permanece prova local com dados fictícios. Publicação/abertura inicial deixam de ser pendências. Relatório em docs/qa/2026-11-25-onboarding-cliente.md.
