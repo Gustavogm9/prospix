@@ -72,3 +72,19 @@ Escopo: ação do corretor no painel, histórico da conversa, fila de WhatsApp e
 | CONV-04 | interface → histórico | Clique acidental apaga evidência ou todas as conversas do mesmo lead | Confirmação nomeia o lead; só o ID da conversa é marcado; mensagens e lead são preservados; evento registra autor e horário | outra conversa do mesmo lead permanece visível; repetição é idempotente |
 
 Risco residual: um envio externo iniciado no mesmo instante da remoção pode já estar em trânsito no provedor. A confirmação e o worker reduzem essa janela; o recibo do provedor continua sendo a fonte de verdade para esse caso.
+
+## Onboarding do cliente — 25/11/2026
+
+Escopo: guiar OWNER e ASSISTANT da organização autenticada por WhatsApp, primeiro contato, ICP, contexto e roteiro. Dados pessoais comuns (nome, telefone e e-mail opcionais); nenhuma informação sensível solicitada. Não cria usuários Auth, não amplia grants/RLS e não envia mensagens. A regra compartilhada de usuários corrigida nesta data é uma operação independente.
+
+| Caso de abuso | Controle | Evidência e limite |
+|---|---|---|
+| Cliente tenta gravar em outra organização pelo corpo ou cabeçalho | Schema estrito recusa campos extras; tenant vem do perfil autenticado; escrita usa chave pública com JWT do chamador e RLS existente | route.test.ts recusa tenant no corpo e confere tenant autenticado e cliente com JWT; não substitui teste remoto de RLS |
+| Anônimo, perfil excluído ou papel administrativo usa o novo cadastro | authenticateRequest existente valida sessão/perfil; rota exige OWNER/ASSISTANT com tenant | 401 e 403 nos testes de contrato; exclusão permanece coberta pelo helper existente |
+| Telefone/e-mail inválido enviado diretamente à API | Mesmo schema Zod no formulário e na rota, com erro por campo | onboarding-client.test.ts e route.test.ts |
+| Duplo clique ou resposta perdida duplica contato | Bloqueio local durante envio; UUID da operação mantido no reenvio sem editar; chave primária do lead; serviço relê operação no próprio tenant | manual-lead.test.ts verifica reenvio sem INSERT e recusa reaproveitamento para outro cliente. Pedidos diferentes simultâneos com mesmo telefone dependem da unicidade legada; esta fatia não cria constraint |
+| Uma conta herda as etapas ou preferência de outra | Progresso consultado no tenant atual, componente remontado por tenant/usuário, respostas anteriores ignoradas; somente preferência de minimizar local e por identidade | onboarding-progress.test.ts e load-onboarding-progress.test.ts; teste visual ignora chave global antiga |
+| Falha de integração vira etapa concluída | Erro explícito, sem habilitar próxima ação; polling continua após sucesso | testes de conexão indisponível e erro de banco; teste de tela simula queda |
+| Conteúdo do contato executa HTML ou aparece em logs | React escapa texto; API não registra corpo; resposta de sucesso só devolve id | revisão do diff; não foi executado ataque em produção |
+
+Modelo de acesso mantido: ambos os perfis do painel cliente podem cadastrar contatos pelo serviço existente; administrador Guilds usa seus fluxos administrativos próprios. Etapas visuais não são novas regras de autorização nem bloqueiam rotas já permitidas pelo produto. Sem campanhas ou envios automáticos ao concluir. Validação isolada com dados fictícios e rede interceptada; sem uso de conta real para os testes de tela.

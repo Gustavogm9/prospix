@@ -1,231 +1,104 @@
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, Button } from '@prospix/ui';
-import { CheckCircle2, Circle, X, ArrowRight, MessageSquare, UserPlus, FileText, Calendar } from 'lucide-react';
+'use client';
 
-const STORAGE_KEY = 'prospix-onboarding-state-v1';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
+import { ArrowRight, CheckCircle2, LockKeyhole, RefreshCw, MessageSquare } from 'lucide-react';
+import { useAuthStore } from '@/store/auth-store';
+import { loadOnboardingProgress } from '@/lib/load-onboarding-progress';
+import { nextStep, onboardingKey, ONBOARDING_STEPS, type OnboardingProgress } from '@/lib/onboarding-progress';
 
-type StepId = 'whatsapp' | 'firstLead' | 'agenda' | 'firstScript';
-
-interface OnboardingState {
-  dismissed: boolean;
-  completed: Record<StepId, boolean>;
+export function OnboardingChecklist({ standalone = false }: { standalone?: boolean }) {
+  const { tenantId, user } = useAuthStore();
+  if (!tenantId || !user) return null;
+  return <Guide key={onboardingKey(tenantId, user.id)} tenantId={tenantId} userId={user.id} standalone={standalone} />;
 }
 
-const DEFAULT_STATE: OnboardingState = {
-  dismissed: false,
-  completed: { whatsapp: false, firstLead: false, agenda: false, firstScript: false },
-};
-
-function loadState(): OnboardingState {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULT_STATE;
-    const parsed = JSON.parse(raw) as Partial<OnboardingState>;
-    return {
-      dismissed: !!parsed.dismissed,
-      completed: {
-        whatsapp: !!parsed.completed?.whatsapp,
-        firstLead: !!parsed.completed?.firstLead,
-        agenda: !!parsed.completed?.agenda,
-        firstScript: !!parsed.completed?.firstScript,
-      },
-    };
-  } catch {
-    return DEFAULT_STATE;
-  }
-}
-
-function saveState(state: OnboardingState) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  } catch {
-    /* localStorage indisponível · degrada silenciosamente */
-  }
-}
-
-interface StepDef {
-  id: StepId;
-  title: string;
-  description: string;
-  icon: typeof MessageSquare;
-  ctaLabel: string;
-  ctaPath: string;
-}
-
-const STEPS: StepDef[] = [
-  {
-    id: 'whatsapp',
-    title: 'Conecte seu WhatsApp',
-    description: 'Habilite o canal Evolution para receber e responder leads no mesmo número que seus clientes já usam.',
-    icon: MessageSquare,
-    ctaLabel: 'Conectar agora',
-    ctaPath: '/configuracoes?tab=integracoes',
-  },
-  {
-    id: 'firstLead',
-    title: 'Cadastre o primeiro lead',
-    description: 'Use a busca por Google Maps ou cadastre manualmente. Enriquecimento automático calcula o Fit Score.',
-    icon: UserPlus,
-    ctaLabel: 'Ir para Leads',
-    ctaPath: '/leads',
-  },
-  {
-    id: 'agenda',
-    title: 'Configure sua agenda',
-    description: 'Defina seus horários disponíveis, dias de atendimento e duração padrão das reuniões para a IA agendar.',
-    icon: Calendar,
-    ctaLabel: 'Configurar',
-    ctaPath: '/configuracoes?tab=agenda',
-  },
-  {
-    id: 'firstScript',
-    title: 'Crie seu primeiro roteiro',
-    description: 'Defina abordagem comercial para que a IA siga seu tom de voz nas conversas.',
-    icon: FileText,
-    ctaLabel: 'Criar roteiro',
-    ctaPath: '/roteiros',
-  },
-];
-
-export interface OnboardingChecklistProps {
-  /** Sinais opcionais para auto-marcar passos com base no estado real do tenant */
-  signals?: Partial<Record<StepId, boolean>>;
-}
-
-export const OnboardingChecklist = ({ signals }: OnboardingChecklistProps) => {
-  const router = useRouter();
-  const [state, setState] = useState<OnboardingState>(() => loadState());
+function Guide({ tenantId, userId, standalone }: { tenantId: string; userId: string; standalone: boolean }) {
+  const [progress, setProgress] = useState<OnboardingProgress | null>(null);
+  const [error, setError] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [minimized, setMinimized] = useState(false);
+  const alive = useRef(false);
+  const busy = useRef(false);
+  const key = onboardingKey(tenantId, userId);
+  const refresh = useCallback(async () => {
+    if (busy.current) return;
+    busy.current = true;
+    setLoading(true);
+    try {
+      const result = await loadOnboardingProgress(tenantId);
+      if (alive.current) { setProgress(result); setError(false); }
+    } catch { if (alive.current) setError(true); }
+    finally { busy.current = false; if (alive.current) setLoading(false); }
+  }, [tenantId]);
 
   useEffect(() => {
-    if (!signals) return;
-    setState((prev) => {
-      const next: OnboardingState = {
-        ...prev,
-        completed: {
-          whatsapp: signals.whatsapp ?? prev.completed.whatsapp,
-          firstLead: signals.firstLead ?? prev.completed.firstLead,
-          agenda: signals.agenda ?? prev.completed.agenda,
-          firstScript: signals.firstScript ?? prev.completed.firstScript,
-        },
-      };
-      saveState(next);
-      return next;
-    });
-  }, [signals]);
-
-  const totalSteps = STEPS.length;
-  const completedCount = STEPS.filter((s) => state.completed[s.id]).length;
-  const allDone = completedCount === totalSteps;
-
-  if (state.dismissed || allDone) return null;
-
-  const handleDismiss = () => {
-    const next = { ...state, dismissed: true };
-    setState(next);
-    saveState(next);
-  };
-
-  const handleManualComplete = (id: StepId) => {
-    const next = {
-      ...state,
-      completed: { ...state.completed, [id]: true },
+    alive.current = true;
+    try { setMinimized(localStorage.getItem(key) === 'minimized'); } catch { /* optional preference */ }
+    void refresh();
+    const check = () => { if (document.visibilityState === 'visible' && navigator.onLine) void refresh(); };
+    const interval = setInterval(check, 30000);
+    window.addEventListener('focus', check);
+    window.addEventListener('online', check);
+    document.addEventListener('visibilitychange', check);
+    return () => {
+      alive.current = false; clearInterval(interval);
+      window.removeEventListener('focus', check);
+      window.removeEventListener('online', check);
+      document.removeEventListener('visibilitychange', check);
     };
-    setState(next);
-    saveState(next);
+  }, [key, refresh]);
+
+  const current = progress ? nextStep(progress) : null;
+  const done = progress ? ONBOARDING_STEPS.filter(step => progress[step.id]).length : 0;
+  const complete = progress !== null && current === null;
+  const toggle = () => {
+    setMinimized(value => {
+      try { localStorage.setItem(key, value ? 'expanded' : 'minimized'); } catch { /* preference only */ }
+      return !value;
+    });
   };
 
-  const progressPercent = Math.round((completedCount / totalSteps) * 100);
-
-  return (
-    <Card className="bg-white border-primary/30 shadow-sm" aria-labelledby="onboarding-title">
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-4">
-          <div className="space-y-1">
-            <CardTitle id="onboarding-title" className="text-base font-bold font-heading text-text">
-              Primeiros passos no Prospix
-            </CardTitle>
-            <CardDescription className="text-text-secondary text-xs">
-              {completedCount}/{totalSteps} concluídos · termine a configuração para começar a captar.
-            </CardDescription>
-          </div>
-          <button
-            type="button"
-            onClick={handleDismiss}
-            className="text-text-secondary hover:text-text transition-colors p-1 rounded"
-            aria-label="Dispensar checklist de onboarding"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-        <div
-          className="w-full bg-surface-sunken rounded-full h-1.5 mt-3 overflow-hidden"
-          role="progressbar"
-          aria-valuenow={progressPercent}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-label="Progresso do onboarding"
-        >
-          <div
-            className="bg-primary h-full transition-all"
-            style={{ width: `${progressPercent}%` }}
-          />
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-2 pt-2">
-        {STEPS.map((step) => {
-          const Icon = step.icon;
-          const done = state.completed[step.id];
-          return (
-            <div
-              key={step.id}
-              className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
-                done ? 'bg-success-soft/40 border-success/20' : 'bg-surface-sunken/60 border-border'
-              }`}
-            >
-              <div className="mt-0.5 shrink-0">
-                {done ? (
-                  <CheckCircle2 className="w-5 h-5 text-success-text" aria-label="Concluído" />
-                ) : (
-                  <Circle className="w-5 h-5 text-text-secondary/60" aria-label="Pendente" />
-                )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <Icon className="w-3.5 h-3.5 text-text-secondary shrink-0" aria-hidden />
-                  <h4 className={`text-xs font-bold ${done ? 'text-text-secondary line-through' : 'text-text'}`}>
-                    {step.title}
-                  </h4>
-                </div>
-                <p className="text-[11px] text-text-secondary mt-1 leading-relaxed">
-                  {step.description}
-                </p>
-              </div>
-              {!done && (
-                <div className="flex flex-col gap-1.5 shrink-0">
-                  <Button
-                    onClick={() => router.push(step.ctaPath)}
-                    className="bg-primary hover:bg-primary-hover text-white text-[10px] font-semibold px-2.5 h-7 rounded-md flex items-center gap-1"
-                  >
-                    {step.ctaLabel}
-                    <ArrowRight className="w-3 h-3" />
-                  </Button>
-                  <button
-                    type="button"
-                    onClick={() => handleManualComplete(step.id)}
-                    className="text-[9px] text-text-secondary hover:text-text underline"
-                    aria-label={`Marcar ${step.title} como concluído`}
-                  >
-                    Já fiz isso
-                  </button>
-                </div>
-              )}
+  return <section aria-labelledby="onboarding-title" className="mb-6 overflow-hidden rounded-2xl border border-primary/20 bg-white shadow-sm">
+    <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-5 sm:p-6">
+      <div className="min-w-0">
+        <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-primary">Sua conta, do começo</p>
+        <h2 id="onboarding-title" className="text-xl font-bold text-text">Vamos preparar seu primeiro atendimento</h2>
+        <p className="mt-2 text-sm text-text-secondary">Comece pelo WhatsApp e avance uma etapa de cada vez.</p>
+      </div>
+      {!standalone && <button type="button" onClick={toggle} className="min-h-11 rounded-lg border border-border px-3 text-sm text-primary">{minimized ? 'Retomar configuração' : 'Minimizar guia'}</button>}
+    </header>
+    <div className="px-5 pt-4 sm:px-6" aria-live="polite">
+      {error ? <div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+        Não foi possível confirmar a configuração. As etapas não foram marcadas como concluídas.
+        <button type="button" disabled={loading} onClick={() => void refresh()} className="ml-2 min-h-11 underline">Tentar novamente</button>
+        <Link href="/configuracoes?tab=integracoes" className="ml-3 inline-flex min-h-11 items-center underline">Verificar WhatsApp</Link>
+      </div> : !progress ? <p role="status" className="py-3 text-sm text-text-secondary">Conferindo sua conexão e seus cadastros…</p> :
+        <p className="text-sm text-text-secondary">{done} de {ONBOARDING_STEPS.length} etapas confirmadas{complete ? ' · Configuração inicial concluída' : ''}</p>}
+    </div>
+    {((!minimized && !complete) || standalone) && progress && <ol className="space-y-3 p-5 sm:p-6">
+      {ONBOARDING_STEPS.map((step, index) => {
+        const finished = progress[step.id];
+        const active = current === step.id;
+        return <li key={step.id} aria-current={active ? 'step' : undefined} className={active ? 'rounded-xl border-2 border-primary bg-primary/5 p-4' : 'rounded-xl border border-border p-4'}>
+          <div className="flex items-start gap-3">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-sunken text-sm font-bold text-primary">{finished ? <CheckCircle2 className="h-5 w-5" aria-label="Confirmado" /> : index + 1}</span>
+            <div className="min-w-0 flex-1">
+              <h3 className="text-sm font-semibold text-text">{step.title}</h3>
+              <p className="mt-1 text-sm leading-relaxed text-text-secondary">{step.description}</p>
+              <p className="mt-2 text-xs font-medium text-text-secondary">{finished ? 'Confirmado no sistema' : active ? 'Próxima etapa' : 'Aguardando as etapas anteriores'}</p>
+              {active && !error && <Link href={step.href} className="mt-3 inline-flex min-h-11 max-w-full items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white">{step.action}<ArrowRight className="h-4 w-4 shrink-0" /></Link>}
+              {!active && !finished && <LockKeyhole aria-hidden className="mt-2 h-4 w-4 text-text-secondary" />}
             </div>
-          );
-        })}
-      </CardContent>
-    </Card>
-  );
-};
-
+          </div>
+        </li>;
+      })}
+    </ol>}
+    <footer className="flex flex-wrap items-center justify-between gap-3 p-5 pt-3 sm:px-6">
+      <p className="flex max-w-lg items-start gap-2 text-xs leading-relaxed text-text-secondary"><MessageSquare className="h-4 w-4 shrink-0" />Este guia não envia mensagens. Faça o primeiro teste somente com um contato autorizado.</p>
+      <button type="button" disabled={loading} onClick={() => void refresh()} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-border px-3 text-sm text-primary"><RefreshCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />{loading ? 'Conferindo…' : 'Conferir etapas'}</button>
+      {complete && !error && <div className="w-full border-t border-border pt-4 text-sm text-text-secondary">Próximos passos: <Link href="/configuracoes?tab=agenda" className="underline">configurar agenda</Link> e <Link href="/campanhas" className="underline">preparar uma campanha</Link>. Revise os dados e o roteiro antes de qualquer envio.</div>}
+    </footer>
+  </section>;
+}
 export default OnboardingChecklist;

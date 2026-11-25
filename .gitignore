@@ -95,4 +95,14 @@ temp/
 .env*
 
 # Local utility scripts with secrets
-scripts/
+scripts/*
+!scripts/ops/
+scripts/ops/*
+!scripts/ops/inspect-presentation-readiness.ps1
+!scripts/ops/prepare-client-presentation.sql
+!scripts/ops/prepare-client-presentation.ps1
+!scripts/ops/release-presentation-backend.ps1
+.tmp/presentation-*
+.tmp/client-presentation-*
+.tmp/audit-prospix-live-*
+.tmp/inspect-giovane-access-*

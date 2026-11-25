@@ -20,6 +20,8 @@ export interface CalendarListEntry {
 }
 
 export interface CalendarEventInput {
+  id?: string; // Stable Google event ID makes an uncertain retry reconcilable.
+  meetingId?: string;
   summary: string;
   description?: string;
   start: string;   // ISO-8601 dateTime
@@ -71,17 +73,15 @@ export async function getAccessToken(refreshToken: string): Promise<string> {
       refresh_token: refreshToken,
       grant_type: 'refresh_token',
     }).toString(),
+    signal: AbortSignal.timeout(12000),
   });
 
   const data = await res.json();
 
   if (!res.ok) {
-    console.error('Google token exchange failed:', data);
-    throw new Error(
-      `Failed to refresh Google access token: ${data.error_description || data.error || res.statusText}`
-    );
+    throw new Error(`Google token exchange failed (HTTP ${res.status})`);
   }
-
+  if (typeof data.access_token !== 'string' || !data.access_token) throw new Error('Google returned no access token');
   return data.access_token as string;
 }
 
@@ -99,6 +99,7 @@ export async function listCalendars(
 
   const res = await fetch(`${GOOGLE_API_BASE}/users/me/calendarList`, {
     headers: { Authorization: `Bearer ${accessToken}` },
+    signal: AbortSignal.timeout(12000),
   });
 
   if (!res.ok) {
@@ -133,6 +134,8 @@ export async function createEvent(
   const accessToken = await getAccessToken(refreshToken);
 
   const body: Record<string, any> = {
+    ...(eventData.id ? { id: eventData.id } : {}),
+    ...(eventData.meetingId ? { extendedProperties: { private: { prospixMeetingId: eventData.meetingId } } } : {}),
     summary: eventData.summary,
     description: eventData.description,
     start: {
@@ -160,7 +163,7 @@ export async function createEvent(
   if (eventData.withMeet) {
     body.conferenceData = {
       createRequest: {
-        requestId: `prospix-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        requestId: eventData.id || `prospix-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         conferenceSolutionKey: { type: 'hangoutsMeet' },
       },
     };
@@ -169,7 +172,7 @@ export async function createEvent(
   // Build query params
   const params = new URLSearchParams();
   if (eventData.withMeet) params.set('conferenceDataVersion', '1');
-  if (eventData.attendees && eventData.attendees.length > 0) params.set('sendNotifications', 'true');
+  if (eventData.attendees && eventData.attendees.length > 0) params.set('sendUpdates', 'all');
   const queryParams = params.toString() ? `?${params}` : '';
 
   const res = await fetch(
@@ -181,20 +184,44 @@ export async function createEvent(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15000),
     }
   );
 
+  if (res.status === 409 && eventData.id && eventData.meetingId) {
+    const existingResponse = await fetch(`${GOOGLE_API_BASE}/calendars/${encodeURIComponent(calendarId)}/events/${eventData.id}`, {
+      method: 'GET', headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(12000),
+    });
+    if (!existingResponse.ok) throw new Error('Google event reconciliation failed');
+    const existing = await existingResponse.json();
+    if (existing.id !== eventData.id || existing.status === 'cancelled' || existing.extendedProperties?.private?.prospixMeetingId !== eventData.meetingId) {
+      throw new Error('Google event identity mismatch');
+    }
+    return { eventId: existing.id, meetLink: existing.hangoutLink || undefined };
+  }
+
   if (!res.ok) {
-    const errBody = await res.text();
-    console.error('Google createEvent failed:', res.status, errBody);
-    throw new Error(`Failed to create event: ${res.statusText}`);
+    throw new Error(`Google createEvent failed (HTTP ${res.status})`);
   }
 
   const created = await res.json();
+  if (typeof created.id !== 'string' || !created.id || (eventData.id && created.id !== eventData.id)) throw new Error('Google returned no matching event receipt');
   return {
     eventId: created.id as string,
     meetLink: created.hangoutLink || created.conferenceData?.entryPoints?.find((ep: any) => ep.entryPointType === 'video')?.uri || undefined,
   };
+}
+
+/** Confirm a stored receipt still refers to an existing, active Google event. */
+export async function confirmEvent(refreshToken: string, calendarId: string, eventId: string): Promise<CreateEventResult> {
+  const accessToken = await getAccessToken(refreshToken);
+  const response = await fetch(`${GOOGLE_API_BASE}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, {
+    headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(12000),
+  });
+  if (!response.ok) throw new Error(`Google event confirmation failed (HTTP ${response.status})`);
+  const event = await response.json();
+  if (event.id !== eventId || event.status === 'cancelled') throw new Error('Google event no longer active');
+  return { eventId: event.id, meetLink: event.hangoutLink || undefined };
 }
 
 // ---------------------------------------------------------------------------

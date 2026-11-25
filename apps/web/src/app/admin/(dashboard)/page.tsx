@@ -1,230 +1,80 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, BarChart, toast } from '@prospix/ui';
-import { DollarSign, Percent, TrendingUp, Cpu, Server, Map } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, BarChart } from '@prospix/ui';
 import { supabaseAdmin } from '@/lib/supabase';
+import { financialSummary } from '@/lib/financial-summary';
+import { saoPauloMonth } from '@/lib/sao-paulo-time';
 
-interface FinancialMetric {
-  mrrTotal: string;
-  costLLM: string;
-  costWhatsApp: string;
-  costMaps: string;
-  netProfit: string;
-  marginPercent: number;
-}
+type Summary = ReturnType<typeof financialSummary>;
+const money = (cents: number | null) => cents === null ? 'Não apurado' : new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cents / 100);
 
 export default function Dashboard() {
-  const [metrics, setMetrics] = useState<FinancialMetric | null>(null);
+  const [summary, setSummary] = useState<Summary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [costBreakdown, setCostBreakdown] = useState<{ label: string; value: number }[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [month, setMonth] = useState(saoPauloMonth());
 
-  useEffect(() => {
-    const fetchMetrics = async () => {
-      try {
-        // Query tenant_usage joined with tenants to get MRR, aggregating cost fields
-        const [usageRes, tenantsRes] = await Promise.all([
-          supabaseAdmin
-            .from('tenant_usage')
-            .select('tenant_id, llm_cost_cents, whatsapp_cost_cents, google_maps_cost_cents, tavily_cost_cents, firecrawl_cost_cents')
-            .order('updated_at', { ascending: false }),
-          supabaseAdmin
-            .from('tenants')
-            .select('id, mrr_cents')
-            .is('deleted_at', null)
-            .in('status', ['ACTIVE', 'ONBOARDING']),
-        ]);
-
-        const report = usageRes.data ?? [];
-        const tenantsList = tenantsRes.data ?? [];
-
-        let mrrTotalCents = 0;
-        let costLLMCents = 0;
-        let costWhatsAppCents = 0;
-        let costMapsCents = 0;
-        let totalCostsCents = 0;
-
-        // Sum MRR from tenants
-        tenantsList.forEach((t: any) => {
-          mrrTotalCents += t.mrr_cents || 0;
-        });
-
-        // Sum costs from usage records
-        report.forEach((rec: any) => {
-          costLLMCents += rec.llm_cost_cents || 0;
-          costWhatsAppCents += rec.whatsapp_cost_cents || 0;
-          costMapsCents += rec.google_maps_cost_cents || 0;
-          totalCostsCents +=
-            (rec.llm_cost_cents || 0) +
-            (rec.whatsapp_cost_cents || 0) +
-            (rec.google_maps_cost_cents || 0) +
-            (rec.tavily_cost_cents || 0) +
-            (rec.firecrawl_cost_cents || 0);
-        });
-
-        const netProfitCents = mrrTotalCents - totalCostsCents;
-        const marginPercent = mrrTotalCents > 0 ? Number(((netProfitCents / mrrTotalCents) * 100).toFixed(1)) : 0;
-
-        const formatBRL = (cents: number) => {
-          return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cents / 100);
-        };
-
-        setMetrics({
-          mrrTotal: formatBRL(mrrTotalCents),
-          costLLM: formatBRL(costLLMCents),
-          costWhatsApp: formatBRL(costWhatsAppCents),
-          costMaps: formatBRL(costMapsCents),
-          netProfit: formatBRL(netProfitCents),
-          marginPercent,
-        });
-
-        setCostBreakdown([
-          { label: 'LLM OpenAI', value: Number((costLLMCents / 100).toFixed(2)) },
-          { label: 'WhatsApp', value: Number((costWhatsAppCents / 100).toFixed(2)) },
-          { label: 'Google Maps', value: Number((costMapsCents / 100).toFixed(2)) },
-        ]);
-      } catch (err: unknown) {
-        console.error('Error fetching consolidated usage metrics:', err);
-        toast.error('Erro de Conexão', 'Não foi possível carregar as métricas financeiras consolidadas.');
-      } finally {
-        setIsLoading(false);
+  const load = useCallback(async () => {
+    setIsLoading(true); setError(null);
+    try {
+      const period = saoPauloMonth();
+      const tenants: { id: string; mrr_cents: number | null }[] = [];
+      const usage: Parameters<typeof financialSummary>[1] = [];
+      // Paginate both sources so a large customer base is never silently truncated.
+      for (let offset = 0; ; offset += 1000) {
+        const result = await supabaseAdmin.from('tenants').select('id, mrr_cents')
+          .is('deleted_at', null).in('status', ['ACTIVE', 'ONBOARDING']).order('id').range(offset, offset + 999);
+        if (result.error) throw result.error;
+        tenants.push(...(result.data ?? []));
+        if ((result.data?.length ?? 0) < 1000) break;
       }
-    };
-
-    fetchMetrics();
+      for (let offset = 0; ; offset += 1000) {
+        const result = await supabaseAdmin.from('tenant_usage')
+          .select('tenant_id, period_month, llm_cost_cents, whatsapp_cost_cents, google_maps_cost_cents, tavily_cost_cents, firecrawl_cost_cents')
+          .eq('period_month', period).order('tenant_id').range(offset, offset + 999);
+        if (result.error) throw result.error;
+        usage.push(...(result.data ?? []));
+        if ((result.data?.length ?? 0) < 1000) break;
+      }
+      setSummary(financialSummary(tenants, usage, period)); setMonth(period);
+    } catch {
+      setError('Não foi possível consultar os contratos e o consumo. Tente novamente.');
+    } finally { setIsLoading(false); }
   }, []);
+  useEffect(() => { void load(); }, [load]);
 
-  if (isLoading || !metrics) {
-    return (
-      <div className="space-y-6">
-        <div className="h-10 w-[280px] bg-zinc-200 animate-pulse rounded-lg" />
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="h-32 bg-zinc-100/60 animate-pulse rounded-2xl border border-border" />
-          ))}
-        </div>
-      </div>
-    );
-  }
-
+  if (isLoading) return <div role="status" className="p-6 text-text-secondary">Consultando contratos e consumo…</div>;
+  if (error || !summary) return <div role="alert" className="p-6 space-y-4"><p>{error}</p><button onClick={() => void load()} className="px-4 py-3 border rounded-lg">Tentar novamente</button></div>;
+  const buckets = [
+    { label: 'IA', value: summary.buckets.llm / 100 },
+    { label: 'WhatsApp', value: summary.buckets.whatsapp / 100 },
+    { label: 'Google Maps', value: summary.buckets.maps / 100 },
+    { label: 'Tavily', value: summary.buckets.tavily / 100 },
+    { label: 'Firecrawl', value: summary.buckets.firecrawl / 100 },
+  ];
   return (
-    <div className="space-y-8 animate-fadeIn">
-      {/* Header */}
+    <div className="space-y-6">
       <div>
-        <h2 className="text-3xl font-bold font-heading text-text tracking-tight">Custos & Margens Financeiras</h2>
-        <p className="text-text-secondary text-sm mt-1">Consolidação em tempo real dos custos de IA/infraestrutura vs faturamento de MRR.</p>
+        <h2 className="text-2xl font-bold text-text">Contratos e consumo do mês</h2>
+        <p className="text-sm text-text-secondary mt-2">Período: {month.slice(5, 7)}/{month.slice(0, 4)} · horário de Brasília.</p>
       </div>
-
-      {/* KPI Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-        <Card className="bg-surface border-border">
-          <CardContent className="pt-6">
-            <div className="flex justify-between items-start">
-              <div className="space-y-1.5">
-                <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider block">MRR Total Consolidado</span>
-                <span className="text-3xl font-bold font-heading tracking-tight text-text font-mono">{metrics.mrrTotal}</span>
-              </div>
-              <div className="p-3 bg-blue-500/10 border border-blue-500/20 text-blue-600 rounded-xl">
-                <DollarSign className="w-5 h-5" />
-              </div>
-            </div>
-            <p className="text-[10px] text-text-muted font-medium mt-4">
-              Total faturado via gateway Asaas recorrente
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-surface border-border">
-          <CardContent className="pt-6">
-            <div className="flex justify-between items-start">
-              <div className="space-y-1.5">
-                <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider block">Lucro Líquido Real</span>
-                <span className="text-3xl font-bold font-heading tracking-tight text-text font-mono">{metrics.netProfit}</span>
-              </div>
-              <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 rounded-xl">
-                <TrendingUp className="w-5 h-5" />
-              </div>
-            </div>
-            <p className="text-[10px] text-text-muted font-medium mt-4">
-              MRR descontado custos de APIs ativas
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-surface border-border">
-          <CardContent className="pt-6">
-            <div className="flex justify-between items-start">
-              <div className="space-y-1.5">
-                <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider block">Margem Operacional</span>
-                <span className="text-3xl font-bold font-heading tracking-tight text-text font-mono">{metrics.marginPercent}%</span>
-              </div>
-              <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-600 rounded-xl">
-                <Percent className="w-5 h-5" />
-              </div>
-            </div>
-            <p className="text-[10px] text-text-muted font-medium mt-4">
-              Alta rentabilidade de SaaS B2B
-            </p>
-          </CardContent>
-        </Card>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {[
+          { title: 'Mensalidades contratadas', value: summary.mrrCents, detail: 'Soma dos contratos ativos e em implantação. Não representa pagamentos recebidos.' },
+          { title: 'Consumo registrado · estimativa', value: summary.estimatedCostCents, detail: 'Uso de serviços registrado neste mês. Conferência com faturas disponível em Custos de provedores.' },
+          { title: 'Saldo após consumo estimado', value: summary.balanceCents, detail: 'Mensalidades menos o consumo registrado. Não inclui todas as despesas e não representa lucro líquido.' },
+        ].map(card => <Card key={card.title}><CardHeader><CardTitle className="text-sm">{card.title}</CardTitle></CardHeader><CardContent>
+          <p className="text-2xl font-bold font-mono">{money(card.value)}</p><p className="mt-3 text-xs text-text-secondary">{card.detail}</p>
+        </CardContent></Card>)}
       </div>
-
-      {/* Marginal Cost Breakdown */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card className="lg:col-span-2 bg-surface border-border">
-          <CardHeader>
-            <CardTitle className="text-base font-bold font-heading text-text">Detalhamento Financeiro de Custos Operacionais</CardTitle>
-            <CardDescription className="text-text-secondary text-xs">Divisão de faturamento consumido por APIs externas.</CardDescription>
-          </CardHeader>
-          <CardContent className="grid grid-cols-1 sm:grid-cols-3 gap-4 py-4">
-            <div className="p-4 rounded-xl bg-surface-sunken/40 border border-border space-y-2.5">
-              <div className="flex items-center gap-2 text-xs font-bold text-text">
-                <Cpu className="w-4 h-4 text-purple-600" />
-                <span>OpenAI / Anthropic</span>
-              </div>
-              <div>
-                <p className="text-sm font-bold font-mono text-text">{metrics.costLLM}</p>
-                <p className="text-[10px] text-text-muted">Custo acumulado de tokens</p>
-              </div>
-            </div>
-
-            <div className="p-4 rounded-xl bg-surface-sunken/40 border border-border space-y-2.5">
-              <div className="flex items-center gap-2 text-xs font-bold text-text">
-                <Server className="w-4 h-4 text-blue-600" />
-                <span>Evolution API</span>
-              </div>
-              <div>
-                <p className="text-sm font-bold font-mono text-text">{metrics.costWhatsApp}</p>
-                <p className="text-[10px] text-text-muted">Custos mensais de instâncias</p>
-              </div>
-            </div>
-
-            <div className="p-4 rounded-xl bg-surface-sunken/40 border border-border space-y-2.5">
-              <div className="flex items-center gap-2 text-xs font-bold text-text">
-                <Map className="w-4 h-4 text-emerald-600" />
-                <span>Google Maps API</span>
-              </div>
-              <div>
-                <p className="text-sm font-bold font-mono text-text">{metrics.costMaps}</p>
-                <p className="text-[10px] text-text-muted">Enriquecimento e fit score</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Cost Distribution Chart */}
-        <Card className="bg-surface border-border">
-          <CardHeader>
-            <CardTitle className="text-base font-bold font-heading text-text">Consumo em Reais</CardTitle>
-            <CardDescription className="text-text-secondary text-xs">Comparativo de despesas.</CardDescription>
-          </CardHeader>
-          <CardContent className="py-4 flex items-end justify-center">
-            <div className="w-full max-w-[280px]">
-              <BarChart items={costBreakdown} />
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <Card><CardHeader><CardTitle className="text-base">Origem dos valores</CardTitle></CardHeader><CardContent className="text-sm text-text-secondary space-y-2">
+        <p>Consumo registrado para {summary.coverage.measuredTenants} de {summary.coverage.totalTenants} operações. Ausência de registro não significa custo zero.</p>
+        <p>Para conferir despesas cobradas, importe as faturas em <a className="underline" href="/admin/custos">Custos de provedores</a>.</p>
+      </CardContent></Card>
+      <Card><CardHeader><CardTitle>Consumo por serviço</CardTitle><CardDescription>Estimativas registradas no período em reais.</CardDescription></CardHeader><CardContent>
+        {summary.estimatedCostCents === null ? <p className="text-sm text-text-secondary">Nenhum consumo registrado neste mês.</p> : <BarChart items={buckets} />}
+      </CardContent></Card>
     </div>
   );
 }

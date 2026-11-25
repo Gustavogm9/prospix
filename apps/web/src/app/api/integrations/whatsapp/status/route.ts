@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readStoredSecret } from '@/lib/secrets';
+import { probeEvolutionConnection } from '@/lib/evolution-connection';
 import { authenticateRequest, supabaseAdmin } from '../../../_lib/supabase-admin';
 import { loadAiActivityMonitor, type TenantAiActivity } from '../../../_lib/ai-activity-monitor';
 import {
@@ -670,6 +671,12 @@ export async function GET(request: NextRequest) {
           reachoutTimelock,
         },
       });
+    }
+
+    if (activeChannel?.provider === 'EVOLUTION') {
+      const external = await probeEvolutionConnection(activeChannel);
+      return NextResponse.json({ ...external, configured: true, provider: 'EVOLUTION', instanceName: activeChannel.instanceName,
+        tenantAiPaused, guardianTrace, wahaCandidate });
     }
 
     const { data: secretRecord } = await supabaseAdmin

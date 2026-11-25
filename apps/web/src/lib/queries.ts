@@ -9,6 +9,8 @@
  */
 
 import { supabase } from './supabase';
+import { createManualLead } from './manual-lead';
+import { saoPauloDayRange, saoPauloMonth } from './sao-paulo-time';
 import type { Database } from './database.types';
 
 // ─── Row Types (shorthand) ─────────────────────────────────────────────────────
@@ -179,9 +181,7 @@ function startOfMonth(date = new Date()): string {
 }
 
 function startOfMonthDate(date = new Date()): string {
-  const d = new Date(date);
-  d.setUTCDate(1);
-  return d.toISOString().slice(0, 10);
+  return saoPauloMonth(date);
 }
 
 function dashboardPeriodStart(period?: DashboardPeriod): string | undefined {
@@ -204,11 +204,8 @@ function getSaoPauloHour(date: string): number {
 }
 
 function todayRange(): { start: string; end: string } {
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  const end = new Date();
-  end.setHours(23, 59, 59, 999);
-  return { start: start.toISOString(), end: end.toISOString() };
+  const range = saoPauloDayRange();
+  return { start: range.start, end: new Date(new Date(range.end).getTime() - 1).toISOString() };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -368,64 +365,8 @@ export const leadsQueries = {
     return { data, error: null };
   },
 
-  /** Create a new manual lead */
-  create: async (tenantId: string, leadData: {
-    name?: string;
-    profession?: Profession;
-    whatsapp: string;
-    email?: string;
-    address?: { city?: string; neighborhood?: string; street?: string };
-    campaignId?: string;
-    metadata?: Record<string, unknown>;
-  }) => {
-    const sanitized = leadData.whatsapp.replace(/[^0-9]/g, '');
-    const finalWhatsapp = sanitized.startsWith('55') ? sanitized : `55${sanitized}`;
-
-    // Uniqueness check
-    const { data: existing } = await supabase
-      .from('leads')
-      .select('id')
-      .eq('tenant_id', tenantId)
-      .eq('whatsapp', finalWhatsapp)
-      .maybeSingle();
-
-    if (existing) {
-      return { data: null, error: { message: 'A lead with this WhatsApp number already exists.', code: 'CONFLICT' } };
-    }
-
-    const now = new Date().toISOString();
-    const { data, error } = await supabase
-      .from('leads')
-      .insert({
-        id: crypto.randomUUID(),
-        tenant_id: tenantId,
-        campaign_id: leadData.campaignId,
-        source: 'MANUAL' as const,
-        name: leadData.name,
-        profession: leadData.profession,
-        whatsapp: finalWhatsapp,
-        email: leadData.email,
-        address: leadData.address as any,
-        status: 'CAPTURED' as const,
-        metadata: leadData.metadata as any,
-        updated_at: now,
-      })
-      .select()
-      .single();
-
-    if (error) return { data: null, error: mapError(error) };
-
-    // Record captured event
-    await supabase.from('lead_events').insert({
-      tenant_id: tenantId,
-      lead_id: data.id,
-      event_type: 'captured',
-      payload: { source: 'manual' } as any,
-    });
-
-    return { data, error: null };
-  },
-
+  /** Create a new manual lead through the shared tenant-scoped service. */
+  create: (tenantId: string, leadData: Parameters<typeof createManualLead>[2]) => createManualLead(supabase, tenantId, leadData),
   /** Update lead fields and/or status transition */
   update: async (tenantId: string, id: string, updateData: {
     name?: string;
@@ -2508,6 +2449,8 @@ export const dashboardQueries = {
         .maybeSingle(),
     ]);
 
+    const queryError = [meetingsRes, convReadyRes, pendingRes, callbackRes, newLeadsRes, nextMeetingRes].find(result => result.error)?.error;
+    if (queryError) return { data: null, error: mapError(queryError) };
     return {
       data: {
         meetings_today: meetingsRes.count ?? 0,

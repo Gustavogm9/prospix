@@ -1099,7 +1099,7 @@ Se o lead não tiver interesse, agradeça e encerre sem insistir.`;
     }
     if (aiTools.includes("CALENDAR_WRITE")) {
       prompt +=
-        `\n- AGENDAR REUNIÃO: Você está autorizado a agendar reuniões se o lead confirmar um horário: "Vou deixar esse horário reservado na agenda!"`;
+        `\n- SOLICITAR AGENDAMENTO: Encaminhe o interesse para a equipe confirmar o horário. Esta ferramenta não reserva a agenda. Nunca diga que um horário foi agendado ou reservado sem um evento confirmado.`;
     }
     if (aiTools.includes("SEND_PDF")) {
       prompt +=
@@ -3309,16 +3309,16 @@ OBRIGATÓRIO: Escreva mensagens curtas e diretas (máximo de 2 parágrafos curto
       openAiTools.push({
         type: "function",
         function: {
-          name: "schedule_meeting",
+          name: "request_scheduling",
           description:
-            "Agenda a reunião confirmada com o lead e gera o Dossiê de Pré-Reunião para o Humano.",
+            "Encaminha o pedido de reunião e o resumo para a equipe confirmar disponibilidade. Não cria nem confirma reserva no calendário.",
           parameters: {
             type: "object",
             properties: {
               confirmation_message: {
                 type: "string",
                 description:
-                  "Mensagem final agradecendo e confirmando o agendamento.",
+                  "Mensagem informando que a equipe confirmará disponibilidade, sem dizer que existe reserva.",
               },
               dossier_summary: {
                 type: "string",
@@ -3357,22 +3357,22 @@ OBRIGATÓRIO: Escreva mensagens curtas e diretas (máximo de 2 parágrafos curto
           } catch (e) {}
         }
 
-        if (call.function?.name === "schedule_meeting") {
+        if (call.function?.name === "request_scheduling" || call.function?.name === "schedule_meeting") {
           try {
             const args = JSON.parse(call.function.arguments);
-            responseText = args.confirmation_message ||
-              "Agendado com sucesso! Nos falamos em breve.";
-
-            // Camada 4: Dossiê Pós-Agendamento
-            const dossier = args.dossier_summary;
+            // A request is a handoff, not a calendar reservation.
+            const dossier = typeof args.dossier_summary === "string" ? args.dossier_summary : "";
 
             // Update Lead and Conversation Status
-            await supabase.from("leads").update({ status: "MEETING_SCHEDULED" })
-              .eq("id", lead.id);
-            await supabase
+            const leadUpdate = await supabase.from("leads").update({ status: "ESCALATED_HUMAN" })
+              .eq("id", lead.id).eq("tenant_id", tenantId);
+            if (leadUpdate.error) throw leadUpdate.error;
+            const conversationUpdate = await supabase
               .from("conversations")
-              .update({ status: "SCHEDULED", ai_handling: false })
-              .eq("id", conversation.id);
+              .update({ status: "ESCALATED", ai_handling: false })
+              .eq("id", conversation.id).eq("tenant_id", tenantId);
+            if (conversationUpdate.error) throw conversationUpdate.error;
+            responseText = "Encaminhei seu pedido para a equipe confirmar a disponibilidade. O horário ainda não está reservado.";
 
             // Create Notification with Dossier
             const { data: tenantAdmin } = await supabase
@@ -3386,15 +3386,16 @@ OBRIGATÓRIO: Escreva mensagens curtas e diretas (máximo de 2 parágrafos curto
                 id: uuid(),
                 tenant_id: tenantId,
                 user_id: tenantAdmin.id,
-                title: `Reunião Agendada: ${lead.name}`,
+                title: `Pedido de agendamento: ${lead.name}`,
                 body: `Dossiê da IA: ${dossier.slice(0, 200)}...`,
-                type: "meeting_scheduled",
+                type: "lead_escalated",
                 link: `/inbox?conversation=${conversation.id}`,
               });
             }
 
-            console.log(`  📅 Guardião 4: Dossiê Gerado e Reunião Agendada!`);
+            console.log("  Scheduling request handed off; no calendar reservation claimed.");
           } catch (e) {
+            responseText = "Não consegui registrar seu pedido de agendamento agora. Nenhum horário foi reservado. Você pode falar diretamente com a equipe para combinar.";
             console.error("Error processing schedule_meeting tool:", e);
           }
         }

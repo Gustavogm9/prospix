@@ -30,14 +30,14 @@ const ENV_MODE = process.env.NODE_ENV;
 const PLANS = [
   {
     name: 'STANDARD',
-    price: 'R$ 150,00/mês',
+    price: 'Conforme contrato',
     description: 'Plano padrão com funcionalidades essenciais para pequenas operações.',
     badge: 'Padrão',
     badgeClass: 'bg-blue-50 text-blue-700 border-blue-200',
   },
   {
     name: 'PREMIUM_MULTI',
-    price: 'R$ 350,00/mês',
+    price: 'Conforme contrato',
     description: 'Multi-usuário com recursos avançados de automação e relatórios.',
     badge: 'Premium',
     badgeClass: 'bg-amber-50 text-amber-800 border-amber-300',

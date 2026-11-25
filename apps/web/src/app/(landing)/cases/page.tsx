@@ -24,41 +24,41 @@ export default function CasesPage() {
       <main className="max-w-3xl mx-auto px-4 py-16">
         <article className="bg-surface rounded-lg border border-border p-8 sm:p-12 shadow-sm text-left">
           <span className="text-2xs font-bold text-success bg-success-soft px-3 py-1 rounded-full uppercase tracking-wider">
-            HISTORIA DE USO · METLIFE
+            EXEMPLO DE USO · DEMONSTRAÇÃO
           </span>
           <h1 className="text-2xl sm:text-3xl font-extrabold text-text mt-4 leading-tight">
-            Como Giovane Carrara reduziu atrito operacional na prospecção de seguro corporativo
+            Como conduzir uma demonstração de prospecção consultiva
           </h1>
           <div className="flex items-center gap-3 my-6 border-b border-border-subtle pb-6">
             <div className="bg-primary/10 h-10 w-10 rounded-full flex items-center justify-center font-bold text-primary">
               GC
             </div>
             <div>
-              <h4 className="text-xs font-bold text-text">Giovane Carrara</h4>
-              <span className="text-2xs text-text-muted">Corretor MetLife · São José do Rio Preto, SP</span>
+              <h4 className="text-xs font-bold text-text">Cenário ilustrativo</h4>
+              <span className="text-2xs text-text-muted">Sem resultado comercial medido</span>
             </div>
           </div>
 
           <div className="space-y-6 text-xs text-text-secondary leading-relaxed">
             <h3 className="text-sm font-bold text-text uppercase">O Desafio</h3>
             <p>
-              Como corretor individual, Giovane dedicava uma parte relevante da rotina a filtrar clínicas, hospitais e consultórios médicos no Google e iniciar contatos frios para tentar agendar reuniões com sócios ou gerentes. Esse trabalho gerava desgaste comercial e pouca previsibilidade na agenda.
+              Um corretor precisa organizar a busca de contatos, a qualificação e o próximo atendimento. A demonstração percorre essas etapas com um contato interno autorizado.
             </p>
 
             <h3 className="text-sm font-bold text-text uppercase">A Solução</h3>
             <p>
-              Em parceria com a Guilds, Giovane conectou a API do Prospix ao seu canal do WhatsApp e ativou um fluxo de varredura automatizada focado em clínicas odontológicas e veterinárias de sua região. 
+              Configure região e público, prepare um roteiro com informações confirmadas e conecte os serviços que serão usados. Teste cada conexão antes de iniciar uma campanha.
             </p>
             <p>
-              A inteligência artificial do Prospix passou a capturar os contatos, cruzar dados com a BrasilAPI e ReceitaWS para calcular o Fit Score, e iniciar conversas consultivas amigáveis no WhatsApp. Caso o lead mostrasse interesse, a IA lia sua disponibilidade em tempo real no Google Calendar integrado e finalizava o agendamento.
+              A IA pode conduzir a conversa e registrar a qualificação conforme o roteiro. Havendo interesse, a equipe confirma disponibilidade e registra a reunião; o painel confirma a sincronização somente após resposta do Google.
             </p>
 
-            <h3 className="text-sm font-bold text-text uppercase">O Resultado</h3>
+            <h3 className="text-sm font-bold text-text uppercase">O que conferir</h3>
             <p>
-              No piloto acompanhado pela Guilds, o fluxo ajudou a organizar a abordagem dos leads da região, priorizar contatos com mais contexto e reduzir etapas manuais antes da conversa comercial.
+              Confira a mensagem no WhatsApp, os fatos da qualificação, o evento no calendário e os registros do painel. Este exemplo não representa um depoimento ou resultado medido de cliente.
             </p>
             <p className="border-l-4 border-secondary pl-4 font-mono text-sm text-primary font-semibold bg-bg p-4 rounded">
-              "Hoje eu chego às conversas com mais contexto e menos trabalho operacional repetitivo. O fluxo assistido me ajuda a priorizar melhor a agenda comercial."
+              Antes de ativar a operação, valide conexões, conteúdo comercial, destinatários e limites com o responsável.
             </p>
           </div>
         </article>

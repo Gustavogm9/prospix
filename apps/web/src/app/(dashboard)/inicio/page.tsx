@@ -1,12 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import { FunnelChart, BarChart, toast, Button, Input } from '@prospix/ui';
 import { Calendar, MessageSquare, Phone, Search, Info, ChevronLeft, ChevronRight, Star, MapPin, X, Clock, Bot, User, Award, Send } from 'lucide-react';
 import { dashboardQueries, conversationsQueries, meetingsQueries, leadsQueries } from '@/lib/queries';
 import { useAuthStore } from '@/store/auth-store';
+
+import { leadStageSummary } from '@/lib/lead-stage-summary';
 import { useRouter } from 'next/navigation';
-import { OnboardingChecklist } from '@/components/OnboardingChecklist';
+
 import { useOperationalStatusContext } from '@/hooks/useOperationalStatus';
 
 interface HotLead {
@@ -243,6 +245,8 @@ export default function HomePage() {
   const operationalView = operationalStatus?.view;
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  const [dashboardError, setDashboardError] = useState(false);
   const [weekOffset, setWeekOffset] = useState(0);
   const [isLoadingWeekly, setIsLoadingWeekly] = useState(false);
 
@@ -414,20 +418,13 @@ export default function HomePage() {
     }
   };
 
-  const onboardingSignals = useMemo(() => {
-    if (!stats) return undefined;
-    const hasConversations = (stats.pendingConversations || 0) + (stats.pendingManualConversations || 0) > 0;
-    const hasLeads = (stats.newLeadsToday || 0) > 0 || (stats.hotLeads?.length || 0) > 0;
-    return {
-      whatsapp: hasConversations,
-      firstLead: hasLeads,
-    };
-  }, [stats]);
+
 
   useEffect(() => {
     if (!tenantId) return;
     let cancelled = false;
     const fetchDashboardData = async () => {
+      setDashboardError(false);
       const emptyStats: DashboardStats = {
         todayMeetings: 0, pendingConversations: 0, pendingManualConversations: 0,
         needsAttention: 0, newLeadsToday: 0, nextMeetingTime: null,
@@ -446,42 +443,11 @@ export default function HomePage() {
 
         const todayData = todayRes.status === 'fulfilled' && !todayRes.value.error ? todayRes.value.data : null;
         const funnelRaw = funnelRes.status === 'fulfilled' && !funnelRes.value.error ? funnelRes.value.data : null;
+        if (!todayData || !funnelRaw) throw new Error('Indicadores indisponíveis');
         const weeklyRaw = weeklyRes.status === 'fulfilled' && !weeklyRes.value.error ? weeklyRes.value.data : [];
         const hotLeadsRaw = hotLeadsRes.status === 'fulfilled' && !hotLeadsRes.value.error ? hotLeadsRes.value.data : [];
 
-        const rawStages = funnelRaw?.stages || {};
-        const totalLeads = Object.values(rawStages).reduce((a: number, b: any) => a + Number(b), 0);
-        const whatsappValid = funnelRaw?.whatsapp_valid_count || 0;
-        
-        // Mensagem enviada: status is anything other than CAPTURED, ENRICHED, NEW, ARCHIVED
-        const uncontacted = (rawStages.CAPTURED || 0) + (rawStages.ENRICHED || 0) + (rawStages.NEW || 0) + (rawStages.ARCHIVED || 0);
-        const contactedTotal = Math.max(0, totalLeads - uncontacted);
-        
-        // Respondeu: Conversing, qualified, meeting_scheduled, closed_won, escalated_human, and not_interested
-        const respondedTotal = (rawStages.CONVERSING || 0) + 
-                             (rawStages.QUALIFIED || 0) + 
-                             (rawStages.MEETING_SCHEDULED || 0) + 
-                             (rawStages.CLOSED_WON || 0) + 
-                             (rawStages.ESCALATED_HUMAN || 0) + 
-                             (rawStages.NOT_INTERESTED || 0);
-
-        // Conversa qualificada: qualified, meeting_scheduled, closed_won
-        const qualifiedTotal = (rawStages.QUALIFIED || 0) + 
-                             (rawStages.MEETING_SCHEDULED || 0) + 
-                             (rawStages.CLOSED_WON || 0);
-                             
-        // Reunião agendada: meeting_scheduled, closed_won
-        const scheduledTotal = (rawStages.MEETING_SCHEDULED || 0) + 
-                             (rawStages.CLOSED_WON || 0);
-
-        const funnelData: DashboardStats['funnelData'] = funnelRaw?.stages ? [
-          { stage: 'Capturados', value: totalLeads, color: '#1B3A6B' },
-          { stage: 'WhatsApp válido', value: whatsappValid, color: '#2C5282' },
-          { stage: 'Mensagem enviada', value: contactedTotal, color: '#64748B' },
-          { stage: 'Respondeu', value: respondedTotal, color: '#E8981C' },
-          { stage: 'Conversa qualificada', value: qualifiedTotal, color: '#F59E0B' },
-          { stage: 'Reunião agendada', value: scheduledTotal, color: '#039855' },
-        ] : [];
+        const funnelData = leadStageSummary(funnelRaw.stages || {}, funnelRaw.whatsapp_valid_count || 0);
 
         const weeklyResult = weeklyRes.status === 'fulfilled' && !weeklyRes.value.error ? weeklyRes.value : null;
         const weeklyPerformance: DashboardStats['weeklyPerformance'] = Array.isArray(weeklyRaw) 
@@ -519,6 +485,7 @@ export default function HomePage() {
       } catch (err) {
         if (cancelled) return;
         console.error('Error fetching dashboard stats', err);
+        setDashboardError(true);
         setStats(emptyStats);
         toast.error('Erro de Conexão', 'Não foi possível carregar o dashboard.');
       } finally {
@@ -557,6 +524,7 @@ export default function HomePage() {
     fetchWeeklyData(newOffset);
   }, [weekOffset, fetchWeeklyData]);
 
+  if (dashboardError) return <div role="alert" className="p-6 space-y-3"><p>Não foi possível consultar os indicadores. Nenhum valor foi estimado.</p><button className="px-4 py-3 border rounded-lg" onClick={() => window.location.reload()}>Tentar novamente</button></div>;
   if (isLoading || !stats) {
     return (
       <div className="space-y-5">
@@ -572,7 +540,7 @@ export default function HomePage() {
   const actionCount = [
     stats.todayMeetings > 0, stats.pendingConversations > 0,
     stats.needsAttention > 0, stats.newLeadsToday > 0,
-  ].filter(Boolean).length || 4;
+  ].filter(Boolean).length;
 
   const totalCaptured = stats.funnelData?.[0]?.value || 0;
 
@@ -597,26 +565,26 @@ export default function HomePage() {
                 Hoje você só precisa de você em {actionCount} coisas. 👆
               </h1>
               <p className="text-[13px] text-[#475569] leading-relaxed">
-                Sua máquina está rodando. A IA já{' '}
-                <strong className="text-[#0F172A]">capturou {stats.newLeadsToday} novos leads</strong>,{' '}
-                mandou <strong className="text-[#0F172A]">{stats.pendingConversations + stats.pendingManualConversations} mensagens</strong> e{' '}
-                conversa com <strong className="text-[#0F172A]">{stats.pendingConversations} pessoas agora</strong>.{' '}
+                No resumo da operação, você tem{' '}
+                <strong className="text-[#0F172A]">{stats.newLeadsToday} novos leads hoje</strong>,{' '}
+                tem <strong className="text-[#0F172A]">{stats.pendingManualConversations} conversas aguardando você</strong> e{' '}
+                <strong className="text-[#0F172A]">{stats.pendingConversations} conversas sob atendimento da IA</strong>.{' '}
                 Aqui está o que precisa do seu tempo:
               </p>
             </div>
             <div className="flex flex-col items-end gap-0.5 text-right shrink-0">
-              <span className="text-[10px] uppercase tracking-wider text-[#64748B] font-semibold">Receita Projetada · 90d</span>
+              <span className="text-[10px] uppercase tracking-wider text-[#64748B] font-semibold">Reuniões de hoje</span>
               <span className="text-[23px] font-bold text-[#A56B0A] font-mono leading-none">
-                R$ {Math.round((stats.todayMeetings * 30 * 0.35 * 5500) / 1000)}k
+                {stats.todayMeetings}
               </span>
-              <span className="text-[11px] text-[#64748B]">{stats.todayMeetings * 30} reuniões × 35% × R$5,5k</span>
+              <span className="text-[11px] text-[#64748B]">Confira os horários na sua agenda</span>
             </div>
           </>
         )}
       </div>
 
       {/* Onboarding Checklist */}
-      <OnboardingChecklist signals={onboardingSignals} />
+
 
       {/* ═══ Action Cards (4 cards) ═══ */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -647,8 +615,8 @@ export default function HomePage() {
             <MessageSquare className="w-5 h-5" />
           </div>
           <div className="text-[28px] font-bold text-[#0F172A] font-mono leading-none">{stats.pendingConversations}</div>
-          <div className="text-[13.5px] font-semibold text-[#0F172A] mt-1.5">Conversas prontas pra fechar</div>
-          <div className="text-[12px] text-[#475569] mt-1 leading-relaxed">Leads que aceitaram a abordagem e aguardam você.</div>
+          <div className="text-[13.5px] font-semibold text-[#0F172A] mt-1.5">Em atendimento pela IA</div>
+          <div className="text-[12px] text-[#475569] mt-1 leading-relaxed">Conversas ativas sob atendimento automático.</div>
           <div className="text-[12px] font-semibold text-[#1B3A6B] mt-3 flex items-center gap-1">Ver conversas →</div>
         </div>
 
@@ -676,7 +644,7 @@ export default function HomePage() {
           </div>
           <div className="text-[28px] font-bold text-[#0F172A] font-mono leading-none">+{stats.newLeadsToday}</div>
           <div className="text-[13.5px] font-semibold text-[#0F172A] mt-1.5">Novos leads capturados</div>
-          <div className="text-[12px] text-[#475569] mt-1 leading-relaxed">Profissionais que a IA encontrou hoje.</div>
+          <div className="text-[12px] text-[#475569] mt-1 leading-relaxed">Contatos cadastrados hoje na sua operação.</div>
           <div className="text-[12px] font-semibold text-[#1B3A6B] mt-3 flex items-center gap-1">Ver leads →</div>
         </div>
       </div>
@@ -690,21 +658,21 @@ export default function HomePage() {
               <span className="w-4 h-4 rounded-full bg-[#F1F3F6] text-[#64748B] flex items-center justify-center text-[10px] font-bold cursor-help">?</span>
             </div>
             <div className="text-[11px] text-[#64748B] mt-0.5">
-              Atualizado há 14s · {totalCaptured} contatos viraram {stats.todayMeetings} reuniões neste mês
+              Registros disponíveis · {totalCaptured} contatos viraram {stats.todayMeetings} reuniões no histórico
             </div>
           </div>
           <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded-full bg-[rgba(232,152,28,0.14)] text-[#A56B0A] flex items-center gap-1.5">
             <span className="w-[5px] h-[5px] rounded-full bg-[#E8981C] animate-pulse" />
-            Rodando agora
+            Visão do histórico
           </span>
         </div>
         <div className="p-4">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {[
-              { num: '✓', name: 'Captura', desc: 'Google Maps, Scraping e Referrals', count: totalCaptured, style: 'done' },
-              { num: '✓', name: 'Super Enriquecimento', desc: '10+ bases (CNPJ, Custo) e Fit Score', count: stats.funnelData?.[1]?.value || 0, style: 'done' },
-              { num: '●', name: 'Conversão IA', desc: 'Contorna objeções no WhatsApp', count: stats.pendingConversations, style: 'active' },
-              { num: '4', name: 'Loop de Indicações', desc: 'Agenda reunião e aciona motor 24h', count: stats.todayMeetings, style: 'pending' },
+              { num: '1', name: 'Leads cadastrados', desc: 'Histórico da operação', count: totalCaptured, style: 'done' },
+              { num: '2', name: 'WhatsApp válido', desc: 'Validação registrada', count: stats.funnelData?.[1]?.value || 0, style: 'done' },
+              { num: '3', name: 'Conversas da IA', desc: 'Atendimento registrado', count: stats.pendingConversations, style: 'active' },
+              { num: '4', name: 'Reuniões hoje', desc: 'Confira os horários na agenda', count: stats.todayMeetings, style: 'pending' },
             ].map((stage, i) => (
               <div key={i} className="relative bg-[#F1F3F6] border border-[#EEF0F3] rounded-lg p-3 text-center cursor-pointer transition-all hover:border-[#1B3A6B] hover:-translate-y-0.5">
                 <div className={`absolute -top-2.5 left-1/2 -translate-x-1/2 w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold border-2 border-white text-white ${
@@ -720,7 +688,7 @@ export default function HomePage() {
           </div>
           <div className="mt-3.5 px-3.5 py-2.5 bg-[rgba(27,58,107,0.04)] rounded-lg text-[12px] text-[#475569] flex items-center gap-2">
             <Info className="w-4 h-4 text-[#1B3A6B] shrink-0" />
-            <div className="leading-relaxed">A engrenagem perfeita: Pescamos de diversas fontes, <strong className="text-[#0F172A]">enriquecemos tudo</strong>, a IA aborda quem tem <strong className="text-[#0F172A]">Fit Score alto</strong>, e 24h após fechar a reunião, <strong className="text-[#0F172A]">roda o motor automático</strong> de indicações no Whatsapp.</div>
+            <div className="leading-relaxed">A operação depende das conexões, do roteiro e das campanhas habilitadas. Confira o WhatsApp, a agenda e o conteúdo comercial antes de iniciar os envios.</div>
           </div>
         </div>
       </div>
@@ -828,9 +796,9 @@ export default function HomePage() {
         {/* Funnel panel */}
         <div className="bg-white border border-[#E5E7EB] rounded-xl shadow-sm overflow-hidden flex flex-col justify-between">
           <div className="px-5 py-3.5 border-b border-[#EEF0F3]">
-            <div className="text-[14px] font-semibold text-[#0F172A]">Funil do mês</div>
+            <div className="text-[14px] font-semibold text-[#0F172A]">Etapas atuais dos leads</div>
             <div className="text-[11px] text-[#64748B] mt-0.5">
-              A cada {totalCaptured && stats.funnelData?.[5]?.value ? Math.round(totalCaptured / Math.max(stats.funnelData[5].value, 1)) : '—'} contatos → 1 reunião
+              Situação registrada no cadastro. Não comprova envio de mensagem nem reserva no Google.
             </div>
           </div>
           <div className="p-5 flex-1 flex items-center justify-center min-h-[220px]">
@@ -852,7 +820,7 @@ export default function HomePage() {
           <div className="px-5 py-3.5 border-b border-[#EEF0F3] flex items-center justify-between">
             <div>
               <div className="text-[14px] font-semibold text-[#0F172A]">Novas Leads na Semana</div>
-              <div className="text-[11px] text-[#64748B] mt-0.5">Distribuição diária de captação pelo Google Maps.</div>
+              <div className="text-[11px] text-[#64748B] mt-0.5">Contatos cadastrados em cada dia do período.</div>
             </div>
             <div className="flex items-center gap-2">
               <button

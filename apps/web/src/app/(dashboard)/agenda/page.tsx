@@ -147,6 +147,7 @@ export default function Schedule() {
   const [meetingDuration, setMeetingDuration] = useState(30);
   const [isLoadingLeads, setIsLoadingLeads] = useState(false);
   const [isCreatingMeeting, setIsCreatingMeeting] = useState(false);
+  const [calendarSyncError, setCalendarSyncError] = useState<string | null>(null);
   const [withMeet, setWithMeet] = useState(false);
   const [sendInvite, setSendInvite] = useState(true);
   const [selectedGoogleEvent, setSelectedGoogleEvent] = useState<BusySlot | null>(null);
@@ -188,12 +189,16 @@ export default function Schedule() {
     if (!silent) setIsSyncing(true);
     try {
       const res = await apiFetch('/api/integrations/calendar/sync', { method: 'POST' });
+      if (!res.ok) throw new Error('Leitura da agenda não confirmada.');
       if (res.ok) {
         const json = await res.json();
+        if (json.success !== true || !Array.isArray(json.events)) throw new Error('Resposta da agenda inválida.');
         setBusySlots(json.events || []);
+        setCalendarSyncError(null);
         if (!silent) toast.success('Sincronizado!', 'Google Calendar atualizado com sucesso.');
       }
     } catch (err) {
+      setCalendarSyncError('Não foi possível ler o Google Calendar. Confira a conexão antes de confirmar horários.');
       console.error('Error syncing Google Calendar:', err);
       if (!silent) toast.error('Erro de Sync', 'Não foi possível sincronizar com o Google Calendar.');
     } finally {
@@ -280,20 +285,28 @@ export default function Schedule() {
 
       // Push to Google Calendar if connected
       const meetingId = result.data?.id;
+      let googleSynced = false;
       if (calendarConnected && meetingId) {
         try {
-          await apiFetch('/api/integrations/calendar/push-event', {
+          const response = await apiFetch('/api/integrations/calendar/push-event', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ meetingId, withMeet, sendInvite }),
           });
+          const receipt = await response.json();
+          if (!response.ok || receipt.success !== true || !receipt.eventId) throw new Error('Sincronização não confirmada.');
+          googleSynced = true;
         } catch (pushErr) {
           console.warn('Failed to push to Google Calendar:', pushErr);
           // Don't fail the meeting creation if push fails
         }
       }
 
-      toast.success('Reunião agendada', calendarConnected ? 'Compromisso salvo e sincronizado com Google Calendar.' : 'Compromisso salvo com sucesso.');
+      if (calendarConnected && !googleSynced) {
+        toast.error('Sincronização pendente', 'A reunião foi salva no Prospix, mas o Google não confirmou o evento. Confira a agenda antes de confirmar ao lead.');
+      } else {
+        toast.success('Reunião agendada', googleSynced ? 'Compromisso salvo e confirmado pelo Google Calendar.' : 'Compromisso salvo no Prospix.');
+      }
       setIsCreateMeetingOpen(false);
       setSelectedSlot(null);
       setMeetingLocation('');
@@ -352,10 +365,11 @@ export default function Schedule() {
       {/* Info banner */}
       <div className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-[rgba(27,58,107,0.04)] to-[rgba(232,152,28,0.06)] border border-[rgba(27,58,107,0.08)] rounded-xl text-[12.5px] text-[#0F172A] shrink-0">
         <Info className="w-4 h-4 text-[#1B3A6B] shrink-0" />
-        <div><strong>Tudo aqui foi agendado pela IA</strong> e sincronizado com seu Google Calendar. Você recebe lembrete 1h antes. Após cada reunião, clique em <strong>"Marcar resultado"</strong> para a IA disparar follow-up e pedir indicações.</div>
+        <div><strong>Organize suas reuniões e confira os horários.</strong> A sincronização com o Google depende da conexão e da confirmação de cada evento. Após a reunião, use <strong>"Marcar resultado"</strong> para registrar o atendimento.</div>
       </div>
 
       {/* Toolbar */}
+      {calendarSyncError && <p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">{calendarSyncError} <a className="underline" href="/configuracoes?tab=integracoes">Verificar conexão</a></p>}
       <div className="bg-white border border-[#E5E7EB] rounded-lg p-2.5 flex items-center gap-2 flex-wrap shadow-sm shrink-0">
         <button onClick={() => setWeekOffset(0)} className={`h-8 px-3 rounded-md text-[12px] font-medium ${weekOffset === 0 ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Esta semana</button>
         <button onClick={() => setWeekOffset(1)} className={`h-8 px-3 rounded-md text-[12px] font-medium ${weekOffset === 1 ? 'bg-[#1B3A6B] text-white' : 'text-[#475569] border border-[#E5E7EB] hover:bg-[#F1F3F6]'}`}>Próxima semana</button>

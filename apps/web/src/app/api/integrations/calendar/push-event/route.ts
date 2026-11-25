@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticateRequest, getSupabaseAdmin } from '../../../_lib/supabase-admin';
-import { createEvent } from '../../../_lib/google-calendar';
-import { readStoredSecret } from '@/lib/secrets';
+import { createEvent, confirmEvent } from '../../../_lib/google-calendar';
+import { readStoredSecret } from '../../../../../lib/secrets';
+import { createHash } from 'node:crypto';
 
 /**
  * POST /api/integrations/calendar/push-event
@@ -69,6 +70,11 @@ export async function POST(request: NextRequest) {
     );
     const calendarId = (secretRecord.google_calendar_id as string) || 'primary';
 
+    if (meeting.google_event_id) {
+      const confirmed = await confirmEvent(refreshToken, calendarId, meeting.google_event_id);
+      return NextResponse.json({ success: true, eventId: confirmed.eventId, meetLink: confirmed.meetLink || null, alreadySynced: true });
+    }
+
     // 3. Build the Google Calendar event payload
     const lead = meeting.leads as any; // joined relation
     const companyName =
@@ -81,6 +87,8 @@ export async function POST(request: NextRequest) {
     ).toISOString();
 
     const eventData = {
+      id: createHash('sha256').update(`${tenantId}:${meetingId}`).digest('hex'),
+      meetingId,
       summary: `Prospix - ${lead?.name || 'Lead'}`,
       description: [
         `📋 Lead: ${lead?.name || '—'}`,
@@ -106,10 +114,13 @@ export async function POST(request: NextRequest) {
         google_event_id: result.eventId,
         updated_at: new Date().toISOString(),
       })
-      .eq('id', meetingId);
+      .eq('id', meetingId)
+      .eq('tenant_id', tenantId)
+      .select('id')
+      .single();
 
     if (updateError) {
-      console.error('Failed to update meeting with google_event_id:', updateError);
+      return NextResponse.json({ error: 'RECONCILIATION_REQUIRED', message: 'O Google confirmou o evento, mas o vínculo não foi salvo. Tente sincronizar esta mesma reunião novamente.' }, { status: 503 });
     }
 
     return NextResponse.json({ success: true, eventId: result.eventId, meetLink: result.meetLink || null });

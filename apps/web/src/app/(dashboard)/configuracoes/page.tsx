@@ -398,7 +398,7 @@ export default function Settings() {
   ]);
 
   // Integrations states
-  const [whatsappStatus, setWhatsappStatus] = useState<'connected' | 'disconnected' | 'loading'>(
+  const [whatsappStatus, setWhatsappStatus] = useState<'connected' | 'disconnected' | 'loading' | 'unavailable'>(
     'loading',
   );
   const [whatsappProvider, setWhatsappProvider] = useState<'EVOLUTION' | 'WAHA' | null>(null);
@@ -435,6 +435,7 @@ export default function Settings() {
   const [googleCalendars, setGoogleCalendars] = useState<
     Array<{ id: string; summary: string; primary?: boolean; backgroundColor?: string }>
   >([]);
+  const [googleVerified, setGoogleVerified] = useState(false);
   const [selectedCalendarId, setSelectedCalendarId] = useState<string>('primary');
   const [isLoadingCalendars, setIsLoadingCalendars] = useState(false);
 
@@ -735,6 +736,7 @@ export default function Settings() {
     try {
       const res = await apiFetch('/api/integrations/credentials');
       const json = await res.json();
+      if (!res.ok || !json?.data) throw new Error('Estado das integrações indisponível.');
       const data = json?.data || emptyCredentialState;
       setCredentialState(data);
       setCredentialDraft((draft) => ({
@@ -745,6 +747,7 @@ export default function Settings() {
 
       // If Google Calendar is connected, load calendar list
       if (data.google?.calendarConnected) {
+        setGoogleVerified(false);
         setSelectedCalendarId(data.google.calendarId || 'primary');
         setIsLoadingCalendars(true);
         try {
@@ -752,6 +755,7 @@ export default function Settings() {
           if (calRes.ok) {
             const calJson = await calRes.json();
             setGoogleCalendars(calJson.calendars || []);
+            setGoogleVerified(Array.isArray(calJson.calendars) && calJson.calendars.length > 0);
           }
         } catch (calErr) {
           console.warn('Failed to load Google Calendars:', calErr);
@@ -902,6 +906,7 @@ export default function Settings() {
     try {
       const res = await apiFetch('/api/integrations/whatsapp/status');
       const data = await res.json();
+      if (!res.ok || data.status === 'unavailable') throw new Error('Não foi possível verificar o WhatsApp no provedor.');
       setWhatsappTrace(data.guardianTrace ?? null);
       setWhatsappProvider(data.provider ?? null);
       setWahaCandidate(data.wahaCandidate ?? null);
@@ -947,7 +952,7 @@ export default function Settings() {
         error: message,
       }));
       if (!silent) setWhatsappTrace(null);
-      if (!silent) setWhatsappStatus('disconnected');
+      setWhatsappStatus('unavailable');
     }
   }, []);
 
@@ -2089,7 +2094,7 @@ export default function Settings() {
                       </span>
                     ) : (
                       <span className="rounded-full bg-[#FEF3F2] px-2 py-0.5 text-[10.5px] font-semibold text-[#D92D20]">
-                        ● Desconectado
+                        {whatsappStatus === 'unavailable' ? '● Não verificado' : '● Desconectado'}
                       </span>
                     )}
                   </div>
@@ -2109,13 +2114,13 @@ export default function Settings() {
                         </div>
                       </div>
                     </div>
-                    {credentialState.google.calendarConnected ? (
+                    {googleVerified ? (
                       <span className="rounded-full bg-[#ECFDF3] px-2 py-0.5 text-[10.5px] font-semibold text-[#027A48]">
                         ● Conectado
                       </span>
                     ) : (
                       <span className="rounded-full bg-[#FEF3F2] px-2 py-0.5 text-[10.5px] font-semibold text-[#D92D20]">
-                        ● Desconectado
+                        {credentialState.google.calendarConnected ? '● Autorização salva; não verificada' : '● Desconectado'}
                       </span>
                     )}
                   </div>
@@ -2349,6 +2354,7 @@ export default function Settings() {
                   )}
 
                   {/* 3. Disconnected State */}
+                  {whatsappStatus === 'unavailable' && <p role="alert" className="p-4 text-sm text-amber-800">Não foi possível consultar o provedor. O estado da conexão não foi confirmado. <button className="underline" onClick={() => void checkStatus()}>Verificar novamente</button></p>}
                   {whatsappStatus === 'disconnected' && (
                     <div className="space-y-5">
                       {renderWhatsAppTracePanel()}
@@ -2525,15 +2531,16 @@ export default function Settings() {
                           <div>
                             <div className="flex items-center gap-2">
                               <h4 className="text-[13px] font-bold text-[#0F172A]">
-                                Google Agenda Ativa
+                                {googleVerified ? 'Leitura da agenda confirmada' : 'Autorização Google salva'}
                               </h4>
                               <span className="rounded-md bg-[#059669] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white">
-                                Sincronizado
+                                {googleVerified ? 'Verificado' : 'Verificação pendente'}
                               </span>
                             </div>
                             <p className="mt-0.5 text-[11px] text-[#059669]">
-                              A IA do Prospix está autorizada a ler conflitos e agendar reuniões.
+                              {googleVerified ? 'O Google respondeu à consulta. Cada agendamento exige a confirmação do evento.' : 'Não foi possível confirmar a leitura no Google. Reconecte a agenda antes de usá-la.'}
                             </p>
+                            {!googleVerified && <button className="underline text-sm py-2" onClick={handleGoogleConnect}>Reconectar Google Agenda</button>}
                           </div>
                         </div>
                         <Button
@@ -2589,7 +2596,7 @@ export default function Settings() {
                             )}
                           </select>
                           <p className="text-[10px] text-[#94A3B8]">
-                            A IA agendará reuniões e verificará conflitos neste calendário.
+                            As reuniões serão sincronizadas com este calendário após confirmação do Google.
                           </p>
                         </label>
                       </div>

@@ -1,7 +1,9 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { OnboardingChecklist } from '@/components/OnboardingChecklist';
 import { useAuthStore } from '@/store/auth-store';
 import { supabase } from '@/lib/supabase';
 import AppShell from '@/layout/AppShell';
@@ -10,6 +12,7 @@ import { AlertTriangle } from 'lucide-react';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const { user, tenantId, clearSession, initialized, initializeFromSupabase } = useAuthStore();
   const [hasHydrated, setHasHydrated] = useState(false);
   const [isSessionExpired, setIsSessionExpired] = useState(false);
@@ -75,7 +78,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   return (
     <>
-      <AppShell>{children}</AppShell>
+      <AppShell>
+        {pathname === '/inicio' && <OnboardingChecklist />}
+        {(pathname === '/configuracoes' || pathname === '/icps' || pathname?.startsWith('/roteiros')) && <div className="mb-4 rounded-xl border border-border bg-white px-4 py-2 text-sm text-text-secondary">
+          Preparando sua conta? <Link href="/onboarding" className="inline-flex min-h-11 items-center font-semibold text-primary underline">Continuar primeiros passos</Link>
+        </div>}
+        {children}
+      </AppShell>
 
       {/* Session Expired Forced Modal */}
       {isSessionExpired && (

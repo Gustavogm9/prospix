@@ -55,15 +55,15 @@ export default function LandingPage() {
     },
     {
       q: 'A IA pode gerar banimento da minha conta do WhatsApp?',
-      a: 'Nossa engine possui algoritmos integrados de aquecimento inteligente (warmup) e controle estrito de janelas de disparo que simulam a escrita humana natural, com intervalos dinâmicos (digitação gradual) entre as interações. Além disso, a IA apenas responde a leads que foram de alguma forma qualificados ou que solicitaram contato, operando dentro das políticas comerciais da Meta para evitar denúncias.',
+      a: 'O sistema possui limites de envio, horários de operação e controles de pausa. Esses controles não garantem que um número nunca será bloqueado. Antes de ativar uma campanha, a equipe precisa validar o público autorizado, o roteiro e as regras do provedor.',
     },
     {
       q: 'Como é feita a integração com o Google Calendar?',
-      a: 'A conexão é direta e segura usando protocolo OAuth2 oficial. O Prospix lê a sua disponibilidade em tempo real (respeitando buffers de 15 minutos que configuramos para evitar reuniões coladas) e escreve o compromisso automaticamente no seu calendário assim que a IA confirma o interesse do lead. Os tokens de acesso são renovados automaticamente em ambiente seguro.',
+      a: 'Você autoriza o acesso pelo Google e seleciona um calendário. Na agenda do Prospix, é possível consultar compromissos e enviar uma reunião ao Google. A sincronização só é confirmada quando o Google devolve o evento.',
     },
     {
       q: 'Eu posso personalizar o script e o tom de voz da IA?',
-      a: 'Com certeza. Disponibilizamos um editor de roteiros onde você define o tom de voz da IA (ex: formal consultivo, mais dinâmico, uso de títulos como Dr./Dra. para médicos) e cria até 3 variações de mensagens. Nosso simulador integrado permite que você teste as respostas da inteligência artificial antes de colocá-la para rodar com leads reais.',
+      a: 'No editor de roteiros, você configura o tom de voz, as perguntas e as restrições da conversa. Valide o roteiro com sua equipe e um contato de teste autorizado antes de iniciar uma campanha.',
     },
     {
       q: 'O que acontece se o lead fizer uma pergunta muito complexa?',
@@ -71,15 +71,15 @@ export default function LandingPage() {
     },
     {
       q: 'Quais são as fontes de captura dos leads?',
-      a: 'O sistema realiza varreduras automáticas em segundo plano integradas diretamente ao Google Places (Maps). Você configura a especialidade e a região de interesse (ex: "Clínicas de Odontologia em Ribeirão Preto") e nosso worker captura, enriquece as informações cadastrais e calcula o Fit Score automaticamente com base nas receitas e dados da empresa antes de iniciar qualquer conversa.',
+      a: 'As campanhas podem buscar contatos no Google Maps conforme especialidade, região e fontes configuradas. A busca depende das credenciais, dos limites de uso e da ativação da campanha. A equipe deve conferir os dados encontrados antes de usá-los na prospecção.',
     },
     {
       q: 'Qual o prazo de setup inicial da plataforma?',
-      a: 'Após a contratação por convite da Guilds e ativação da sua conta, o setup básico (conexão do WhatsApp, OAuth do Calendário e ativação do primeiro roteiro pré-configurado) leva menos de 10 minutos por meio do nosso checklist interativo de onboarding.',
+      a: 'A implantação depende do pareamento do WhatsApp, da autorização do Google e da validação do roteiro. O checklist orienta a configuração e cada conexão deve ser testada antes da ativação.',
     },
     {
       q: 'Quais as formas de pagamento e recorrência?',
-      a: 'O faturamento é mensal via boleto ou PIX integrado da Asaas. Seus relatórios de consumo mostram exatamente o uso da franquia de tokens em tempo real na aba de faturamento das suas configurações.',
+      a: 'As condições de cobrança são definidas no contrato. O painel mostra os registros de consumo e os pagamentos cadastrados. A integração automática com uma plataforma de cobrança não está disponível nesta versão.',
     },
   ];
 
@@ -197,11 +197,11 @@ export default function LandingPage() {
       <section className="gradient-hero py-16 md:py-24 border-b border-border">
         <div className="max-w-5xl mx-auto px-4 text-center">
           <h1 className="text-3xl md:text-5xl font-bold tracking-tight text-text leading-tight max-w-4xl mx-auto">
-            Sua máquina de prospecção que agenda{' '}
+            Sua prospecção assistida para organizar{' '}
             <span className="text-primary border-b-4 border-secondary/30">reuniões qualificadas</span> no WhatsApp
           </h1>
           <p className="mt-6 text-base md:text-md text-text-secondary max-w-2xl mx-auto leading-relaxed">
-            Pare de ligar para 100 contatos para falar com 10. A inteligência artificial do Prospix captura os leads ideais, inicia conversas humanas qualificadas e agenda no seu calendário. Você só aparece para vender.
+            Pare de ligar para 100 contatos para falar com 10. A inteligência artificial do Prospix ajuda a captar leads, conduzir a qualificação pelo WhatsApp e organizar o encaminhamento ao corretor.
           </p>
           <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
             <a
@@ -218,7 +218,8 @@ export default function LandingPage() {
             </a>
           </div>
 
-          {/* Interactive Mockup Container */}
+          {/* Illustration identified as fictional data. */}
+          <p className="mt-10 text-sm text-text-secondary">Exemplo ilustrativo com dados fictícios. Os resultados e tempos de resposta dependem da operação.</p>
           <div className="mt-16 bg-surface rounded-lg shadow-lg border border-border overflow-hidden max-w-4xl mx-auto">
             {/* Window bar */}
             <div className="bg-surface-sunken h-10 px-4 flex items-center gap-2 border-b border-border">
@@ -238,7 +239,7 @@ export default function LandingPage() {
                     { l: 'Capturados', c: 1420, p: 100 },
                     { l: 'WhatsApp Ativo', c: 840, p: 59 },
                     { l: 'Respondidos', c: 382, p: 27 },
-                    { l: 'Qualificados (IA)', c: 180, p: 12 },
+                    { l: 'Qualificados (IA)', c: 180, p: 13 },
                     { l: 'Reuniões prontas', c: 42, p: 3 },
                   ].map((s, idx) => (
                     <div key={idx} className="flex items-center gap-2 text-xs">
@@ -263,8 +264,8 @@ export default function LandingPage() {
                 </div>
                 <div className="bg-surface p-4 rounded border border-border-subtle shadow-sm flex-1">
                   <span className="text-2xs text-text-muted font-semibold block uppercase">Tempo de Resposta</span>
-                  <span className="text-2xl font-bold text-text font-mono">~12s</span>
-                  <span className="text-2xs text-text-secondary block mt-1">Totalmente automatizado</span>
+                  <span className="text-2xl font-bold text-text font-mono">Conforme a fila</span>
+                  <span className="text-2xs text-text-secondary block mt-1">Fluxo assistido</span>
                 </div>
               </div>
             </div>
@@ -277,7 +278,7 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto px-4 flex flex-col md:flex-row items-center justify-between gap-6">
           <div className="text-center md:text-left">
             <span className="text-2xs font-semibold text-text-muted uppercase block tracking-wider">
-              Conexões operando nas principais seguradoras brasileiras
+              Voltado à operação comercial de corretores de seguros
             </span>
           </div>
           <div className="flex flex-wrap justify-center items-center gap-8 md:gap-12 opacity-80 filter grayscale hover:grayscale-0 transition-all">
@@ -339,7 +340,7 @@ export default function LandingPage() {
               {
                 step: '02',
                 title: 'Abordagem Inteligente',
-                desc: 'A IA assume as conversas no WhatsApp utilizando a máscara de escrita humana. Ela contorna objeções, responde dúvidas do lead e analisa o Fit Score antes de oferecer sua agenda.',
+                desc: 'A assistente virtual conduz a qualificação pelo WhatsApp usando o roteiro e os fatos confirmados. Dúvidas específicas e interesse em reunião são encaminhados à equipe.',
                 icon: (
                   <svg className="h-6 w-6 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
@@ -349,7 +350,7 @@ export default function LandingPage() {
               {
                 step: '03',
                 title: 'Compromisso Agendado',
-                desc: 'Assim que o lead demonstra o interesse técnico ideal, a IA escolhe a melhor data no seu calendário integrado e confirma a reunião. Você recebe um e-mail com a notificação.',
+                desc: 'Quando houver interesse, a equipe confirma o horário e registra a reunião na agenda. A sincronização com o Google depende da autorização e do recibo do evento.',
                 icon: (
                   <svg className="h-6 w-6 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -386,7 +387,7 @@ export default function LandingPage() {
             {[
               {
                 t: 'Corretores Autônomos',
-                p: 'Chega de perder tempo digitando "olá" ou batendo ligações frias. O Prospix atua como seu assistente comercial, enchendo sua agenda semanal enquanto você atende clientes.',
+                p: 'Chega de perder tempo digitando "olá" ou batendo ligações frias. O Prospix atua como seu assistente comercial, ajudando a organizar a qualificação e os próximos atendimentos.',
               },
               {
                 t: 'Equipes de Vendas (2-5 corretores)',
@@ -411,7 +412,7 @@ export default function LandingPage() {
         <div className="max-w-5xl mx-auto px-4 text-center">
           <h2 className="text-2xl font-bold tracking-tight">Menos atrito operacional, mais produtividade comercial</h2>
           <p className="mt-4 text-sm text-white/80 max-w-xl mx-auto">
-            Indicadores operacionais observados em simulações, pilotos e fluxos acompanhados pela equipe Guilds.
+            Exemplos do que acompanhar no painel quando houver registros da operação.
           </p>
 
           <div className="mt-16 grid grid-cols-1 sm:grid-cols-3 gap-8">
@@ -448,13 +449,13 @@ export default function LandingPage() {
             {[
               {
                 name: 'Essencial',
-                price: 'R$ 290',
-                period: '/mês',
-                setup: 'Setup R$ 4.900',
+                price: 'Sob consulta',
+                period: '',
+                setup: 'Implantação conforme proposta',
                 desc: 'Para corretores individuais iniciarem sua automação básica.',
                 features: [
                   '1 Conexão WhatsApp ativa',
-                  'Até 500 leads enriquecidos/mês',
+                  'Limites definidos em contrato',
                   'Integração Google Calendar',
                   'Filtro básico de Fit Score',
                   'Roteiro simples (1 base)',
@@ -464,31 +465,31 @@ export default function LandingPage() {
               },
               {
                 name: 'Recomendado',
-                price: 'R$ 490',
-                period: '/mês',
-                setup: 'Setup R$ 7.900',
+                price: 'Sob consulta',
+                period: '',
+                setup: 'Implantação conforme proposta',
                 desc: 'A solução comercial completa com motor de inteligência avançado.',
                 features: [
                   '1 Conexão WhatsApp ativa',
-                  'Leads enriquecidos ILIMITADOS',
+                  'Volume de leads definido por campanha',
                   'Integração Google Calendar',
                   'Lógica avançada de Fit Score',
                   'Até 3 variações de roteiros',
-                  'Histórico completo Asaas',
+                  'Histórico de pagamentos cadastrados',
                   'Prioridade de suporte via WhatsApp',
                 ],
                 recommended: true,
               },
               {
                 name: 'Premium Guilds',
-                price: 'R$ 890',
-                period: '/mês',
+                price: 'Sob consulta',
+                period: '',
                 setup: 'Setup sob consulta',
-                desc: 'Para grandes corretores e líderes com múltiplos canais operando.',
+                desc: 'Para equipes que precisam acompanhar a operação comercial.',
                 features: [
-                  'Até 3 conexões de WhatsApp',
-                  'Leads enriquecidos ILIMITADOS',
-                  'Múltiplos calendários OAuth',
+                  'Um canal ativo por operação',
+                  'Volume de leads definido por campanha',
+                  'Seleção de calendário Google',
                   'Criptografia AES-256 no Secrets Vault',
                   'Suporte dedicado 1-on-1',
                   'Acesso antecipado a novos roteiros',
@@ -504,7 +505,7 @@ export default function LandingPage() {
               >
                 {plan.recommended && (
                   <span className="absolute top-0 right-6 -translate-y-1/2 bg-primary text-white text-2xs font-semibold px-3 py-1 rounded-full uppercase">
-                    Mais Popular ★
+                    Para equipes
                   </span>
                 )}
                 <div>
@@ -555,22 +556,22 @@ export default function LandingPage() {
       <section id="cases" className="py-20 bg-bg border-b border-border">
         <div className="max-w-4xl mx-auto px-4">
           <div className="text-center">
-            <span className="text-2xs font-semibold text-primary uppercase block tracking-wider">Histórias de Sucesso</span>
-            <h2 className="text-2xl font-bold tracking-tight text-text mt-2">Como Giovane Carrara otimizou seu funil MetLife</h2>
+            <span className="text-2xs font-semibold text-primary uppercase block tracking-wider">Fluxo de trabalho</span>
+            <h2 className="text-2xl font-bold tracking-tight text-text mt-2">Da busca de leads ao atendimento comercial</h2>
           </div>
 
           <div className="mt-12 bg-surface rounded-lg border border-border p-6 sm:p-10 shadow-sm grid grid-cols-1 md:grid-cols-3 gap-8 items-center">
             <div className="md:col-span-2 text-left">
               <p className="text-sm text-text-secondary leading-relaxed italic">
-                "Eu gastava muitas horas em contatos frios e triagem manual. Com um fluxo assistido pelo Prospix, passei a chegar nas conversas comerciais com mais contexto e menos trabalho operacional repetitivo."
+                Configure público e região, prepare um roteiro e teste a qualificação com sua equipe. Confirme os dados e o próximo passo antes de iniciar uma campanha real.
               </p>
               <div className="mt-6 flex items-center gap-3">
                 <div className="bg-primary/10 h-10 w-10 rounded-full flex items-center justify-center font-bold text-primary">
                   GC
                 </div>
                 <div>
-                  <h4 className="text-xs font-bold text-text">Giovane Carrara</h4>
-                  <span className="text-2xs text-text-muted">Corretor Premium MetLife · SJRP</span>
+                  <h4 className="text-xs font-bold text-text">Demonstração orientada</h4>
+                  <span className="text-2xs text-text-muted">Validação com contato de teste</span>
                 </div>
               </div>
             </div>
@@ -579,8 +580,8 @@ export default function LandingPage() {
               <span className="text-3xl font-extrabold font-mono text-success mt-2 block">Mais cadência</span>
               <span className="text-2xs text-text-muted mt-1 block">Em acompanhamento comercial</span>
               <div className="border-t border-border my-4 pt-4">
-                <a href="/cases" className="text-xs font-semibold text-primary hover:text-primary-hover transition-colors">
-                  Ler case completo →
+                <a href="#como-funciona" className="text-xs font-semibold text-primary hover:text-primary-hover transition-colors">
+                  Ver funcionamento →
                 </a>
               </div>
             </div>
@@ -740,7 +741,7 @@ export default function LandingPage() {
             <ul className="space-y-2">
               <li><a href="#como-funciona" className="hover:text-primary">Como Funciona</a></li>
               <li><a href="#planos" className="hover:text-primary">Tabela de Planos</a></li>
-              <li><a href="#cases" className="hover:text-primary">Histórias de Sucesso</a></li>
+              <li><a href="#cases" className="hover:text-primary">Fluxo de trabalho</a></li>
             </ul>
           </div>
           <div>

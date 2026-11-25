@@ -44,7 +44,7 @@ const STEPS = [
     color: 'text-indigo-500',
     bg: 'bg-indigo-500/10',
     title: '5. Qualificação & Agendamento',
-    description: 'Quando o lead responde, você não precisa parar o que está fazendo. A IA do Prospix entende a intenção, quebra objeções e agenda reuniões diretamente no seu Google Agenda.',
+    description: 'A IA do Prospix ajuda a identificar a intenção e conduzir a qualificação. Quando houver interesse em reunião, a equipe confirma o horário na agenda e a sincronização com o Google.',
     imageUrl: 'https://images.unsplash.com/photo-1506784365847-bbad939e9335?auto=format&fit=crop&q=80&w=600&h=400',
   }
 ];

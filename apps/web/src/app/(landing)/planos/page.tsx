@@ -4,17 +4,17 @@ import React from 'react';
 
 export default function PlanosPage() {
   const features = [
-    { name: 'WhatsApp Web API', base: 'Sim (1 canal)', advanced: 'Sim (1 canal)', premium: 'Sim (Até 3 canais)' },
-    { name: 'Leads do Google Maps', base: 'Limitado (500/mês)', advanced: 'ILIMITADO', premium: 'ILIMITADO' },
+    { name: 'WhatsApp Web API', base: 'Sim (1 canal)', advanced: 'Sim (1 canal)', premium: '1 canal ativo por operação' },
+    { name: 'Leads do Google Maps', base: 'Conforme contrato', advanced: 'Conforme contrato', premium: 'Conforme contrato' },
     { name: 'Algoritmo de Fit Score', base: 'Sim (Regras simples)', advanced: 'Sim (Lógica complexa)', premium: 'Sim (Lógica complexa)' },
     { name: 'Editor de Roteiros (Engine)', base: 'Apenas mensagem base', advanced: 'Base + 3 variações', premium: 'Base + 3 variações' },
-    { name: 'OAuth Google Calendar', base: 'Sim', advanced: 'Sim', premium: 'Múltiplos calendários' },
+    { name: 'OAuth Google Calendar', base: 'Sim', advanced: 'Sim', premium: 'Seleção de calendário' },
     { name: 'Dashboard em Tempo Real', base: 'Sim', advanced: 'Sim (SWR cache)', premium: 'Sim (SWR cache)' },
-    { name: 'Notificações por Email/SMS', base: 'Sim', advanced: 'Sim', premium: 'Sim' },
+    { name: 'Notificações no painel', base: 'Sim', advanced: 'Sim', premium: 'Sim' },
     { name: 'Isolamento de Banco (RLS)', base: 'Sim (Row Level)', advanced: 'Sim (Row Level)', premium: 'Sim (Row Level)' },
     { name: 'Chaves Criptografadas no Vault', base: 'Sim', advanced: 'Sim (AES-256)', premium: 'Sim (AES-256)' },
-    { name: 'Faturamento Integrado Asaas', base: 'Sim', advanced: 'Sim', premium: 'Sim' },
-    { name: 'Suporte Técnico', base: 'Email / Ticket', advanced: 'WhatsApp Prioritário', premium: 'Gerente Dedicado 24h' },
+    { name: 'Registro manual de pagamentos', base: 'Sim', advanced: 'Sim', premium: 'Sim' },
+    { name: 'Suporte Técnico', base: 'Email / Ticket', advanced: 'WhatsApp Prioritário', premium: 'Conforme contrato' },
   ];
 
   return (
@@ -75,7 +75,7 @@ export default function PlanosPage() {
         <div className="mt-12 p-8 bg-surface border border-border rounded-lg shadow-sm text-center">
           <h3 className="text-md font-bold text-text">Pronto para começar?</h3>
           <p className="text-xs text-text-secondary mt-2">
-            Disponibilizamos planos adequados a partir de R$ 290/mês. Fale com nossos consultores da Guilds para receber seu convite de ativação imediata.
+            Disponibilizamos planos adequados com valores definidos em contrato. Fale com nossos consultores da Guilds para receber seu convite de ativação imediata.
           </p>
           <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-4">
             <a href="/#contato" className="w-full sm:w-auto inline-flex items-center justify-center h-10 px-6 rounded text-xs font-semibold bg-primary text-white hover:bg-primary-hover transition-colors shadow">
