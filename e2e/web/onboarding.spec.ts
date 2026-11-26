@@ -97,8 +97,24 @@ test.describe('Primeiros passos · dados fictícios e rede interceptada', () => 
       await page.goto('/onbording');
       await expect(page.getByRole('heading', { name: 'Conecte seu WhatsApp', exact: true })).toBeVisible();
       await expect(page.getByRole('heading', { name: 'Cadastre seu primeiro cliente', exact: true })).toHaveCount(0);
-      await expect(page.getByRole('button', { name: 'Gerar QR Code' })).toBeVisible();
+      const generate = page.getByRole('button', { name: 'Gerar QR Code', exact: true });
+      await expect(generate).toBeEnabled();
+      await generate.click();
+      await expect(page.getByRole('img', { name: 'QR Code para conectar seu WhatsApp' })).toBeVisible();
+      await expect(page.getByLabel('Nome do cliente')).toHaveCount(0);
     } finally { release(); }
+  });
+
+  test('gera QR mesmo quando a conferência de progresso está indisponível', async ({ page }) => {
+    await page.route('**/api/integrations/whatsapp/status*', route => route.fulfill({ status: 503, json: { message: 'unavailable' } }));
+    await page.goto('/onbording');
+    await expect(page.getByRole('alert').filter({ hasText: 'Não foi possível confirmar' })).toBeVisible();
+    const generate = page.getByRole('button', { name: 'Gerar QR Code', exact: true });
+    await expect(generate).toBeEnabled();
+    await generate.click();
+    await expect(page.getByRole('img', { name: 'QR Code para conectar seu WhatsApp' })).toBeVisible();
+    expect(qrRequests).toBe(1);
+    await expect(page.getByLabel('Nome do cliente')).toHaveCount(0);
   });
 
   test('gera QR na própria etapa e só avança depois de confirmar a conexão', async ({ page }) => {
@@ -145,6 +161,32 @@ test.describe('Primeiros passos · dados fictícios e rede interceptada', () => 
     await page.getByRole('button', { name: 'Gerar QR Code', exact: true }).click();
     await expect(page.getByRole('img', { name: 'QR Code para conectar seu WhatsApp' })).toBeVisible();
     expect(qrRequests).toBe(2);
+  });
+
+  test('encerra geração travada e permite tentar novamente', async ({ page }) => {
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    await page.route('**/api/integrations/whatsapp/connect', async route => {
+      await pending;
+      await route.abort().catch(() => {});
+    });
+    try {
+      await page.goto('/onbording');
+      await page.clock.install();
+      const generate = page.getByRole('button', { name: 'Gerar QR Code', exact: true });
+      await generate.click();
+      await expect(page.getByText('Gerando seu QR Code…', { exact: true })).toBeVisible();
+      await expect(generate).toBeDisabled();
+      await page.clock.fastForward(20_001);
+      await expect(page.getByRole('alert').filter({ hasText: 'demorou mais que o esperado' })).toBeVisible();
+      await expect(generate).toBeEnabled();
+      await expect(page.getByText('Gerando seu QR Code…', { exact: true })).toHaveCount(0);
+      await expect(page.getByLabel('Nome do cliente')).toHaveCount(0);
+      release();
+      await page.unroute('**/api/integrations/whatsapp/connect');
+      await generate.click();
+      await expect(page.getByRole('img', { name: 'QR Code para conectar seu WhatsApp' })).toBeVisible();
+    } finally { release(); }
   });
 
   test('valida campos, preserva rascunho e reutiliza pedido após falha', async ({ page }) => {

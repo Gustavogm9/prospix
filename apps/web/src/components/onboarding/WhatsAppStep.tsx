@@ -1,13 +1,13 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { Loader2, QrCode, RefreshCw, Smartphone } from 'lucide-react';
-import { apiFetch } from '@/lib/api-fetch';
+import { requestOnboardingQr } from '@/lib/onboarding-whatsapp';
 import { useAuthStore } from '@/store/auth-store';
 import { useOnboardingProgress } from './OnboardingProgressContext';
 
 export function WhatsAppStep() {
   const role = useAuthStore(state => state.user?.role);
-  const { loading, progress, refresh } = useOnboardingProgress();
+  const { loading, refresh } = useOnboardingProgress();
   const [qr, setQr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -26,17 +26,14 @@ export function WhatsAppStep() {
     if (sending.current || role !== 'OWNER') return;
     sending.current = true; setBusy(true); setError(''); setQr(null);
     try {
-      const response = await apiFetch('/api/integrations/whatsapp/connect', { method: 'POST', signal: AbortSignal.timeout(20_000) });
-      const result = await response.json();
-      if (!response.ok || typeof result.qrcode !== 'string' || !result.qrcode.trim()) throw new Error('QR_UNAVAILABLE');
-      const value = result.qrcode.trim();
-      if (value.startsWith('data:') && !/^data:image\/(png|jpeg|webp);base64,/i.test(value)) throw new Error('QR_INVALID');
-      if (!value.startsWith('data:') && !/^[A-Za-z0-9+/=\r\n]+$/.test(value)) throw new Error('QR_INVALID');
+      const value = await requestOnboardingQr();
       if (!alive.current) return;
-      setQr(value.startsWith('data:') ? value : `data:image/png;base64,${value}`);
+      setQr(value);
       setExpiresAt(Date.now() + 40_000);
-    } catch {
-      if (alive.current) setError('Não foi possível gerar o QR Code. Tente novamente.');
+    } catch (cause) {
+      if (alive.current) setError(cause instanceof Error && cause.message === 'QR_TIMEOUT'
+        ? 'A geração do QR Code demorou mais que o esperado. Tente novamente.'
+        : 'Não foi possível gerar o QR Code. Tente novamente.');
     } finally { sending.current = false; if (alive.current) setBusy(false); }
   };
   return <div>
@@ -61,7 +58,7 @@ export function WhatsAppStep() {
         {busy ? <div role="status" className="flex flex-col items-center gap-3 text-sm text-text-secondary"><Loader2 aria-hidden className="h-7 w-7 animate-spin text-primary" />Gerando seu QR Code…</div> : qr && remaining > 0 ? <img src={qr} width={208} height={208} alt="QR Code para conectar seu WhatsApp" className="h-full w-full object-contain" /> : <div className="flex flex-col items-center gap-3 px-3 text-center text-sm text-text-secondary"><QrCode aria-hidden className="h-16 w-16 text-primary opacity-40" />{qr ? 'Gere um novo código para continuar.' : 'Seu QR Code aparece aqui.'}</div>}
       </div>
       {role === 'OWNER' ? <>
-        <button type="button" disabled={busy || loading || !progress} onClick={() => void connect()} className="mt-4 inline-flex min-h-12 w-full max-w-[260px] items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-white disabled:opacity-60"><QrCode aria-hidden className="h-4 w-4" />{qr ? 'Gerar novo QR Code' : 'Gerar QR Code'}</button>
+        <button type="button" disabled={busy} onClick={() => void connect()} className="mt-4 inline-flex min-h-12 w-full max-w-[260px] items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-white disabled:opacity-60"><QrCode aria-hidden className="h-4 w-4" />{qr ? 'Gerar novo QR Code' : 'Gerar QR Code'}</button>
         {qr && remaining > 0 && <p role="status" className="mt-3 text-xs text-text-secondary">Escaneie agora. Tempo para escanear: {remaining}s.</p>}
         {qr && <button type="button" disabled={loading || busy} onClick={() => void refresh()} className="mt-2 inline-flex min-h-11 items-center justify-center gap-2 px-2 text-sm font-semibold text-primary disabled:opacity-60"><RefreshCw aria-hidden className="h-4 w-4" />Já escaneei, verificar conexão</button>}
       </> : <p className="mt-4 text-sm text-text-secondary">Peça ao proprietário da conta para conectar o WhatsApp.</p>}

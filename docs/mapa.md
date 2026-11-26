@@ -29,3 +29,10 @@ Nenhum schema, migration, job ou policy alterados. Testes de integração usam r
 - `apps/web/src/components/onboarding/WhatsAppStep.tsx:1`: hierarquia visual, instruções numeradas e QR em destaque. Lógica de geração/verificação preservada.
 
 Mudança somente de apresentação e composição; nenhum contrato de API, campo persistido ou política alterados.
+
+## Desbloqueio do QR — 26/11/2026
+
+- `apps/web/src/components/onboarding/WhatsAppStep.tsx:10`: geração independe do carregamento e da disponibilidade do progresso agregado. Apenas uma geração por vez; avanço continua exigindo confirmação da conexão.
+- `apps/web/src/lib/onboarding-whatsapp.ts:3`: chamada autenticada existente, validação da imagem e prazo de 20 segundos para toda a operação, incluindo espera pela sessão e leitura do corpo; cancela a requisição no prazo.
+- `apps/web/src/lib/onboarding-whatsapp.test.ts:8`: normalização, resposta inválida, sessão bloqueada e corpo que nunca termina.
+- `e2e/web/onboarding.spec.ts:92`: botão disponível com conferência pendente/indisponível e nova tentativa após timeout. Rede interceptada, sem pareamento real.
