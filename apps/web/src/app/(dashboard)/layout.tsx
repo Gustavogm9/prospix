@@ -82,7 +82,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     <>
       <OnboardingFlow key={`onboarding:${identity}`} onComplete={openTutorial}>
       {pathname === '/onbording' ? (
-        <main className="min-h-[100dvh] bg-bg px-4 py-8 sm:px-6">{children}</main>
+        <main className="min-h-[100dvh] bg-bg p-3 md:p-5 xl:p-6">{children}</main>
       ) : (
         <AppShell key={`shell:${identity}`} tutorialOpen={tutorialIdentity === identity} onTutorialClose={() => setTutorialIdentity(null)}>
           {children}

@@ -1,0 +1,74 @@
+.shell {
+  width: 100%; max-width: 1680px; margin-inline: auto;
+  min-height: calc(100dvh - 48px);
+  display: grid; grid-template-columns: 288px minmax(0, 1fr);
+  overflow: hidden; border: 1px solid var(--border); border-radius: 24px;
+  background: var(--surface); box-shadow: 0 18px 60px -32px var(--primary-soft);
+}
+.rail {
+  position: relative; display: flex; flex-direction: column; gap: 36px;
+  padding: 34px 26px 26px; color: white; background: var(--primary);
+}
+.brand { display: flex; align-items: center; gap: 12px; font-size: 23px; font-weight: 750; letter-spacing: -.04em; }
+.brandMark { display: grid; place-items: center; width: 42px; height: 42px; padding: 9px; background: var(--surface); border-radius: 12px; }
+.railIntro { position: relative; }
+.railEyebrow { margin-bottom: 12px; color: white; font-size: 10px; font-weight: 650; letter-spacing: .15em; text-transform: uppercase; }
+.railEyebrow::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 8px; vertical-align: 1px; border-radius: 50%; background: var(--secondary); }
+.railHeadline { max-width: 220px; font-size: 29px; font-weight: 650; letter-spacing: -.045em; line-height: 1.18; }
+.railDescription { margin-top: 15px; color: #d4deed; font-size: 13px; line-height: 1.75; }
+.steps { display: flex; flex-direction: column; gap: 9px; }
+.step { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid transparent; border-radius: 13px; color: #d4deed; }
+.stepIcon { display: grid; place-items: center; flex: 0 0 35px; height: 35px; border: 1px solid rgba(255,255,255,.28); border-radius: 10px; }
+.stepTitle { display: block; font-size: 12px; font-weight: 600; }
+.stepState { display: block; margin-top: 3px; font-size: 10px; }
+.stepActive { background: var(--surface); color: var(--primary); box-shadow: 0 7px 20px rgba(0,0,0,.08); }
+.stepActive .stepIcon { border-color: var(--border); background: var(--secondary-soft); }
+.stepActive .stepState { font-weight: 600; }
+.stepDone .stepIcon { background: rgba(255,255,255,.12); }
+.railNote { display: flex; align-items: flex-start; gap: 10px; margin-top: auto; border-top: 1px solid rgba(255,255,255,.2); padding: 23px 3px 0; color: #d4deed; font-size: 11px; line-height: 1.65; }
+.railNote svg { flex-shrink: 0; margin-top: 2px; color: white; }
+.main { display: flex; min-width: 0; flex-direction: column; }
+.header { padding: 22px 36px 22px; border-bottom: 1px solid var(--border-subtle); }
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.topLabel { display: flex; align-items: center; gap: 9px; font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.topLabel svg { color: var(--primary); }
+.pause { display: inline-flex; min-height: 44px; align-items: center; gap: 8px; padding: 0 14px; border: 1px solid var(--border); border-radius: 10px; font-size: 12px; font-weight: 600; color: var(--primary); transition: background .18s, border-color .18s; }
+.pause:hover { background: var(--primary-softer); border-color: var(--border-strong); }
+.title { max-width: 720px; margin-top: 16px; color: var(--text); font-size: clamp(22px, 2.25vw, 30px); font-weight: 700; letter-spacing: -.045em; line-height: 1.2; }
+.subtitle { margin-top: 11px; max-width: 680px; font-size: 13px; line-height: 1.7; color: var(--text-secondary); }
+.progressMeta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 18px; font-size: 11px; color: var(--text-secondary); }
+.stepBadge { display: inline-flex; min-height: 28px; align-items: center; gap: 7px; border-radius: 7px; padding: 4px 9px; background: var(--secondary-soft); color: var(--primary); font-size: 11px; font-weight: 650; }
+.track { display: flex; gap: 6px; margin-top: 12px; }
+.segment { height: 4px; min-width: 0; flex: 1; border-radius: 8px; background: var(--surface-sunken); }
+.segmentDone { background: var(--primary); }
+.segmentActive { background: var(--secondary); }
+.content { flex: 1; display: flex; flex-direction: column; justify-content: center; min-width: 0; padding: 34px 36px 40px; }
+.content h2 { font-size: clamp(23px, 2vw, 29px); line-height: 1.2; letter-spacing: -.04em; }
+.content input:not([type=checkbox]), .content textarea { min-height: 48px; border-color: var(--border-strong); border-radius: 11px; padding: 11px 14px; font-size: 14px; }
+.content input::placeholder, .content textarea::placeholder { color: var(--text-muted); }
+.content input:focus-visible, .content textarea:focus-visible, .content button:focus-visible, .pause:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.content button[type=submit] { min-height: 48px; padding-inline: 22px; border-radius: 11px; font-size: 13px; }
+.formLayout { display: grid; grid-template-columns: minmax(0,1fr) 230px; gap: 32px; align-items: start; }
+.formArea { min-width: 0; }
+.formArea > form, .formArea > section { width: 100%; }
+.guidance { padding: 23px 20px; border: 1px solid var(--border-subtle); border-radius: 16px; background: var(--bg); }
+.guidanceIcon { display: grid; place-items: center; width: 38px; height: 38px; margin-bottom: 19px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--primary); }
+.guidanceLabel { color: var(--text-secondary); font-size: 10px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
+.guidance h3 { margin-top: 9px; font-size: 17px; font-weight: 650; line-height: 1.35; letter-spacing: -.025em; color: var(--text); }
+.guidance ul { display: grid; gap: 13px; margin-top: 19px; font-size: 12px; line-height: 1.7; color: var(--text-secondary); }
+.guidance li { display: flex; align-items: flex-start; gap: 8px; }
+.guidance li svg { flex-shrink: 0; margin-top: 4px; color: var(--primary); }
+.nextStep { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--border); }
+.nextStep p { color: var(--text-secondary); font-size: 10px; }
+.nextStep span { display: block; margin-top: 5px; color: var(--primary); font-size: 12px; font-weight: 600; line-height: 1.5; }
+.footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid var(--border-subtle); padding: 16px 36px; color: var(--text-secondary); font-size: 11px; }
+.footerNote { display: flex; align-items: center; gap: 8px; }
+.footerNote svg { flex-shrink: 0; color: var(--primary); }
+.refresh { display: inline-flex; min-height: 44px; align-items: center; gap: 7px; padding: 0 5px; color: var(--primary); font-size: 11px; font-weight: 600; }
+.refresh:disabled { opacity: .6; }
+@media (min-width: 1500px) { .shell { grid-template-columns: 310px minmax(0,1fr); } .header { padding-inline: 48px; } .content { padding: 44px 48px; } .footer { padding-inline: 48px; } .rail { padding-inline: 32px; } .formLayout { grid-template-columns: minmax(0,1fr) 260px; gap: 48px; } }
+@media (max-width: 1279px) { .formLayout { grid-template-columns: minmax(0,1fr); } .guidance { display: none; } .rail { padding-inline: 22px; } }
+@media (max-width: 1023px) { .shell { grid-template-columns: minmax(0,1fr); min-height: calc(100dvh - 40px); border-radius: 20px; } .rail { display: none; } .header, .content { padding-inline: 28px; } .title { max-width: 630px; } .footer { padding-inline: 28px; } }
+@media (max-width: 639px) { .shell { min-height: calc(100dvh - 24px); border-radius: 17px; } .header { padding: 16px 18px 22px; } .topLabel { font-size: 11px; gap: 6px; } .pause { padding-inline: 10px; font-size: 11px; } .pause svg { display: none; } .title { margin-top: 19px; font-size: 23px; } .subtitle { font-size: 12px; } .progressMeta { margin-top: 21px; font-size: 10px; } .content { padding: 25px 18px 28px; justify-content: flex-start; } .footer { padding: 12px 18px; font-size: 10px; } .footerNote { align-items: flex-start; max-width: 235px; line-height: 1.65; } .content h2 { font-size: 23px; } }
+@media (min-width: 1024px) and (max-height: 820px) { .subtitle { display: none; } .content { padding-top: 26px; padding-bottom: 28px; } .rail { gap: 24px; padding-top: 28px; } .railHeadline { font-size: 27px; } }
+@media (prefers-reduced-motion: reduce) { .pause { transition: none; } }

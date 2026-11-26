@@ -20,3 +20,12 @@ Escopo atualizado em 25/11/2026; base `928d4ac`. Onboarding de uma etapa por vez
 - `apps/web/src/components/TutorialModal.tsx:52`: tutorial Como funciona abre após conclusão confirmada da última etapa.
 
 Nenhum schema, migration, job ou policy alterados. Testes de integração usam rede interceptada e dados fictícios; não comprovam publicação nem o estado do banco remoto.
+
+## Composição visual — 26/11/2026
+
+- `apps/web/src/app/(dashboard)/onbording/page.tsx:1`: remove o limite de 768 px e usa a composição fluida.
+- `apps/web/src/components/onboarding/onboarding-shell.module.css:1`: estrutura responsiva de até 1680 px, painel lateral de progresso, área principal e orientações contextuais; ajustes para celular e desktop baixo.
+- `apps/web/src/components/OnboardingChecklist.tsx:1`: mesma etapa e mesmas confirmações, com resumo lateral não interativo e orientações para o formulário atual.
+- `apps/web/src/components/onboarding/WhatsAppStep.tsx:1`: hierarquia visual, instruções numeradas e QR em destaque. Lógica de geração/verificação preservada.
+
+Mudança somente de apresentação e composição; nenhum contrato de API, campo persistido ou política alterados.

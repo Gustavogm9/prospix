@@ -41,25 +41,27 @@ export function WhatsAppStep() {
   };
   return <div>
     <div className="mb-6 flex items-start gap-3">
-      <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/5 text-primary"><Smartphone aria-hidden className="h-6 w-6" /></span>
+      <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary-soft text-primary"><Smartphone aria-hidden className="h-6 w-6" /></span>
       <div><h2 className="text-2xl font-bold tracking-tight text-text">Conecte seu WhatsApp</h2>
       <p className="mt-2 text-sm leading-relaxed text-text-secondary">Use o celular com o número que vai atender seus clientes.</p></div>
     </div>
-    <div className="grid gap-7 md:grid-cols-2 md:items-center">
+    <div className="grid gap-7 md:grid-cols-2 md:items-center lg:gap-8 xl:gap-12">
     <div className="order-2 md:order-1">
-      <ol className=" space-y-4 text-sm leading-relaxed text-text-secondary">
-        <li><strong className="text-text">1.</strong> Abra o WhatsApp no celular.</li>
-        <li><strong className="text-text">2.</strong> Toque em <strong className="text-text">Aparelhos conectados → Conectar aparelho</strong>.</li>
-        <li><strong className="text-text">3.</strong> Aponte a câmera para o QR Code desta tela.</li>
+      <p className="mb-5 text-xs font-semibold uppercase tracking-wider text-primary">No seu celular</p>
+      <ol className="space-y-5 text-sm leading-relaxed text-text-secondary">
+        <li className="flex items-start gap-3"><span aria-hidden className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary-soft text-xs font-bold text-primary">01</span><span className="pt-1">Abra o <strong className="text-text">WhatsApp</strong> no celular.</span></li>
+        <li className="flex items-start gap-3"><span aria-hidden className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary-soft text-xs font-bold text-primary">02</span><span className="pt-1">Toque em <strong className="text-text">Aparelhos conectados → Conectar aparelho</strong>.</span></li>
+        <li className="flex items-start gap-3"><span aria-hidden className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary-soft text-xs font-bold text-primary">03</span><span className="pt-1">Aponte a câmera para o <strong className="text-text">QR Code</strong> desta tela.</span></li>
       </ol>
-      <p className="mt-5 text-xs leading-relaxed text-text-secondary">Conectar o número não ativa campanhas nem envia mensagens.</p>
+      <p className="mt-7 rounded-xl border border-border-subtle bg-bg p-4 text-xs leading-relaxed text-text-secondary">Conectar o número não ativa campanhas nem envia mensagens.</p>
     </div>
-    <div className="order-1 flex min-w-0 flex-col md:order-2 items-center rounded-2xl border border-border bg-bg p-4 sm:p-6">
-      <div className="flex aspect-square w-full max-w-[240px] items-center justify-center rounded-xl border border-border bg-white p-4">
-        {busy ? <div role="status" className="flex flex-col items-center gap-3 text-sm text-text-secondary"><Loader2 aria-hidden className="h-7 w-7 animate-spin text-primary" />Gerando seu QR Code…</div> : qr && remaining > 0 ? <img src={qr} width={208} height={208} alt="QR Code para conectar seu WhatsApp" className="h-full w-full object-contain" /> : <div className="flex flex-col items-center gap-3 px-3 text-center text-sm text-text-secondary"><QrCode aria-hidden className="h-16 w-16 text-primary/40" />{qr ? 'Gere um novo código para continuar.' : 'Seu QR Code aparece aqui.'}</div>}
+    <div className="order-1 flex min-w-0 flex-col md:order-2 items-center rounded-2xl border border-border-subtle bg-bg p-4 sm:p-6 xl:p-7">
+      <p className="mb-4 text-xs font-semibold text-primary">Escaneie para conectar</p>
+      <div className="flex aspect-square w-full max-w-[260px] items-center justify-center rounded-xl border border-border bg-white p-4">
+        {busy ? <div role="status" className="flex flex-col items-center gap-3 text-sm text-text-secondary"><Loader2 aria-hidden className="h-7 w-7 animate-spin text-primary" />Gerando seu QR Code…</div> : qr && remaining > 0 ? <img src={qr} width={208} height={208} alt="QR Code para conectar seu WhatsApp" className="h-full w-full object-contain" /> : <div className="flex flex-col items-center gap-3 px-3 text-center text-sm text-text-secondary"><QrCode aria-hidden className="h-16 w-16 text-primary opacity-40" />{qr ? 'Gere um novo código para continuar.' : 'Seu QR Code aparece aqui.'}</div>}
       </div>
       {role === 'OWNER' ? <>
-        <button type="button" disabled={busy || loading || !progress} onClick={() => void connect()} className="mt-4 inline-flex min-h-11 w-full max-w-[240px] items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-white disabled:opacity-60"><QrCode aria-hidden className="h-4 w-4" />{qr ? 'Gerar novo QR Code' : 'Gerar QR Code'}</button>
+        <button type="button" disabled={busy || loading || !progress} onClick={() => void connect()} className="mt-4 inline-flex min-h-12 w-full max-w-[260px] items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-white disabled:opacity-60"><QrCode aria-hidden className="h-4 w-4" />{qr ? 'Gerar novo QR Code' : 'Gerar QR Code'}</button>
         {qr && remaining > 0 && <p role="status" className="mt-3 text-xs text-text-secondary">Escaneie agora. Tempo para escanear: {remaining}s.</p>}
         {qr && <button type="button" disabled={loading || busy} onClick={() => void refresh()} className="mt-2 inline-flex min-h-11 items-center justify-center gap-2 px-2 text-sm font-semibold text-primary disabled:opacity-60"><RefreshCw aria-hidden className="h-4 w-4" />Já escaneei, verificar conexão</button>}
       </> : <p className="mt-4 text-sm text-text-secondary">Peça ao proprietário da conta para conectar o WhatsApp.</p>}
