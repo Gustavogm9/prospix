@@ -108,7 +108,9 @@ test.describe('Primeiros passos · dados fictícios e rede interceptada', () => 
   test('gera QR mesmo quando a conferência de progresso está indisponível', async ({ page }) => {
     await page.route('**/api/integrations/whatsapp/status*', route => route.fulfill({ status: 503, json: { message: 'unavailable' } }));
     await page.goto('/onbording');
-    await expect(page.getByRole('alert').filter({ hasText: 'Não foi possível confirmar' })).toBeVisible();
+    await expect(page.getByRole('alert').filter({ hasText: 'Não foi possível verificar seu progresso agora.' })).toBeVisible();
+    await expect(page.getByText('Verificação pendente', { exact: true })).toBeVisible();
+    await expect(page.getByText('Conferindo sua conta…', { exact: true })).toHaveCount(0);
     const generate = page.getByRole('button', { name: 'Gerar QR Code', exact: true });
     await expect(generate).toBeEnabled();
     await generate.click();

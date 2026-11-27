@@ -73,13 +73,13 @@ export function OnboardingChecklist() {
       </div>
       <h1 id="onboarding-title" className={styles.title}>Vamos preparar seu primeiro atendimento</h1>
       <p className={styles.subtitle}>Configure sua conta em cinco passos. A cada confirmação, seguimos para a próxima etapa.</p>
-      <div className={styles.progressMeta}><span className={styles.stepBadge}><span className="h-1.5 w-1.5 rounded-full bg-primary" />{complete ? 'Tudo pronto' : `Etapa ${Math.max(index + 1, 1)} de ${ONBOARDING_STEPS.length}`}</span><span>{progress ? `${done} de ${ONBOARDING_STEPS.length} etapas confirmadas` : 'Conferindo sua conta…'}</span></div>
+      <div className={styles.progressMeta}><span className={styles.stepBadge}><span className="h-1.5 w-1.5 rounded-full bg-primary" />{complete ? 'Tudo pronto' : `Etapa ${Math.max(index + 1, 1)} de ${ONBOARDING_STEPS.length}`}</span><span>{progress ? `${done} de ${ONBOARDING_STEPS.length} etapas confirmadas` : error && !loading ? 'Verificação pendente' : 'Conferindo sua conta…'}</span></div>
       <div role="progressbar" aria-label="Progresso da configuração" aria-valuemin={0} aria-valuemax={5} aria-valuenow={progress ? done : undefined} className={styles.track}>
         {ONBOARDING_STEPS.map((step, position) => <span key={step.id} className={`${styles.segment} ${progress?.[step.id] ? styles.segmentDone : position === index || !progress && position === 0 ? styles.segmentActive : ''}`} />)}
       </div>
     </header>
     <div className={styles.content}>
-      {error && <div role="alert" className="mb-6 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm leading-relaxed text-amber-900">Não foi possível confirmar a configuração. O que já foi salvo está preservado. <button type="button" disabled={loading} onClick={() => void refresh()} className="min-h-11 font-semibold underline disabled:opacity-60">Tentar novamente</button></div>}
+      {error && <div role="alert" className="mb-6 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm leading-relaxed text-amber-900">Não foi possível verificar seu progresso agora. As informações que você já salvou continuam guardadas. <button type="button" disabled={loading} onClick={() => void refresh()} className="min-h-11 font-semibold underline disabled:opacity-60">Tentar novamente</button></div>}
       {!progress && !error && <p role="status" className="mb-5 flex items-center gap-2 text-sm text-text-secondary"><Loader2 aria-hidden className="h-4 w-4 animate-spin" />Conferindo sua conexão e seus cadastros…</p>}
       {current === 'whatsapp' && <WhatsAppStep />}
       {current && current !== 'whatsapp' && <div className={styles.formLayout}>
