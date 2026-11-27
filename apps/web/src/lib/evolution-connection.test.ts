@@ -15,3 +15,21 @@ describe('estado real do canal Evolution selecionado', () => {
     await expect(probeEvolutionConnection(channel)).resolves.toMatchObject({ status: 'unavailable' });
   });
 });
+
+
+it('trata instância ainda não criada como desconectada, sem erro geral no onboarding', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+    status: 404, error: 'Not Found', response: { message: ['The "active-channel" instance does not exist'] },
+  }), { status: 404 })));
+  await expect(probeEvolutionConnection(channel)).resolves.toEqual({ status: 'disconnected', reason: 'instance_not_found' });
+});
+
+it.each([401, 403, 500, 503])('mantém HTTP %s como indisponível em vez de permitir conexão presumida', async status => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ message: 'unavailable' }), { status })));
+  await expect(probeEvolutionConnection(channel)).resolves.toEqual({ status: 'unavailable', reason: 'provider_unavailable' });
+});
+
+it('não confunde rota 404 inválida com instância ausente', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 404, error: 'Not Found', message: 'Cannot GET /invalid' }), { status: 404 })));
+  await expect(probeEvolutionConnection(channel)).resolves.toEqual({ status: 'unavailable', reason: 'provider_unavailable' });
+});

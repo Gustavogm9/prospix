@@ -36,3 +36,12 @@ Mudança somente de apresentação e composição; nenhum contrato de API, campo
 - `apps/web/src/lib/onboarding-whatsapp.ts:3`: chamada autenticada existente, validação da imagem e prazo de 20 segundos para toda a operação, incluindo espera pela sessão e leitura do corpo; cancela a requisição no prazo.
 - `apps/web/src/lib/onboarding-whatsapp.test.ts:8`: normalização, resposta inválida, sessão bloqueada e corpo que nunca termina.
 - `e2e/web/onboarding.spec.ts:92`: botão disponível com conferência pendente/indisponível e nova tentativa após timeout. Rede interceptada, sem pareamento real.
+
+## Integração WhatsApp no onboarding — 27/11/2026
+
+- `apps/web/src/lib/evolution-connection.ts:14`: normaliza apenas o 404 estruturado de instância inexistente; preserva indisponibilidade nos demais erros.
+- `apps/web/src/app/api/integrations/whatsapp/connect/route.ts:270`: usa o helper existente de Basic restrito por host e timeout em criação, webhook e QR.
+- `apps/web/src/app/api/integrations/whatsapp/connect/route.test.ts:32`: contrato de autenticação, host autorizado, prazo e permissões.
+- `apps/web/src/app/api/integrations/whatsapp/status/route.test.ts:69`: rota de status exercitada com probe real e resposta 404 anonimizada.
+- `apps/web/src/lib/load-onboarding-progress.test.ts:48`: WhatsApp pendente sem invalidar os outros cadastros.
+- `e2e/web/onboarding.spec.ts:122`: instância ausente sem aviso geral; geração de QR e tutorial após confirmação.

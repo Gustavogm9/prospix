@@ -9,6 +9,7 @@ import {
 } from '../../../_lib/whatsapp-provider';
 import crypto from 'crypto';
 import { encryptSecret, readStoredSecret } from '@/lib/secrets';
+import { buildEvolutionHeaders } from '../../../../../../../../supabase/functions/_shared/evolution-auth';
 
 const DEFAULT_WAHA_BASE_URL = 'https://waha-waha.qr4jgl.easypanel.host';
 
@@ -266,10 +267,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const evolutionHeaders = buildEvolutionHeaders(apiKey, {
+      basicAuthB64: process.env.EVOLUTION_BASIC_AUTH_B64,
+      allowedHost: process.env.EVOLUTION_BASIC_AUTH_HOST,
+      requestUrl: baseUrl,
+    });
+
     // Create instance on Evolution API
     await fetch(`${baseUrl}/instance/create`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: apiKey },
+      headers: { ...evolutionHeaders, 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(5000),
       body: JSON.stringify({ instanceName, integration: 'WHATSAPP-BAILEYS', qrcode: true }),
     });
 
@@ -279,7 +287,8 @@ export async function POST(request: NextRequest) {
 
     await fetch(`${baseUrl}/webhook/set/${instanceName}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: apiKey },
+      headers: { ...evolutionHeaders, 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(5000),
       body: JSON.stringify({
         url: webhookUrl,
         webhook_by_events: false,
@@ -290,7 +299,8 @@ export async function POST(request: NextRequest) {
 
     // Get QR Code
     const qrRes = await fetch(`${baseUrl}/instance/connect/${instanceName}`, {
-      headers: { apikey: apiKey },
+      headers: evolutionHeaders,
+      signal: AbortSignal.timeout(5000),
     });
 
     if (!qrRes.ok) {

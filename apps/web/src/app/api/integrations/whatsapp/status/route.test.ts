@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ auth: vi.fn(), channel: vi.fn(), waha: vi.fn(), evolution: vi.fn(), diagnostics: vi.fn() }));
 vi.mock('../../../_lib/supabase-admin', () => ({ authenticateRequest: mocks.auth, supabaseAdmin: { from: mocks.diagnostics } }));
 vi.mock('@/lib/secrets', () => ({ readStoredSecret: vi.fn() }));
@@ -62,4 +62,17 @@ it('permite a assistente consultar a conexão do próprio tenant', async () => {
   mocks.auth.mockResolvedValue({ tenantId: 'assistant-tenant', role: 'ASSISTANT' });
   expect((await GET(request())).status).toBe(200);
   expect(mocks.channel).toHaveBeenCalledWith(expect.anything(), 'assistant-tenant');
+});
+
+
+afterEach(() => vi.unstubAllGlobals());
+it('normaliza a resposta 404 real do Evolution sem derrubar a checagem do onboarding', async () => {
+  const { probeEvolutionConnection } = await vi.importActual<typeof import('../../../../../lib/evolution-connection')>('../../../../../lib/evolution-connection');
+  mocks.evolution.mockImplementation(probeEvolutionConnection);
+  mocks.channel.mockResolvedValue({ provider: 'EVOLUTION', baseUrl: 'https://evo.example.test', apiKey: 'qa-key', instanceName: 'qa-onboarding' });
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 404, error: 'Not Found', response: { message: ['The "qa-onboarding" instance does not exist'] } }), { status: 404 })));
+  const response = await GET(request());
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ status: 'disconnected', reason: 'instance_not_found', configured: true });
+  expect(mocks.diagnostics).not.toHaveBeenCalled();
 });

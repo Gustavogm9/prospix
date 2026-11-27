@@ -119,6 +119,23 @@ test.describe('Primeiros passos · dados fictícios e rede interceptada', () => 
     await expect(page.getByLabel('Nome do cliente')).toHaveCount(0);
   });
 
+  test('instância ainda não criada mantém primeira etapa sem aviso e preserva os demais cadastros', async ({ page }) => {
+    created = icpSaved = contextSaved = scriptSaved = true;
+    await page.route('**/api/integrations/whatsapp/status*', route => route.fulfill({ json: { status: connected ? 'connected' : 'disconnected', reason: connected ? null : 'instance_not_found', configured: true } }));
+    await page.goto('/onbording');
+    await expect(page.getByText('4 de 5 etapas confirmadas', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Conecte seu WhatsApp', exact: true })).toBeVisible();
+    await expect(page.getByRole('alert').filter({ hasText: 'Não foi possível verificar seu progresso' })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Gerar QR Code', exact: true }).click();
+    await expect(page.getByRole('img', { name: 'QR Code para conectar seu WhatsApp' })).toBeVisible();
+    await expect(page.getByLabel('Nome do cliente')).toHaveCount(0);
+    await page.screenshot({ path: '.local/onboarding-instancia-qa/instancia-ausente.png', fullPage: true });
+    connected = true;
+    await page.getByRole('button', { name: 'Já escaneei, verificar conexão' }).click();
+    await expect(page).toHaveURL(/\/inicio$/);
+    await expect(page.getByRole('dialog', { name: 'Como funciona' })).toBeVisible();
+  });
+
   test('gera QR na própria etapa e só avança depois de confirmar a conexão', async ({ page }) => {
     await page.goto('/onbording');
     await page.getByRole('button', { name: 'Gerar QR Code', exact: true }).click();

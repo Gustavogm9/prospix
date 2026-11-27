@@ -11,7 +11,18 @@ export async function probeEvolutionConnection(channel: { baseUrl: string; apiKe
       }),
       signal: AbortSignal.timeout(5000),
     });
-    if (!response.ok) return { status: 'unavailable', reason: 'provider_unavailable' };
+    if (!response.ok) {
+      if (response.status === 404) {
+        const payload = await response.json();
+        const messages = payload?.response?.message;
+        // Resposta real do Evolution para uma instância ainda não provisionada.
+        if (payload?.status === 404 && payload?.error === 'Not Found' && Array.isArray(messages)
+          && messages.includes(`The "${channel.instanceName}" instance does not exist`)) {
+          return { status: 'disconnected', reason: 'instance_not_found' };
+        }
+      }
+      return { status: 'unavailable', reason: 'provider_unavailable' };
+    }
     const payload = await response.json();
     const state = String(payload.instance?.state ?? payload.state ?? '').toLowerCase();
     if (!state) return { status: 'unavailable', reason: 'invalid_provider_response' };

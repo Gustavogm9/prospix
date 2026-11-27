@@ -43,3 +43,10 @@ it('interrompe a espera e permite tentar novamente quando a conexão não respon
   expect(mocks.api.mock.calls[0]?.[1]?.signal.aborted).toBe(true);
   await rejected;
 });
+
+
+it('mantém WhatsApp pendente e os demais cadastros confirmados quando a instância ainda não existe', async () => {
+  mocks.from.mockReturnValue(table({ count: 1, data: { persona_name: 'QA', business_description: 'Empresa fictícia', tone_of_voice: 'Consultivo' }, error: null }));
+  mocks.api.mockResolvedValue(new Response(JSON.stringify({ status: 'disconnected', configured: true, reason: 'instance_not_found' })));
+  await expect(loadOnboardingProgress('qa-tenant')).resolves.toEqual({ whatsapp: false, firstLead: true, icp: true, context: true, firstScript: true });
+});
