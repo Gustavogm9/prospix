@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useAuthStore } from '@/store/auth-store';
 import { OnboardingProgressContext } from './onboarding/OnboardingProgressContext';
 import type { OnboardingProgress } from '@/lib/onboarding-progress';
-import { loadOnboardingProgress } from '@/lib/load-onboarding-progress';
+import { loadOnboardingProgress, OnboardingProgressError } from '@/lib/load-onboarding-progress';
 import { advanceOnboardingSession, onboardingSessionKey, ONBOARDING_REFRESH, ONBOARDING_STARTED, readOnboardingSession, startOnboardingSession, writeOnboardingSession, type OnboardingSession } from '@/lib/onboarding-session';
 
 export function OnboardingFlow({ onComplete, children }: { onComplete: () => void; children: ReactNode }) {
@@ -58,7 +58,8 @@ function Flow({ tenantId, userId, onComplete, children }: { tenantId: string; us
       if (!alive.current || requestGeneration !== generation.current || !current.current) return;
       setProgress(result); setError(false);
       apply(advanceOnboardingSession(current.current, result));
-    } catch {
+    } catch (cause) {
+      if (alive.current && requestGeneration === generation.current) console.warn('onboarding_progress_unavailable', cause instanceof OnboardingProgressError ? { source: cause.source, code: cause.code } : { source: 'unknown', code: 'unexpected' });
       if (alive.current && requestGeneration === generation.current) setError(true);
       if (alive.current && requestGeneration === generation.current && current.current?.open) router.replace('/onbording');
     } finally {

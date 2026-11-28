@@ -1,6 +1,6 @@
 import { apiFetch } from './api-fetch';
 
-export async function requestOnboardingQr(): Promise<string> {
+export async function requestOnboardingQr(): Promise<string | null> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout>;
   const deadline = new Promise<never>((_resolve, reject) => {
@@ -15,7 +15,8 @@ export async function requestOnboardingQr(): Promise<string> {
       method: 'POST', signal: controller.signal,
     });
     const result = await response.json();
-    if (!response.ok || typeof result.qrcode !== 'string' || !result.qrcode.trim()) throw new Error('QR_UNAVAILABLE');
+    if (response.ok && result?.status === 'connected') return null;
+    if (!response.ok || typeof result?.qrcode !== 'string' || !result.qrcode.trim()) throw new Error('QR_UNAVAILABLE');
     const value = result.qrcode.trim();
     if (value.startsWith('data:') && !/^data:image\/(png|jpeg|webp);base64,/i.test(value)) throw new Error('QR_INVALID');
     if (!value.startsWith('data:') && !/^[A-Za-z0-9+/=\r\n]+$/.test(value)) throw new Error('QR_INVALID');

@@ -39,3 +39,15 @@ describe('pedido de QR do onboarding', () => {
     await pending;
   });
 });
+
+
+it('aceita conexão já confirmada pelo servidor sem exigir outro QR', async () => {
+  mocks.api.mockResolvedValue(new Response(JSON.stringify({ status: 'connected', instanceName: 'qa-active' })));
+  await expect(requestOnboardingQr()).resolves.toBeNull();
+});
+
+
+it('não aceita resposta com erro HTTP como conexão confirmada', async () => {
+  mocks.api.mockResolvedValue(new Response(JSON.stringify({ status: 'connected' }), { status: 503 }));
+  await expect(requestOnboardingQr()).rejects.toThrow('QR_UNAVAILABLE');
+});

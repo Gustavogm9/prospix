@@ -50,3 +50,21 @@ it('mantém WhatsApp pendente e os demais cadastros confirmados quando a instân
   mocks.api.mockResolvedValue(new Response(JSON.stringify({ status: 'disconnected', configured: true, reason: 'instance_not_found' })));
   await expect(loadOnboardingProgress('qa-tenant')).resolves.toEqual({ whatsapp: false, firstLead: true, icp: true, context: true, firstScript: true });
 });
+
+
+it('identifica qual consulta falhou sem expor o erro ou dado retornado pelo banco', async () => {
+  mocks.from.mockImplementation(name => table(name === 'icps' ? { error: { message: 'private database detail' } } : { count: 0, data: null, error: null }));
+  mocks.api.mockResolvedValue(new Response(JSON.stringify({ status: 'connected' })));
+  await expect(loadOnboardingProgress('qa')).rejects.toMatchObject({ source: 'icp', code: 'query_failed' });
+});
+
+it('aplica prazo também ao corpo da resposta da conexão', async () => {
+  vi.useFakeTimers();
+  mocks.from.mockReturnValue(table({ count: 0, data: null, error: null }));
+  mocks.api.mockResolvedValue({ ok: true, json: () => new Promise(() => {}) });
+  let outcome: unknown;
+  const pending = loadOnboardingProgress('qa').then(value => { outcome = value; }, error => { outcome = error; });
+  await vi.advanceTimersByTimeAsync(10_001);
+  expect(outcome).toMatchObject({ source: 'timeout', code: 'deadline_exceeded' });
+  await pending;
+});

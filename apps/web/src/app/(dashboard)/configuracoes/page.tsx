@@ -1225,6 +1225,11 @@ export default function Settings() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.message || 'Erro ao conectar');
+      if (data.status === 'connected') {
+        await checkStatus(true);
+        setIsGeneratingQr(false);
+        return;
+      }
       setQrCode(data.qrcode);
       setQrCountdown(40); // Set 40 seconds timer
       setInstanceName(data.instanceName);

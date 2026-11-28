@@ -8,7 +8,8 @@ import {
   loadTenantWahaChannel,
 } from '../../../_lib/whatsapp-provider';
 import crypto from 'crypto';
-import { encryptSecret, readStoredSecret } from '@/lib/secrets';
+import { encryptSecret } from '@/lib/secrets';
+import { probeEvolutionConnection } from '../../../../../lib/evolution-connection';
 import { buildEvolutionHeaders } from '../../../../../../../../supabase/functions/_shared/evolution-auth';
 
 const DEFAULT_WAHA_BASE_URL = 'https://waha-waha.qr4jgl.easypanel.host';
@@ -215,56 +216,66 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    let { data: secretRecord } = await supabaseAdmin
-      .from('tenant_secrets')
-      .select('*')
-      .eq('tenant_id', tenantId)
-      .maybeSingle();
-
-    const cleanSlug = tenant.slug.toLowerCase().replace(/[^a-z0-9]/g, '');
-    const defaultInstanceName = `tenant_${cleanSlug}`;
-
-    if (!secretRecord) {
-      const { data: created, error: createErr } = await supabaseAdmin
+    // The QR and connection check must resolve the same tenant channel.
+    let evolutionChannel = activeChannel;
+    if (!evolutionChannel) {
+      const { data: existingSecret, error: secretError } = await supabaseAdmin
         .from('tenant_secrets')
-        .insert({
-          tenant_id: tenantId,
-          evolution_instance_name: defaultInstanceName,
-          evolution_webhook_secret: encryptSecret(crypto.randomBytes(16).toString('hex')),
-          updated_at: new Date().toISOString(),
-        })
-        .select()
-        .single();
-      if (createErr) throw createErr;
-      secretRecord = created;
-    } else if (!secretRecord.evolution_instance_name) {
-      const { data: updated, error: updateErr } = await supabaseAdmin
-        .from('tenant_secrets')
-        .update({
-          evolution_instance_name: defaultInstanceName,
-          evolution_webhook_secret: secretRecord.evolution_webhook_secret || crypto.randomBytes(16).toString('hex'),
-          updated_at: new Date().toISOString(),
-        })
+        .select('*')
         .eq('tenant_id', tenantId)
-        .select()
-        .single();
-      if (updateErr) throw updateErr;
-      secretRecord = updated;
+        .maybeSingle();
+      if (secretError) throw secretError;
+      let secretRecord = existingSecret;
+
+      const cleanSlug = tenant.slug.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const defaultInstanceName = `tenant_${cleanSlug}`;
+
+      if (!secretRecord) {
+        const { data: created, error: createErr } = await supabaseAdmin
+          .from('tenant_secrets')
+          .insert({
+            tenant_id: tenantId,
+            evolution_instance_name: defaultInstanceName,
+            evolution_webhook_secret: encryptSecret(crypto.randomBytes(16).toString('hex')),
+            updated_at: new Date().toISOString(),
+          })
+          .select()
+          .single();
+        if (createErr) throw createErr;
+        secretRecord = created;
+      } else if (!secretRecord.evolution_instance_name) {
+        const { data: updated, error: updateErr } = await supabaseAdmin
+          .from('tenant_secrets')
+          .update({
+            evolution_instance_name: defaultInstanceName,
+            evolution_webhook_secret: secretRecord.evolution_webhook_secret || crypto.randomBytes(16).toString('hex'),
+            updated_at: new Date().toISOString(),
+          })
+          .eq('tenant_id', tenantId)
+          .select()
+          .single();
+        if (updateErr) throw updateErr;
+        secretRecord = updated;
+      }
+      evolutionChannel = await loadTenantWhatsAppChannel(supabaseAdmin, tenantId);
     }
+    const instanceName = evolutionChannel?.instanceName;
+    const baseUrl = evolutionChannel?.baseUrl;
+    const apiKey = evolutionChannel?.apiKey;
 
-    const instanceName = secretRecord!.evolution_instance_name!;
-    const baseUrl = secretRecord!.evolution_base_url || process.env.EVOLUTION_BASE_URL;
-    const apiKey = secretRecord!.evolution_api_key_encrypted
-      ? readStoredSecret(secretRecord!.evolution_api_key_encrypted, undefined, {
-          allowLegacyPlaintext: process.env.ALLOW_LEGACY_PLAINTEXT_SECRETS === 'true',
-        })
-      : process.env.EVOLUTION_GUILDS_API_KEY || '';
-
-    if (!baseUrl || !apiKey) {
+    if (!baseUrl || !apiKey || !instanceName || evolutionChannel?.provider !== 'EVOLUTION') {
       return NextResponse.json(
         { error: 'ConfigurationError', message: 'Evolution API não configurada.' },
         { status: 503 },
       );
+    }
+
+    const currentConnection = await probeEvolutionConnection({ baseUrl, apiKey, instanceName });
+    if (currentConnection.status === 'connected') {
+      return NextResponse.json({ provider: 'EVOLUTION', status: 'connected', instanceName });
+    }
+    if (currentConnection.status === 'unavailable') {
+      return NextResponse.json({ error: 'CONNECTION_UNVERIFIED', message: 'Não foi possível verificar a conexão atual do WhatsApp. Tente novamente.' }, { status: 503 });
     }
 
     const evolutionHeaders = buildEvolutionHeaders(apiKey, {
@@ -314,6 +325,14 @@ export async function POST(request: NextRequest) {
     }
 
     const qrData = await qrRes.json();
+    if (typeof qrData?.base64 !== 'string' || !qrData.base64.trim()) {
+      // Pairing can finish while the provider is preparing its QR response.
+      const connection = await probeEvolutionConnection({ baseUrl, apiKey, instanceName });
+      if (connection.status === 'connected') {
+        return NextResponse.json({ provider: 'EVOLUTION', status: 'connected', instanceName });
+      }
+      return NextResponse.json({ error: 'QR_UNAVAILABLE', message: 'O QR Code ainda não está disponível. Tente novamente.' }, { status: 503 });
+    }
     const quarantineMinutesRaw = Number(process.env.WA_POST_RECONNECT_QUARANTINE_MINUTES || 60);
     const quarantineMinutes = Number.isFinite(quarantineMinutesRaw) && quarantineMinutesRaw >= 0 ? quarantineMinutesRaw : 60;
     const nowIso = new Date().toISOString();

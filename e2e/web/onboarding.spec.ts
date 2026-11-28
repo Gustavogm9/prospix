@@ -151,6 +151,33 @@ test.describe('Primeiros passos · dados fictícios e rede interceptada', () => 
     await expect(page.getByRole('img', { name: 'QR Code para conectar seu WhatsApp' })).toHaveCount(0);
   });
 
+  test('avança automaticamente após parear sem gerar outro QR', async ({ page }) => {
+    await page.clock.install();
+    await page.goto('/onbording');
+    await expect(page.getByRole('button', { name: 'Conferir etapas', exact: true })).toBeEnabled();
+    await page.getByRole('button', { name: 'Gerar QR Code', exact: true }).click();
+    await expect(page.getByRole('img', { name: 'QR Code para conectar seu WhatsApp' })).toBeVisible();
+    connected = true;
+    await page.clock.fastForward(20_001);
+    await expect(page.getByLabel('Nome do cliente')).toBeVisible();
+    await expect(page.getByRole('alert').filter({ hasText: 'Não foi possível verificar seu progresso' })).toHaveCount(0);
+    expect(qrRequests).toBe(1);
+  });
+
+  test('sessão já conectada não vira erro de QR e confirma a próxima etapa', async ({ page }) => {
+    await page.goto('/onbording');
+    await expect(page.getByRole('button', { name: 'Conferir etapas', exact: true })).toBeEnabled();
+    await page.route('**/api/integrations/whatsapp/connect', route => {
+      qrRequests++;
+      connected = true;
+      return route.fulfill({ json: { provider: 'EVOLUTION', status: 'connected', instanceName: 'qa-active' } });
+    });
+    await page.getByRole('button', { name: 'Gerar QR Code', exact: true }).click();
+    await expect(page.getByLabel('Nome do cliente')).toBeVisible();
+    await expect(page.getByRole('alert').filter({ hasText: 'Não foi possível gerar o QR Code' })).toHaveCount(0);
+    expect(qrRequests).toBe(1);
+  });
+
   test('QR Code cabe no celular e continua na mesma etapa ao redimensionar', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 812 });
     await page.goto('/onbording');

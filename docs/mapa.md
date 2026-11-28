@@ -45,3 +45,13 @@ Mudança somente de apresentação e composição; nenhum contrato de API, campo
 - `apps/web/src/app/api/integrations/whatsapp/status/route.test.ts:69`: rota de status exercitada com probe real e resposta 404 anonimizada.
 - `apps/web/src/lib/load-onboarding-progress.test.ts:48`: WhatsApp pendente sem invalidar os outros cadastros.
 - `e2e/web/onboarding.spec.ts:122`: instância ausente sem aviso geral; geração de QR e tutorial após confirmação.
+
+## Retomada após pareamento — 27/11/2026
+
+- `apps/web/src/app/api/integrations/whatsapp/connect/route.ts`: resolve o mesmo canal do status; preflight de sessão aberta evita recriação/webhook/QR, e ausência de imagem exige reconfirmação.
+- `apps/web/src/lib/onboarding-whatsapp.ts`: retorno nulo significa conexão já confirmada pelo servidor; HTTP com erro nunca comprova conexão.
+- `apps/web/src/components/onboarding/WhatsAppStep.tsx`: reconsulta progresso nesse retorno e mantém avanço condicionado ao status.
+- `apps/web/src/app/(dashboard)/configuracoes/page.tsx`: aceita retorno conectado sem abrir outro QR.
+- `apps/web/src/lib/load-onboarding-progress.ts`: prazo inclui JSON; erro informa apenas fonte e código seguros.
+- `apps/web/src/components/OnboardingFlow.tsx`: diagnóstico de falha sem respostas brutas ou dados pessoais.
+- `e2e/web/onboarding.spec.ts`: polling após pareamento e retorno conectado sem novo QR.

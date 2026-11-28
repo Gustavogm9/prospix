@@ -28,6 +28,7 @@ export function WhatsAppStep() {
     try {
       const value = await requestOnboardingQr();
       if (!alive.current) return;
+      if (value === null) { await refresh(); return; }
       setQr(value);
       setExpiresAt(Date.now() + 40_000);
     } catch (cause) {
